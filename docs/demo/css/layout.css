@@ -165,15 +165,29 @@
 .app-logo {
   width: 32px;
   height: 32px;
-  background: var(--brand-grad);
-  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  color: #fff;
   flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(124, 106, 244, 0.4);
+}
+
+.app-logo img {
+  width: 32px;
+  height: 32px;
+  display: block;
+}
+
+/* Logo 双主题：深色默认显示 dark 版，浅色切换 light 版 */
+.logo-img-light {
+  display: none;
+}
+
+body.light-theme .logo-img-dark {
+  display: none;
+}
+
+body.light-theme .logo-img-light {
+  display: block;
 }
 
 .app-name {

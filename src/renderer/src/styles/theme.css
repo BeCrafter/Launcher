@@ -1,0 +1,14 @@
+/* 主题变量（阶段 5 扩展为完整主题系统；与 docs/demo 的 body.light-theme 约定保持一致） */
+:root {
+  --logo-grad-a: #9d8cff;
+  --logo-grad-b: #7c6af4;
+  --logo-grad-c: #4b3ec7;
+  --logo-symbol: #ffffff;
+}
+
+body.light-theme {
+  --logo-grad-a: #a99cff;
+  --logo-grad-b: #7c6af4;
+  --logo-grad-c: #5b4dd6;
+  --logo-symbol: #1e1e2e;
+}
