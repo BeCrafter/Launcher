@@ -4,18 +4,50 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库现状
 
-BeCrafter/Launcher 是一个 macOS 本地服务管理应用（管理 launchd / crontab / 端口服务）的设计原型仓库。**当前尚无 Swift 应用源码**——仓库里唯一的代码是 `docs/demo/` 下高保真可交互的 HTML 原型页，用于在原生实现前验证 UI/UX。README 为占位内容。
+BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab / 端口服务）的设计原型仓库，**重构进行中**：基于开源 [LaunchManager](https://github.com/Sean10000/LaunchManager)（Swift）迁移为 **TS + Electron** 实现（`src/`），核心目标是解决编辑体验问题并新增 AI 能力。仓库里目前只有 `docs/demo/` 下高保真可交互的 HTML 原型页 + `src/` 下的阶段 0 脚手架。
 
-原型页内的「重构方案」视图（`#view-design`）和「plist 键覆盖」视图（`#view-plist`）描述了原生应用的计划架构（plist 作为唯一事实来源、RowCard/StatusDot 等 UI 原语、ManagedTask 协议、ToastCenter 错误层），是理解本项目长期方向的主要文档。
+- **demo 是 UI/UX 设计基准**（非终态，持续演进）：`docs/demo/` 的视觉/交互作为重构验收的对照基线，改动 demo 参照其自身约定
+- **长期方向文档**：`docs/design/refactor-plan.md`（迁移矩阵 + 分阶段计划 + 已确认决策）、`docs/design/ai-capability.md`（AI 引擎/MCP/专家提示词方案，阶段 4 按此落地）
+- README 为占位内容
 
 ## 运行方式
 
-无构建步骤，无测试框架，无 lint 配置。
+**应用（src/，阶段 0 脚手架）**：
+- 开发：`npm run dev`（electron-vite，热更新；出空窗口 + 菜单栏图标；重复启动由单实例锁捕获）
+- 测试：`npm test`（vitest，src/**/*.test.ts）；类型检查：`npm run typecheck`
+- 重新生成品牌图标：`npm run icon`（`scripts/gen-icon.mjs` 零依赖，输出三款变体 power/rocket/arrow × {菜单栏模板图 16/32、应用图标 512、icns} → `resources/logo/<variant>/`；同时产出 demo 双主题 `docs/demo/logo-dark.svg` / `logo-light.svg`）
 
+**演示页（docs/demo/）**：
 - 打开演示页：直接双击 `docs/demo/index.html`（file:// 协议可用，无需服务器；不要在此引入 fetch/ES 模块，否则 file:// 下会失效）
 - 或本地起静态服务：`cd docs/demo && python3 -m http.server` or `npx -y serve ./docs/demo`
 - **改动后必跑自检**：`node docs/demo/check.mjs`（零依赖；CSS 括号/锚点、全部 js 语法、MOCK_DATA 结构、i18n 中英键一致、MODULES 注册表与 index.html 引用一一对应；失败 exit 1）。已配置 PostToolUse hook，编辑/写入后自动执行、失败即阻断
 - 个别校验仍可用 `node --check docs/demo/js/*.js` 单点排查
+
+## 重构进度（对照 docs/design/refactor-plan.md）
+
+- 阶段 0（脚手架：electron-vite + React + TS + 单实例 + 空壳窗口/Tray）✅
+- 阶段 1（Agents 模块端到端，含抽屉编辑器/CodeMirror XML/状态机）——当前
+- 阶段 2 Cron / 阶段 3 端口服务 / 阶段 4 AI+MCP / 阶段 5 双形态与设置（待办）
+
+## src/ 文件地图（Electron 应用，阶段 0）
+
+```
+src/
+├── main/            # 主进程（唯一事实来源）
+│   ├── index.ts     # 窗口 + Tray 单实例双形态 + Logo 变体（logo:list/get/set IPC、settings.json 持久化、dock.setIcon）
+│   ├── domains/     # 纯函数领域层（阶段 1 起：launchd/plist/brew/cron/process）
+│   ├── services/    # 执行层（ShellRunner/osascript 提权/LaunchctlService/Resolvers）
+│   ├── stores/      # AgentStore/CronStore/ServiceStore（状态机，对齐开源 Store 模式）
+│   ├── ai/          # registry/llm/agent/skills/prompts（阶段 4）
+│   └── mcp/         # MCP stdio server（launcher-mcp 入口，阶段 4）
+├── preload/         # contextBridge 白名单 IPC（window.launcher）
+├── renderer/        # React 18 + zustand（components/ 由 demo components.js 迁移）
+│   ├── components/Logo.tsx   # 品牌 Logo SVG（variant: power/rocket/arrow；颜色走 --logo-* 变量，主题自适应）
+│   └── styles/theme.css      # 主题变量（:root 深色 + body.light-theme 浅色，与 demo 约定一致）
+└── shared/          # 常量等跨进程共享代码（APP_NAME 等）
+```
+
+约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + 订阅变更；解析器类纯函数配 vitest 单测（对齐开源 TDD 用例）。
 
 ## 页面架构（docs/demo/）
 
