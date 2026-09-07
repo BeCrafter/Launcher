@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { APP_NAME } from '../shared/constants'
 
-export const LOGO_VARIANTS = ['power', 'rocket', 'arrow', 'gauge', 'bolt', 'stack', 'bars', 'letterL'] as const
+export const LOGO_VARIANTS = ['power', 'rocket', 'arrow', 'gauge', 'bolt', 'stack', 'bars', 'letterL', 'rocketOrbit'] as const
 export type LogoVariant = (typeof LOGO_VARIANTS)[number]
 
 let mainWindow: BrowserWindow | null = null

@@ -267,6 +267,39 @@ const letterLHit = (px, py, S, frac = 1) => {
 
 const SYMBOLS = { power: powerHit, rocket: rocketHit, arrow: arrowHit, gauge: gaugeHit, bolt: boltHit, stack: stackHit, bars: barsHit, letterL: letterLHit }
 
+// ── 各款符号包围盒自动测量（用于 Tray/SVG 等比满幅放大，避免菜单栏图标显小）──
+const TRAY_BOUNDS = {}
+{
+  const R = 160
+  for (const [v, hit] of Object.entries(SYMBOLS)) {
+    let x0 = 1
+    let y0 = 1
+    let x1 = 0
+    let y1 = 0
+    for (let y = 0; y < R; y++) {
+      for (let x = 0; x < R; x++) {
+        if (hit(x, y, R)) {
+          if (x / R < x0) x0 = x / R
+          if (x / R > x1) x1 = x / R
+          if (y / R < y0) y0 = y / R
+          if (y / R > y1) y1 = y / R
+        }
+      }
+    }
+    TRAY_BOUNDS[v] = [x0, y0, x1, y1]
+  }
+}
+// 等比满幅变换（pad 边距，保持形状不拉伸）
+const TRAY_PAD = 0.05
+function fitTransform(b) {
+  const w = b[2] - b[0]
+  const h = b[3] - b[1]
+  const s = Math.min((1 - 2 * TRAY_PAD) / w, (1 - 2 * TRAY_PAD) / h)
+  const cx = (b[0] + b[2]) / 2
+  const cy = (b[1] + b[3]) / 2
+  return { s, cx, cy }
+}
+
 // ── 3x3 超采样（每像素子采样）──
 function render(px, py, hit, S, opts = {}) {
   let a = 0
@@ -278,12 +311,22 @@ function render(px, py, hit, S, opts = {}) {
   return a / 9
 }
 
-// 菜单栏模板图：纯黑白（R=G=B=0）
+// 菜单栏模板图：纯黑白（R=G=B=0），符号按包围盒等比满幅放大
 function trayPng(variant, size) {
   const hit = SYMBOLS[variant]
+  const { s, cx, cy } = fitTransform(TRAY_BOUNDS[variant])
   return encodePng(size, (x, y) => {
-    const a = Math.round(255 * render(x, y, hit, size))
-    return [0, 0, 0, a]
+    // 像素 → 符号坐标（先还原缩放，再做 3x3 超采样）
+    const ux = cx + ((x / size) - 0.5) / s
+    const uy = cy + ((y / size) - 0.5) / s
+    const step = 1 / (s * size)
+    let a = 0
+    for (let sy = 0; sy < 3; sy++) {
+      for (let sx = 0; sx < 3; sx++) {
+        if (hit((ux + (sx + 0.5) / 3 * step) * size, (uy + (sy + 0.5) / 3 * step) * size, size)) a++
+      }
+    }
+    return [0, 0, 0, Math.round((255 * a) / 9)]
   })
 }
 
@@ -351,6 +394,15 @@ function makeIcns(variant) {
 const SQUIRCLE_PATH = 'M 15 128 C 15 58 58 15 128 15 C 198 15 241 58 241 128 C 241 198 198 241 128 241 C 58 241 15 198 15 128 Z'
 const fmt = (v) => Math.round(v * 256).toString()
 
+// SVG 用与 Tray 相同的 fit 变换（保持三处视觉一致）
+function svgFitTransform(variant) {
+  const b = TRAY_BOUNDS[variant]
+  const { s, cx, cy } = fitTransform(b)
+  const tx = (0.5 - cx * s) * 256
+  const ty = (0.5 - cy * s) * 256
+  return `translate(${tx.toFixed(1)} ${ty.toFixed(1)}) scale(${s.toFixed(4)})`
+}
+
 function svgSymbol(variant, color) {
   switch (variant) {
     case 'power':
@@ -411,19 +463,24 @@ function makeSvg(variant, symbolColor, gradTop, gradMid, gradDark) {
     </linearGradient>
   </defs>
   <path d="${SQUIRCLE_PATH}" fill="url(#g)"/>
+  <g transform="${svgFitTransform(variant)}">
   ${svgSymbol(variant, symbolColor)}
+  </g>
 </svg>
 `
 }
 
-// ── 16px ASCII 预览（调试）──
+// ── 16px ASCII 预览（调试，与 trayPng 同一 fit 变换）──
 function dumpTray(variant) {
   const hit = SYMBOLS[variant]
-  console.log(`— ${variant} 16px —`)
+  const { s, cx, cy } = fitTransform(TRAY_BOUNDS[variant])
+  console.log(`— ${variant} 16px (fit ${s.toFixed(2)}x) —`)
   for (let y = 0; y < 16; y++) {
     let line = ''
     for (let x = 0; x < 16; x++) {
-      line += render(x, y, hit, 16) > 0.5 ? '██' : '  '
+      const ux = cx + (x / 16 - 0.5) / s
+      const uy = cy + (y / 16 - 0.5) / s
+      line += hit(ux * 16, uy * 16, 16) ? '██' : '  '
     }
     console.log(line)
   }
