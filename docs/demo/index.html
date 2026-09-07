@@ -278,20 +278,11 @@
               <button class="set-nav-btn" onclick="switchSettingsSection('launchd', this)">
                 <i class="fa-solid fa-rocket"></i><span data-i18n="settings.tab.launchd">Launchd 引擎</span>
               </button>
-              <button class="set-nav-btn" onclick="switchSettingsSection('scanner', this)">
-                <i class="fa-solid fa-network-wired"></i><span data-i18n="settings.tab.scanner">端口与进程</span>
-              </button>
               <button class="set-nav-btn" onclick="switchSettingsSection('editor', this)">
                 <i class="fa-solid fa-code"></i><span data-i18n="settings.tab.editor">Plist 编辑器</span>
               </button>
               <button class="set-nav-btn" onclick="switchSettingsSection('security', this)">
                 <i class="fa-solid fa-shield-halved"></i><span data-i18n="settings.tab.security">权限与提权</span>
-              </button>
-              <button class="set-nav-btn" onclick="switchSettingsSection('keybinds', this)">
-                <i class="fa-solid fa-keyboard"></i><span data-i18n="settings.tab.keybinds">快捷键</span>
-              </button>
-              <button class="set-nav-btn" onclick="switchSettingsSection('backup', this)">
-                <i class="fa-solid fa-database"></i><span data-i18n="settings.tab.backup">备份与数据</span>
               </button>
               <button class="set-nav-btn" onclick="switchSettingsSection('about', this)">
                 <i class="fa-solid fa-circle-info"></i><span data-i18n="settings.tab.about">关于与诊断</span>
@@ -397,17 +388,6 @@
                           <option value="en-US">English (US)</option>
                         </select>
                       </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.general.timeFormat.rowTitle">时间显示格式</div>
-                          <div class="settings-row-desc" data-i18n="settings.general.timeFormat.rowDesc">日志与运行时间的时间戳展示方式</div>
-                        </div>
-                        <select class="settings-select" onchange="saveSetting('timeFormat', this.value)">
-                          <option value="24h" data-i18n="settings.general.timeFormat.24h">24 小时制 (14:32:01)</option>
-                          <option value="12h" data-i18n="settings.general.timeFormat.12h">12 小时制 (02:32:01 PM)</option>
-                          <option value="iso">ISO 8601 (2025-02-28T14:32)</option>
-                        </select>
-                      </div>
                     </div>
                   </section>
 
@@ -437,6 +417,26 @@
                           <div class="settings-row-desc" data-i18n="settings.general.menubarResident.rowDesc">关闭主窗口时保持菜单栏托盘运行，不完全退出应用</div>
                         </div>
                         <label class="toggle"><input type="checkbox" checked onchange="saveSetting('menubarOnly', this.checked)" />
+                          <div class="toggle-track"></div>
+                          <div class="toggle-thumb"></div>
+                        </label>
+                      </div>
+                      <div class="settings-row">
+                        <div>
+                          <div class="settings-row-title" data-i18n="settings.general.trayIcon.rowTitle">显示菜单栏图标</div>
+                          <div class="settings-row-desc" data-i18n="settings.general.trayIcon.rowDesc">在顶部菜单栏显示常驻图标，点击可打开主窗口与快捷操作菜单</div>
+                        </div>
+                        <label class="toggle"><input type="checkbox" checked onchange="saveSetting('trayVisible', this.checked)" />
+                          <div class="toggle-track"></div>
+                          <div class="toggle-thumb"></div>
+                        </label>
+                      </div>
+                      <div class="settings-row">
+                        <div>
+                          <div class="settings-row-title" data-i18n="settings.general.dockIcon.rowTitle">在 Dock 中显示图标</div>
+                          <div class="settings-row-desc" data-i18n="settings.general.dockIcon.rowDesc">隐藏 Dock 图标，保留菜单栏图标形态（菜单栏应用常见形态）</div>
+                        </div>
+                        <label class="toggle"><input type="checkbox" checked onchange="saveSetting('dockVisible', this.checked)" />
                           <div class="toggle-track"></div>
                           <div class="toggle-thumb"></div>
                         </label>
@@ -481,17 +481,6 @@
                           <div class="toggle-thumb"></div>
                         </label>
                       </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.launchd.debounce.rowTitle">文件防抖延迟 (Debounce)</div>
-                          <div class="settings-row-desc" data-i18n="settings.launchd.debounce.rowDesc">频繁文件写入触发刷新的节流等待时长</div>
-                        </div>
-                        <select class="settings-select" onchange="saveSetting('debounceMs', this.value)">
-                          <option value="200" data-i18n="settings.launchd.debounce.fast">200 毫秒 (快速)</option>
-                          <option value="500" data-i18n="settings.launchd.debounce.recommended" selected>500 毫秒 (推荐)</option>
-                          <option value="1000" data-i18n="settings.launchd.debounce.slow">1000 毫秒</option>
-                        </select>
-                      </div>
                     </div>
                   </section>
 
@@ -515,73 +504,11 @@
                           <option value="10000" data-i18n="settings.launchd.cmdTimeout.10s">10 秒</option>
                         </select>
                       </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.launchd.autoKickstart.rowTitle">保存时自动执行 kickstart</div>
-                          <div class="settings-row-desc" data-i18n="settings.launchd.autoKickstart.rowDesc">编辑修改生效后，自动对处于 Running 状态的任务重启载入新配置</div>
-                        </div>
-                        <label class="toggle"><input type="checkbox" checked onchange="saveSetting('autoKickstartOnSave', this.checked)" />
-                          <div class="toggle-track"></div>
-                          <div class="toggle-thumb"></div>
-                        </label>
-                      </div>
                     </div>
                   </section>
                 </div>
 
-                <!-- ═ Pane 3: 端口与进程 ═ -->
-                <div class="settings-pane" id="sp-scanner">
-                  <div class="settings-hero">
-                    <div class="settings-title" data-i18n="settings.scanner.title">端口与 TCP 服务监控</div>
-                    <div class="settings-subtitle" data-i18n="settings.scanner.subtitle">管理后台对 lsof / netstat 端口占用的扫描周期与能耗策略。</div>
-                  </div>
-
-                  <section class="settings-section">
-                    <div class="settings-section-header">
-                      <div class="settings-section-icon"><i class="fa-solid fa-network-wired"></i></div>
-                      <div>
-                        <div class="settings-section-title" data-i18n="settings.scanner.sectionTitle">TCP 扫描器配置</div>
-                        <div class="settings-section-desc" data-i18n="settings.scanner.sectionDesc">基于 lsof -iTCP -sTCP:LISTEN 获取监听端口</div>
-                      </div>
-                    </div>
-                    <div class="settings-body">
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.scanner.autoRefresh.rowTitle">自动轮询扫描</div>
-                          <div class="settings-row-desc" data-i18n="settings.scanner.autoRefresh.rowDesc">自动探测本机活跃端口及对应关联的 PID 和进程名称</div>
-                        </div>
-                        <label class="toggle"><input type="checkbox" checked onchange="saveSetting('autoRefresh', this.checked)" />
-                          <div class="toggle-track"></div>
-                          <div class="toggle-thumb"></div>
-                        </label>
-                      </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.scanner.refreshInterval.rowTitle">轮询间隔频率</div>
-                          <div class="settings-row-desc" data-i18n="settings.scanner.refreshInterval.rowDesc">前台激活时的扫描时间间隔</div>
-                        </div>
-                        <select class="settings-select" onchange="saveSetting('refreshInterval', this.value)">
-                          <option value="1" data-i18n="settings.scanner.refreshInterval.high">1 秒 (高灵敏)</option>
-                          <option value="3" data-i18n="settings.scanner.refreshInterval.recommended" selected>3 秒 (推荐)</option>
-                          <option value="5" data-i18n="settings.scanner.refreshInterval.5s">5 秒</option>
-                          <option value="10" data-i18n="settings.scanner.refreshInterval.lowPower">10 秒 (低功耗)</option>
-                        </select>
-                      </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.scanner.pauseOnBlur.rowTitle">窗口失焦时挂起轮询</div>
-                          <div class="settings-row-desc" data-i18n="settings.scanner.pauseOnBlur.rowDesc">当应用在后台最小化时暂停扫描以节省 CPU 与电池能耗</div>
-                        </div>
-                        <label class="toggle"><input type="checkbox" checked onchange="saveSetting('pauseScanOnBlur', this.checked)" />
-                          <div class="toggle-track"></div>
-                          <div class="toggle-thumb"></div>
-                        </label>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-
-                <!-- ═ Pane 4: Plist 编辑器 ═ -->
+                <!-- ═ Pane 3: Plist 编辑器 ═ -->
                 <div class="settings-pane" id="sp-editor">
                   <div class="settings-hero">
                     <div class="settings-title" data-i18n="settings.editor.title">Plist 结构化编辑器</div>
@@ -615,21 +542,11 @@
                           <option value="tab" data-i18n="settings.editor.xmlIndent.tab">Tab 缩进</option>
                         </select>
                       </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.editor.formatOnSave.rowTitle">保存前自动格式化 XML</div>
-                          <div class="settings-row-desc" data-i18n="settings.editor.formatOnSave.rowDesc">写入磁盘时自动清理多余空白行与非法字符</div>
-                        </div>
-                        <label class="toggle"><input type="checkbox" checked onchange="saveSetting('formatXmlOnSave', this.checked)" />
-                          <div class="toggle-track"></div>
-                          <div class="toggle-thumb"></div>
-                        </label>
-                      </div>
                     </div>
                   </section>
                 </div>
 
-                <!-- ═ Pane 5: 权限与提权 ═ -->
+                <!-- ═ Pane 4: 权限与提权 ═ -->
                 <div class="settings-pane" id="sp-security">
                   <div class="settings-hero">
                     <div class="settings-title" data-i18n="settings.security.title">权限与提权策略</div>
@@ -670,89 +587,7 @@
                   </section>
                 </div>
 
-                <!-- ═ Pane 6: 快捷键 ═ -->
-                <div class="settings-pane" id="sp-keybinds">
-                  <div class="settings-hero">
-                    <div class="settings-title" data-i18n="settings.keybinds.title">全局与常用快捷键</div>
-                    <div class="settings-subtitle" data-i18n="settings.keybinds.subtitle">提高运维与任务调试效率的快捷按键组合。</div>
-                  </div>
-
-                  <section class="settings-section">
-                    <div class="settings-section-header">
-                      <div class="settings-section-icon"><i class="fa-solid fa-keyboard"></i></div>
-                      <div>
-                        <div class="settings-section-title" data-i18n="settings.keybinds.sectionTitle">快捷键列表</div>
-                        <div class="settings-section-desc" data-i18n="settings.keybinds.sectionDesc">当前支持的键盘热键绑定</div>
-                      </div>
-                    </div>
-                    <div class="settings-body">
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.keybinds.toggleWindow.rowTitle">全局呼出 / 隐藏窗口</div>
-                          <div class="settings-row-desc" data-i18n="settings.keybinds.toggleWindow.rowDesc">在任意界面一键唤出 Launcher</div>
-                        </div>
-                        <span class="keybind-badge"><i class="fa-brands fa-apple"></i> ⌥ Space</span>
-                      </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.keybinds.focusSearch.rowTitle">聚焦全局搜索栏</div>
-                          <div class="settings-row-desc" data-i18n="settings.keybinds.focusSearch.rowDesc">立即开始键入过滤任务</div>
-                        </div>
-                        <span class="keybind-badge"><i class="fa-brands fa-apple"></i> ⌘ F</span>
-                      </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.keybinds.newTask.rowTitle">新建任务</div>
-                          <div class="settings-row-desc" data-i18n="settings.keybinds.newTask.rowDesc">在当前活跃模块快速新建配置项</div>
-                        </div>
-                        <span class="keybind-badge"><i class="fa-brands fa-apple"></i> ⌘ N</span>
-                      </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.keybinds.saveReload.rowTitle">保存并重载当前任务</div>
-                          <div class="settings-row-desc" data-i18n="settings.keybinds.saveReload.rowDesc">在抽屉编辑器中保存配置</div>
-                        </div>
-                        <span class="keybind-badge"><i class="fa-brands fa-apple"></i> ⌘ S</span>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-
-                <!-- ═ Pane 7: 备份与数据 ═ -->
-                <div class="settings-pane" id="sp-backup">
-                  <div class="settings-hero">
-                    <div class="settings-title" data-i18n="settings.backup.title">备份与数据管理</div>
-                    <div class="settings-subtitle" data-i18n="settings.backup.subtitle">打包导出本地 LaunchAgents / Crontab 任务配置，或一键重置应用缓存。</div>
-                  </div>
-
-                  <section class="settings-section">
-                    <div class="settings-section-header">
-                      <div class="settings-section-icon"><i class="fa-solid fa-cloud-arrow-down"></i></div>
-                      <div>
-                        <div class="settings-section-title" data-i18n="settings.backup.sectionTitle">配置导入与导出</div>
-                        <div class="settings-section-desc" data-i18n="settings.backup.sectionDesc">迁移或归档当前环境的所有受管任务</div>
-                      </div>
-                    </div>
-                    <div class="settings-body">
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.backup.export.rowTitle">导出所有配置备份包 (.zip)</div>
-                          <div class="settings-row-desc" data-i18n="settings.backup.export.rowDesc">包含当前所有 Plist 文件及 Crontab 脚本快照</div>
-                        </div>
-                        <button class="d-btn accent" onclick="showToast(t('toast.backupCreating'),'#a78bfa','fa-file-zipper')"><i class="fa-solid fa-download"></i><span data-i18n="settings.backup.btn.export">导出备份</span></button>
-                      </div>
-                      <div class="settings-row">
-                        <div>
-                          <div class="settings-row-title" data-i18n="settings.backup.reset.rowTitle">恢复全部设置与偏好</div>
-                          <div class="settings-row-desc" data-i18n="settings.backup.reset.rowDesc">重置界面主题、语言与轮询偏好为系统出厂初始状态</div>
-                        </div>
-                        <button class="d-btn red" onclick="resetSettings()"><i class="fa-solid fa-rotate-left"></i><span data-i18n="settings.backup.btn.reset">恢复默认设置</span></button>
-                      </div>
-                    </div>
-                  </section>
-                </div>
-
-                <!-- ═ Pane 8: 关于与诊断 ═ -->
+                <!-- ═ Pane 5: 关于与诊断 ═ -->
                 <div class="settings-pane" id="sp-about">
                   <div class="settings-hero">
                     <div class="settings-title" data-i18n="settings.about.title">关于 Launcher</div>
@@ -793,7 +628,7 @@
                   </section>
                 </div>
 
-                <!-- ═ Pane 9: 登录项 ═ -->
+                <!-- ═ Pane 6: 登录项 ═ -->
                 <div class="settings-pane" id="sp-login">
                   <div class="settings-hero">
                     <div class="settings-title" data-i18n="settings.login.title">登录项</div>

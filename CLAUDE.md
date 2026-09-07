@@ -15,6 +15,9 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 **应用（src/，阶段 0 脚手架）**：
 - 开发：`npm run dev`（electron-vite，热更新；出空窗口 + 菜单栏图标；重复启动由单实例锁捕获）
 - 测试：`npm test`（vitest，src/**/*.test.ts）；类型检查：`npm run typecheck`
+- 应用编译（构建 + 端到端架构验证）：`npm run build:app`（默认本机架构）/ `build:app:arm64` / `build:app:x64` / `build:app:universal` / `build:app:all`（arm64+x64 依次）
+  - `scripts/build-app.mjs`：electron-vite build → electron-builder 打包（dist/，dir 目标）→ 验证：lipo 架构断言（主 bin + Electron Framework）+ 实际启动产物按进程二进制架构断言；主机无法原生运行的架构（如 Intel 机上 arm64）自动 SKIP 运行验证并注明
+  - 打包图标取当前激活 Logo 款（resources/logo/<variant>/icon.icns → build/icon.icns）；electron 二进制走 ELECTRON_MIRROR（env > .npmrc > npmmirror 兜底）；未配置开发者证书时 electron-builder 跳过代码签名（ad-hoc 行为，正式分发需补签名）
 - 重新生成品牌图标：`npm run icon`（`scripts/gen-icon.mjs` 零依赖，输出三款变体 power/rocket/arrow × {菜单栏模板图 16/32、应用图标 512、icns} → `resources/logo/<variant>/`；同时产出 demo 双主题 `docs/demo/logo-dark.svg` / `logo-light.svg`）
 
 **演示页（docs/demo/）**：
@@ -73,7 +76,7 @@ src/
 - `base.css`：`:root` 主题变量与 `body.light-theme` 浅色覆写、reset/滚动条/动画、跨模块通用组件（tag / chip / toggle / status-dot / act-btn / d-btn / row-card / expand-grid / 表单 f-* / multi-val / toast / modal / empty-state）
 - `layout.css`：app-shell、侧边栏（含折叠态与移动端）、顶栏 + 搜索、底部 launch-statusbar（含 560/680/860 响应式）
 - `views.css`：filter-bar/chip、list-container、group-block、agent-col-card、row-expand/chevron、invalid-plist、Cron 内联编辑样式、文档页（doc-* / overview-cards / phase / mermaid-wrap）、key-table / key-status
-- `settings.css`：设置页整块（settings-layout / tab-nav / pane / hero / section / theme-cards / keybind-badge / footer 与 760 响应式）
+- `settings.css`：设置页整块（settings-layout / tab-nav / pane / hero / section / theme-cards / footer 与 760 响应式）
 - `drawer.css`：抽屉（mask / hdr / ops 按钮 / 状态点 / tab 导航 / body / scroll / footer）、log-section、xml-section、cfg-group、trigger / ka / sched / socket 卡片、stat-grid、log-line
 
 ### js/（经典脚本，全局作用域，加载顺序见上）
