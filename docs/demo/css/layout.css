@@ -177,16 +177,17 @@
   display: block;
 }
 
-/* Logo 双主题：深色默认显示 dark 版，浅色切换 light 版 */
-.logo-img-light {
+/* Logo 双主题：深色默认显示 dark 版，浅色切换 light 版
+   注意：作用域须带 .app-logo，否则 .app-logo img 的 display:block 特异性更高会压过隐藏规则 */
+.app-logo .logo-img-light {
   display: none;
 }
 
-body.light-theme .logo-img-dark {
+body.light-theme .app-logo .logo-img-dark {
   display: none;
 }
 
-body.light-theme .logo-img-light {
+body.light-theme .app-logo .logo-img-light {
   display: block;
 }
 

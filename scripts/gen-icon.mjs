@@ -3,7 +3,9 @@
 //   demo 双主题 SVG。特性：底座超椭圆（squircle）连续圆角；符号尖角全部圆角多边形化。
 // 调试：node scripts/gen-icon.mjs --dump（16px ASCII）| --dump-svg（三款完整 SVG 文本，供 Logo.tsx 同步）
 import { deflateSync } from 'node:zlib'
-import { writeFileSync, mkdirSync } from 'node:fs'
+import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -370,24 +372,30 @@ function appPng(variant, size) {
   })
 }
 
-function makeIcns(variant) {
-  const entries = [
-    ['icp4', 16],
-    ['icp5', 32],
-    ['icp7', 128],
-    ['icp8', 256],
-    ['ic09', 512]
-  ].map(([type, size]) => {
-    const png = appPng(variant, size)
-    const len = Buffer.alloc(4)
-    len.writeUInt32BE(8 + png.length)
-    return Buffer.concat([Buffer.from(type, 'ascii'), len, png])
-  })
-  const body = Buffer.concat(entries)
-  const head = Buffer.alloc(8)
-  head.write('icns', 0, 'ascii')
-  head.writeUInt32BE(8 + body.length, 4)
-  return Buffer.concat([head, body])
+// ── icns（iconutil 官方生成：标准 iconset 10 个尺寸表示 → iconutil -c icns）──
+const ICONSET_REPS = [
+  ['icon_16x16.png', 16],
+  ['icon_16x16@2x.png', 32],
+  ['icon_32x32.png', 32],
+  ['icon_32x32@2x.png', 64],
+  ['icon_128x128.png', 128],
+  ['icon_128x128@2x.png', 256],
+  ['icon_256x256.png', 256],
+  ['icon_256x256@2x.png', 512],
+  ['icon_512x512.png', 512],
+  ['icon_512x512@2x.png', 1024]
+]
+function makeIcns(variant, pngPath, outPath) {
+  const iconset = join(tmpdir(), `launcher-iconset-${variant}.iconset`) // iconutil 要求目录以 .iconset 结尾
+  rmSync(iconset, { recursive: true, force: true })
+  mkdirSync(iconset, { recursive: true })
+  for (const [name, size] of ICONSET_REPS) {
+    execFileSync('sips', ['-z', String(size), String(size), pngPath, '--out', join(iconset, name)], {
+      stdio: 'pipe'
+    })
+  }
+  execFileSync('iconutil', ['-c', 'icns', iconset, '-o', outPath], { stdio: 'pipe' })
+  rmSync(iconset, { recursive: true, force: true })
 }
 
 // ── SVG 公共件：squircle 底座 path（与 PNG 底座同构，视口 256）──
@@ -506,8 +514,9 @@ for (const v of VARIANTS) {
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, 'iconTemplate.png'), trayPng(v, 16))
   writeFileSync(join(dir, 'iconTemplate@2x.png'), trayPng(v, 32))
-  writeFileSync(join(dir, 'icon.png'), appPng(v, 512))
-  writeFileSync(join(dir, 'icon.icns'), makeIcns(v))
+  const iconPng = join(dir, 'icon.png')
+  writeFileSync(iconPng, appPng(v, 512))
+  makeIcns(v, iconPng, join(dir, 'icon.icns'))
 }
 writeFileSync(join(demoDir, 'logo-dark.svg'), makeSvg('power', '#ffffff', '#9d8cff', '#7c6af4', '#4b3ec7'))
 writeFileSync(join(demoDir, 'logo-light.svg'), makeSvg('power', '#1e1e2e', '#a99cff', '#7c6af4', '#5b4dd6'))

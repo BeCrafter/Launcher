@@ -237,23 +237,29 @@ const BASE_RGBA = Buffer.alloc(w * h * 4)
 writeFileSync(join(WORK, 'base.png'), encodePng(w, h, BASE_RGBA))
 console.log('[2.5] white squircle base ok')
 
-// ── 3. 缩放 + icns（白底版）──
+// ── 3. 缩放 + icns（iconutil 官方生成，保证 macOS 兼容）──
 sips('-z', '512', '512', join(WORK, 'base.png'), '--out', join(OUT, 'icon.png'))
-const icnsEntries = []
-for (const [type, size] of [['icp4', 16], ['icp5', 32], ['icp7', 128], ['icp8', 256], ['ic09', 512]]) {
-  const f = join(WORK, `icon-${size}.png`)
-  sips('-z', String(size), String(size), join(OUT, 'icon.png'), '--out', f)
-  const png = readFileSync(f)
-  const len = Buffer.alloc(4)
-  len.writeUInt32BE(8 + png.length)
-  icnsEntries.push(Buffer.concat([Buffer.from(type, 'ascii'), len, png]))
+{
+  const ICONSET = join(WORK, 'iconset.iconset') // iconutil 要求目录以 .iconset 结尾
+  mkdirSync(ICONSET, { recursive: true })
+  const reps = [
+    ['icon_16x16.png', 16],
+    ['icon_16x16@2x.png', 32],
+    ['icon_32x32.png', 32],
+    ['icon_32x32@2x.png', 64],
+    ['icon_128x128.png', 128],
+    ['icon_128x128@2x.png', 256],
+    ['icon_256x256.png', 256],
+    ['icon_256x256@2x.png', 512],
+    ['icon_512x512.png', 512],
+    ['icon_512x512@2x.png', 1024]
+  ]
+  for (const [name, size] of reps) {
+    sips('-z', String(size), String(size), join(OUT, 'icon.png'), '--out', join(ICONSET, name))
+  }
+  execFileSync('iconutil', ['-c', 'icns', ICONSET, '-o', join(OUT, 'icon.icns')])
 }
-const icnsBody = Buffer.concat(icnsEntries)
-const icnsHead = Buffer.alloc(8)
-icnsHead.write('icns', 0, 'ascii')
-icnsHead.writeUInt32BE(8 + icnsBody.length, 4)
-writeFileSync(join(OUT, 'icon.icns'), Buffer.concat([icnsHead, icnsBody]))
-console.log('[3] icon.png(512) + icon.icns ok')
+console.log('[3] icon.png(512) + icon.icns (iconutil) ok')
 
 // ── 4. 菜单栏模板 16/32：内容包围盒满幅 + 纯黑白 alpha（用透明版，无白色底）──
 for (const [size, name] of [[16, 'iconTemplate.png'], [32, 'iconTemplate@2x.png']]) {

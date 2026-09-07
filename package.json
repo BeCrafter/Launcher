@@ -12,7 +12,12 @@
     "start": "electron-vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "icon": "node scripts/gen-icon.mjs"
+    "icon": "node scripts/gen-icon.mjs",
+    "build:app": "node scripts/build-app.mjs",
+    "build:app:arm64": "node scripts/build-app.mjs --arch arm64",
+    "build:app:x64": "node scripts/build-app.mjs --arch x64",
+    "build:app:universal": "node scripts/build-app.mjs --arch universal",
+    "build:app:all": "node scripts/build-app.mjs --arch all"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -25,6 +30,7 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.6",

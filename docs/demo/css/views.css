@@ -257,7 +257,7 @@
   display: none;
   padding: 10px 14px 12px;
   border-top: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--hover);
 }
 
 .row-expand.open {
@@ -332,6 +332,12 @@
   grid-template-columns: 1fr 1fr;
   gap: 10px;
   margin-bottom: 12px;
+}
+
+/* 网格列内输入框必须占满列宽，否则 input 固有宽度会撑破 1fr 轨道导致溢出（如新建 Cron 弹窗五列布局） */
+.cron-edit-grid .f-input {
+  width: 100%;
+  min-width: 0;
 }
 
 @media(max-width:600px) {

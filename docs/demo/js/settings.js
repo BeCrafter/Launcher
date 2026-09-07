@@ -58,7 +58,7 @@ function checkAppUpdates() {
 }
 
 function resetSettings() {
-  ['launcherTheme', 'launcherLanguage', 'launcher_autoRefresh', 'launcher_refreshInterval', 'launcher_confirmDangerous', 'launcher_showToast', 'launcher_launchAtLogin', 'launcher_menubarOnly', 'launcher_fseventsActive', 'launcher_cmdTimeout'].forEach(key => localStorage.removeItem(key));
+  ['launcherTheme', 'launcherLanguage', 'launcher_confirmDangerous', 'launcher_launchAtLogin', 'launcher_menubarOnly', 'launcher_menubarBadge', 'launcher_trayVisible', 'launcher_dockVisible', 'launcher_fseventsActive', 'launcher_cmdTimeout'].forEach(key => localStorage.removeItem(key));
   setTheme('system');
   const language = document.getElementById('languageSelect');
   if (language) language.value = 'zh-CN';

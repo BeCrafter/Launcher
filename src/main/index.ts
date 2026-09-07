@@ -42,7 +42,11 @@ function saveSettings(patch: Record<string, unknown>): void {
 }
 
 function logoDir(v: LogoVariant): string {
-  return join(__dirname, `../../resources/logo/${v}`)
+  // dev：项目根 resources/；打包后：extraResources 释放到 Contents/Resources/logo
+  const base = app.isPackaged
+    ? join(process.resourcesPath, 'logo')
+    : join(__dirname, '../../resources/logo')
+  return join(base, v)
 }
 
 // ── Tray（图标 = 当前 variant 的模板图，系统自动适配明暗菜单栏）──
