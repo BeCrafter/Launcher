@@ -1,3 +1,5 @@
+import { ROCKET_ORBIT_DATAURL } from '../assets/rocketOrbit'
+
 export type LogoVariant =
   | 'power'
   | 'rocket'
@@ -7,6 +9,7 @@ export type LogoVariant =
   | 'stack'
   | 'bars'
   | 'letterL'
+  | 'rocketOrbit'
 
 export const LOGO_VARIANTS: { id: LogoVariant; label: string }[] = [
   { id: 'power', label: '电源符号' },
@@ -16,13 +19,28 @@ export const LOGO_VARIANTS: { id: LogoVariant; label: string }[] = [
   { id: 'bolt', label: '闪电' },
   { id: 'stack', label: '服务栈' },
   { id: 'bars', label: '均衡条' },
-  { id: 'letterL', label: 'L 字标' }
+  { id: 'letterL', label: 'L 字标' },
+  { id: 'rocketOrbit', label: '星际火箭（插画）' }
 ]
 
-// 几何与 scripts/gen-icon.mjs 的符号场严格同构（viewBox 256 = S；圆角顶点由 --dump-svg 输出）
+/* 几何与 scripts/gen-icon.mjs 严格同构（viewBox 256 = S）：
+   - 符号基点由 --dump-svg 输出
+   - fit transform = 包围盒等比满幅（与菜单栏模板图同一变换，三处视觉一致） */
 
 const SQUIRCLE_PATH =
   'M 15 128 C 15 58 58 15 128 15 C 198 15 241 58 241 128 C 241 198 198 241 128 241 C 58 241 15 198 15 128 Z'
+
+const FIT: Record<LogoVariant, string> = {
+  power: 'translate(-17.1 -28.9) scale(1.1339)',
+  rocket: 'translate(-58.2 -52.4) scale(1.4545)',
+  arrow: 'translate(-11.6 -25.6) scale(1.0909)',
+  gauge: 'translate(-38.1 -76.5) scale(1.2973)',
+  bolt: 'translate(-31.1 -28.2) scale(1.2203)',
+  stack: 'translate(-81.5 -81.5) scale(1.6364)',
+  bars: 'translate(-72.3 -72.3) scale(1.5652)',
+  letterL: 'translate(-128.6 -100.9) scale(1.8228)',
+  rocketOrbit: '' // 插画自带满幅构图，无需 fit
+}
 
 const ROCKET_POINTS =
   '124,44 131,40 132,41 132,41 133,42 132,44 161,128 187,187 185,195 184,195 183,195 182,195 181,193 147,179 144,190 130,206 128,206 127,205 126,205 124,205 132,205 112,196 112,194 113,193 112,191 112,190 109,179 75,193 67,190 67,189 67,188 67,188 69,187 95,128'
@@ -99,6 +117,8 @@ function Symbol({ variant }: { variant: LogoVariant }): React.JSX.Element {
           <circle cx="179" cy="77" r="16" fill={stroke} />
         </g>
       )
+    case 'rocketOrbit':
+      return <image href={ROCKET_ORBIT_DATAURL} x="0" y="0" width="256" height="256" preserveAspectRatio="xMidYMid meet" />
   }
 }
 
@@ -119,7 +139,9 @@ export default function Logo({
         </linearGradient>
       </defs>
       <path d={SQUIRCLE_PATH} fill="url(#logo-grad)" />
-      <Symbol variant={variant} />
+      <g transform={FIT[variant]}>
+        <Symbol variant={variant} />
+      </g>
     </svg>
   )
 }
