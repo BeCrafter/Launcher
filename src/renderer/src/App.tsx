@@ -6,6 +6,9 @@ export default function App(): React.JSX.Element {
   const [variant, setVariant] = useState<LogoVariant>('power')
   const [light, setLight] = useState(false)
 
+  // 移除「启动中」过渡页（幂等；先于错误分支，避免遮盖错误信息）
+  document.getElementById('boot-splash')?.remove()
+
   // preload 未成功注入时给出可诊断的错误页而非白屏
   if (!window.launcher) {
     return (
@@ -40,7 +43,7 @@ export default function App(): React.JSX.Element {
         <Logo variant={variant} size={56} />
         <div>
           <h1 style={{ margin: 0 }}>{appName}</h1>
-          <p style={{ margin: '4px 0 0', color: '#888' }}>
+          <p style={{ margin: '4px 0 0', color: 'var(--app-dim)' }}>
             Electron {versions.electron} · Node {versions.node} · IPC ping: {pong || '…'}
           </p>
         </div>
@@ -50,7 +53,7 @@ export default function App(): React.JSX.Element {
       </header>
 
       <section style={{ marginTop: 24 }}>
-        <h2 style={{ fontSize: 14, color: '#888' }}>选择 Logo（临时预览，阶段 5 并入设置页）</h2>
+        <h2 style={{ fontSize: 14, color: 'var(--app-dim)' }}>选择 Logo（临时预览，阶段 5 并入设置页）</h2>
         <div style={{ display: 'flex', gap: 16 }}>
           {LOGO_VARIANTS.map(({ id, label }) => (
             <button
