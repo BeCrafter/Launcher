@@ -133,6 +133,9 @@ function openAgentDraft({ label, program, scope, runAtLoad, xml }) {
   selectedAgent = newAgent;
   closeModal('importModal');
   openEditFloat(label);
+  // 草稿未保存：顶栏操作（加载/启用/立即运行）禁用，状态显示「未保存草稿」
+  drawerAgentState.isDraft = true;
+  updateOpsBar();
   if (xml) {
     const xmlTa = document.getElementById('ef_xmlEditor');
     xmlTa.value = xml;

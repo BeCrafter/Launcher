@@ -24,6 +24,7 @@ function openEditFloat(id, e) {
   setVal('ef_desc', a.desc);
   setVal('ef_program', a.program || '');
   switchDrawerTab('edit', document.querySelector('#editDrawer .drawer-nav-btn'));
+  drawerAgentState.isDraft = false;
   drawerAgentState.loaded = a.status !== 'stopped' || !!a.pid;
   drawerAgentState.enabled = !a.disabled;
   drawerAgentState.running = a.status === 'running';
@@ -46,6 +47,23 @@ function updateOpsBar() {
   const dot = document.getElementById('opsStateDot');
   const lbl = document.getElementById('opsStateLabel');
   if (!btnLoad) return;
+  // 草稿态（新建未保存）：加载/启用/立即运行均不可用
+  if (s.isDraft) {
+    btnLoad.disabled = true;
+    btnEnable.disabled = true;
+    btnKick.disabled = true;
+    btnLoad.className = 'hdr-ops-btn';
+    btnLoad.querySelector('i').className = 'fa-solid fa-plug';
+    btnLoadLbl.textContent = t('drawer.op.load');
+    btnEnable.className = 'hdr-ops-btn';
+    btnEnableIcon.className = 'fa-solid fa-circle-check';
+    btnEnableLbl.textContent = t('drawer.op.enable');
+    dot.className = 'hdr-state-dot unloaded';
+    lbl.textContent = t('drawer.state.draft');
+    chip.style.color = 'var(--dim)';
+    return;
+  }
+  btnLoad.disabled = false; // 脱离草稿态后复位（草稿分支会禁用）
   if (s.loaded) {
     btnLoad.className = 'hdr-ops-btn active-blue';
     btnLoad.querySelector('i').className = 'fa-solid fa-plug-circle-xmark';
@@ -87,6 +105,7 @@ function updateOpsBar() {
 
 function drawerOpsAction(action) {
   const s = drawerAgentState;
+  if (s.isDraft) return; // 草稿未保存，禁止加载/启用/运行类操作
   if (action === 'load') {
     if (s.loaded) {
       s.loaded = false;
@@ -181,6 +200,11 @@ function saveFloatAgent() {
     if (entry.label !== selectedAgent.id) entry.id = entry.label;
     renderAgents(activeFilter || 'all', (document.getElementById('globalSearch') || {}).value || '');
   }
+  // 保存后脱离草稿态：plist 已落地但尚未 bootstrap，加载按钮恢复可用
+  drawerAgentState.isDraft = false;
+  drawerAgentState.loaded = false;
+  drawerAgentState.running = false;
+  updateOpsBar();
   closeModal('editAgentFloat');
   showToast(t('toast.configSavedReload'), '#4ade80', 'fa-check');
   addLogLine('ok', '[OK] Config saved. Reloading…');
