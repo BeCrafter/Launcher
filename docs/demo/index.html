@@ -504,6 +504,18 @@
                           <option value="10000" data-i18n="settings.launchd.cmdTimeout.10s">10 秒</option>
                         </select>
                       </div>
+                      <div class="settings-row">
+                        <div>
+                          <div class="settings-row-title" data-i18n="settings.launchd.cronLogRetain.rowTitle">Cron 日志保留天数</div>
+                          <div class="settings-row-desc" data-i18n="settings.launchd.cronLogRetain.rowDesc">任务开启「记录日志」后，stdout/stderr 收敛至固定目录，超出保留期自动清理</div>
+                        </div>
+                        <select class="settings-select" onchange="saveSetting('cronLogRetainDays', this.value)">
+                          <option value="1" data-i18n="settings.launchd.cronLogRetain.1d">1 天</option>
+                          <option value="3" data-i18n="settings.launchd.cronLogRetain.3d" selected>3 天</option>
+                          <option value="7" data-i18n="settings.launchd.cronLogRetain.7d">7 天</option>
+                          <option value="14" data-i18n="settings.launchd.cronLogRetain.14d">14 天</option>
+                        </select>
+                      </div>
                     </div>
                   </section>
                 </div>
@@ -1386,6 +1398,26 @@
         <div class="modal-footer">
           <button class="d-btn" onclick="closeModal('importModal')"><span data-i18n="common.cancel">取消</span></button>
           <button class="d-btn accent" onclick="doImport()"><i class="fa-solid fa-file-import"></i> <span data-i18n="modal.import.doImport">导入</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模态框：Cron 任务日志（console 风格查看） -->
+    <div class="modal-mask" id="cronLogModal" onclick="closeModalBg(event,'cronLogModal')">
+      <div class="modal-box" style="width:700px;">
+        <div class="modal-hdr">
+          <span class="modal-title"><i class="fa-solid fa-scroll" style="color:var(--cyan);margin-right:7px;"></i><span data-i18n="cron.log.title">任务日志</span></span>
+          <span style="font-size:10.5px;color:var(--dim);font-family:monospace;flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 10px;" id="cronLogPath"></span>
+          <button class="modal-close" onclick="closeModal('cronLogModal')"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body" style="padding:0;overflow:hidden;">
+          <div class="log-section-body" style="height:420px;flex:none;">
+            <div class="log-section-content" id="cronLogBody"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <span style="font-size:10.5px;color:var(--dim);margin-right:auto;"><i class="fa-solid fa-clock-rotate-left" style="margin-right:4px;"></i><span data-i18n="cron.log.retainHint">日志保留 3 天，超出自动清理</span></span>
+          <button class="d-btn" onclick="closeModal('cronLogModal')"><span data-i18n="common.close">关闭</span></button>
         </div>
       </div>
     </div>

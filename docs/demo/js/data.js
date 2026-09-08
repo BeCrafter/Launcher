@@ -100,7 +100,8 @@ const MOCK_DATA = {
     expr: '0 9 * * 1-5',
     cmd: '/usr/local/bin/report.sh',
     desc: '工作日早 9 点生成报告',
-    enabled: true
+    enabled: true,
+    log: true
   },
   {
     id: 'c2',
@@ -108,7 +109,8 @@ const MOCK_DATA = {
     expr: '*/30 * * * *',
     cmd: '/usr/local/bin/healthcheck.sh',
     desc: '每 30 分钟健康检查',
-    enabled: true
+    enabled: true,
+    log: true
   },
   {
     id: 'c3',
@@ -125,7 +127,8 @@ const MOCK_DATA = {
     expr: '0 18 * * 5',
     cmd: '/usr/local/bin/weekly-backup.sh',
     desc: '每周五下午 6 点备份',
-    enabled: true
+    enabled: true,
+    log: true
   },
 ],
   services: [{
