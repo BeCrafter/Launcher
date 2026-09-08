@@ -700,3 +700,31 @@ body.light-theme .topbar {
     transform: translateX(0);
   }
 }
+
+/* ── 顶栏窗口自适应 ── */
+.topbar-btn span {
+  white-space: nowrap;
+}
+
+@media(max-width:900px) {
+  .search-wrap {
+    width: 150px;
+  }
+}
+
+@media(max-width:680px) {
+  .search-wrap {
+    width: 120px;
+  }
+
+  /* 顶栏操作按钮退化为纯图标，避免文字换行 */
+  .topbar-btn {
+    font-size: 0;
+    gap: 0;
+    padding: 6px 9px;
+  }
+
+  .topbar-btn i {
+    font-size: 11px;
+  }
+}

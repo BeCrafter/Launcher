@@ -45,6 +45,8 @@ function toggleGroupBlock(gid, hdr) {
 
 function toggleRowExpand(id, e) {
   e && e.stopPropagation();
+  // 浮层互斥：展开本面板前收起其他已开面板（cron 面板注册的 closeCronPanels）
+  if (typeof closeCronPanels === 'function') closeCronPanels('exp_' + id);
   const exp = document.getElementById('exp_' + id);
   const chev = document.getElementById('chev_' + id);
   if (!exp) return;

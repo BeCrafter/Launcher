@@ -147,22 +147,42 @@ function renderCron(filter = activeCronFilter, query = '') {
 // ════════ Cron 内联编辑 ════════
 let activeCronEdit = null;
 
+// 收起 cronGrid 内所有已打开的面板（详情/编辑），exceptId 为保留不关闭的面板元素 id
+function closeCronPanels(exceptId) {
+  activeCronEdit = null;
+  document.querySelectorAll('#cronGrid .row-expand.open').forEach(p => {
+    if (p.id === exceptId) return;
+    p.classList.remove('open');
+    const chev = document.getElementById('chev_' + p.id.replace('exp_', ''));
+    if (chev) chev.classList.remove('open');
+  });
+  document.querySelectorAll('#cronGrid .cron-edit-expand.open').forEach(p => {
+    if (p.id === exceptId) return;
+    p.classList.remove('open');
+    const icon = document.getElementById('cronEditIcon_' + p.id.replace('cronEdit_', ''));
+    if (icon) icon.className = 'fa-solid fa-pen';
+  });
+}
+
+// 点击卡片/展开面板以外的区域时，收起所有浮层面板（面板内交互不受影响）
+document.addEventListener('click', (e) => {
+  const inPanelOrCard = e.target.closest('#cronGrid .row-expand.open, #cronGrid .cron-edit-expand.open, #cronGrid .cron-col-card');
+  if (inPanelOrCard) return;
+  if (document.querySelector('#cronGrid .row-expand.open, #cronGrid .cron-edit-expand.open')) {
+    closeCronPanels();
+  }
+});
+
 function toggleCronEdit(id, e) {
   e && e.stopPropagation();
   const editEl = document.getElementById('cronEdit_' + id);
   const iconEl = document.getElementById('cronEditIcon_' + id);
   if (!editEl) return;
   const isOpen = editEl.classList.contains('open');
-  if (activeCronEdit && activeCronEdit !== id) {
-    const prev = document.getElementById('cronEdit_' + activeCronEdit);
-    const prevIcon = document.getElementById('cronEditIcon_' + activeCronEdit);
-    if (prev) prev.classList.remove('open');
-    if (prevIcon) prevIcon.className = 'fa-solid fa-pen';
-  }
+  closeCronPanels('cronEdit_' + id);
   if (isOpen) {
     editEl.classList.remove('open');
     if (iconEl) iconEl.className = 'fa-solid fa-pen';
-    activeCronEdit = null;
   } else {
     editEl.classList.add('open');
     if (iconEl) iconEl.className = 'fa-solid fa-xmark';
