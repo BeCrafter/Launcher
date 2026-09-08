@@ -79,7 +79,7 @@
               <input type="text" placeholder="搜索任务…" id="globalSearch" oninput="handleSearch(this.value)" data-i18n-placeholder="topbar.searchTasks" />
             </div>
             <button class="topbar-btn" onclick="showImportModal()"><i class="fa-solid fa-file-import"></i><span data-i18n="topbar.import">导入</span></button>
-            <button class="topbar-btn accent" onclick="showNewModal()"><i class="fa-solid fa-plus"></i><span data-i18n="topbar.new">新建</span></button>
+            <button class="topbar-btn accent" onclick="newAgentWithScope('user')"><i class="fa-solid fa-plus"></i><span data-i18n="topbar.new">新建</span></button>
           </div>
         </div>
 
@@ -1356,44 +1356,6 @@
       </div>
     </div>
 
-    <!-- 模态框：新建 -->
-    <div class="modal-mask" id="newModal" onclick="closeModalBg(event,'newModal')">
-      <div class="modal-box">
-        <div class="modal-hdr">
-          <span class="modal-title"><i class="fa-solid fa-plus" style="color:var(--accent2);margin-right:7px;"></i><span data-i18n="modal.newAgent.title">新建 Launch Agent</span></span>
-          <button class="modal-close" onclick="closeModal('newModal')"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="modal-body">
-          <div class="f-row center"><span class="f-lbl">Label</span><input class="f-input mono" type="text" placeholder="com.yourname.taskname" id="new_label" /></div>
-          <div class="f-row center">
-            <span class="f-lbl">Program</span>
-            <input class="f-input mono" type="text" placeholder="/usr/local/bin/yourscript" id="new_prog" />
-            <button class="act-btn" style="flex-shrink:0;width:28px;"><i class="fa-solid fa-folder-open" style="font-size:10px;"></i></button>
-          </div>
-          <div class="f-row center">
-            <span class="f-lbl">Scope</span>
-            <select class="f-input" id="new_scope">
-              <option value="user" data-i18n="modal.newAgent.scopeUser">用户级 ~/Library/LaunchAgents</option>
-              <option value="system" data-i18n="modal.newAgent.scopeSystem">全局 /Library/LaunchAgents（需管理员）</option>
-              <option value="daemon" data-i18n="modal.newAgent.scopeDaemon">系统 /Library/LaunchDaemons（需管理员）</option>
-            </select>
-          </div>
-          <div class="f-row center">
-            <span class="f-lbl">RunAtLoad</span>
-            <label class="toggle"><input type="checkbox" checked id="new_run" />
-              <div class="toggle-track"></div>
-              <div class="toggle-thumb"></div>
-            </label>
-            <span style="font-size:10.5px;color:var(--dim);margin-left:6px;" data-i18n="modal.newAgent.runAtLoadHint">载入后立即运行</span>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="d-btn" onclick="closeModal('newModal')"><span data-i18n="common.cancel">取消</span></button>
-          <button class="d-btn accent" onclick="createAgent()"><i class="fa-solid fa-plus"></i> <span data-i18n="modal.newAgent.create">创建并编辑</span></button>
-        </div>
-      </div>
-    </div>
-
     <!-- 模态框：导入 -->
     <div class="modal-mask" id="importModal" onclick="closeModalBg(event,'importModal')">
       <div class="modal-box">
@@ -1408,10 +1370,7 @@
             <div style="font-size:11px;color:var(--dim);margin-top:4px;" data-i18n="modal.import.dropSub">支持 LaunchAgent / LaunchDaemon plist</div>
           </div>
           <div style="text-align:center;font-size:11px;color:var(--dim);" data-i18n="modal.import.orPaste">— 或粘贴 XML —</div>
-          <div class="f-row">
-            <span class="f-lbl" style="padding-top:5px;" data-i18n="modal.import.pasteLabel">粘贴 XML</span>
-            <textarea class="f-input mono" rows="5" placeholder="粘贴 plist XML 内容…" style="font-size:10.5px;" data-i18n-placeholder="modal.import.pastePlaceholder"></textarea>
-          </div>
+          <textarea class="f-input mono" rows="5" id="import_xml" placeholder="粘贴 plist XML 内容…" style="font-size:10.5px;display:block;" data-i18n-placeholder="modal.import.pastePlaceholder"></textarea>
         </div>
         <div class="modal-footer">
           <button class="d-btn" onclick="closeModal('importModal')"><span data-i18n="common.cancel">取消</span></button>

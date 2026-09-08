@@ -172,6 +172,15 @@ function efSetKaMode(mode) {
 }
 
 function saveFloatAgent() {
+  // 真实保存：表单值回写到当前编辑的 Agent，并刷新列表（新建草稿由此"落地"）
+  const entry = selectedAgent && agentData.find(x => x.id === selectedAgent.id);
+  if (entry) {
+    entry.label = document.getElementById('ef_label').value.trim() || entry.label;
+    entry.desc = document.getElementById('ef_desc').value.trim();
+    entry.program = document.getElementById('ef_program').value.trim();
+    if (entry.label !== selectedAgent.id) entry.id = entry.label;
+    renderAgents(activeFilter || 'all', (document.getElementById('globalSearch') || {}).value || '');
+  }
   closeModal('editAgentFloat');
   showToast(t('toast.configSavedReload'), '#4ade80', 'fa-check');
   addLogLine('ok', '[OK] Config saved. Reloading…');

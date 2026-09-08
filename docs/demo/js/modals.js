@@ -1,8 +1,33 @@
 // ════════ 模态框 ════════
 
-// ════════ 模态框 ════════
-function showNewModal() {
-  openModal('newModal');
+// plist XML 轻量解析：提取 Label 与（Program > ProgramArguments[0]）
+function parsePlistXml(xml) {
+  if (!xml || !xml.includes('<plist')) return null;
+  const pick = (key) => {
+    const m = xml.match(new RegExp(`<key>${key}<\\/key>\\s*<string>([^<]+)<\\/string>`));
+    return m ? m[1].trim() : '';
+  };
+  const label = pick('Label');
+  const program = pick('Program') || (() => {
+    const m = xml.match(/<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]+)<\/string>/);
+    return m ? m[1].trim() : '';
+  })();
+  return { label, program };
+}
+
+// 新建 Agent：按 scope 直接创建草稿并打开抽屉编辑器（无需中间弹窗，其余字段在抽屉内编辑）
+function newAgentWithScope(scope) {
+  const prefix = localStorage.getItem('launcher_labelPrefix') || 'com.user.';
+  let label = prefix + 'taskname';
+  // 与现有任务避免占位 label 重复
+  let idx = 1;
+  while (agentData.some(a => a.id === label)) label = prefix + 'taskname.' + (idx++);
+  openAgentDraft({
+    label,
+    program: '',
+    scope: scope || 'user',
+    runAtLoad: true
+  });
 }
 
 function showNewCronModal() {
@@ -68,6 +93,13 @@ function createCronJob() {
 
 function showImportModal() {
   openModal('importModal');
+  // 剪贴板含 plist 时自动预填粘贴区（权限受限时静默降级）
+  if (navigator.clipboard && navigator.clipboard.readText) {
+    navigator.clipboard.readText().then(text => {
+      const area = document.getElementById('import_xml');
+      if (area && text && text.includes('<plist') && !area.value) area.value = text;
+    }).catch(() => {});
+  }
 }
 
 function openModal(id) {
@@ -82,17 +114,45 @@ function closeModalBg(e, id) {
   if (e.target.id === id) closeModal(id);
 }
 
-function createAgent() {
-  const lbl = document.getElementById('new_label').value.trim();
-  if (!lbl) {
-    showToast(t('toast.requireLabel'), '#f87171', 'fa-exclamation-circle');
-    return;
-  }
-  closeModal('newModal');
-  showToast(fmt(t('toast.agentCreated'), { L: lbl }), '#4ade80', 'fa-plus');
+// 新建/导入的统一落点：创建草稿记录 → 打开抽屉编辑器（XML 模式时原文带入 XML tab）
+function openAgentDraft({ label, program, scope, runAtLoad, xml }) {
+  const newAgent = {
+    id: label,
+    label,
+    desc: '',
+    status: 'stopped',
+    pid: null,
+    uptime: null,
+    scope: scope || 'user',
+    tags: [],
+    program: program || '',
+    exitCode: null,
+    restarts: 0
+  };
+  agentData.unshift(newAgent);
+  selectedAgent = newAgent;
+  closeModal('importModal');
+  openEditFloat(label);
+  if (xml) document.getElementById('ef_xmlEditor').value = xml;
+  renderAgents(activeFilter || 'all', (document.getElementById('globalSearch') || {}).value || '');
+  showToast(fmt(t('modal.newAgent.createdOpen'), { L: label }), '#a78bfa', 'fa-wand-magic-sparkles');
 }
 
 function doImport() {
-  closeModal('importModal');
-  showToast(t('toast.plistImported'), '#22d3ee', 'fa-file-import');
+  const xmlRaw = (document.getElementById('import_xml').value || '').trim();
+  if (!xmlRaw) {
+    showToast(t('toast.requireLabel'), '#f87171', 'fa-circle-exclamation');
+    return;
+  }
+  const parsed = parsePlistXml(xmlRaw) || {};
+  let label = parsed.label || ('com.user.imported');
+  let idx = 1;
+  while (agentData.some(a => a.id === label)) label = 'com.user.imported.' + (idx++);
+  openAgentDraft({
+    label,
+    program: parsed.program || '',
+    scope: 'user',
+    runAtLoad: false,
+    xml: xmlRaw
+  });
 }
