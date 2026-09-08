@@ -755,6 +755,40 @@ textarea.f-input {
   flex-shrink: 0;
 }
 
+/* 导入弹窗：紧凑拖入区（横排），把空间让给 XML 编辑器 */
+.import-drop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px dashed var(--border2);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.import-drop:hover {
+  border-color: rgba(124, 106, 244, 0.5);
+  background: rgba(124, 106, 244, 0.06);
+}
+
+.import-drop i {
+  font-size: 20px;
+  color: var(--dim);
+  flex-shrink: 0;
+}
+
+.import-drop > div > div:first-child {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.import-drop-sub {
+  font-size: 10.5px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+
 body.light-theme {
   --bg: #f6f7fb;
   --surface: #ffffff;
@@ -807,4 +841,66 @@ body.light-theme {
 body.light-theme .f-input,
 body.light-theme .search-wrap {
   background: rgba(30, 38, 68, 0.05);
+}
+
+
+/* ── XML 编辑器（高亮叠加层：textarea 透明文字 + 底层 pre 语法着色，同步滚动）── */
+.xml-editor-wrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.xml-editor-wrap.bordered {
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: rgba(8, 8, 18, 0.8);
+}
+
+.xml-editor-wrap .xml-hl-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 14px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--muted);
+}
+
+.xml-editor-wrap textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  border: none;
+  padding: 14px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  color: transparent;
+  caret-color: var(--cyan);
+  resize: none;
+  outline: none;
+  display: block;
+  z-index: 1;
+}
+
+.xml-hl-tag {
+  color: var(--cyan);
+}
+
+.xml-hl-decl {
+  color: var(--accent2);
+}
+
+.xml-hl-comment {
+  color: var(--dim);
 }

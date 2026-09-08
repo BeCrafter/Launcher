@@ -1267,7 +1267,10 @@
                 </div>
               </div>
               <div class="xml-section-content">
-                <textarea id="ef_xmlEditor"></textarea>
+                <div class="xml-editor-wrap">
+                  <pre class="xml-hl-layer" aria-hidden="true"></pre>
+                  <textarea id="ef_xmlEditor"></textarea>
+                </div>
               </div>
               <!-- 固定底部操作栏 -->
               <div class="xml-section-bottom">
@@ -1358,19 +1361,27 @@
 
     <!-- 模态框：导入 -->
     <div class="modal-mask" id="importModal" onclick="closeModalBg(event,'importModal')">
-      <div class="modal-box">
+      <div class="modal-box" style="width:720px;">
         <div class="modal-hdr">
           <span class="modal-title"><i class="fa-solid fa-file-import" style="color:var(--cyan);margin-right:7px;"></i><span data-i18n="modal.import.title">导入 plist</span></span>
           <button class="modal-close" onclick="closeModal('importModal')"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div class="modal-body">
-          <div style="border:2px dashed var(--border2);border-radius:10px;padding:28px;text-align:center;cursor:pointer;transition:all 0.2s;" onmouseenter="this.style.borderColor='rgba(124,106,244,0.5)'" onmouseleave="this.style.borderColor=''" onclick="showToast(t('toast.choosePlist'),'#60a5fa','fa-folder-open')">
-            <i class="fa-solid fa-file-arrow-up" style="font-size:28px;color:var(--dim);margin-bottom:10px;display:block;"></i>
-            <div style="font-size:13px;color:var(--muted);" data-i18n="modal.import.dropHint">点击选择或拖入 .plist 文件</div>
-            <div style="font-size:11px;color:var(--dim);margin-top:4px;" data-i18n="modal.import.dropSub">支持 LaunchAgent / LaunchDaemon plist</div>
+          <div class="import-drop" onclick="showToast(t('toast.choosePlist'),'#60a5fa','fa-folder-open')">
+            <i class="fa-solid fa-file-arrow-up"></i>
+            <div>
+              <div data-i18n="modal.import.dropHint">点击选择或拖入 .plist 文件</div>
+              <div class="import-drop-sub" data-i18n="modal.import.dropSub">支持 LaunchAgent / LaunchDaemon plist</div>
+            </div>
           </div>
           <div style="text-align:center;font-size:11px;color:var(--dim);" data-i18n="modal.import.orPaste">— 或粘贴 XML —</div>
-          <textarea class="f-input mono" rows="5" id="import_xml" placeholder="粘贴 plist XML 内容…" style="font-size:10.5px;display:block;" data-i18n-placeholder="modal.import.pastePlaceholder"></textarea>
+          <!-- 复用抽屉 XML 编辑器样式（暗底等宽 mono），更大编辑区域 -->
+          <div class="xml-section-content" style="height:300px;flex:none;">
+            <div class="xml-editor-wrap bordered" style="height:100%;">
+              <pre class="xml-hl-layer" aria-hidden="true"></pre>
+              <textarea id="import_xml" placeholder="粘贴 plist XML 内容…" data-i18n-placeholder="modal.import.pastePlaceholder"></textarea>
+            </div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="d-btn" onclick="closeModal('importModal')"><span data-i18n="common.cancel">取消</span></button>

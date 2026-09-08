@@ -80,3 +80,34 @@ function showToast(msg, color, icon) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2600);
 }
+
+// ════════ XML 编辑器高亮（通用）════════
+// textarea 文字透明，底层 pre 呈现语法着色；输入与滚动实时同步
+function initXmlHighlight(textareaId) {
+  const ta = document.getElementById(textareaId);
+  if (!ta || ta.dataset.hlBound) return;
+  const pre = ta.parentElement.querySelector('.xml-hl-layer');
+  if (!pre) return;
+  ta.dataset.hlBound = '1';
+  const escapeHtml = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const render = () => {
+    const src = escapeHtml(ta.value.replace(/\n$/, '\n\n'));
+    pre.innerHTML = src.replace(
+      /(&lt;!--[\s\S]*?--&gt;)|(&lt;\?[\s\S]*?\?&gt;)|(&lt;\/?[a-zA-Z][\s\S]*?&gt;)/g,
+      (m, comment, decl, tag) => {
+        if (comment) return `<span class="xml-hl-comment">${comment}</span>`;
+        if (decl) return `<span class="xml-hl-decl">${decl}</span>`;
+        if (tag) return `<span class="xml-hl-tag">${tag}</span>`;
+        return m;
+      }
+    ) + '\n';
+  };
+  const syncScroll = () => {
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
+  };
+  ta.addEventListener('input', () => { render(); syncScroll(); });
+  ta.addEventListener('scroll', syncScroll);
+  render();
+  syncScroll();
+}

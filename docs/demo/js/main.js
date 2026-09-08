@@ -88,5 +88,9 @@ updateAgentFilterCounts();
 // ── 抽屉初始值填充（编辑表单/状态/日志/XML）──
 populateDrawerDefaults();
 
+// ── XML 编辑器高亮初始化（导入弹窗 + 抽屉 XML tab）──
+initXmlHighlight('import_xml');
+initXmlHighlight('ef_xmlEditor');
+
 // ── 设置页页脚 / 关于页版本号（由 mock 数据驱动）──
 fillSettingsMeta();

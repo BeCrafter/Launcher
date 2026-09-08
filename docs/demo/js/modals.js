@@ -133,7 +133,11 @@ function openAgentDraft({ label, program, scope, runAtLoad, xml }) {
   selectedAgent = newAgent;
   closeModal('importModal');
   openEditFloat(label);
-  if (xml) document.getElementById('ef_xmlEditor').value = xml;
+  if (xml) {
+    const xmlTa = document.getElementById('ef_xmlEditor');
+    xmlTa.value = xml;
+    xmlTa.dispatchEvent(new Event('input')); // 触发高亮渲染
+  }
   renderAgents(activeFilter || 'all', (document.getElementById('globalSearch') || {}).value || '');
   showToast(fmt(t('modal.newAgent.createdOpen'), { L: label }), '#a78bfa', 'fa-wand-magic-sparkles');
 }
