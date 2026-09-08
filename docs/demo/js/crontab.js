@@ -86,25 +86,24 @@ function renderCron(filter = activeCronFilter, query = '') {
   let html = '';
   list.forEach(j => {
     const cronDesc = parseCronExpr(j.expr);
-    const main = `<div class="row-main">
-        ${statusDot(j.enabled ? 'running' : 'stopped')}
-        ${rowInfo({
-          labelHtml: `<span style="font-family:monospace;font-size:11.5px;">${j.cmd}</span>`,
-          subHtml: j.desc,
-          tagsHtml: `${tagChip(j.system ? t('cron.tag.systemEtc') : t('cron.tag.user'), j.system ? 'red' : 'blue')}
-            ${tagChip(j.expr, 'cyan', '', 'font-family:monospace;')}
-            ${tagChip(cronDesc, 'green')}`
-        })}
-        <div class="row-actions" onclick="event.stopPropagation()">
-          <div style="display:flex;align-items:center;margin-right:2px;">
-            <label class="toggle" title="${j.enabled?t('cron.disable'):t('cron.enable')}">
-              <input type="checkbox" ${j.enabled?'checked':''} onchange="toggleCronJob('${j.id}',this)" />
-              <div class="toggle-track"></div><div class="toggle-thumb"></div>
-            </label>
+    const main = `<div class="cron-col-card">
+        <div class="cron-r1">
+          ${statusDot(j.enabled ? 'running' : 'stopped')}
+          <span class="cron-cmd" title="${j.cmd}">${j.cmd}</span>
+          <label class="toggle" title="${j.enabled?t('cron.disable'):t('cron.enable')}">
+            <input type="checkbox" ${j.enabled?'checked':''} onchange="toggleCronJob('${j.id}',this)" />
+            <div class="toggle-track"></div><div class="toggle-thumb"></div>
+          </label>
+        </div>
+        <div class="cron-desc">${j.desc}</div>
+        <div class="cron-repeat">${cronDesc}</div>
+        <div class="cron-r4">
+          <span class="cron-expr" title="${j.expr}">${j.expr}</span>
+          <div class="row-actions" onclick="event.stopPropagation()">
+            ${actBtn('fa-solid fa-pen', { cls: 'accent', title: t('cron.edit'), onclick: `toggleCronEdit('${j.id}',event)`, iconId: 'cronEditIcon_' + j.id })}
+            ${actBtn('fa-solid fa-trash-can', { cls: 'red', title: t('cron.delete'), onclick: `deleteCronJob('${j.id}')` })}
+            ${actBtn('fa-solid fa-chevron-down row-chevron', { title: t('cron.expand'), onclick: `toggleRowExpand('cron_${j.id}',event)`, iconId: 'chev_cron_' + j.id })}
           </div>
-          ${actBtn('fa-solid fa-pen', { cls: 'accent', title: t('cron.edit'), onclick: `toggleCronEdit('${j.id}',event)`, iconId: 'cronEditIcon_' + j.id })}
-          ${actBtn('fa-solid fa-trash-can', { cls: 'red', title: t('cron.delete'), onclick: `deleteCronJob('${j.id}')` })}
-          ${actBtn('fa-solid fa-chevron-down row-chevron', { title: t('cron.expand'), onclick: `toggleRowExpand('cron_${j.id}',event)`, iconId: 'chev_cron_' + j.id })}
         </div>
       </div>`;
     const extra = `<div class="row-expand" id="exp_cron_${j.id}">
@@ -140,9 +139,9 @@ function renderCron(filter = activeCronFilter, query = '') {
           <button class="d-btn accent" onclick="saveCronEdit('${j.id}')"><i class="fa-solid fa-check"></i> ${t('common.save')}</button>
         </div>
       </div>`;
-    html += rowCard({ id: 'croncard_' + j.id, main, extra });
+    html += `<div class="cron-cell">${main}${extra}</div>`;
   });
-  c.innerHTML = html;
+  c.innerHTML = `<div class="group-card-grid" id="cronGrid">${html}</div>`;
 }
 
 // ════════ Cron 内联编辑 ════════
@@ -172,7 +171,7 @@ function toggleCronEdit(id, e) {
     setTimeout(() => {
       const scrollBox = editEl.closest('.list-container') || editEl.parentElement;
       const listTop = scrollBox.getBoundingClientRect().top;
-      const card = editEl.closest('.row-card');
+      const card = editEl.closest('.row-card, .cron-col-card');
       if (card) {
         const cardTop = card.getBoundingClientRect().top;
         scrollBox.scrollTop += (cardTop - listTop - 12);
@@ -239,6 +238,7 @@ function toggleCronJob(id, chk) {
   const j = cronData.find(x => x.id === id);
   if (j) {
     j.enabled = chk.checked;
+    renderCron(); // 状态点是卡片内唯一状态指示，需随开关即时刷新
     updateCronStats();
     showToast(chk.checked ? t('toast.cronEnabled') : t('toast.cronDisabled'), chk.checked ? '#4ade80' : '#8888aa', chk.checked ? 'fa-check' : 'fa-ban');
   }

@@ -314,6 +314,135 @@
   margin-top: 1px;
 }
 
+/* ── Cron 卡片（网格布局，与 agent-col-card 视觉同族）── */
+.cron-col-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.cron-col-card:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
+
+/* R1：状态点 | 命令（主信息，mono 截断）| 启用开关（唯一状态控件） */
+.cron-r1 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.cron-r1 .cron-cmd {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cron-r1 .toggle {
+  flex-shrink: 0;
+}
+
+/* R2：描述一行截断 */
+.cron-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* R3：人读（价值信息，绿色，一行截断） */
+.cron-repeat {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* R4：表达式（灰色辅助小 mono，左）+ 操作按钮组（右，独立行不挤压内容） */
+.cron-r4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.cron-r4 .cron-expr {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  color: var(--dim);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cron-r4 .row-actions {
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.cron-r4 .act-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.cron-r4 .act-btn i {
+  font-size: 10px;
+}
+
+/* 列单元：卡片与它的详情/编辑面板上下堆叠，面板宽度跟随所属卡片列宽（不跨整行） */
+.cron-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+#cronGrid {
+  align-items: start;
+  /* 固定两列等分：自然平铺满窗口、无像素依赖；窄视口降单列 */
+  grid-template-columns: 1fr 1fr;
+}
+
+@media(max-width:860px) {
+  #cronGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 列内面板独立成卡（圆角 + 全边线），内容按窄列宽适配 */
+#cronGrid .row-expand,
+#cronGrid .cron-edit-expand {
+  border-radius: 10px;
+  border: 1px solid var(--border2);
+}
+
+#cronGrid .expand-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
 /* Cron 内联编辑 */
 .cron-edit-expand {
   display: none;

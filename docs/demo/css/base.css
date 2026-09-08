@@ -42,6 +42,10 @@
   --toast-border: rgba(124, 106, 244, 0.35);
   --toast-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 
+  /* 开关关闭态轨道：中性表面，需足够对比使"未启用"清晰可见 */
+  --toggle-off-track: rgba(255, 255, 255, 0.15);
+  --toggle-off-border: rgba(255, 255, 255, 0.13);
+
   /* 主题预览卡片（固定演示三套主题自身的用色，不随当前主题改变） */
   --brand-grad: linear-gradient(135deg, #7c6af4, #60a5fa);
   --card-accent-solid: #7c6af4;
@@ -521,10 +525,10 @@ textarea.f-input {
 .toggle-track {
   position: absolute;
   inset: 0;
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--toggle-off-track, rgba(255, 255, 255, 0.1));
   border-radius: 9px;
   transition: background 0.2s;
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--toggle-off-border, rgba(255, 255, 255, 0.07));
 }
 
 .toggle input:checked+.toggle-track {
@@ -534,8 +538,9 @@ textarea.f-input {
 
 .toggle-thumb {
   position: absolute;
-  top: 2px;
-  left: 2px;
+  /* 轨道含 1px 边框，偏移补偿 1px 保证视觉居中（2px 时圆点偏上、位移终点不对称） */
+  top: 3px;
+  left: 3px;
   width: 12px;
   height: 12px;
   background: #fff;
@@ -784,6 +789,10 @@ body.light-theme {
   /* 浅色中性淡底/hover：半透明浅灰替代深色下的白色叠加 */
   --hover: rgba(30, 38, 68, 0.05);
   --panel: rgba(255, 255, 255, 0.7);
+
+  /* 浅色下开关关闭态：深灰轨道保证在浅底上清晰可见（保持轻量，不过深） */
+  --toggle-off-track: rgba(30, 38, 68, 0.10);
+  --toggle-off-border: rgba(30, 38, 68, 0.20);
 
   --statusbar-bg: rgba(255, 255, 255, 0.85);
   --statusbar-border: rgba(106, 88, 224, 0.14);
