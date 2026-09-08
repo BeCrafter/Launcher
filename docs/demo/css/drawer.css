@@ -297,7 +297,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: rgba(8, 8, 18, 0.8);
+  background: var(--code-bg);
 }
 
 .log-section-toolbar {
@@ -307,7 +307,7 @@
   justify-content: space-between;
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--hover);
 }
 
 .log-section-content {
@@ -327,7 +327,7 @@
   justify-content: space-between;
   padding: 10px 14px;
   border-top: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--code-bar);
   gap: 8px;
 }
 
@@ -359,7 +359,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: rgba(8, 8, 18, 0.8);
+  background: var(--code-bg);
 }
 
 .xml-section-toolbar {
@@ -369,7 +369,7 @@
   justify-content: space-between;
   padding: 8px 14px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--hover);
 }
 
 .xml-section-content {
@@ -386,7 +386,7 @@
   gap: 7px;
   padding: 11px 16px;
   border-top: 1px solid var(--border);
-  background: rgba(0, 0, 0, 0.15);
+  background: var(--code-bar);
 }
 
 /* 配置分组 */
@@ -404,7 +404,7 @@
   gap: 7px;
   padding: 9px 13px;
   border-bottom: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--hover);
   cursor: pointer;
   user-select: none;
 }

@@ -46,6 +46,10 @@
   --toggle-off-track: rgba(255, 255, 255, 0.15);
   --toggle-off-border: rgba(255, 255, 255, 0.13);
 
+  /* 控制台/代码区底色（XML 编辑器、日志面板），深浅主题各自取值 */
+  --code-bg: rgba(8, 8, 18, 0.8);
+  --code-bar: rgba(0, 0, 0, 0.15);
+
   /* 主题预览卡片（固定演示三套主题自身的用色，不随当前主题改变） */
   --brand-grad: linear-gradient(135deg, #7c6af4, #60a5fa);
   --card-accent-solid: #7c6af4;
@@ -828,6 +832,10 @@ body.light-theme {
   --toggle-off-track: rgba(30, 38, 68, 0.10);
   --toggle-off-border: rgba(30, 38, 68, 0.20);
 
+  /* 浅色控制台底色：白底日志/代码区，工具条淡灰 */
+  --code-bg: rgba(255, 255, 255, 0.85);
+  --code-bar: rgba(30, 38, 68, 0.06);
+
   --statusbar-bg: rgba(255, 255, 255, 0.85);
   --statusbar-border: rgba(106, 88, 224, 0.14);
   --statusbar-shadow: 0 -5px 18px rgba(30, 40, 80, 0.10);
@@ -850,13 +858,14 @@ body.light-theme .search-wrap {
   display: flex;
   flex: 1;
   min-height: 0;
+  height: 100%; /* 父容器高度未知的块级场景（如抽屉 xml-section-content）撑满 */
   overflow: hidden;
 }
 
 .xml-editor-wrap.bordered {
   border: 1px solid var(--border2);
   border-radius: 10px;
-  background: rgba(8, 8, 18, 0.8);
+  background: var(--code-bg);
 }
 
 .xml-editor-wrap .xml-hl-layer {
