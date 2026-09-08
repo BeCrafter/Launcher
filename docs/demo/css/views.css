@@ -412,12 +412,13 @@
   font-size: 10px;
 }
 
-/* 列单元：卡片与它的详情/编辑面板上下堆叠，面板宽度跟随所属卡片列宽（不跨整行） */
+/* 列单元：卡片与它的详情/编辑面板（面板为浮层，宽度跟随所属卡片列宽） */
 .cron-cell {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
+  position: relative;
 }
 
 #cronGrid {
@@ -432,11 +433,32 @@
   }
 }
 
-/* 列内面板独立成卡（圆角 + 全边线），内容按窄列宽适配 */
+/* 浮层面板：紧贴所属卡片下缘向下展开（与卡片拼合为整体风格），覆盖下方内容（不撑开网格） */
 #cronGrid .row-expand,
 #cronGrid .cron-edit-expand {
-  border-radius: 10px;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  border-radius: 0 0 11px 11px;
   border: 1px solid var(--border2);
+  border-top: 1px solid var(--border);
+  background: var(--surface); /* 不透明底色：遮挡下方被覆盖内容 */
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* 面板展开时卡片底部与面板拼接融合（去掉下圆角，视觉连体） */
+#cronGrid .cron-cell:has(.row-expand.open) .cron-col-card,
+#cronGrid .cron-cell:has(.cron-edit-expand.open) .cron-col-card {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* 拼接态下卡片不可再上浮，避免与面板裂开 */
+#cronGrid .cron-cell:has(.row-expand.open) .cron-col-card:hover,
+#cronGrid .cron-cell:has(.cron-edit-expand.open) .cron-col-card:hover {
+  transform: none;
 }
 
 #cronGrid .expand-grid {
