@@ -112,11 +112,19 @@ function renderCron(filter = activeCronFilter, query = '') {
           <div class="expand-field"><div class="expand-key">${t('cron.field.desc')}</div><div class="expand-val ok">${cronDesc}</div></div>
           <div class="expand-field"><div class="expand-key">${t('cron.field.user')}</div><div class="expand-val">${j.user}</div></div>
           <div class="expand-field"><div class="expand-key">${t('cron.field.source')}</div><div class="expand-val">${j.system?'/etc/crontab':'crontab -l'}</div></div>
-          <div class="expand-field"><div class="expand-key">${t('cron.log.path')}</div><div class="expand-val">${j.log ? cronLogPath(j.id) : t('cron.log.no')}</div></div>
         </div>
-        <div class="cron-log-row" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;">
-          <span style="font-size:10px;color:var(--dim);" data-i18n="cron.log.retainHint">日志保留 3 天，超出自动清理</span>
-          <button class="d-btn accent" style="padding:4px 10px;font-size:10.5px;" onclick="showCronLog('${j.id}')" ${j.log ? '' : 'disabled'}><i class="fa-solid fa-scroll"></i> <span data-i18n="cron.log.view">查看日志</span></button>
+        <div class="cron-log-block" style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;">
+          <div class="expand-field" style="margin-bottom:8px;">
+            <div class="expand-key" data-i18n="cron.log.path">日志路径</div>
+            <div class="expand-val" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${j.log ? cronLogPath(j.id) : t('cron.log.no')}</div>
+          </div>
+          <div class="cron-log-row" style="display:${j.log ? 'flex' : 'none'};justify-content:space-between;align-items:center;">
+            <span style="font-size:10px;color:var(--dim);" data-i18n="cron.log.retainHint">日志保留 3 天，超出自动清理</span>
+            <div style="display:flex;gap:6px;">
+              <button class="d-btn blue" style="padding:4px 10px;font-size:10.5px;" onclick="copyCronLogPath('${j.id}')" ${j.log ? '' : 'disabled'}><i class="fa-solid fa-copy"></i> <span data-i18n="cron.log.copyPath">复制路径</span></button>
+              <button class="d-btn accent" style="padding:4px 10px;font-size:10.5px;" onclick="showCronLog('${j.id}')" ${j.log ? '' : 'disabled'}><i class="fa-solid fa-scroll"></i> <span data-i18n="cron.log.view">查看日志</span></button>
+            </div>
+          </div>
         </div>
       </div>
       <div class="cron-edit-expand" id="cronEdit_${j.id}">
@@ -289,12 +297,12 @@ function toggleCronLog(id, chk) {
   j.log = !!chk.checked;
   const exp = document.getElementById('exp_cron_' + id);
   if (exp) {
-    const logField = [...exp.querySelectorAll('.expand-field')]
-      .find(f => (f.querySelector('.expand-key') || {}).textContent === t('cron.log.path'));
-    const val = logField && logField.querySelector('.expand-val');
+    const logBlock = exp.querySelector('.cron-log-block');
+    const val = logBlock && logBlock.querySelector('.expand-val');
     if (val) val.textContent = j.log ? cronLogPath(id) : t('cron.log.no');
-    const btn = exp.querySelector('.cron-log-row button');
-    if (btn) btn.disabled = !j.log;
+    const logRow = logBlock && logBlock.querySelector('.cron-log-row');
+    if (logRow) logRow.style.display = j.log ? 'flex' : 'none'; // 与开关强联动：停用时不展示提示与操作
+    exp.querySelectorAll('.cron-log-row button').forEach(b => { b.disabled = !j.log; });
   }
   showToast(j.log ? t('toast.cronLogOn') : t('toast.cronLogOff'), j.log ? '#4ade80' : '#8888aa', 'fa-scroll');
 }

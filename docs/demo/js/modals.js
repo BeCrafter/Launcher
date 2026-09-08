@@ -33,6 +33,7 @@ function newAgentWithScope(scope) {
 function showNewCronModal() {
   document.getElementById('newCronCmd').value = '';
   document.getElementById('newCronDesc').value = '';
+  document.getElementById('newCronLog').checked = false; // 默认关闭（与编辑面板一致：不干预任务自身输出）
   applyNewCronPreset('0 9 * * *', t('cron.preset.daily9Desc'), document.querySelector('#newCronPresets .cron-preset-chip.active') || document.querySelector('#newCronPresets .cron-preset-chip:nth-child(3)'));
   openModal('newCronModal');
 }
@@ -80,7 +81,8 @@ function createCronJob() {
     cmd: cmd,
     desc: desc,
     enabled: true,
-    system: isSystem
+    system: isSystem,
+    log: document.getElementById('newCronLog').checked
   };
   cronData.unshift(newJob);
   renderCron();

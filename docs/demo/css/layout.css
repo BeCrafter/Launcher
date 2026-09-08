@@ -733,7 +733,12 @@ body.light-theme .topbar {
 .new-agent-group {
   position: relative;
   display: flex;
-  gap: 2px;
+}
+
+/* 菜单展开（hover）时按钮底部两角直角，与下拉框连体接合 */
+.new-agent-group:hover .topbar-btn {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
 
 /* 悬停「新建」按钮自动展开 scope 菜单 */
@@ -744,15 +749,17 @@ body.light-theme .topbar {
 
 .new-agent-menu {
   position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  top: calc(100% - 1px); /* 上移 1px：顶部边框与按钮底部边框重叠为单线 */
+  right: 0; /* 与按钮右缘对齐 */
   z-index: 60;
-  min-width: 210px;
-  background: var(--surface2);
-  border: 1px solid var(--border2);
-  border-radius: 10px;
+  min-width: 260px;
+  background: var(--accent-wash-grad); /* 与按钮同源材质（紫 wash 渐变），深浅主题自适应 */
+  border: 1px solid rgba(124, 106, 244, 0.30); /* 与 accent 按钮同色系 */
+  border-top: 1px solid rgba(124, 106, 244, 0.45); /* 与按钮底部边框同浓度并重叠 */
+  border-radius: 0 0 7px 7px; /* 顶部两角直角与按钮底边接合；底部圆角与按钮统一 */
   padding: 5px;
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22); /* 轻投影，与轻量按钮同一层级 */
+  backdrop-filter: blur(12px);
   display: none; /* 默认隐藏，悬停「新建」时展开 */
   flex-direction: column;
   gap: 2px;
@@ -765,15 +772,24 @@ body.light-theme .topbar {
   padding: 8px 10px;
   border: none;
   background: none;
-  border-radius: 7px;
+  border-radius: 0; /* 菜单项紧挨成整块列表，不分割独立圆角 */
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 500;
   font-family: inherit;
   text-align: left;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
+  width: 100%;
+}
+
+.new-agent-menu-item + .new-agent-menu-item {
+  border-top: 1px solid rgba(124, 106, 244, 0.10);
+}
+
+.new-agent-menu-item i {
+  font-size: 11px;
 }
 
 .new-agent-menu-item i {
@@ -784,10 +800,10 @@ body.light-theme .topbar {
 }
 
 .new-agent-menu-item:hover {
-  background: var(--hover);
-  color: var(--text);
+  background: var(--wash-accent);
+  color: var(--accent2);
 }
 
 .new-agent-menu-item:hover i {
-  color: var(--accent2);
+  color: var(--accent);
 }
