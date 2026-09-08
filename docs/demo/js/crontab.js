@@ -112,6 +112,11 @@ function renderCron(filter = activeCronFilter, query = '') {
           <div class="expand-field"><div class="expand-key">${t('cron.field.desc')}</div><div class="expand-val ok">${cronDesc}</div></div>
           <div class="expand-field"><div class="expand-key">${t('cron.field.user')}</div><div class="expand-val">${j.user}</div></div>
           <div class="expand-field"><div class="expand-key">${t('cron.field.source')}</div><div class="expand-val">${j.system?'/etc/crontab':'crontab -l'}</div></div>
+          <div class="expand-field"><div class="expand-key">${t('cron.log.path')}</div><div class="expand-val">${j.log ? cronLogPath(j.id) : t('cron.log.no')}</div></div>
+        </div>
+        <div class="cron-log-row" style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:10px;color:var(--dim);" data-i18n="cron.log.retainHint">日志保留 3 天，超出自动清理</span>
+          <button class="d-btn accent" style="padding:4px 10px;font-size:10.5px;" onclick="showCronLog('${j.id}')" ${j.log ? '' : 'disabled'}><i class="fa-solid fa-scroll"></i> <span data-i18n="cron.log.view">查看日志</span></button>
         </div>
       </div>
       <div class="cron-edit-expand" id="cronEdit_${j.id}">
@@ -133,7 +138,14 @@ function renderCron(filter = activeCronFilter, query = '') {
           <div class="f-row center"><span class="f-lbl" style="width:60px;">${t('cron.field.dow')}</span><input class="f-input mono" type="text" id="cronDow_${j.id}"  value="${j.expr.split(' ')[4]}" oninput="updateCronExpr('${j.id}')" /></div>
         </div>
         <div class="f-row center" style="margin-bottom:8px;"><span class="f-lbl" style="width:60px;">${t('cron.field.cmd')}</span><input class="f-input mono" type="text" id="cronCmd_${j.id}"  value="${j.cmd}" /></div>
-        <div class="f-row center"><span class="f-lbl" style="width:60px;">${t('cron.field.desc')}</span><input class="f-input" type="text" id="cronDesc_${j.id}" value="${j.desc}" /></div>
+        <div class="f-row center" style="margin-bottom:8px;"><span class="f-lbl" style="width:60px;">${t('cron.field.desc')}</span><input class="f-input" type="text" id="cronDesc_${j.id}" value="${j.desc}" /></div>
+        <div class="f-row center">
+          <span class="f-lbl" style="width:60px;" data-i18n="cron.log.label">记录日志</span>
+          <label class="toggle"><input type="checkbox" ${j.log?'checked':''} onchange="toggleCronLog('${j.id}',this)" />
+            <div class="toggle-track"></div><div class="toggle-thumb"></div>
+          </label>
+          <span style="font-size:10px;color:var(--dim);flex:1;min-width:0;">${t('cron.log.hint')}</span>
+        </div>
         <div style="display:flex;justify-content:flex-end;gap:7px;margin-top:12px;">
           <button class="d-btn" onclick="cancelCronEdit('${j.id}')"><i class="fa-solid fa-xmark"></i> ${t('common.cancel')}</button>
           <button class="d-btn accent" onclick="saveCronEdit('${j.id}')"><i class="fa-solid fa-check"></i> ${t('common.save')}</button>
@@ -262,4 +274,60 @@ function toggleCronJob(id, chk) {
     updateCronStats();
     showToast(chk.checked ? t('toast.cronEnabled') : t('toast.cronDisabled'), chk.checked ? '#4ade80' : '#8888aa', chk.checked ? 'fa-check' : 'fa-ban');
   }
+}
+
+// ════════ Cron 日志记录 ════════
+// 机制：任务开启「记录日志」后，stdout/stderr 收敛到固定日志文件；保留 3 天（可配），超出自动清理。
+function cronLogPath(id) {
+  return `~/Library/Logs/BeCrafter-Launcher/cron/${id}.log`;
+}
+
+// 日志开关（即时生效；仅局部同步详情面板，不整表重渲染——避免关闭当前编辑面板）
+function toggleCronLog(id, chk) {
+  const j = cronData.find(x => x.id === id);
+  if (!j) return;
+  j.log = !!chk.checked;
+  const exp = document.getElementById('exp_cron_' + id);
+  if (exp) {
+    const logField = [...exp.querySelectorAll('.expand-field')]
+      .find(f => (f.querySelector('.expand-key') || {}).textContent === t('cron.log.path'));
+    const val = logField && logField.querySelector('.expand-val');
+    if (val) val.textContent = j.log ? cronLogPath(id) : t('cron.log.no');
+    const btn = exp.querySelector('.cron-log-row button');
+    if (btn) btn.disabled = !j.log;
+  }
+  showToast(j.log ? t('toast.cronLogOn') : t('toast.cronLogOff'), j.log ? '#4ade80' : '#8888aa', 'fa-scroll');
+}
+
+// 模拟日志内容（最近 3 天窗口，含正确/正确重试/错误/告警，类型着色）
+function cronLogLines(j) {
+  const day = 86400000;
+  const now = Date.now();
+  const ts = (offset) => new Date(now - offset).toISOString().slice(0, 19).replace('T', ' ');
+  const cmdBase = j.cmd.split('/').pop();
+  return [
+    [ts(2 * day + 3600000), 'info', `[INFO] cron registered: ${j.expr} → ${j.cmd}`],
+    [ts(2 * day + 1790000), 'ok', `[OK] run started (pid ${1000 + (j.id.charCodeAt(1) || 65) * 7})`],
+    [ts(2 * day + 1780000), 'ok', `[OK] run finished in 8.3s, exit 0`],
+    [ts(day + 3600000), 'info', `[INFO] scheduled trigger matched (${j.expr})`],
+    [ts(day + 3000000), 'warn', `[WARN] retry #1 — transient failure, re-running`],
+    [ts(day + 2990000), 'ok', `[OK] retry succeeded: ${cmdBase}`],
+    [ts(day / 2), 'info', `[INFO] heartbeat: cron dispatch alive`],
+    [ts(3600000), 'ok', `[OK] last run completed successfully (exit 0)`],
+    [ts(600000), 'err', `[ERR] stderr: permission denied on /var/tmp/${cmdBase}.tmp`],
+    [ts(300000), 'warn', `[WARN] stdout: 3 lines truncated (retention window)`],
+    [ts(0), 'info', `[INFO] log tail — retained; older than ${t('settings.launchd.cronLogRetain.3d')} auto-cleaned`]
+  ];
+}
+
+// 查看日志（console 弹窗）
+function showCronLog(id) {
+  const j = cronData.find(x => x.id === id);
+  if (!j) return;
+  document.getElementById('cronLogPath').textContent = cronLogPath(id);
+  const body = document.getElementById('cronLogBody');
+  body.innerHTML = cronLogLines(j).map(([ts, type, text]) =>
+    `<div class="log-line"><span class="log-ts">${ts}</span><span class="log-txt ${type}">${text}</span></div>`
+  ).join('');
+  openModal('cronLogModal');
 }
