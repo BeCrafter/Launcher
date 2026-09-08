@@ -17,7 +17,7 @@ const MODULES = {
               </div>
               <button class="topbar-btn" onclick="showImportModal()"><i class="fa-solid fa-file-import"></i><span>${t('topbar.importConfig')}</span></button>
               <div class="new-agent-group">
-                <button class="topbar-btn accent" onclick="newAgentWithScope('user')"><i class="fa-solid fa-plus"></i><span>${t('topbar.newTask')}</span></button>
+                <button class="topbar-btn accent" type="button"><i class="fa-solid fa-plus"></i><span>${t('topbar.newTask')}</span></button>
                 <div class="new-agent-menu" id="newAgentMenu">
                   <button class="new-agent-menu-item" onclick="newAgentWithScope('user')"><i class="fa-solid fa-user"></i>${t('modal.newAgent.scopeUser')}</button>
                   <button class="new-agent-menu-item" onclick="newAgentWithScope('system')"><i class="fa-solid fa-building"></i>${t('modal.newAgent.scopeSystem')}</button>

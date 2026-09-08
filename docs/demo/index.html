@@ -79,7 +79,7 @@
               <input type="text" placeholder="搜索任务…" id="globalSearch" oninput="handleSearch(this.value)" data-i18n-placeholder="topbar.searchTasks" />
             </div>
             <button class="topbar-btn" onclick="showImportModal()"><i class="fa-solid fa-file-import"></i><span data-i18n="topbar.import">导入</span></button>
-            <button class="topbar-btn accent" onclick="newAgentWithScope('user')"><i class="fa-solid fa-plus"></i><span data-i18n="topbar.new">新建</span></button>
+            <button class="topbar-btn accent" type="button"><i class="fa-solid fa-plus"></i><span data-i18n="topbar.new">新建</span></button>
           </div>
         </div>
 
@@ -1362,6 +1362,13 @@
               <option value="user" data-i18n="modal.newCron.scopeUser">当前用户 (crontab -e)</option>
               <option value="system" data-i18n="modal.newCron.scopeSystem">系统全局 (/etc/crontab 需 root)</option>
             </select>
+          </div>
+          <div class="f-row center">
+            <span class="f-lbl" data-i18n="cron.log.label">记录日志</span>
+            <label class="toggle"><input type="checkbox" id="newCronLog" />
+              <div class="toggle-track"></div><div class="toggle-thumb"></div>
+            </label>
+            <span style="font-size:10px;color:var(--dim);flex:1;min-width:0;" data-i18n="cron.log.hint">stdout / stderr 自动收敛至固定日志文件（不干预任务自身输出）</span>
           </div>
         </div>
         <div class="modal-footer">
