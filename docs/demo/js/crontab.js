@@ -96,24 +96,23 @@ function renderCron(filter = activeCronFilter, query = '') {
           </label>
         </div>
         <div class="cron-desc">${j.desc}</div>
-        <div class="cron-repeat">${cronDesc}</div>
+        <div class="cron-repeat">
+          <span class="cron-repeat-text">${cronDesc}</span>
+          <span class="cron-repeat-tags">
+            ${tagChip(j.user, 'blue')}
+            ${tagChip(j.system ? t('cron.tag.systemEtc') : t('cron.tag.user'), j.system ? 'red' : 'blue')}
+          </span>
+        </div>
         <div class="cron-r4">
           <span class="cron-expr" title="${j.expr}">${j.expr}</span>
           <div class="row-actions" onclick="event.stopPropagation()">
             ${actBtn('fa-solid fa-pen', { cls: 'accent', title: t('cron.edit'), onclick: `toggleCronEdit('${j.id}',event)`, iconId: 'cronEditIcon_' + j.id })}
             ${actBtn('fa-solid fa-trash-can', { cls: 'red', title: t('cron.delete'), onclick: `deleteCronJob('${j.id}')` })}
-            ${actBtn('fa-solid fa-chevron-down row-chevron', { title: t('cron.expand'), onclick: `toggleRowExpand('cron_${j.id}',event)`, iconId: 'chev_cron_' + j.id })}
           </div>
         </div>
       </div>`;
     const extra = `<div class="row-expand" id="exp_cron_${j.id}">
-        <div class="expand-grid">
-          <div class="expand-field"><div class="expand-key">${t('cron.exprLabel')}</div><div class="expand-val">${j.expr}</div></div>
-          <div class="expand-field"><div class="expand-key">${t('cron.field.desc')}</div><div class="expand-val ok">${cronDesc}</div></div>
-          <div class="expand-field"><div class="expand-key">${t('cron.field.user')}</div><div class="expand-val">${j.user}</div></div>
-          <div class="expand-field"><div class="expand-key">${t('cron.field.source')}</div><div class="expand-val">${j.system?'/etc/crontab':'crontab -l'}</div></div>
-        </div>
-        <div class="cron-log-block" style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;">
+        <div class="cron-log-block">
           <div class="expand-field" style="margin-bottom:8px;">
             <div class="expand-key" data-i18n="cron.log.path">日志路径</div>
             <div class="expand-val" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${j.log ? cronLogPath(j.id) : t('cron.log.no')}</div>

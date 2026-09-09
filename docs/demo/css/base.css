@@ -53,6 +53,9 @@
   /* accent 家族渐变 wash（按钮/下拉菜单共用同源材质） */
   --accent-wash-grad: linear-gradient(135deg, rgba(124, 106, 244, 0.16), rgba(96, 165, 250, 0.08));
 
+  /* hover 展开区（cron 详情/编辑面板）弱化底色：略暗于卡片 hover 提亮、同族中性，重点保持在上的卡片 */
+  --panel-weak: #141420;
+
   /* 主题预览卡片（固定演示三套主题自身的用色，不随当前主题改变） */
   --brand-grad: linear-gradient(135deg, #7c6af4, #60a5fa);
   --card-accent-solid: #7c6af4;
@@ -841,6 +844,9 @@ body.light-theme {
 
   /* 浅色 accent 渐变 wash（与深色同源，更淡） */
   --accent-wash-grad: linear-gradient(135deg, rgba(106, 88, 224, 0.10), rgba(61, 127, 214, 0.05));
+
+  /* 浅色 hover 展开区弱化底色：略深于卡片 hover 淡灰、弱于白色主体 */
+  --panel-weak: #eef0f5;
 
   --statusbar-bg: rgba(255, 255, 255, 0.85);
   --statusbar-border: rgba(106, 88, 224, 0.14);
