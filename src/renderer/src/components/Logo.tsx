@@ -1,5 +1,24 @@
+import { useEffect, useState } from 'react'
 import { ROCKET_ORBIT_DATAURL } from '../assets/rocketOrbit'
-import { ROCKET_ORBIT2_DATAURL } from '../assets/rocketOrbit2'
+import { ROCKET_ORBIT2_DARK_DATAURL, ROCKET_ORBIT2_LIGHT_DATAURL } from '../assets/rocketOrbit2Theme'
+
+// 主题探测：父级传 theme 优先；否则侦听 body.light-theme（与 demo/theme.css 约定一致）
+export type LogoTheme = 'dark' | 'light'
+
+function useLogoTheme(theme?: LogoTheme): LogoTheme {
+  const [auto, setAuto] = useState<LogoTheme>(
+    typeof document !== 'undefined' && document.body.classList.contains('light-theme') ? 'light' : 'dark'
+  )
+  useEffect(() => {
+    if (theme) return
+    const sync = (): void =>
+      setAuto(document.body.classList.contains('light-theme') ? 'light' : 'dark')
+    const mo = new MutationObserver(sync)
+    mo.observe(document.body, { attributes: true, attributeFilter: ['class'] })
+    return () => mo.disconnect()
+  }, [theme])
+  return theme ?? auto
+}
 
 export type LogoVariant =
   | 'power'
@@ -64,7 +83,7 @@ const STACK_POINTS = [
 const L_POINTS =
   '87,78 94,66 95,66 96,66 97,67 99,67 106,67 119,74 118,75 118,76 118,77 118,78 118,159 157,159 170,166 169,167 169,168 169,169 169,170 169,178 162,190 161,190 160,190 159,189 157,189 99,189 86,182 87,181 87,180 87,179 87,178'
 
-function Symbol({ variant }: { variant: LogoVariant }): React.JSX.Element {
+function Symbol({ variant, themeL }: { variant: LogoVariant; themeL: LogoTheme }): React.JSX.Element {
   const stroke = 'var(--logo-symbol)'
   switch (variant) {
     case 'power':
@@ -122,19 +141,24 @@ function Symbol({ variant }: { variant: LogoVariant }): React.JSX.Element {
         </g>
       )
     case 'rocketOrbit':
+      // v1：原始蓝青插画（理想态）
       return <image href={ROCKET_ORBIT_DATAURL} x="0" y="0" width="256" height="256" preserveAspectRatio="xMidYMid meet" />
     case 'rocketOrbit2':
-      return <image href={ROCKET_ORBIT2_DATAURL} x="0" y="0" width="256" height="256" preserveAspectRatio="xMidYMid meet" />
+      // v2：紫调双主题（深色版深底贴纸 / 浅色版白底贴纸）
+      return <image href={themeL === 'light' ? ROCKET_ORBIT2_LIGHT_DATAURL : ROCKET_ORBIT2_DARK_DATAURL} x="0" y="0" width="256" height="256" preserveAspectRatio="xMidYMid meet" />
   }
 }
 
 export default function Logo({
   variant = 'power',
-  size = 48
+  size = 48,
+  theme
 }: {
   variant?: LogoVariant
   size?: number
+  theme?: LogoTheme
 }): React.JSX.Element {
+  const themeL = useLogoTheme(theme)
   return (
     <svg width={size} height={size} viewBox="0 0 256 256" role="img" aria-label="Launcher Logo">
       <defs>
@@ -146,7 +170,7 @@ export default function Logo({
       </defs>
       <path d={SQUIRCLE_PATH} fill="url(#logo-grad)" />
       <g transform={FIT[variant]}>
-        <Symbol variant={variant} />
+        <Symbol variant={variant} themeL={themeL} />
       </g>
     </svg>
   )

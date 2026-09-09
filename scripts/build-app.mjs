@@ -10,7 +10,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync, rmSync, existsSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -67,7 +67,11 @@ function pickLogo() {
       variant = JSON.parse(readFileSync(settingsPath, 'utf8')).logoVariant ?? variant
     } catch {}
   }
-  const pngPath = join(ROOT, `resources/logo/${variant}/icon.png`)
+  // 打包静态应用图标：紫调插画款固定用浅色版（icon-light.png，Finder/Dock 默认外观）
+  // 几何变体无浅色版 → 回退 icon.png
+  const dir = join(ROOT, `resources/logo/${variant}`)
+  const light = join(dir, 'icon-light.png')
+  const pngPath = existsSync(light) ? light : join(dir, 'icon.png')
   if (!existsSync(pngPath)) {
     throw new Error(`未找到图标资源：${pngPath}（先跑 node scripts/gen-custom-icon.mjs 或 npm run icon）`)
   }
@@ -201,7 +205,7 @@ async function main() {
   const { variant, pngPath } = pickLogo()
   mkdirSync(join(ROOT, 'build'), { recursive: true })
   buildIcns(pngPath, join(ROOT, 'build/icon.icns'))
-  console.log(`[0] 图标：${variant}（icon.png → iconutil 现场生成 build/icon.icns）`)
+  console.log(`[0] 图标：${variant}（${basename(pngPath)} → iconutil 现场生成 build/icon.icns）`)
 
   console.log('[1] electron-vite build')
   sh('npx', ['electron-vite', 'build'])
@@ -227,7 +231,13 @@ async function main() {
     const resBase = join(appPath, 'Contents/Resources/logo', variant)
     const resourcesOk =
       existsSync(join(resBase, 'icon.png')) && existsSync(join(resBase, 'iconTemplate.png'))
-    console.log(`  打包资源：Contents/Resources/logo/${variant}（icon + tray template）→ ${resourcesOk ? 'PASS' : 'FAIL'}`)
+    // 紫调插画变体（rocketOrbit2）需含主题双图（Dock 深浅切换依赖）；几何变体无此要求
+    const themedOk =
+      variant !== 'rocketOrbit2' ||
+      (existsSync(join(resBase, 'icon-dark.png')) && existsSync(join(resBase, 'icon-light.png')))
+    console.log(
+      `  打包资源：Contents/Resources/logo/${variant}（icon + tray template + theme icons）→ ${resourcesOk && themedOk ? 'PASS' : 'FAIL'}`
+    )
     // bundle 图标完整性：iconutil 解出 ≥8 尺寸表示（手写/损坏 icns 只有 3 个）
     const iconOk = assertBundleIcon(appPath)
     console.log(`  bundle 图标：Contents/Resources/icon.icns 完整尺寸表示 → ${iconOk ? 'PASS' : 'FAIL'}`)

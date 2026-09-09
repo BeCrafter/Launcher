@@ -18,7 +18,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - 应用编译（构建 + 端到端架构验证）：`npm run build:app`（默认本机架构）/ `build:app:arm64` / `build:app:x64` / `build:app:universal` / `build:app:all`（arm64+x64 依次）
   - `scripts/build-app.mjs`：electron-vite build → electron-builder 打包（dist/，dir 目标）→ 验证：lipo 架构断言（主 bin + Electron Framework）+ 实际启动产物按进程二进制架构断言；主机无法原生运行的架构（如 Intel 机上 arm64）自动 SKIP 运行验证并注明
   - 打包图标取当前激活 Logo 款（resources/logo/<variant>/icon.icns → build/icon.icns）；electron 二进制走 ELECTRON_MIRROR（env > .npmrc > npmmirror 兜底）；未配置开发者证书时 electron-builder 跳过代码签名（ad-hoc 行为，正式分发需补签名）
-- 重新生成品牌图标：`npm run icon`（`scripts/gen-icon.mjs` 零依赖，输出三款变体 power/rocket/arrow × {菜单栏模板图 16/32、应用图标 512、icns} → `resources/logo/<variant>/`）；demo 双主题 logo 由 `scripts/gen-demo-logos.mjs` 产出（`node scripts/gen-demo-logos.mjs`，python3+PIL+numpy：884 高清源 `resources/app-logo-src/app-icon.png` 相映射重着色（青→页面 accent 紫、BFS 白底融入、描边主题化）+ 程序超采样圆角贴纸 → `docs/demo/logo-dark.png`（深底 #1d1d2e）/ `logo-light.png`（白底），1024×1024 高清）
+- 重新生成品牌图标：`npm run icon`（`scripts/gen-icon.mjs` 零依赖，输出三款变体 power/rocket/arrow × {菜单栏模板图 16/32、应用图标 512、icns} → `resources/logo/<variant>/`）；demo 与应用的紫调双主题 logo 由 `scripts/gen-demo-logos.mjs` 一次产出（`node scripts/gen-demo-logos.mjs`，python3+PIL+numpy：884 高清源 `resources/app-logo-src/app-icon.png` 软化+相映射重着色（青→页面 accent 紫、BFS 白底融入、浅色像素按主题压暗/提亮）+ 程序超采样圆角贴纸 → ① `docs/demo/logo-{dark,light}.png` 1024 ② `resources/logo/rocketOrbit2/icon-{dark,light}.png` 512（Dock 深浅切换）③ `icon.png`（浅色 512 静态）+ `icon.icns`（浅色版包图标）④ `src/renderer/src/assets/rocketOrbit2Theme.ts`（512 双主题 dataURL，Logo 组件热切换）。**变体语义：rocketOrbit（v1）= 原始蓝青理想态；rocketOrbit2（v2）= 紫调双主题**）
 
 **演示页（docs/demo/）**：
 - 打开演示页：直接双击 `docs/demo/index.html`（file:// 协议可用，无需服务器；不要在此引入 fetch/ES 模块，否则 file:// 下会失效）
@@ -37,7 +37,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 ```
 src/
 ├── main/            # 主进程（唯一事实来源）
-│   ├── index.ts     # 窗口 + Tray 单实例双形态 + Logo 变体（logo:list/get/set IPC、settings.json 持久化、dock.setIcon）
+│   ├── index.ts     # 窗口 + Tray 单实例双形态 + Logo 变体（logo:list/get/set IPC、settings.json 持久化、dock.setIcon；Dock 深浅：nativeTheme.on('updated') 按 shouldUseDarkColors 切 icon-{dark,light}.png，无双图变体回退 icon.png）
 │   ├── domains/     # 纯函数领域层（阶段 1 起：launchd/plist/brew/cron/process）
 │   ├── services/    # 执行层（ShellRunner/osascript 提权/LaunchctlService/Resolvers）
 │   ├── stores/      # AgentStore/CronStore/ServiceStore（状态机，对齐开源 Store 模式）
@@ -45,7 +45,7 @@ src/
 │   └── mcp/         # MCP stdio server（launcher-mcp 入口，阶段 4）
 ├── preload/         # contextBridge 白名单 IPC（window.launcher）
 ├── renderer/        # React 18 + zustand（components/ 由 demo components.js 迁移）
-│   ├── components/Logo.tsx   # 品牌 Logo SVG（variant: power/rocket/arrow；颜色走 --logo-* 变量，主题自适应）
+│   ├── components/Logo.tsx   # 品牌 Logo（几何变体 power/rocket/…走 --logo-* 变量主题自适应；rocketOrbit v1 蓝青原图 / rocketOrbit2 v2 紫调双主题（theme prop 或 body.light-theme 自动切换 dataURL；未传时 MutationObserver 侦听 body class））
 │   └── styles/theme.css      # 主题变量（:root 深色 + body.light-theme 浅色，与 demo 约定一致）
 └── shared/          # 常量等跨进程共享代码（APP_NAME 等）
 ```
