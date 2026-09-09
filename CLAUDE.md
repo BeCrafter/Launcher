@@ -54,7 +54,7 @@ src/
 
 ## 页面架构（docs/demo/）
 
-单页应用式原型：`index.html` 只有静态结构 + 资源引用，逻辑全部在经典 `<script>` 标签加载的全局作用域文件中（无模块、无 import，文件间通过全局函数/常量互相调用，HTML 内联 `onclick` 直接调用这些全局函数）。script 加载顺序有依赖，调整顺序前确认：`i18n → data → utils → statusbar → 各视图 → drawer → settings → modules → modals → main`。
+单页应用式原型：`index.html` 只有静态结构 + 资源引用，逻辑全部在经典 `<script>` 标签加载的全局作用域文件中（无模块、无 import，文件间通过全局函数/常量互相调用，HTML 内联 `onclick` 直接调用这些全局函数）。script 加载顺序有依赖，调整顺序前确认：`i18n → data → utils → statusbar → 各视图 → drawer → settings → modules → elevation → modals → main`（elevation/modals 仅为运行时引用互调，先加载其一亦可，但保持此序）。
 
 - **样式** `css/` 与 **脚本** `js/` 均按页面结构拆分，各文件的职责与关键函数见下方「文件地图」。主题通过 `--*` 变量实现（`:root` 深色 + `body.light-theme` 浅色覆写）
 - **模块注册表** `js/config.js`：`MODULES` 是模块接线的单一事实来源——视图显隐、面包屑、顶栏操作区模板、搜索行为、底部状态栏配置全部在一条记录里，改模块/加模块只动这里
@@ -63,6 +63,7 @@ src/
 - **多语言** `js/i18n.js`：`I18N` 字典（zh-CN / en-US 两份，新增文案需同时更新）、静态 HTML 通过 `data-i18n` / `data-i18n-placeholder` / `data-i18n-title` 标记，JS 动态文本用 `t('key')`
 - **模块切换** `js/modules.js` 的 `switchModule()`：控制 `#view-*` 显隐、重建顶栏按钮/搜索框（每模块的顶栏操作区是运行时 innerHTML 重写的）、驱动侧边栏折叠与底部状态栏
 - **抽屉编辑器** `js/drawer.js`：Agent 编辑面板（编辑/状态/日志/XML 四个 tab），初始值由 `populateDrawerDefaults()` 从 `MOCK_DATA.drawer` 填充；日志 tab 有 4.5 秒轮询追加的模拟实时日志
+- **提权交互** `js/elevation.js`：非用户所属权限内容（系统级 plist、/etc/crontab、launchctl 特权域）的统一流程——`ELEVATION.request({detail, command})` 返回 Promise<boolean>（`launcher_authCacheMin` 凭证缓存窗口内静默通过；密码非空即授权；取消返回 false 不残留）；`confirmDangerousAction({detail})` 危险操作二次确认（`launcher_confirmDangerous=false` 可关闭）。已在 index.html 挂 elevationModal / dangerModal，接线点：drawer.js（系统级保存/删除、抽屉 ops）、crontab.js（system 编辑/删除）、modals.js（新建 system cron）。**注意：demo 的密码输入框是 macOS 系统授权框的前端模拟；真实实现走 osascript `with administrator privileges` 系统原生框、应用不碰密码，落地时去掉密码框（详见 docs/design/refactor-plan.md「提权模态」）**
 - 外部 CDN 依赖（static0.xesimg.com）：FontAwesome 图标（必备）、Tailwind（基本未用）、Mermaid（仅装饰性架构图，加载失败被 try/catch 容忍）
 
 ## 文件地图（docs/demo/）
@@ -88,13 +89,14 @@ src/
 - `utils.js`：showToast、openExternal、架构检测（`detectArch` / `archLabel`）、`themeLabel` / `languageLabel`、`truncate`、`toggleGroupBlock`、`toggleRowExpand`（tagColor/aiTagColor 已并入 components.js 的 TAG_COLORS）
 - `statusbar.js`：`updateModuleStatusBar`（渲染 MODULES[mod].statusbar 配置）、`updateLaunchStatusBar`、`refreshSettingsStatusBar`
 - `agents.js`：`renderAgents`（分组渲染 + invalid-plist 横幅）、`filterAgents` / `handleSearch`、`selectAgent` / `toggleAgent` / `brewAction`、`updateAgentFilterCounts`（过滤栏计数）
-- `crontab.js`：`parseCronExpr`、`renderCron`、`filterCrons` / `updateCronStats`、内联编辑（`toggleCronEdit` / `applyCronPreset` / `updateCronExpr` / `saveCronEdit` / `cancelCronEdit` / `deleteCronJob` / `toggleCronJob`）
+- `crontab.js`：`parseCronExpr`、`renderCron`、`filterCrons` / `updateCronStats`、内联编辑（`toggleCronEdit` / `applyCronPreset` / `updateCronExpr` / `saveCronEdit` / `cancelCronEdit` / `deleteCronJob` / `toggleCronJob`）；`saveCronEdit` / `deleteCronJob` 对 system 任务先 `confirmDangerousAction` 再 `ELEVATION.request` 提权
 - `services.js`：`renderServices` + `killSvc` / `copyPort`
 - `ai.js`：`renderAi`（Agent 组 + 技能组）、`filterAi` / `handleAiSearch` / `scanAiAgents` / `runWithAgent`、`aiIconBadgeCls`
-- `drawer.js`：`openEditFloat` / `closeDrawerMask`、`drawerAgentState`、`updateOpsBar` / `drawerOpsAction`、`switchDrawerTab`（按 data-tab 属性匹配）、`efToggleTrig` / `efToggleSection` / `efSetKaMode`、`saveFloatAgent`、表单行构建（`addArgTo` / `addEnvTo` / `addWatchTo` / `delMvRow`）、`sci*`（StartCalendarInterval 规则构建器）、`toggleCfg`、日志（`clearLog` / `addLogLine` / `getTs`）、XML（`validateXml` / `copyXml`）、`populateDrawerDefaults`（初始化时从 MOCK_DATA.drawer 填充抽屉全部样例值）
+- `drawer.js`：`openEditFloat` / `closeDrawerMask`、`drawerAgentState`、`updateOpsBar` / `drawerOpsAction`、`dpAction`（抽屉底部删除/克隆，原为未定义死代码已补齐）、`switchDrawerTab`（按 data-tab 属性匹配）、`efToggleTrig` / `efToggleSection` / `efSetKaMode`、`saveFloatAgent`、表单行构建（`addArgTo` / `addEnvTo` / `addWatchTo` / `delMvRow`）、`sci*`（StartCalendarInterval 规则构建器）、`toggleCfg`、日志（`clearLog` / `addLogLine` / `getTs`）、XML（`validateXml` / `copyXml`）、`populateDrawerDefaults`（初始化时从 MOCK_DATA.drawer 填充抽屉全部样例值）；`drawerOpsAction` / `saveFloatAgent` / `dpAction(delete)` 对 system/daemon scope 接入提权流程
 - `settings.js`：`switchSettingsSection`、`setTheme`、`setLanguage`、`saveSetting`、`checkAppUpdates`、`resetSettings`、`loadSettings`、`fillSettingsMeta`（页脚/关于页版本号）
 - `modules.js`：`switchModule`（配置驱动：读取 MODULES 记录完成视图显隐 / 顶栏重建 / 状态栏开关）、`handleModuleSearch`（顶栏搜索统一分发）、`syncSidebarLayout`、`toggleSidebarCollapse`、`checkMobile` / `toggleSidebar`
-- `modals.js`：`openModal` / `closeModal` / `closeModalBg`、新建与导入弹窗（`showNewModal` / `showImportModal` / `createAgent` / `doImport`）、新建 Cron（`applyNewCronPreset` / `updateNewCronExpr` / `createCronJob`）
+- `modals.js`：`openModal` / `closeModal` / `closeModalBg`、新建与导入弹窗（`showNewModal` / `showImportModal` / `createAgent` / `doImport`）、新建 Cron（`applyNewCronPreset` / `updateNewCronExpr` / `createCronJob`，系统级新建走提权）
+- `elevation.js`：`ELEVATION.request`（提权：凭证缓存 `launcher_authCacheMin` / 密码非空授权 / 取消返回 false）、`confirmDangerousAction`（危险二次确认，`launcher_confirmDangerous=false` 关闭）；详见上方「提权交互」
 - `main.js`：顶部执行序（实时日志 interval 4500ms、ResizeObserver、侧边栏初始态、架构检测、初始渲染 + `loadSettings`、mermaid 初始化）；末尾调用 `updateAgentFilterCounts` / `populateDrawerDefaults` / `fillSettingsMeta`
 - `check.mjs`：自检脚本（见「运行方式」，hook 与手动共用）
 

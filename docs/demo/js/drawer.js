@@ -25,6 +25,7 @@ function openEditFloat(id, e) {
   setVal('ef_program', a.program || '');
   switchDrawerTab('edit', document.querySelector('#editDrawer .drawer-nav-btn'));
   drawerAgentState.isDraft = false;
+  drawerAgentState.scope = a.scope;
   drawerAgentState.loaded = a.status !== 'stopped' || !!a.pid;
   drawerAgentState.enabled = !a.disabled;
   drawerAgentState.running = a.status === 'running';
@@ -103,9 +104,61 @@ function updateOpsBar() {
   }
 }
 
-function drawerOpsAction(action) {
+// 抽屉底部操作：删除/克隆（原为未定义死代码，现补齐并接入提权流程）
+async function dpAction(action) {
+  if (action === 'delete') {
+    const label = (selectedAgent && selectedAgent.label) || '';
+    const scope = drawerAgentState.scope;
+    const confirmed = await confirmDangerousAction({
+      detail: fmt(t('elev.delete.detail'), { L: label }) + (scope === 'system' || scope === 'daemon' ? '（bootout + rm 一次授权）' : '（bootout 后删除）')
+    });
+    if (!confirmed) return;
+    if (scope === 'system' || scope === 'daemon') {
+      const ok = await ELEVATION.request({
+        detail: fmt(t('elev.delete.detail'), { L: label }),
+        command: `osascript -e 'do shell script "launchctl bootout ${scope === 'daemon' ? 'system' : 'gui'}/${label} && rm -f ${scope === 'daemon' ? '/Library/LaunchDaemons' : '/Library/LaunchAgents'}/${label}.plist" with administrator privileges'`
+      });
+      if (!ok) return;
+    }
+    const idx = agentData.findIndex(x => x.id === selectedAgent.id);
+    if (idx > -1) agentData.splice(idx, 1);
+    closeModal('editAgentFloat');
+    renderAgents(activeFilter || 'all', (document.getElementById('globalSearch') || {}).value || '');
+    showToast(t('toast.deletedTask'), '#f87171', 'fa-trash-can');
+    addLogLine('warn', `[WARN] deleted: ${label}`);
+    return;
+  }
+  if (action === 'clone' && selectedAgent) {
+    const base = selectedAgent.label;
+    let copy = base + '.copy';
+    let idx = 1;
+    while (agentData.some(a => a.id === copy)) copy = base + '.copy.' + (idx++);
+    agentData.unshift({ ...selectedAgent, id: copy, label: copy, status: 'stopped', pid: null, uptime: null });
+    renderAgents(activeFilter || 'all', (document.getElementById('globalSearch') || {}).value || '');
+    showToast(t('toast.clonedTask'), '#22d3ee', 'fa-copy');
+    return;
+  }
+  const msgs = {
+    bootstrap: { mk: 'toast.enabledTask', c: '#4ade80', i: 'fa-play' },
+    bootout: { mk: 'toast.disabledTask', c: '#60a5fa', i: 'fa-stop' },
+    kickstart: { mk: 'toast.kickstarted', c: '#a78bfa', i: 'fa-bolt' }
+  };
+  const info = msgs[action];
+  if (info) showToast(t(info.mk), info.c, info.i);
+}
+
+async function drawerOpsAction(action) {
   const s = drawerAgentState;
   if (s.isDraft) return; // 草稿未保存，禁止加载/启用/运行类操作
+  // 系统级（system/daemon 域）launchctl 操作需提权
+  if (s.scope === 'system' || s.scope === 'daemon') {
+    const labels = { load: t('drawer.op.load'), enable: t('drawer.op.enable'), kickstart: t('drawer.op.kickstart') };
+    const ok = await ELEVATION.request({
+      detail: fmt(t('elev.ops.detail'), { A: labels[action] || action, L: (selectedAgent && selectedAgent.label) || '' }),
+      command: `osascript -e 'do shell script "launchctl ${action === 'load' ? 'bootout' : action} ${(selectedAgent && selectedAgent.label) || ''}" with administrator privileges'`
+    });
+    if (!ok) return;
+  }
   if (action === 'load') {
     if (s.loaded) {
       s.loaded = false;
@@ -190,10 +243,19 @@ function efSetKaMode(mode) {
   }
 }
 
-function saveFloatAgent() {
+async function saveFloatAgent() {
   // 真实保存：表单值回写到当前编辑的 Agent，并刷新列表（新建草稿由此"落地"）
   const entry = selectedAgent && agentData.find(x => x.id === selectedAgent.id);
   if (entry) {
+    // 系统级 scope 写 plist 需提权（非用户所属权限内容）
+    if (entry.scope === 'system' || entry.scope === 'daemon') {
+      const label = document.getElementById('ef_label').value.trim() || entry.label;
+      const ok = await ELEVATION.request({
+        detail: fmt(t('elev.saveAgent.detail'), { L: label }),
+        command: `mkdir -p ${entry.scope === 'daemon' ? '/Library/LaunchDaemons' : '/Library/LaunchAgents'} && plutil -lint /Library/LaunchAgents/${label}.plist`
+      });
+      if (!ok) return;
+    }
     entry.label = document.getElementById('ef_label').value.trim() || entry.label;
     entry.desc = document.getElementById('ef_desc').value.trim();
     entry.program = document.getElementById('ef_program').value.trim();

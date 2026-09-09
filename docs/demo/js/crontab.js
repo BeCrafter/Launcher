@@ -254,9 +254,14 @@ function cancelCronEdit(id) {
   showToast(t('toast.editCanceled'), '#888', 'fa-xmark');
 }
 
-function saveCronEdit(id) {
+async function saveCronEdit(id) {
   const j = cronData.find(x => x.id === id);
   if (!j) return;
+  // 系统级 /etc/crontab 写需提权
+  if (j.system) {
+    const ok = await ELEVATION.request({ detail: t('elev.cron.detail'), command: `osascript -e 'do shell script "crontab -l > /tmp/crontab.bak" with administrator privileges'` });
+    if (!ok) return;
+  }
   const getF = fid => (document.getElementById(fid) || {}).value || '';
   j.expr = [getF('cronMin_' + id), getF('cronHour_' + id), getF('cronDom_' + id), getF('cronMon_' + id), getF('cronDow_' + id)].join(' ');
   j.cmd = getF('cronCmd_' + id);
@@ -266,7 +271,14 @@ function saveCronEdit(id) {
   showToast(t('toast.cronSaved'), '#4ade80', 'fa-check');
 }
 
-function deleteCronJob(id) {
+async function deleteCronJob(id) {
+  const job = cronData.find(x => x.id === id);
+  if (job && job.system) {
+    const confirmed = await confirmDangerousAction({ detail: t('elev.cron.detail') + '（/etc/crontab）' });
+    if (!confirmed) return;
+    const ok = await ELEVATION.request({ detail: t('elev.cron.detail'), command: `osascript -e 'do shell script "crontab -r" with administrator privileges'` });
+    if (!ok) return;
+  }
   const idx = cronData.findIndex(x => x.id === id);
   if (idx > -1) cronData.splice(idx, 1);
   renderCron();

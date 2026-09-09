@@ -64,7 +64,7 @@ function updateNewCronExpr() {
   document.querySelectorAll('#newCronPresets .cron-preset-chip').forEach(c => c.classList.remove('active'));
 }
 
-function createCronJob() {
+async function createCronJob() {
   const cmd = document.getElementById('newCronCmd').value.trim();
   if (!cmd) {
     showToast(t('toast.requireCommand'), '#f87171', 'fa-circle-exclamation');
@@ -74,6 +74,10 @@ function createCronJob() {
   const expr = [getF('newCronMin'), getF('newCronHour'), getF('newCronDom'), getF('newCronMon'), getF('newCronDow')].join(' ');
   const desc = document.getElementById('newCronDesc').value.trim() || parseCronExpr(expr);
   const isSystem = document.getElementById('newCronScope').value === 'system';
+  if (isSystem) {
+    const ok = await ELEVATION.request({ detail: t('elev.cron.detail'), command: `osascript -e 'do shell script "crontab -l | sed 1d" with administrator privileges'` });
+    if (!ok) return;
+  }
   const newJob = {
     id: 'c' + Date.now(),
     user: isSystem ? 'root' : 'user',
@@ -133,6 +137,7 @@ function openAgentDraft({ label, program, scope, runAtLoad, xml }) {
   };
   agentData.unshift(newAgent);
   selectedAgent = newAgent;
+  drawerAgentState.scope = newAgent.scope;
   closeModal('importModal');
   openEditFloat(label);
   // 草稿未保存：顶栏操作（加载/启用/立即运行）禁用，状态显示「未保存草稿」
