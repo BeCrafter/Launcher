@@ -1429,6 +1429,48 @@
       </div>
     </div>
 
+    <!-- 模态框：提权授权（系统级操作模拟） -->
+    <div class="modal-mask" id="elevationModal" onclick="closeModalBg(event,'elevationModal')">
+      <div class="modal-box" style="width:440px;">
+        <div class="modal-hdr">
+          <span class="modal-title"><i class="fa-solid fa-shield-halved" style="color:var(--yellow);margin-right:7px;"></i><span data-i18n="elev.title">需要管理员权限</span></span>
+          <button class="modal-close" onclick="closeModal('elevationModal')"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body" style="gap:10px;">
+          <div style="font-size:11px;color:var(--muted);line-height:1.6;" id="elevDetail" data-i18n="elev.detail"></div>
+          <div>
+            <div style="font-size:9.5px;color:var(--dim);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;" data-i18n="elev.cmdLabel">将执行</div>
+            <div class="expand-val" id="elevCmd" style="background:rgba(0,0,0,0.18);border:1px solid var(--border);border-radius:7px;padding:7px 9px;font-size:10px;"></div>
+          </div>
+          <div class="f-row center">
+            <span class="f-lbl" data-i18n="elev.password">密码</span>
+            <input class="f-input" type="password" id="elevPwd" autocomplete="off" style="flex:1;" />
+          </div>
+          <div style="font-size:10.5px;color:var(--red);display:none;" id="elevError" data-i18n="elev.error.invalid"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="d-btn" id="elevCancel"><span data-i18n="elev.cancel">取消</span></button>
+          <button class="d-btn accent" id="elevGrant"><i class="fa-solid fa-shield-halved"></i> <span data-i18n="elev.authorize">授权</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模态框：危险操作二次确认 -->
+    <div class="modal-mask" id="dangerModal" onclick="closeModalBg(event,'dangerModal')">
+      <div class="modal-box" style="width:420px;">
+        <div class="modal-hdr">
+          <span class="modal-title"><i class="fa-solid fa-triangle-exclamation" style="color:var(--red);margin-right:7px;"></i><span id="dgrTitle" data-i18n="dgr.title">危险操作确认</span></span>
+        </div>
+        <div class="modal-body">
+          <div style="font-size:11.5px;color:var(--muted);line-height:1.6;" id="dgrDetail" data-i18n="dgr.detail"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="d-btn" id="dgrCancel"><span data-i18n="common.cancel">取消</span></button>
+          <button class="d-btn red" id="dgrOk"><i class="fa-solid fa-trash-can"></i> <span data-i18n="common.confirm">确认</span></button>
+        </div>
+      </div>
+    </div>
+
     <!-- 三个主要模块共用的底部状态栏：根据当前模块展示对应信息 -->
     <div class="launch-statusbar" id="launchStatusBar">
       <div class="launch-status-left" id="moduleStatusLeft"></div>
@@ -1455,6 +1497,7 @@
     <script src="js/drawer.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/modules.js"></script>
+    <script src="js/elevation.js"></script>
     <script src="js/modals.js"></script>
     <script src="js/main.js"></script>
   </body>
