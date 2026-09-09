@@ -1,19 +1,32 @@
-// 生成 demo 双主题 logo（rocketOrbit 插画重着色 → docs/demo/logo-{dark,light}.png）
+// 生成紫调双主题 rocketOrbit2 图标（一次产出全部应用资产）
 // 管线（最高清晰度）：884 高清源轻高斯软化（σ1.15：抹平插画边缘锯齿与单像素切换起伏）
 //   → 重着色（青→紫连续色相映射；BFS 白底掩码 + 6px 渐变带融入贴纸底（带内增益 ×1.6+0.15）；
 //     浅色像素按主题映射——深色版全部压到 V≤0.42 中暗紫、浅色版保留淡紫）
 //   → 程序绘制超采样圆角贴纸（2048 画布）→ 1024 BOX 降采样。
 // 输入：resources/app-logo-src/app-icon.png（884×806 原始高清插画）
-// 输出：docs/demo/logo-dark.png（深色圆角底 #1d1d2e）、docs/demo/logo-light.png（白底贴纸）均为 1024×1024
-// 依赖：python3 + PIL + numpy（macOS 自带 python3；pip3 install pillow numpy）
+// 输出（rocketOrbit2 = 紫调双主题插画变体；rocketOrbit v1 保留原始蓝青不动）：
+//   docs/demo/logo-dark.png / logo-light.png（1024，demo 侧边栏双主题）
+//   resources/logo/rocketOrbit2/icon-dark.png / icon-light.png（512，Dock 运行时深浅切换）
+//   resources/logo/rocketOrbit2/icon.png（512 浅色，变体静态图标）
+//   resources/logo/rocketOrbit2/icon.icns（浅色版静态包图标，Finder/Dock 默认）
+//   src/renderer/src/assets/rocketOrbit2Theme.ts（512 双主题 dataURL，Logo 组件主题切换）
+// 依赖：python3 + PIL + numpy + iconutil（macOS 自带；pip3 install pillow numpy）
 import { execFileSync } from 'node:child_process'
+import { writeFileSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const src = join(root, '../resources/app-logo-src/app-icon.png')
-const outDark = join(root, '../docs/demo/logo-dark.png')
-const outLight = join(root, '../docs/demo/logo-light.png')
+const demoDark = join(root, '../docs/demo/logo-dark.png')
+const demoLight = join(root, '../docs/demo/logo-light.png')
+const resDir = join(root, '../resources/logo/rocketOrbit2')
+const iconDark = join(resDir, 'icon-dark.png')
+const iconLight = join(resDir, 'icon-light.png')
+const iconPng = join(resDir, 'icon.png')
+const iconIcns = join(resDir, 'icon.icns')
+const tsOut = join(root, '../src/renderer/src/assets/rocketOrbit2Theme.ts')
 
 const py = `
 import numpy as np
@@ -24,6 +37,8 @@ SRC = ${JSON.stringify(src)}
 OUT = 1024
 CAN = 2048    # 贴纸画布超采样（程序圆角无锯齿）
 SIGMA = 1.15  # 源软化：抹平插画边缘锯齿起伏（白点链根源）
+DOCK = 512
+ICONSET = ${JSON.stringify(join(tmpdir(), 'launcher-logo.iconset'))}
 
 def rgb_to_hsv(a):
     mx = a.max(axis=-1); mn = a.min(axis=-1)
@@ -139,9 +154,37 @@ def sticker(bg_hex, white_v):
     canvas.alpha_composite(art, ((CAN - art.width) // 2, (CAN - art.height) // 2))
     return canvas.resize((OUT, OUT), Image.BOX)
 
-sticker('#1d1d2e', 0.42).save(${JSON.stringify(outDark)})   # 深色版
-sticker('#ffffff', 0.94).save(${JSON.stringify(outLight)})  # 浅色版
+def iconset(light_img):
+    import os
+    from os import path
+    os.makedirs(ICONSET, exist_ok=True)
+    for size in (16, 32, 128, 256, 512):
+        light_img.resize((size, size), Image.LANCZOS).save(path.join(ICONSET, f'icon_{size}x{size}.png'))
+        light_img.resize((size*2, size*2), Image.LANCZOS).save(path.join(ICONSET, f'icon_{size}x{size}@2x.png'))
+
+dark = sticker('#1d1d2e', 0.42)
+light = sticker('#ffffff', 0.94)
+dark.save(${JSON.stringify(demoDark)})
+light.save(${JSON.stringify(demoLight)})
+dark.resize((DOCK, DOCK), Image.LANCZOS).save(${JSON.stringify(iconDark)})
+light.resize((DOCK, DOCK), Image.LANCZOS).save(${JSON.stringify(iconLight)})
+light.resize((DOCK, DOCK), Image.LANCZOS).save(${JSON.stringify(iconPng)})   # 浅色 512 = v2 静态图标
+iconset(light)
 print('written')
 `
 
 execFileSync('python3', ['-c', py], { stdio: 'inherit' })
+
+// icns：浅色版静态包图标（iconutil 打包 iconset）
+const iconset = join(tmpdir(), 'launcher-logo.iconset')
+execFileSync('iconutil', ['-c', 'icns', iconset, '-o', iconIcns], { stdio: 'inherit' })
+rmSync(iconset, { recursive: true, force: true })
+
+// renderer 双主题 dataURL（供 Logo.tsx 主题切换：rocketOrbit2 = 紫调双主题）
+const b64 = (p) => `'data:image/png;base64,${readFileSync(p).toString('base64')}'`
+const ts = `// 自动生成：scripts/gen-demo-logos.mjs（紫调双主题 512，源 resources/app-logo-src/app-icon.png）
+export const ROCKET_ORBIT2_DARK_DATAURL = ${b64(iconDark)}
+export const ROCKET_ORBIT2_LIGHT_DATAURL = ${b64(iconLight)}
+`
+writeFileSync(tsOut, ts)
+console.log(`written dock icons, icns, ${tsOut.split('/').pop()}`)
