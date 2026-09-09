@@ -1,4 +1,5 @@
 import { ROCKET_ORBIT_DATAURL } from '../assets/rocketOrbit'
+import { ROCKET_ORBIT2_DATAURL } from '../assets/rocketOrbit2'
 
 export type LogoVariant =
   | 'power'
@@ -10,6 +11,7 @@ export type LogoVariant =
   | 'bars'
   | 'letterL'
   | 'rocketOrbit'
+  | 'rocketOrbit2'
 
 export const LOGO_VARIANTS: { id: LogoVariant; label: string }[] = [
   { id: 'power', label: '电源符号' },
@@ -20,7 +22,8 @@ export const LOGO_VARIANTS: { id: LogoVariant; label: string }[] = [
   { id: 'stack', label: '服务栈' },
   { id: 'bars', label: '均衡条' },
   { id: 'letterL', label: 'L 字标' },
-  { id: 'rocketOrbit', label: '星际火箭（插画）' }
+  { id: 'rocketOrbit', label: '星际火箭（插画 v1）' },
+  { id: 'rocketOrbit2', label: '星际火箭（插画 v2）' }
 ]
 
 /* 几何与 scripts/gen-icon.mjs 严格同构（viewBox 256 = S）：
@@ -39,7 +42,8 @@ const FIT: Record<LogoVariant, string> = {
   stack: 'translate(-81.5 -81.5) scale(1.6364)',
   bars: 'translate(-72.3 -72.3) scale(1.5652)',
   letterL: 'translate(-128.6 -100.9) scale(1.8228)',
-  rocketOrbit: '' // 插画自带满幅构图，无需 fit
+  rocketOrbit: '', // 插画自带满幅构图，无需 fit
+  rocketOrbit2: ''
 }
 
 const ROCKET_POINTS =
@@ -119,6 +123,8 @@ function Symbol({ variant }: { variant: LogoVariant }): React.JSX.Element {
       )
     case 'rocketOrbit':
       return <image href={ROCKET_ORBIT_DATAURL} x="0" y="0" width="256" height="256" preserveAspectRatio="xMidYMid meet" />
+    case 'rocketOrbit2':
+      return <image href={ROCKET_ORBIT2_DATAURL} x="0" y="0" width="256" height="256" preserveAspectRatio="xMidYMid meet" />
   }
 }
 
