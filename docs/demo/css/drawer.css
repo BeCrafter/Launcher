@@ -47,38 +47,42 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px 10px;
+  padding: 13px 16px 11px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  background: linear-gradient(135deg, rgba(124, 106, 244, 0.1), rgba(96, 165, 250, 0.06));
+  background: transparent; /* 简洁：不作独立底色，依靠分隔线界定 */
   gap: 10px;
 }
 
 .drawer-title-area {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
+  min-width: 0;
 }
 
+/* 图标依托：小尺寸圆角浅底（主题化 alpha），无渐变/描边/投影 */
 .drawer-title-icon {
   width: 34px;
   height: 34px;
   border-radius: 10px;
-  background: linear-gradient(135deg, rgba(124, 106, 244, 0.35), var(--blue));
+  background: rgba(124, 106, 244, 0.14); /* 深色主题：淡紫底 */
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--accent2);
   flex-shrink: 0;
-  box-shadow: 0 4px 14px rgba(124, 106, 244, 0.25);
+}
+
+body.light-theme .drawer-title-icon {
+  background: rgba(124, 106, 244, 0.10); /* 浅色主题：更淡的紫底 */
 }
 
 .drawer-title-main {
-  font-size: 13.5px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text);
-  font-family: 'SF Mono', Menlo, monospace;
   line-height: 1.3;
 }
 
@@ -86,6 +90,10 @@
   font-size: 10.5px;
   color: var(--dim);
   margin-top: 2px;
+  font-family: 'SF Mono', Menlo, monospace; /* 等宽留给路径/标识类副标题 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .drawer-hdr-right {

@@ -290,6 +290,11 @@ body {
   color: var(--red);
 }
 
+.tag.dim {
+  background: var(--hover);
+  color: var(--dim);
+}
+
 .tag.yellow {
   background: var(--wash-yellow);
   color: var(--yellow);

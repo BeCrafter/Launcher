@@ -569,6 +569,94 @@
   color: var(--muted);
 }
 
+/* ── 端口服务卡片（响应式网格，与 agent/cron 卡片同族；修复宽行空隙与右下空白）── */
+#svcList {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 10px;
+  align-items: start;
+  /* 容器撑满视口时禁止拉伸行高（默认 stretch 会把剩余高度均分进行间，形成大空隙） */
+  align-content: start;
+}
+
+@media(max-width:860px) {
+  #svcList {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media(max-width:560px) {
+  #svcList {
+    grid-template-columns: 1fr;
+  }
+}
+
+.svc-col-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 13px;
+}
+
+.svc-col-card:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
+
+.svc-r1 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.svc-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svc-port {
+  color: var(--cyan);
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.svc-cmd {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.svc-meta-left {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
 /* 文档页 */
 .doc-h1 {
   font-family: "Noto Serif SC", serif;
