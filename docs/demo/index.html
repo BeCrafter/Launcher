@@ -1409,22 +1409,29 @@
       </div>
     </div>
 
-    <!-- 模态框：Cron 任务日志（console 风格查看） -->
-    <div class="modal-mask" id="cronLogModal" onclick="closeModalBg(event,'cronLogModal')">
-      <div class="modal-box" style="width:700px;">
-        <div class="modal-hdr">
-          <span class="modal-title"><i class="fa-solid fa-scroll" style="color:var(--cyan);margin-right:7px;"></i><span data-i18n="cron.log.title">任务日志</span></span>
-          <span style="font-size:10.5px;color:var(--dim);font-family:monospace;flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 10px;" id="cronLogPath"></span>
-          <button class="modal-close" onclick="closeModal('cronLogModal')"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="modal-body" style="padding:0;overflow:hidden;">
-          <div class="log-section-body" style="height:420px;flex:none;">
-            <div class="log-section-content" id="cronLogBody"></div>
+    <!-- 侧拉窗：Cron 任务日志（console 风格，右侧抽屉形态，与 Agent 日志一致） -->
+    <div class="edit-drawer-mask" id="cronLogDrawer" onclick="closeDrawerMask(event)">
+      <div class="edit-drawer">
+        <div class="drawer-hdr">
+          <div class="drawer-title-area">
+            <div class="drawer-title-icon"><i class="fa-solid fa-scroll" style="color:var(--cyan);"></i></div>
+            <div style="min-width:0;">
+              <div class="drawer-title-main" data-i18n="cron.log.title">任务日志</div>
+              <div class="drawer-title-sub" id="cronLogPath" style="font-family:monospace;"></div>
+            </div>
+          </div>
+          <div class="drawer-hdr-right">
+            <button class="modal-close" onclick="closeModal('cronLogDrawer')" data-i18n-title="common.close"><i class="fa-solid fa-xmark"></i></button>
           </div>
         </div>
-        <div class="modal-footer">
-          <span style="font-size:10.5px;color:var(--dim);margin-right:auto;"><i class="fa-solid fa-clock-rotate-left" style="margin-right:4px;"></i><span data-i18n="cron.log.retainHint">日志保留 3 天，超出自动清理</span></span>
-          <button class="d-btn" onclick="closeModal('cronLogModal')"><span data-i18n="common.close">关闭</span></button>
+        <div class="drawer-body">
+          <div class="log-section-body" style="flex:1;min-height:0;">
+            <div class="log-section-content" id="cronLogBody"></div>
+          </div>
+          <div class="xml-section-bottom">
+            <span style="font-size:10.5px;color:var(--dim);"><i class="fa-solid fa-clock-rotate-left" style="margin-right:4px;"></i><span data-i18n="cron.log.retainHint">日志保留 3 天，超出自动清理</span></span>
+            <button class="d-btn" onclick="closeModal('cronLogDrawer')"><span data-i18n="common.close">关闭</span></button>
+          </div>
         </div>
       </div>
     </div>

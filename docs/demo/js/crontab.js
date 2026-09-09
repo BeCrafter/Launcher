@@ -339,7 +339,7 @@ function cronLogLines(j) {
   ];
 }
 
-// 查看日志（console 弹窗）
+// 查看日志（右侧抽屉，与 Agent 日志 tab 同形态）
 function showCronLog(id) {
   const j = cronData.find(x => x.id === id);
   if (!j) return;
@@ -348,5 +348,5 @@ function showCronLog(id) {
   body.innerHTML = cronLogLines(j).map(([ts, type, text]) =>
     `<div class="log-line"><span class="log-ts">${ts}</span><span class="log-txt ${type}">${text}</span></div>`
   ).join('');
-  openModal('cronLogModal');
+  openModal('cronLogDrawer');
 }

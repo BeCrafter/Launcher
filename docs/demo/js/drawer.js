@@ -34,7 +34,10 @@ function openEditFloat(id, e) {
 }
 
 function closeDrawerMask(e) {
-  if (e && e.target.id === 'editAgentFloat') closeModal('editAgentFloat');
+  // 通用：点击任意 edit-drawer-mask 遮罩关闭对应抽屉（Agent 编辑 / Cron 日志等）
+  if (e && e.target.classList && e.target.classList.contains('edit-drawer-mask')) {
+    closeModal(e.target.id);
+  }
 }
 function updateOpsBar() {
   const s = drawerAgentState;

@@ -90,6 +90,22 @@ function agentCard(o) {
   </div>`;
 }
 
+// 端口服务卡片（与 agent-col-card / cron-col-card 同族：标题行 / 命令 / meta+操作行）
+function svcCard(o) {
+  return `<div class="svc-col-card"${o.id ? ` id="${o.id}"` : ''}>
+    <div class="svc-r1">
+      ${o.statusHtml || statusDot('running')}
+      <span class="svc-name" title="${o.name}">${o.name}</span>
+      <span class="svc-port">:${o.port}</span>
+    </div>
+    <div class="svc-cmd" title="${o.cmd}">${o.cmd}</div>
+    <div class="svc-meta">
+      <div class="svc-meta-left" style="flex:1;min-width:0;overflow:hidden;">${o.metaHtml}</div>
+      <div class="row-actions" onclick="event.stopPropagation()">${o.actionsHtml}</div>
+    </div>
+  </div>`;
+}
+
 // 空状态
 function emptyState(icon, text) {
   return `<div class="empty-state"><i class="${icon}"></i><p>${text}</p></div>`;

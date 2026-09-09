@@ -138,7 +138,10 @@ const MOCK_DATA = {
     pid: 7821,
     cmd: 'node .next/server',
     type: 'node',
-    status: 'running'
+    status: 'running',
+    addr: '127.0.0.1',
+    proto: 'TCP',
+    uptime: '3d 2h'
   },
   {
     id: 's2',
@@ -148,7 +151,10 @@ const MOCK_DATA = {
     cmd: 'nginx: worker',
     type: 'brew',
     status: 'running',
-    isBrew: true
+    isBrew: true,
+    addr: '0.0.0.0',
+    proto: 'TCP',
+    uptime: '5d 4h'
   },
   {
     id: 's3',
@@ -158,7 +164,10 @@ const MOCK_DATA = {
     cmd: 'postgres -D /usr/local/var/postgres',
     type: 'brew',
     status: 'running',
-    isBrew: true
+    isBrew: true,
+    addr: '127.0.0.1',
+    proto: 'TCP',
+    uptime: '42d'
   },
   {
     id: 's4',
@@ -167,7 +176,10 @@ const MOCK_DATA = {
     pid: 5001,
     cmd: 'redis-server 127.0.0.1:6379',
     type: 'brew',
-    status: 'running'
+    status: 'running',
+    addr: '127.0.0.1',
+    proto: 'TCP',
+    uptime: '12h'
   },
   {
     id: 's5',
@@ -176,7 +188,10 @@ const MOCK_DATA = {
     pid: 9100,
     cmd: 'ngrok http 3000',
     type: 'process',
-    status: 'running'
+    status: 'running',
+    addr: '0.0.0.0',
+    proto: 'TCP',
+    uptime: '1h 20m'
   },
 ],
   aiAgents: [{
