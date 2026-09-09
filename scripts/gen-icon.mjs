@@ -518,6 +518,4 @@ for (const v of VARIANTS) {
   writeFileSync(iconPng, appPng(v, 512))
   makeIcns(v, iconPng, join(dir, 'icon.icns'))
 }
-writeFileSync(join(demoDir, 'logo-dark.svg'), makeSvg('power', '#ffffff', '#9d8cff', '#7c6af4', '#4b3ec7'))
-writeFileSync(join(demoDir, 'logo-light.svg'), makeSvg('power', '#1e1e2e', '#a99cff', '#7c6af4', '#5b4dd6'))
-console.log(`written ${VARIANTS.length} variants (tray 16/32 + icon 512 + icns) + demo svg x2`)
+console.log(`written ${VARIANTS.length} variants (tray 16/32 + icon 512 + icns)`)
