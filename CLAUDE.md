@@ -18,7 +18,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - 应用编译（构建 + 端到端架构验证）：`npm run build:app`（默认本机架构）/ `build:app:arm64` / `build:app:x64` / `build:app:universal` / `build:app:all`（arm64+x64 依次）
   - `scripts/build-app.mjs`：electron-vite build → electron-builder 打包（dist/，dir 目标）→ 验证：lipo 架构断言（主 bin + Electron Framework）+ 实际启动产物按进程二进制架构断言；主机无法原生运行的架构（如 Intel 机上 arm64）自动 SKIP 运行验证并注明
   - 打包图标取当前激活 Logo 款（resources/logo/<variant>/icon.icns → build/icon.icns）；electron 二进制走 ELECTRON_MIRROR（env > .npmrc > npmmirror 兜底）；未配置开发者证书时 electron-builder 跳过代码签名（ad-hoc 行为，正式分发需补签名）
-- 重新生成品牌图标：`npm run icon`（`scripts/gen-icon.mjs` 零依赖，输出三款变体 power/rocket/arrow × {菜单栏模板图 16/32、应用图标 512、icns} → `resources/logo/<variant>/`；同时产出 demo 双主题 `docs/demo/logo-dark.svg` / `logo-light.svg`）
+- 重新生成品牌图标：`npm run icon`（`scripts/gen-icon.mjs` 零依赖，输出三款变体 power/rocket/arrow × {菜单栏模板图 16/32、应用图标 512、icns} → `resources/logo/<variant>/`）；demo 双主题 logo 由 `scripts/gen-demo-logos.mjs` 产出（`node scripts/gen-demo-logos.mjs`，python3+PIL+numpy：884 高清源 `resources/app-logo-src/app-icon.png` 相映射重着色（青→页面 accent 紫、BFS 白底融入、描边主题化）+ 程序超采样圆角贴纸 → `docs/demo/logo-dark.png`（深底 #1d1d2e）/ `logo-light.png`（白底），1024×1024 高清）
 
 **演示页（docs/demo/）**：
 - 打开演示页：直接双击 `docs/demo/index.html`（file:// 协议可用，无需服务器；不要在此引入 fetch/ES 模块，否则 file:// 下会失效）
