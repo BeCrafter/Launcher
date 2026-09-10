@@ -7,7 +7,8 @@ files:
   - out/**
   - package.json
 extraResources:
-  - from: resources/logo
+  # 仅打包 v2 星际火箭（项目唯一图标）；v1 rocketOrbit 仅作仓库备份不进包
+  - from: resources/logo/rocketOrbit2
     to: logo
 asar: true
 mac:

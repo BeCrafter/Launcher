@@ -54,28 +54,15 @@ const sh = (cmd, args, opts = {}) => {
   return execFileSync(cmd, args, { stdio: 'inherit', cwd: ROOT, ...opts })
 }
 
-// ── 0. 前置：打包图标（当前激活 Logo 款的 icon.png → 现场用 iconutil 生成标准 icns，
-//        不信任磁盘 icns 文件状态，杜绝陈旧/损坏 icns 进入打包）──
+// ── 0. 前置：打包图标（v2 星际火箭为项目唯一图标，浅色版作静态应用图标，
+//        现场用 iconutil 生成标准 icns，不信任磁盘 icns 文件状态，杜绝陈旧/损坏 icns 进入打包）──
 function pickLogo() {
-  const settingsPath = join(
-    process.env.HOME,
-    'Library/Application Support/becrafter-launcher/settings.json'
-  )
-  let variant = 'rocketOrbit'
-  if (existsSync(settingsPath)) {
-    try {
-      variant = JSON.parse(readFileSync(settingsPath, 'utf8')).logoVariant ?? variant
-    } catch {}
-  }
   // 打包静态应用图标：紫调插画款固定用浅色版（icon-light.png，Finder/Dock 默认外观）
-  // 几何变体无浅色版 → 回退 icon.png
-  const dir = join(ROOT, `resources/logo/${variant}`)
-  const light = join(dir, 'icon-light.png')
-  const pngPath = existsSync(light) ? light : join(dir, 'icon.png')
+  const pngPath = join(ROOT, 'resources/logo/rocketOrbit2/icon-light.png')
   if (!existsSync(pngPath)) {
-    throw new Error(`未找到图标资源：${pngPath}（先跑 node scripts/gen-custom-icon.mjs 或 npm run icon）`)
+    throw new Error(`未找到图标资源：${pngPath}（先跑 npm run icon:theme）`)
   }
-  return { variant, pngPath }
+  return { variant: 'rocketOrbit2', pngPath }
 }
 
 const ICONSET_REPS = [
@@ -227,16 +214,15 @@ async function main() {
     }
     const expected = LIPO_ARCH[arch]
     const staticOk = assertStaticArch(appPath, expected)
-    // 打包资源完整性：logo 图标集必须随 extraResources 进入 bundle（Tray/Dock 依赖）
-    const resBase = join(appPath, 'Contents/Resources/logo', variant)
+    // 打包资源完整性：v2 图标集必须随 extraResources 进入 bundle（Tray/Dock 依赖）
+    const resBase = join(appPath, 'Contents/Resources/logo')
     const resourcesOk =
-      existsSync(join(resBase, 'icon.png')) && existsSync(join(resBase, 'iconTemplate.png'))
-    // 紫调插画变体（rocketOrbit2）需含主题双图（Dock 深浅切换依赖）；几何变体无此要求
-    const themedOk =
-      variant !== 'rocketOrbit2' ||
-      (existsSync(join(resBase, 'icon-dark.png')) && existsSync(join(resBase, 'icon-light.png')))
+      existsSync(join(resBase, 'icon.png')) &&
+      existsSync(join(resBase, 'iconTemplate.png')) &&
+      existsSync(join(resBase, 'icon-dark.png')) &&
+      existsSync(join(resBase, 'icon-light.png'))
     console.log(
-      `  打包资源：Contents/Resources/logo/${variant}（icon + tray template + theme icons）→ ${resourcesOk && themedOk ? 'PASS' : 'FAIL'}`
+      `  打包资源：Contents/Resources/logo/（icon + tray template + theme icons）→ ${resourcesOk ? 'PASS' : 'FAIL'}`
     )
     // bundle 图标完整性：iconutil 解出 ≥8 尺寸表示（手写/损坏 icns 只有 3 个）
     const iconOk = assertBundleIcon(appPath)
