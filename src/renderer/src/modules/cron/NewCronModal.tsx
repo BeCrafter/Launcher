@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html #newCronModal + modals.js createCronJob @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 新建 Cron 模态(demo newCronModal + createCronJob:预设 chips + 表达式实时预览 + 提权分流)
 import { useState } from 'react'
 import { useT } from '../../hooks/useT'

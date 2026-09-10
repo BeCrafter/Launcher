@@ -19,7 +19,7 @@ BeCrafter/Launcher 是基于开源项目 [Sean10000/LaunchManager](https://githu
 
 当前仓库状态：`docs/demo/` 高保真原型（含模块注册表 config.js、UI 原语 components.js、自检 check.mjs）+ `docs/design/ai-capability.md`（已批准的 AI 方案）。demo 非终态，后续会继续演进，实现时以 demo 当前版为视觉/交互基准。
 
-**已确认决策**：① 提权沿用 osascript（非沙盒）② 单应用双形态（Dock+Tray，「菜单栏常驻」开关）③ 分阶段逐项迁移验证 ④ 暂不管分发/签名 ⑤ 渲染层 React 18 ⑥ 阶段 1 就上 CodeMirror 6（XML 高亮/行号，编辑体验卖点）。
+**已确认决策**：① 提权沿用 osascript（非沙盒）② 单应用双形态（Dock+Tray，「菜单栏常驻」开关）③ 分阶段逐项迁移验证 ④ 暂不管分发/签名 ⑤ 渲染层 React 19 ⑥ 阶段 1 就上 CodeMirror 6（XML 高亮/行号，编辑体验卖点）。
 
 **提权模态（demo ↔ 真机映射，2026-09 确认，勿遗忘）**：真实实现走 **macOS 系统原生授权框**——`osascript -e 'do shell script "<cmd>" with administrator privileges'`，由 SecurityAgent 弹密码框，**应用进程永不接触密码**（不进内存/日志/shell 历史，对齐开源 PrivilegeService）。demo 的 `elevationModal`（elevation.js）只是系统密码框的**前端模拟**（标题/命令展示/取消-128/缓存窗口语义一一对应）；落地时**去掉密码输入框**（系统框接管密码），应用层保留「执行前说明 + 待执行命令透明展示 + 危险确认」，osascript 返回 -128 → 主进程捕获 → 与 demo 一致反馈「已取消授权」；凭证缓存窗口（authCacheMin）为应用层逻辑，照常保留。阶段 1 手测以「AppleScript 密码框」为准（见「验证」节）。
 
@@ -69,7 +69,7 @@ BeCrafter/Launcher 是基于开源项目 [Sean10000/LaunchManager](https://githu
 ## 架构
 
 ```
-Launcher/（electron-vite + TS + React 18）
+Launcher/（electron-vite + TS + React 19）
 ├── src/
 │   ├── main/
 │   │   ├── index.ts            # 窗口 + Tray 单实例双形态（菜单栏常驻开关）
@@ -80,7 +80,7 @@ Launcher/（electron-vite + TS + React 18）
 │   │   ├── mcp/                # server.ts + stdio 传输（launcher-mcp 独立入口）
 │   │   └── settings/           # 设置持久化（electron-store 或 JSON，暂替代 UserDefaults/localStorage）
 │   ├── preload/                # contextBridge 白名单 IPC API
-│   └── renderer/               # React 18
+│   └── renderer/               # React 19
 │       ├── components/         # 由 components.js 迁移：AgentCard/GroupBlock/RowCard/StatusDot/TagChip/ActBtn
 │       ├── modules/            # Agents（抽屉 4 tab + CodeMirror）/ Cron / Services / Ai / Settings
 │       ├── state/              # zustand：主进程快照投影 + IPC 事件订阅

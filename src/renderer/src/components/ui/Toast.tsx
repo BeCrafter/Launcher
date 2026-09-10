@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/utils.js showToast + index.html #toast @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 全局 Toast(单条;色值映射表逐字保留自 demo utils.js showToast)
 import { useUiStore } from '../../state/ui-store'
 

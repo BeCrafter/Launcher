@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/drawer.js sci* + index.html SCI 面板 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // StartCalendarInterval 规则构建器(demo sciAddEntry/sciUpdatePreview/sciInsertPreset + 内联样式逐字)
 // 五列输入(分/时/日/星期/月份,省略 = 通配)+ 每规则 preview 行;聚合 preview 是 demo 死代码,不移植
 import { useT } from '../../hooks/useT'

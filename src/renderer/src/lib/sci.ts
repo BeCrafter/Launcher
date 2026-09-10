@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/drawer.js sciDescribe/sciPlistFragment @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // StartCalendarInterval 规则构建纯函数(逐行为移植 drawer.js sciDescribe/sciPlistFragment)
 import { fmt } from '../i18n'
 import type { Language } from '@shared/settings'

@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html #editAgentFloat + drawer.js(头部/ops/switchDrawerTab) @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Agent 编辑抽屉(demo #editAgentFloat/#editDrawer:头部状态 chip + ops bar 5 态 + 4 tab + 遮罩关闭)
 import { useT } from '../../hooks/useT'
 import { Modal } from '../../components/Modal'
