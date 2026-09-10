@@ -137,7 +137,7 @@ function CrontabActions(): React.JSX.Element {
         <i className="fa-solid fa-arrows-rotate" />
         <span>{t('topbar.refresh')}</span>
       </button>
-      <button className="topbar-btn accent" type="button">
+      <button className="topbar-btn accent" type="button" onClick={() => useUiStore.getState().openOverlay('newCronModal')}>
         <i className="fa-solid fa-plus" />
         <span>{t('topbar.newCron')}</span>
       </button>
