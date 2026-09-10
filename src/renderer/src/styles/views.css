@@ -1,0 +1,896 @@
+/* ported-from: docs/demo/css/views.css @ 06ff9ba — 逐字节移植,勿就地修改(docs/design/demo-react-migration-map.md) */
+/* ============================================================
+   Launcher demo — 样式文件（从 index.html 内联 <style> 拆分）
+   说明：与重构前内联样式完全一致，仅按页面结构归入对应文件
+   ============================================================ */
+
+/* ── 过滤chip ── */
+.filter-bar {
+  padding: 10px 18px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.2s;
+  background: none;
+  font-family: inherit;
+}
+
+.chip:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}
+
+.chip.active {
+  background: var(--wash-accent);
+  border-color: var(--accent);
+  color: var(--accent2);
+}
+
+.chip.brew.active {
+  background: var(--wash-brew);
+  border-color: var(--brew);
+  color: var(--brew);
+}
+
+.chip.user.active {
+  background: var(--wash-blue);
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.chip.sys.active {
+  background: var(--wash-yellow);
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+.chip.daemon.active {
+  background: var(--wash-red);
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* ── 列表容器 ── */
+.list-container {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-y: auto;
+  /* 为底部固定状态栏预留空间，避免最后一项被遮挡 */
+  padding: 12px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scroll-padding-bottom: 64px;
+}
+
+#agentList {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+/* ── 分组块 ── */
+.group-block {
+  width: 100%;
+  margin-bottom: 10px;
+}
+
+.group-block-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 4px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.group-block-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.group-block-count {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.group-block-chevron {
+  font-size: 10px;
+  color: var(--dim);
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+
+.group-block-chevron.open {
+  transform: rotate(90deg);
+}
+
+.group-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 10px;
+  width: 100%;
+}
+
+@media(max-width:780px) {
+  .group-card-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media(max-width:520px) {
+  .group-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Agent 卡片 ── */
+.agent-col-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  transition: all 0.2s;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-col-card:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
+
+.agent-col-card.selected {
+  border-color: rgba(124, 106, 244, 0.5);
+  background: rgba(124, 106, 244, 0.07);
+  box-shadow: 0 0 0 1px rgba(124, 106, 244, 0.2), 0 8px 28px rgba(0, 0, 0, 0.25);
+}
+
+.acc-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 13px 8px;
+  gap: 8px;
+}
+
+.acc-status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.acc-body {
+  padding: 0 13px 10px;
+  flex: 1;
+}
+
+.acc-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: 'SF Mono', Menlo, monospace;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 4px;
+}
+
+.acc-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 34px;
+}
+
+.acc-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 13px 10px;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  gap: 6px;
+}
+
+.acc-meta-left {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.acc-meta-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+.acc-meta-stat i {
+  font-size: 9px;
+}
+
+.acc-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* 展开行：hover 卡片即自动展开详情（移出收起，鼠标在面板内连续） */
+.row-expand {
+  display: none;
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--hover);
+}
+
+#cronGrid .cron-cell:hover .row-expand {
+  display: block;
+}
+
+.row-expand.open {
+  display: block;
+}
+
+.row-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--dim);
+  transition: transform 0.2s;
+}
+
+.row-chevron.open {
+  transform: rotate(90deg);
+}
+
+/* 无效 plist */
+.invalid-plist-row {
+  background: var(--wash-red);
+  border: 1px solid var(--red);
+  border-radius: 9px;
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.invalid-icon {
+  color: var(--red);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.invalid-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.invalid-path {
+  font-size: 11px;
+  color: var(--red);
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.invalid-sub {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+
+/* ── Cron 卡片（网格布局，与 agent-col-card 视觉同族）── */
+.cron-col-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.cron-col-card:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+  /* 不随 hover 上浮：保持与展开详情面板无缝衔接（整体感） */
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
+
+/* R1：状态点 | 命令（主信息，mono 截断）| 启用开关（唯一状态控件） */
+.cron-r1 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.cron-r1 .cron-cmd {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cron-r1 .toggle {
+  flex-shrink: 0;
+}
+
+/* R2：描述一行截断 */
+.cron-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* R3：人读（价值信息，绿色）+ 用户/来源 tags（同行） */
+.cron-repeat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cron-repeat-text {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.cron-repeat-tags {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* R4：表达式（灰色辅助小 mono，左）+ 操作按钮组（右，独立行不挤压内容） */
+.cron-r4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.cron-r4 .cron-expr {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  color: var(--dim);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cron-r4 .row-actions {
+  flex-shrink: 0;
+  gap: 4px;
+}
+
+.cron-r4 .act-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.cron-r4 .act-btn i {
+  font-size: 10px;
+}
+
+/* 列单元：卡片与它的详情/编辑面板（面板为浮层，宽度跟随所属卡片列宽） */
+.cron-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  position: relative;
+}
+
+#cronGrid {
+  align-items: start;
+  /* 固定两列等分：自然平铺满窗口、无像素依赖；窄视口降单列 */
+  grid-template-columns: 1fr 1fr;
+}
+
+@media(max-width:860px) {
+  #cronGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 浮层面板：紧贴所属卡片下缘向下展开（与卡片拼合为整体风格），覆盖下方内容（不撑开网格） */
+#cronGrid .row-expand,
+#cronGrid .cron-edit-expand {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  border-radius: 0 0 11px 11px;
+  border: 1px solid var(--border2);
+  border-top: 1px solid var(--border);
+  background: var(--panel-weak); /* 弱化底色：略弱于上方 hover 卡片（双主题同方向），重点保持在卡片 */
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* 面板展开时卡片底部与面板拼接融合（去掉下圆角，视觉连体） */
+#cronGrid .cron-cell:has(.row-expand.open) .cron-col-card,
+#cronGrid .cron-cell:has(.cron-edit-expand.open) .cron-col-card,
+#cronGrid .cron-cell:hover .cron-col-card {
+  /* hover 自动展开详情时同样直角衔接（消除底部圆角缝隙） */
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+/* 拼接态下卡片不可再上浮，避免与面板裂开 */
+#cronGrid .cron-cell:has(.row-expand.open) .cron-col-card:hover,
+#cronGrid .cron-cell:has(.cron-edit-expand.open) .cron-col-card:hover,
+#cronGrid .cron-cell:hover .cron-col-card:hover {
+  transform: none;
+}
+
+#cronGrid .expand-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+/* Cron 内联编辑 */
+.cron-edit-expand {
+  display: none;
+  background: rgba(124, 106, 244, 0.04);
+  border-top: 1px solid rgba(124, 106, 244, 0.2);
+  padding: 16px 16px 14px;
+  animation: slideDown 0.22s ease;
+}
+
+.cron-edit-expand.open {
+  display: block;
+}
+
+.cron-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+/* 网格列内输入框必须占满列宽，否则 input 固有宽度会撑破 1fr 轨道导致溢出（如新建 Cron 弹窗五列布局） */
+.cron-edit-grid .f-input {
+  width: 100%;
+  min-width: 0;
+}
+
+@media(max-width:600px) {
+  .cron-edit-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.cron-preset-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.cron-preset-chip {
+  font-size: 10.5px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.18s;
+  font-family: inherit;
+}
+
+.cron-preset-chip:hover,
+.cron-preset-chip.active {
+  background: rgba(124, 106, 244, 0.2);
+  border-color: rgba(124, 106, 244, 0.45);
+  color: var(--accent2);
+}
+
+.cron-expr-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--wash-cyan);
+  border: 1px solid var(--cyan);
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+.cron-expr-preview code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+  color: var(--cyan);
+  flex: 1;
+  letter-spacing: 0.05em;
+}
+
+.cron-expr-desc {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── 端口服务卡片（过滤 chips + 类型分组；组内响应式网格，与 agent/cron 卡片同族）── */
+#svcList .group-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+}
+
+@media(max-width:860px) {
+  #svcList .group-card-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ── 定时任务卡片：分组网格最多两列（卡片内容较宽，多列会挤压内部样式）── */
+#cronList .group-card-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media(max-width:520px) {
+  #cronList .group-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media(max-width:560px) {
+  #svcList .group-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.svc-col-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 13px;
+}
+
+.svc-col-card:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
+
+.svc-r1 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.svc-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svc-port {
+  color: var(--cyan);
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.svc-cmd {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.svc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.svc-meta-left {
+  display: flex;
+  gap: 4px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* 文档页 */
+.doc-h1 {
+  font-family: "Noto Serif SC", serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.doc-lead {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.7;
+  margin-bottom: 20px;
+}
+
+.doc-h2 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.doc-h2 i {
+  font-size: 12px;
+  color: var(--accent2);
+}
+
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 16px 0;
+}
+
+.ov-card {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+}
+
+.ov-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--card-top, linear-gradient(90deg, #7c6af4, #60a5fa));
+}
+
+.ov-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border2);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.3);
+}
+
+.ov-card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+
+.ov-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+
+.ov-card-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.phase-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.phase-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  transition: border-color 0.2s;
+  cursor: pointer;
+}
+
+.phase-item:hover {
+  border-color: var(--border2);
+}
+
+.phase-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.phase-content {
+  flex: 1;
+}
+
+.phase-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.phase-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.phase-tags {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
+.mermaid-wrap {
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 22px;
+  overflow-x: auto;
+}
+
+.mermaid-wrap .mermaid {
+  display: flex;
+  justify-content: center;
+}
+
+/* plist 键表 */
+.key-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.key-table th {
+  text-align: left;
+  padding: 6px 10px;
+  background: var(--hover);
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.key-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  vertical-align: top;
+}
+
+.key-table tr:last-child td {
+  border-bottom: none;
+}
+
+.key-table td:first-child {
+  font-family: monospace;
+  color: var(--cyan);
+  white-space: nowrap;
+}
+
+.key-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 600;
+}
+
+.key-status.done {
+  background: rgba(62, 207, 142, 0.13);
+  color: var(--green);
+}
+
+.key-status.new {
+  background: rgba(238, 192, 77, 0.14);
+  color: var(--yellow);
+}
+
+.key-status.adv {
+  background: rgba(69, 203, 224, 0.12);
+  color: var(--cyan);
+}
+
+
+@media(max-width:560px) {
+  .list-container {
+    /* 移动端状态栏高度为 48px，同时预留阴影与安全间距 */
+    padding-bottom: 76px;
+    scroll-padding-bottom: 76px;
+  }
+}

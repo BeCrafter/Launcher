@@ -1,14 +1,13 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, nativeTheme } from 'electron'
+import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { APP_NAME } from '../shared/constants'
-
-export const LOGO_VARIANTS = ['rocketOrbit', 'rocketOrbit2'] as const
-export type LogoVariant = (typeof LOGO_VARIANTS)[number]
+import { createSettingsStore, defaultConfigPath, type SettingsStore } from './settings/store'
+import { applyDockIcon, applySettings } from './settings/apply'
+import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-let activeVariant: LogoVariant = 'rocketOrbit2'
+let store: SettingsStore
 
 // 单实例锁：重复启动时唤起既有窗口
 const gotLock = app.requestSingleInstanceLock()
@@ -23,38 +22,19 @@ app.on('second-instance', () => {
   }
 })
 
-// ── 设置持久化（userData/settings.json，阶段 5 并入正式 settings 模块）──
-function settingsFile(): string {
-  return join(app.getPath('userData'), 'settings.json')
-}
-
-function loadSettings(): { logoVariant?: string } {
-  try {
-    return JSON.parse(readFileSync(settingsFile(), 'utf8'))
-  } catch {
-    return {}
-  }
-}
-
-function saveSettings(patch: Record<string, unknown>): void {
-  const current = loadSettings()
-  writeFileSync(settingsFile(), JSON.stringify({ ...current, ...patch }, null, 2))
-}
-
-function logoDir(v: LogoVariant): string {
+function logoDir(): string {
   // dev：项目根 resources/；打包后：extraResources 释放到 Contents/Resources/logo
   const base = app.isPackaged
     ? join(process.resourcesPath, 'logo')
     : join(__dirname, '../../resources/logo')
-  return join(base, v)
+  return base
 }
 
-// ── Tray（图标 = 当前 variant 的模板图，系统自动适配明暗菜单栏）──
+// ── Tray（图标 = v2 星际火箭模板图，系统自动适配明暗菜单栏）──
 function createTray(): void {
-  const iconPath = join(logoDir(activeVariant), 'iconTemplate.png')
-  const icon = nativeImage.createFromPath(iconPath)
+  if (tray) return
+  const icon = nativeImage.createFromPath(join(logoDir(), 'iconTemplate.png'))
   icon.setTemplateImage(true)
-  console.log(`[tray] path=${iconPath} empty=${icon.isEmpty()} size=${JSON.stringify(icon.getSize())}`)
   tray = new Tray(icon)
   tray.setToolTip(APP_NAME)
   tray.setContextMenu(
@@ -84,30 +64,15 @@ function createTray(): void {
   })
 }
 
-// ── Logo 应用：Tray 重建 + Dock 图标 ──
-// Dock 深浅主题：macOS 无原生自动切换，监听 nativeTheme（含「自动」跟随系统外观）
-// 按 shouldUseDarkColors 在 icon-dark/light.png 间轮换；变体无双图时回退 icon.png。
-function applyDockIcon(v: LogoVariant): void {
-  if (process.platform !== 'darwin') return
-  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  const themed = join(logoDir(v), `icon-${theme}.png`)
-  const iconPath = existsSync(themed) ? themed : join(logoDir(v), 'icon.png')
-  const icon = nativeImage.createFromPath(iconPath)
-  if (!icon.isEmpty()) {
-    app.dock?.setIcon(icon)
-    console.log(`[dock] icon set (${v}, ${theme}${themed === iconPath ? '' : ', fallback'})`)
-  }
-}
-
-function applyLogo(v: LogoVariant): void {
-  activeVariant = v
+function destroyTray(): void {
   tray?.destroy()
   tray = null
-  createTray()
-  applyDockIcon(v)
 }
 
-nativeTheme.on('updated', () => applyDockIcon(activeVariant))
+// 主进程主题(含系统外观变化)变化 → Dock 图标随明暗切换
+nativeTheme.on('updated', () => {
+  applyDockIcon({ logoDir, createTray, destroyTray })
+})
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -117,11 +82,28 @@ function createWindow(): void {
     minHeight: 450,
     show: false,
     title: APP_NAME,
+    backgroundColor: '#0e0e17', // 深色主题下避免白闪
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
-      sandbox: false
+      sandbox: false,
+      // 首帧前把初始设置带进 preload(免同步 IPC、无主题/语言闪烁)
+      additionalArguments: [`--launcher-initial-settings=${JSON.stringify(store.get())}`]
     }
+  })
+
+  // menubarOnly:关窗 → 隐藏常驻菜单栏;false 时关窗即退出
+  mainWindow.on('close', (e) => {
+    if (store.get().menubarOnly) {
+      e.preventDefault()
+      mainWindow?.hide()
+    }
+  })
+
+  // window.open / target=_blank 一律走系统浏览器(http/https 白名单)
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
   })
 
   // dev 可见性：渲染层控制台错误转发到主进程输出，启动后自检 root 是否渲染
@@ -134,9 +116,9 @@ function createWindow(): void {
       setTimeout(async () => {
         try {
           const result = (await mainWindow?.webContents.executeJavaScript(
-            "document.getElementById('root')?.childElementCount ?? -1"
-          )) as number
-          console.log(`[dev-check] root children: ${result}`)
+            "JSON.stringify({url: location.href.slice(0,80), root: !!document.getElementById('root'), rootKids: document.getElementById('root')?.childElementCount ?? -1, bodyKids: document.body.childElementCount, shell: !!document.querySelector('.app-shell')})"
+          )) as string
+          console.log(`[dev-check] ${result}`)
         } catch (err) {
           console.log('[dev-check] failed:', err)
         }
@@ -159,25 +141,14 @@ function createWindow(): void {
   }
 }
 
-// ── IPC：Logo 变体（dev 期预览切换，阶段 5 并入设置页）──
-ipcMain.handle('logo:list', () => [...LOGO_VARIANTS])
-ipcMain.handle('logo:get', () => activeVariant)
-ipcMain.handle('logo:set', (_e, v: string) => {
-  if (!LOGO_VARIANTS.includes(v as LogoVariant)) throw new Error(`unknown logo variant: ${v}`)
-  saveSettings({ logoVariant: v })
-  applyLogo(v as LogoVariant)
-  return v
-})
-
-ipcMain.handle('ping', () => 'pong')
-
 app.whenReady().then(() => {
-  const saved = loadSettings().logoVariant
-  if (saved && LOGO_VARIANTS.includes(saved as LogoVariant)) {
-    activeVariant = saved as LogoVariant
-  }
+  // 启动序:设置加载 → 副作用(themeSource/Tray/Dock/登录项) → 建窗 → IPC
+  store = createSettingsStore(defaultConfigPath(app.getPath('home')))
+  const refs = { logoDir, createTray, destroyTray }
+  applySettings(store.get(), refs)
+  registerIpc(store)
+
   createWindow()
-  applyLogo(activeVariant)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -186,4 +157,11 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+// menubarOnly 关窗只隐藏,退出须经 Tray 菜单 / Cmd+Q(默认 macOS 行为保留)
+app.on('before-quit', () => {
+  // 允许 quit 流程真正退出(绕过 close 的 hide 拦截)
+  mainWindow?.removeAllListeners('close')
+  mainWindow?.destroy()
 })

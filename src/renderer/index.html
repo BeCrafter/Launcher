@@ -6,9 +6,10 @@
     <title>Launcher</title>
   </head>
   <body style="margin:0">
-    <div id="boot-splash" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#14141f;z-index:9999;font-family:system-ui,sans-serif">
+    <!-- 启动过渡页:背景取 demo --bg;首帧由 main additionalArguments 的设置驱动,无主题闪烁 -->
+    <div id="boot-splash" style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#0e0e17;z-index:9999;font-family:system-ui,sans-serif">
       <div style="width:36px;height:36px;border-radius:50%;border:3px solid rgba(124,106,244,.25);border-top-color:#7c6af4;animation:launcher-spin .8s linear infinite"></div>
-      <div style="color:#8a8aa3;font-size:13px;letter-spacing:.02em">Launcher 启动中…</div>
+      <div style="color:#8e8ea8;font-size:13px;letter-spacing:.02em">Launcher 启动中…</div>
     </div>
     <style>
       @keyframes launcher-spin { to { transform: rotate(360deg) } }
