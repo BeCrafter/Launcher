@@ -2,7 +2,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, shell } from 
 import { join } from 'node:path'
 import { APP_NAME } from '../shared/constants'
 import { createSettingsStore, defaultConfigPath, type SettingsStore } from './settings/store'
-import { applyDockIcon, applySettings } from './settings/apply'
+import { applyDockIcon, applySettings, windowBgColor } from './settings/apply'
 import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
@@ -74,9 +74,13 @@ function destroyTray(): void {
   tray = null
 }
 
-// 主进程主题(含系统外观变化)变化 → Dock 图标随明暗切换
+// 副作用引用(全模块级依赖,whenReady 与 nativeTheme 监听共用)
+const refs = { logoDir, createTray, destroyTray, getWindow: () => mainWindow }
+
+// 主进程主题(应用内切换或系统外观变化)变化 → 窗口底色 + Dock 图标随明暗切换
 nativeTheme.on('updated', () => {
-  applyDockIcon({ logoDir, createTray, destroyTray })
+  applyDockIcon(refs)
+  mainWindow?.setBackgroundColor(windowBgColor())
 })
 
 function createWindow(): void {
@@ -87,7 +91,7 @@ function createWindow(): void {
     minHeight: 450,
     show: false,
     title: APP_NAME,
-    backgroundColor: '#0e0e17', // 深色主题下避免白闪
+    backgroundColor: windowBgColor(), // 依据生效主题(启动序里 themeSource 已先应用)
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
@@ -147,10 +151,11 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // 启动序:设置加载 → 副作用(themeSource/Tray/Dock/登录项) → 建窗 → IPC
+  // 启动序:设置加载 → 副作用(themeSource/Tray/Dock/登录项/窗口底色) → 建窗 → IPC
   store = createSettingsStore(defaultConfigPath(app.getPath('home')))
-  const refs = { logoDir, createTray, destroyTray }
   applySettings(store.get(), refs)
+  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用(themeSource/Tray/Dock/底色)
+  store.onChange((s) => applySettings(s, refs))
   registerIpc(store)
 
   createWindow()
