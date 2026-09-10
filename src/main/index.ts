@@ -1,14 +1,14 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } from 'electron'
+import { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, nativeTheme } from 'electron'
 import { join } from 'node:path'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { APP_NAME } from '../shared/constants'
 
-export const LOGO_VARIANTS = ['power', 'rocket', 'arrow', 'gauge', 'bolt', 'stack', 'bars', 'letterL', 'rocketOrbit'] as const
+export const LOGO_VARIANTS = ['rocketOrbit', 'rocketOrbit2'] as const
 export type LogoVariant = (typeof LOGO_VARIANTS)[number]
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-let activeVariant: LogoVariant = 'power'
+let activeVariant: LogoVariant = 'rocketOrbit2'
 
 // 单实例锁：重复启动时唤起既有窗口
 const gotLock = app.requestSingleInstanceLock()
@@ -85,19 +85,29 @@ function createTray(): void {
 }
 
 // ── Logo 应用：Tray 重建 + Dock 图标 ──
+// Dock 深浅主题：macOS 无原生自动切换，监听 nativeTheme（含「自动」跟随系统外观）
+// 按 shouldUseDarkColors 在 icon-dark/light.png 间轮换；变体无双图时回退 icon.png。
+function applyDockIcon(v: LogoVariant): void {
+  if (process.platform !== 'darwin') return
+  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  const themed = join(logoDir(v), `icon-${theme}.png`)
+  const iconPath = existsSync(themed) ? themed : join(logoDir(v), 'icon.png')
+  const icon = nativeImage.createFromPath(iconPath)
+  if (!icon.isEmpty()) {
+    app.dock?.setIcon(icon)
+    console.log(`[dock] icon set (${v}, ${theme}${themed === iconPath ? '' : ', fallback'})`)
+  }
+}
+
 function applyLogo(v: LogoVariant): void {
   activeVariant = v
   tray?.destroy()
   tray = null
   createTray()
-  if (process.platform === 'darwin') {
-    const icon = nativeImage.createFromPath(join(logoDir(v), 'icon.png'))
-    if (!icon.isEmpty()) {
-      app.dock?.setIcon(icon)
-      console.log(`[logo] dock icon set (${v})`)
-    }
-  }
+  applyDockIcon(v)
 }
+
+nativeTheme.on('updated', () => applyDockIcon(activeVariant))
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({

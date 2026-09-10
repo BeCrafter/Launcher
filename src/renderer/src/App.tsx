@@ -3,7 +3,7 @@ import Logo, { LOGO_VARIANTS, type LogoVariant } from './components/Logo'
 
 export default function App(): React.JSX.Element {
   const [pong, setPong] = useState('')
-  const [variant, setVariant] = useState<LogoVariant>('power')
+  const [variant, setVariant] = useState<LogoVariant>('rocketOrbit2')
   const [light, setLight] = useState(false)
 
   // 移除「启动中」过渡页（幂等；先于错误分支，避免遮盖错误信息）

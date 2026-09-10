@@ -12,9 +12,14 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-const SRC = '/Users/tester/Desktop/IMG_9736.jpg'
+// 源图固定放项目内（默认 app-icon.png；历史版本可用 --src 指定归档源，如 app-icon-v1-source.jpg）
+const srcArgPos = process.argv.indexOf('--src')
+const SRC = srcArgPos >= 0 ? process.argv[srcArgPos + 1] : join(ROOT, '../resources/app-logo-src/app-icon.png')
 const WORK = join(ROOT, '../resources/logo-custom')
-const OUT = join(ROOT, '../resources/logo/rocketOrbit')
+// 产出变体名可指定（不覆盖历史）：node scripts/gen-custom-icon.mjs --name rocketOrbit2
+const nameArgPos = process.argv.indexOf('--name')
+const VARIANT = (nameArgPos >= 0 && process.argv[nameArgPos + 1]) || 'rocketOrbit'
+const OUT = join(ROOT, `../resources/logo/${VARIANT}`)
 const ASSET = join(ROOT, '../src/renderer/src/assets')
 
 function sips(...args) {
@@ -209,10 +214,10 @@ console.log('[2] cutout ok (near-white & pale haze → transparent)')
 
 // ── 2.5 内容留白缩放 + 白底 squircle 合成（Dock/应用图标：macOS 规范留白，底座外透明）──
 const TRAY_SRC = rgba // 菜单栏模板仍用纯透明版（满幅 fit 逻辑在步骤 4）
-const CONTENT = fitResize(rgba, w, h, w, 0.12) // 插画内容缩至画布 ~76%，白边收窄成紧凑徽章
+const CONTENT = fitResize(rgba, w, h, w, 0.17) // 插画内容缩至画布 ~66%（对齐系统图标内部图形比例）
 const BASE_RGBA = Buffer.alloc(w * h * 4)
 {
-  const m = w * 0.06 // 满幅白底 squircle（与几何款 SVG 底座同网格，无透明边缘）
+  const m = w * 0.0975 // 贴纸 80.5% 画布（对齐 macOS 系统应用图标基准 824/1024），四角透明
   const a0 = w / 2 - m
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -261,26 +266,61 @@ sips('-z', '512', '512', join(WORK, 'base.png'), '--out', join(OUT, 'icon.png'))
 }
 console.log('[3] icon.png(512) + icon.icns (iconutil) ok')
 
-// ── 4. 菜单栏模板 16/32：内容包围盒满幅 + 纯黑白 alpha（用透明版，无白色底）──
-for (const [size, name] of [[16, 'iconTemplate.png'], [32, 'iconTemplate@2x.png']]) {
-  const fitted = fitResize(TRAY_SRC, w, h, size)
-  const out = Buffer.alloc(size * size * 4)
-  for (let i = 0; i < size * size; i++) {
-    out[i * 4] = 0
-    out[i * 4 + 1] = 0
-    out[i * 4 + 2] = 0
-    out[i * 4 + 3] = fitted[i * 4 + 3]
+// ── 4. 菜单栏模板 16/32：内容裁剪（无缩放）→ sips 高质量重采样 → 纯黑白 alpha ──
+//    自写双线性在 16px 会产生锯齿；sips（vImage Lanczos 类）边缘干净得多
+{
+  // 内容包围盒（alpha>16），外扩 3% 避免内容贴边
+  let bx0 = w
+  let by0 = h
+  let bx1 = -1
+  let by1 = -1
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (TRAY_SRC[(y * w + x) * 4 + 3] > 16) {
+        if (x < bx0) bx0 = x
+        if (x > bx1) bx1 = x
+        if (y < by0) by0 = y
+        if (y > by1) by1 = y
+      }
+    }
   }
-  writeFileSync(join(OUT, name), encodePng(size, size, out))
+  const padX = Math.max(1, Math.round((bx1 - bx0) * 0.03))
+  const padY = Math.max(1, Math.round((by1 - by0) * 0.03))
+  bx0 = Math.max(0, bx0 - padX)
+  by0 = Math.max(0, by0 - padY)
+  bx1 = Math.min(w - 1, bx1 + padX)
+  by1 = Math.min(h - 1, by1 + padY)
+  const cw = bx1 - bx0 + 1
+  const ch = by1 - by0 + 1
+  const crop = Buffer.alloc(cw * ch * 4)
+  for (let y = 0; y < ch; y++) {
+    TRAY_SRC.copy(crop, y * cw * 4, ((by0 + y) * w + bx0) * 4, ((by0 + y) * w + bx0 + cw) * 4)
+  }
+  const cropPng = join(WORK, `tray-crop-${VARIANT}.png`)
+  writeFileSync(cropPng, encodePng(cw, ch, crop))
+  for (const [size, name] of [[16, 'iconTemplate.png'], [32, 'iconTemplate@2x.png']]) {
+    const scaled = join(WORK, `tray-${size}-${VARIANT}.png`)
+    sips('-z', String(size), String(size), cropPng, '--out', scaled)
+    const d = decodePng(readFileSync(scaled))
+    const out = Buffer.alloc(size * size * 4)
+    for (let i = 0; i < size * size; i++) {
+      out[i * 4] = 0
+      out[i * 4 + 1] = 0
+      out[i * 4 + 2] = 0
+      out[i * 4 + 3] = d.pixels[i * d.bpp + 3] // alpha 即形状
+    }
+    writeFileSync(join(OUT, name), encodePng(size, size, out))
+  }
 }
-console.log('[4] tray template 16/32 ok (content-fit)')
+console.log('[4] tray template 16/32 ok (bbox crop + sips resample)')
 
 // ── 5. 渲染层预览 dataURL（128）──
 sips('-z', '128', '128', join(OUT, 'icon.png'), '--out', join(WORK, 'preview.png'))
 const preview = readFileSync(join(WORK, 'preview.png')).toString('base64')
+const exportName = VARIANT.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toUpperCase() // rocketOrbit2 → ROCKET_ORBIT2
 writeFileSync(
-  join(ASSET, 'rocketOrbit.ts'),
-  `// 自动生成：node scripts/gen-custom-icon.mjs（用户插画抠图版，128px dataURL）\nexport const ROCKET_ORBIT_DATAURL = 'data:image/png;base64,${preview}'\n`
+  join(ASSET, `${VARIANT}.ts`),
+  `// 自动生成：node scripts/gen-custom-icon.mjs --name ${VARIANT}（用户插画抠图版，128px dataURL）\nexport const ${exportName}_DATAURL = 'data:image/png;base64,${preview}'\n`
 )
 console.log(`[5] renderer asset ok (${preview.length} b64 chars)`)
 

@@ -2,6 +2,7 @@ node_modules/
 out/
 dist/
 build/
+resources/logo-custom/
 *.tsbuildinfo
 .DS_Store
 *.local
