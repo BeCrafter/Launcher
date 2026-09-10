@@ -4,6 +4,8 @@ import { useT } from '../hooks/useT'
 import { MODULES } from '../lib/modules'
 import { useUiStore } from '../state/ui-store'
 import { useSettingsStore } from '../state/settings-store'
+import { useAgentsStore } from '../state/agents-store'
+import { useDrawerStore } from '../state/drawer-store'
 import { showToast } from '../lib/utils'
 
 export function Topbar(): React.JSX.Element {
@@ -79,9 +81,23 @@ export function SearchBox({
 
 function AgentsActions(): React.JSX.Element {
   const t = useT()
+  // demo newAgentWithScope:label 前缀 + taskname 去重 → 草稿入抽屉
+  const newWithScope = async (scope: 'user' | 'system' | 'daemon'): Promise<void> => {
+    const prefix = useSettingsStore.getState().settings?.labelPrefix ?? 'com.user.'
+    let label = prefix + 'taskname'
+    let idx = 1
+    const agents = useAgentsStore.getState().agents
+    while (agents.some((a) => a.id === label)) label = prefix + 'taskname.' + idx++
+    const draft = await useAgentsStore.getState().createDraft(scope, label)
+    await useDrawerStore.getState().openDraft(draft)
+  }
   return (
     <>
-      <button className="topbar-btn" type="button">
+      <button
+        className="topbar-btn"
+        type="button"
+        onClick={() => useUiStore.getState().openOverlay('importModal')}
+      >
         <i className="fa-solid fa-file-import" />
         <span>{t('topbar.importConfig')}</span>
       </button>
@@ -91,15 +107,15 @@ function AgentsActions(): React.JSX.Element {
           <span>{t('topbar.newTask')}</span>
         </button>
         <div className="new-agent-menu" id="newAgentMenu">
-          <button className="new-agent-menu-item" type="button">
+          <button className="new-agent-menu-item" type="button" onClick={() => void newWithScope('user')}>
             <i className="fa-solid fa-user" />
             {t('modal.newAgent.scopeUser')}
           </button>
-          <button className="new-agent-menu-item" type="button">
+          <button className="new-agent-menu-item" type="button" onClick={() => void newWithScope('system')}>
             <i className="fa-solid fa-building" />
             {t('modal.newAgent.scopeSystem')}
           </button>
-          <button className="new-agent-menu-item" type="button">
+          <button className="new-agent-menu-item" type="button" onClick={() => void newWithScope('daemon')}>
             <i className="fa-solid fa-server" />
             {t('modal.newAgent.scopeDaemon')}
           </button>
