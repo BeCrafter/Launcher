@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/statusbar.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 底部状态栏(demo statusbar.js + launch-statusbar 渲染;几何由 useSidebarLayout 内联控制)
 // 配置数据 = lib/modules MODULES[mod] + 各视图 statusbar 构建器(此处接收构建好的模型)
 // summary/items 文案来自生成字典,含 <strong> 标签(demo 走 innerHTML),此处按 HTML 渲染保持视觉一致

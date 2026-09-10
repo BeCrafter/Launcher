@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html theme-cards-grid + settings.js setTheme @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 主题三卡选择器(demo #sp-general theme-cards-grid;preview 色块内联样式逐字保留)
 import { useT } from '../../hooks/useT'
 import { useSettingsStore } from '../../state/settings-store'

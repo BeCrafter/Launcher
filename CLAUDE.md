@@ -4,21 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 仓库现状
 
-BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab / 端口服务）的设计原型仓库，**重构进行中**：基于开源 [LaunchManager](https://github.com/Sean10000/LaunchManager)（Swift）迁移为 **TS + Electron** 实现（`src/`），核心目标是解决编辑体验问题并新增 AI 能力。仓库里目前只有 `docs/demo/` 下高保真可交互的 HTML 原型页 + `src/` 下的阶段 0 脚手架。
+BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab / 端口服务），基于开源 [LaunchManager](https://github.com/Sean10000/LaunchManager)（Swift）重构为 **TS + Electron** 实现（`src/`），核心目标是解决编辑体验问题并新增 AI 能力。
 
-- **demo 是 UI/UX 设计基准**（非终态，持续演进）：`docs/demo/` 的视觉/交互作为重构验收的对照基线，改动 demo 参照其自身约定
+- **demo 是 UI/UX 设计基准（冻结）**：`docs/demo/` 的视觉/交互作为验收对照基线，**自 2026-09 起冻结不再改动**；demo → React 的逐项映射与已知差异见 `docs/design/demo-react-migration-map.md`（改任一侧时按表核对）
 - **长期方向文档**：`docs/design/refactor-plan.md`（迁移矩阵 + 分阶段计划 + 已确认决策）、`docs/design/ai-capability.md`（AI 引擎/MCP/专家提示词方案，阶段 4 按此落地）
 - README 为占位内容
 
 ## 运行方式
 
-**应用（src/，阶段 0 脚手架）**：
-- 开发：`npm run dev`（electron-vite，热更新；出空窗口 + 菜单栏图标；重复启动由单实例锁捕获）
+**应用（src/，UI 层迁移完成 + mock 数据驱动）**：
+- 开发：`npm run dev`（electron-vite，热更新；重复启动由单实例锁捕获；`LAUNCHER_DEV_DEBUG_PORT=9223 npm run dev` 可开 CDP 调试端口供自动化验证）
 - 测试：`npm test`（vitest，src/**/*.test.ts）；类型检查：`npm run typecheck`
 - 应用编译（构建 + 端到端架构验证）：`npm run build:app`（默认本机架构）/ `build:app:arm64` / `build:app:x64` / `build:app:universal` / `build:app:all`（arm64+x64 依次）
   - `scripts/build-app.mjs`：electron-vite build → electron-builder 打包（dist/，dir 目标）→ 验证：lipo 架构断言（主 bin + Electron Framework）+ 实际启动产物按进程二进制架构断言；主机无法原生运行的架构（如 Intel 机上 arm64）自动 SKIP 运行验证并注明
-  - 打包图标取当前激活 Logo 款（resources/logo/<variant>/icon.icns → build/icon.icns）；electron 二进制走 ELECTRON_MIRROR（env > .npmrc > npmmirror 兜底）；未配置开发者证书时 electron-builder 跳过代码签名（ad-hoc 行为，正式分发需补签名）
-- 品牌图标（2026-09 定稿：**仅两款星际火箭插画**，几何款已清理）：`npm run icon`（`scripts/gen-custom-icon.mjs` 插画通用生成器：抠图 + 白底贴纸 + iconutil icns + 菜单栏模板，`--name <变体名>` / `--src <源图>` 参数化，源图仓库 `resources/app-logo-src/`）；`npm run icon:theme`（`scripts/gen-demo-logos.mjs`，python3+PIL+numpy：紫调重着色（青→页面 accent 紫、BFS 白底融入）+ 圆角贴纸 → ① `docs/demo/logo-{dark,light}.png` 1024 ② `resources/logo/rocketOrbit2/icon-{dark,light}.png` 512（Dock 深浅切换）③ `icon.png`（浅色 512 静态）+ `icon.icns` ④ `src/renderer/src/assets/rocketOrbit2Theme.ts` 双主题 dataURL）。**尺寸基准：贴纸 80.5% 画布（824/1024，对齐 macOS 系统图标实测值）、四角透明**。**变体语义：rocketOrbit（v1）= 原始蓝青插画；rocketOrbit2（v2）= 紫调双主题（当前激活）**
+  - **打包图标固定 rocketOrbit2 浅色版**（icon-light.png → 现场生成 build/icon.icns）；electron-builder extraResources 仅打包 rocketOrbit2（v1 仅作仓库备份不进包）；electron 二进制走 ELECTRON_MIRROR（env > .npmrc > npmmirror 兜底）；未配置开发者证书时 electron-builder 跳过代码签名（ad-hoc 行为，正式分发需补签名）
+- 品牌图标（2026-09 定稿：**rocketOrbit2 v2 紫调双主题 = 项目唯一图标**，v1 rocketOrbit 仅磁盘备份、应用内无切换入口）：`npm run icon`（`scripts/gen-custom-icon.mjs` 插画通用生成器，`--name <变体名>` / `--src <源图>` 参数化，源图仓库 `resources/app-logo-src/`）；`npm run icon:theme`（`scripts/gen-demo-logos.mjs`，python3+PIL+numpy → ① demo logo 图 ② rocketOrbit2 深浅图 ③ icns ④ `rocketOrbit2Theme.ts` 双主题 dataURL。**会写 docs/demo/（冻结目录），本轮禁止执行**）。**尺寸基准：贴纸 80.5% 画布、四角透明**
+- **设置持久化**：`${HOME}/.config/launcher/config.json`（`src/main/settings/store.ts` 原子写 + 损坏回 .bak；schema 单一来源 `src/shared/settings.ts`；main 唯一写者，renderer 经 `settings:*` IPC 乐观读写，首帧经 additionalArguments 注入免闪烁）
 
 **演示页（docs/demo/）**：
 - 打开演示页：直接双击 `docs/demo/index.html`（file:// 协议可用，无需服务器；不要在此引入 fetch/ES 模块，否则 file:// 下会失效）
@@ -28,31 +29,44 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 
 ## 重构进度（对照 docs/design/refactor-plan.md）
 
-- 阶段 0（脚手架：electron-vite + React + TS + 单实例 + 空壳窗口/Tray）✅
-- 阶段 1（Agents 模块端到端，含抽屉编辑器/CodeMirror XML/状态机）——当前
-- 阶段 2 Cron / 阶段 3 端口服务 / 阶段 4 AI+MCP / 阶段 5 双形态与设置（待办）
+- 阶段 0（脚手架：electron-vite + React 19 + TS + 单实例 + 窗口/Tray）✅
+- 阶段 0.5（图标定稿：v2 唯一图标 + 设置持久化 `~/.config/launcher/config.json`）✅
+- **UI 层迁移**（demo → React，mock 驱动）：Agents / 定时任务 / 端口服务 / 设置页六 pane / Agent 抽屉(4 tab)/ 全部浮层 ✅——逐项映射见 `docs/design/demo-react-migration-map.md`
+- 阶段 1（Agents 真实后端 launchctl/plist）——下一步；阶段 2 Cron 后端 / 阶段 3 端口服务后端 / 阶段 4 AI+MCP / 阶段 5 双形态与设置收尾（待办）
 
-## src/ 文件地图（Electron 应用，阶段 0）
+## src/ 文件地图（Electron 应用，UI 迁移后）
 
 ```
 src/
-├── main/            # 主进程（唯一事实来源）
-│   ├── index.ts     # 窗口 + Tray 单实例双形态 + Logo 变体（logo:list/get/set IPC、settings.json 持久化、dock.setIcon；Dock 深浅：nativeTheme.on('updated') 按 shouldUseDarkColors 切 icon-{dark,light}.png，无双图变体回退 icon.png）
-│   ├── domains/     # 纯函数领域层（阶段 1 起：launchd/plist/brew/cron/process）
-│   ├── services/    # 执行层（ShellRunner/osascript 提权/LaunchctlService/Resolvers）
-│   ├── stores/      # AgentStore/CronStore/ServiceStore（状态机，对齐开源 Store 模式）
-│   ├── ai/          # registry/llm/agent/skills/prompts（阶段 4）
-│   └── mcp/         # MCP stdio server（launcher-mcp 入口，阶段 4）
-├── preload/         # contextBridge 白名单 IPC（window.launcher）
-├── renderer/        # React 18 + zustand（components/ 由 demo components.js 迁移）
-│   ├── components/Logo.tsx   # 品牌 Logo（几何变体 power/rocket/…走 --logo-* 变量主题自适应；rocketOrbit v1 蓝青原图 / rocketOrbit2 v2 紫调双主题（theme prop 或 body.light-theme 自动切换 dataURL；未传时 MutationObserver 侦听 body class））
-│   └── styles/theme.css      # 主题变量（:root 深色 + body.light-theme 浅色，与 demo 约定一致）
-└── shared/          # 常量等跨进程共享代码（APP_NAME 等）
+├── main/              # 主进程（唯一事实来源）
+│   ├── index.ts       # 窗口/Tray 单实例 + 启动序(设置→副作用→建窗→IPC) + dev-check + 关窗常驻(menubarOnly) + windowOpen 拦截
+│   ├── settings/
+│   │   ├── store.ts   # config.json 原子写存储(损坏回 .bak/onChange/路径注入)
+│   │   └── apply.ts   # 设置副作用:themeSource(唯一写者)/Tray/Dock 深浅/登录项
+│   ├── ipc.ts         # settings:get/set/reset、app:info、shell:openExternal(https 白名单)、settings:changed 广播
+│   ├── domains/       # 纯函数领域层（阶段 1：launchd/plist/brew/cron/process）
+│   ├── services/      # 执行层（ShellRunner/osascript 提权/LaunchctlService/Resolvers）
+│   ├── stores/        # AgentStore/CronStore/ServiceStore（阶段 1 起）
+│   ├── ai/            # registry/llm/agent/skills/prompts（阶段 4）
+│   └── mcp/           # MCP stdio server（launcher-mcp 入口，阶段 4）
+├── preload/           # contextBridge 白名单 IPC（window.launcher;initialSettings 经 additionalArguments 注入;onEvent 白名单订阅）
+├── renderer/src/
+│   ├── components/    # 分层组件:ui/(L0 原语 TagChip/StatusDot/ActBtn/Toggle/Chip/Toast…)、Modal/GroupBlock/FilterBar/StatusBar(L1)、cards/(L2 Agent/Svc 卡)、overlays/(提权/危险/导入)、XmlEditor(CodeMirror 6)
+│   ├── modules/       # 视图:agents/cron(卡片+内联编辑+日志抽屉+新建模态)/services/drawer(壳+4 tab+SciBuilder+MultiValueList)/settings(6 pane)
+│   ├── layout/        # AppShell/Sidebar/Topbar/ViewHost
+│   ├── state/         # zustand:settings(乐观+IPC)/ui(路由/浮层/toast)/agents/cron/services/drawer(抽屉状态机)/bootstrap
+│   ├── data/          # 数据接缝:ports(仓储接口)/index(工厂,mock→IPC 可换)/mock/(MOCK_DATA 生成 + 行为化数据源)
+│   ├── i18n/          # dict.*.ts 由 scripts/port-demo-i18n.mjs 生成(勿手改)+ t/fmt/useT
+│   ├── lib/           # 纯函数:cron/sci/plist/classify/ops-bar(5 态表)/elevation(Promise API)/utils/modules(注册表)/statusbars
+│   ├── hooks/         # useT/useFmt/useSidebarLayout(ResizeObserver+折叠三重同步)
+│   ├── assets/        # rocketOrbit2Theme.ts(生成的双主题 dataURL)
+│   └── styles/        # base/layout/views/settings/drawer.css(逐字节移植自 demo,勿就地修改)
+└── shared/            # settings.ts(schema+normalize)/models.ts(领域类型)/ipc.ts(通道契约)/constants/api
 ```
 
-约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + 订阅变更；解析器类纯函数配 vitest 单测（对齐开源 TDD 用例）。
+约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 i18n 字典勿手改**。
 
-## 页面架构（docs/demo/）
+## 页面架构（docs/demo/，冻结基线——以下为 demo 自身约定，仅作对照阅读）
 
 单页应用式原型：`index.html` 只有静态结构 + 资源引用，逻辑全部在经典 `<script>` 标签加载的全局作用域文件中（无模块、无 import，文件间通过全局函数/常量互相调用，HTML 内联 `onclick` 直接调用这些全局函数）。script 加载顺序有依赖，调整顺序前确认：`i18n → data → utils → statusbar → 各视图 → drawer → settings → modules → elevation → modals → main`（elevation/modals 仅为运行时引用互调，先加载其一亦可，但保持此序）。
 

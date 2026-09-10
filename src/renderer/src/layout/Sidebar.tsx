@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html L22-62 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 侧边栏(demo index.html L22-62 骨架;4 入口 → 本轮 3 入口,AI 未迁移)
 // Logo 用 v2 双主题 Logo 组件(等效 demo logo-dark/light img 对,32px 同款;差异记对照表)
 import Logo from '../components/Logo'

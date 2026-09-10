@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/components.js groupBlock + utils.js toggleGroupBlock @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 分组块(demo components.js groupBlock:分组头 + 卡片网格容器,可折叠)
 import { useState } from 'react'
 

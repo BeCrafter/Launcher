@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/agents.js/drawer.js/modals.js/crontab.js/services.js 交互行为 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // mock 数据源:demo 交互行为的服务化封装(逐行为移植自 agents.js/drawer.js/modals.js/crontab.js/services.js)
 // 状态 = 就地修改 MOCK_DATA(与 demo 全局数组别名同一模式);后续阶段整体替换为 ipcDataSource。
 

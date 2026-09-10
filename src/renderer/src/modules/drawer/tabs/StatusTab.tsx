@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html #dft-status + populateDrawerDefaults @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 状态 tab(demo #dft-status:stat 卡片 + CPU/内存条 + 元信息 chips + 路径信息组;数据 = readStatus)
 import { useT } from '../../../hooks/useT'
 import { useDrawerStore } from '../../../state/drawer-store'

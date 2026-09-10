@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/drawer.js addArgTo/addEnvTo/addWatchTo @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 多值行编辑(收口 demo addArgTo/addEnvTo/addWatchTo/delMvRow 三处同构)
 // 行 markup 与内联样式逐字保留(demo 中这些行由 JS createElement 生成)
 import { useT } from '../../hooks/useT'

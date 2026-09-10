@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html #importModal + modals.js showImportModal/doImport @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 导入 plist 模态(demo importModal + doImport:剪贴板预填 → 解析 → 草稿入抽屉)
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../hooks/useT'

@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/services.js + index.html #view-services @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 端口服务视图(demo services.js:分类分组渲染 + kill 危险确认 + 复制端口)
 import { useMemo } from 'react'
 import { useT, useFmt } from '../../hooks/useT'

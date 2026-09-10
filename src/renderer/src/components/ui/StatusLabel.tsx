@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/components.js statusLabel @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 状态文案(demo components.js statusLabel:三态配色,文本键可覆盖)
 import { useT } from '../../hooks/useT'
 import type { AgentStatus } from '@shared/models'

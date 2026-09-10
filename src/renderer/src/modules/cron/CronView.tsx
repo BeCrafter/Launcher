@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/crontab.js(renderCron/filterCrons) + index.html #view-crontab @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Cron 视图(demo renderCron/filterCrons/updateCronStats:#cronGrid 嵌套 + scope 分组 + 文档级点击收面板)
 import { useEffect, useMemo } from 'react'
 import { useT } from '../../hooks/useT'

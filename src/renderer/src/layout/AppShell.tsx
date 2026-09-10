@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html .app-shell + statusbar.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 应用外壳(demo .app-shell 布局):侧边栏 + 主内容(顶栏/视图/状态栏)+ Toast
 // 状态栏显隐由 MODULES[module].showStatusBar 驱动;模型按模块从数据 store 派生
 import { useEffect, useState } from 'react'
