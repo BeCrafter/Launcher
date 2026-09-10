@@ -9,6 +9,11 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let store: SettingsStore
 
+// dev 自动化验证端口(如 CDP 交互测试);生产不生效
+if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_DEV_DEBUG_PORT']) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env['LAUNCHER_DEV_DEBUG_PORT'])
+}
+
 // 单实例锁：重复启动时唤起既有窗口
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
