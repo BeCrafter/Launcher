@@ -10,6 +10,7 @@ import { GroupBlock } from '../../components/GroupBlock'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { ActBtn } from '../../components/ui/ActBtn'
 import { AgentCard } from '../../components/cards/AgentCard'
+import { useDrawerStore } from '../../state/drawer-store'
 import { showToast } from '../../lib/utils'
 import type { Agent, AgentScope } from '@shared/models'
 import type { AgentFilter } from '../../data/ports'
@@ -145,9 +146,7 @@ export function AgentsView(): React.JSX.Element {
                   onSelect={() => select(a.id)}
                   onToggle={() => onToggle(a)}
                   onBrew={(kind) => onBrew(kind, a)}
-                  onEdit={() => {
-                    /* 抽屉编辑在阶段 3 接线(对照表记 stub) */
-                  }}
+                  onEdit={() => void useDrawerStore.getState().openFor(a)}
                   onMore={() => showToast(t('toast.moreActions'), '#888', 'fa-ellipsis')}
                 />
               ))}
