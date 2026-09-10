@@ -23,8 +23,8 @@ export interface AgentRepository {
   // demo toggleAgent:running → bootout 停止;否则 bootstrap 启动(返回新状态)
   toggle(id: string): Promise<Agent>
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
-  // 草稿:按 scope + label 前缀新建未加载条目并插入列表顶(demo openAgentDraft)
-  createDraft(scope: AgentScope, labelPrefix: string): Promise<Agent>
+  // 草稿:以给定 label 新建未加载条目并插入列表顶(demo openAgentDraft;label 去重在调用方完成)
+  createDraft(scope: AgentScope, label: string): Promise<Agent>
   save(id: string, patch: Partial<AgentForm> & { label: string; desc: string }): Promise<Agent>
   remove(id: string): Promise<void>
   clone(id: string): Promise<Agent>

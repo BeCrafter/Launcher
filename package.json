@@ -21,6 +21,10 @@
     "build:app:all": "node scripts/build-app.mjs --arch all"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.11.0",
+    "@codemirror/lang-xml": "^6.1.0",
+    "@codemirror/state": "^6.7.4",
+    "@codemirror/view": "^6.43.11",
     "@fontsource/noto-sans-sc": "^5.3.0",
     "@fontsource/noto-serif-sc": "^5.3.0",
     "@fortawesome/fontawesome-free": "^6.7.2",
