@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/components.js agentCard + agents.js 卡片装配 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Agent 卡片(demo components.js agentCard + agents.js 卡片装配;class 名逐字对齐)
 // 槽位复用 L0 原语(StatusDot/StatusLabel/TagChip/ActBtn);动作经 props 上抛
 import { StatusDot } from '../ui/StatusDot'

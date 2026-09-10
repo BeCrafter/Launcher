@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/agents.js + index.html #view-agents @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Launch Agents 视图(逐行为移植 docs/demo/js/agents.js renderAgents/filterAgents/handleSearch)
 // 过滤 → 搜索 → 分桶(user/system/daemon)→ invalid 横幅 + GroupBlock 分组渲染
 import { useMemo } from 'react'

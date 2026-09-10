@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/services.js classifySvc/SVC_GROUP_META @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 端口服务分类管线(逐行为移植 services.js:① Brew Resolver ② COMMAND 映射 ③ 兜底 process)
 import type { SvcFilter } from '../data/ports'
 import type { PortService } from '@shared/models'

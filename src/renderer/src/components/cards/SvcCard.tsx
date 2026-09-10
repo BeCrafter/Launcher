@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/components.js svcCard + services.js svcCardHtml @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 端口服务卡片(demo services.js svcCardHtml + components.js svcCard;meta chips 内联样式逐字)
 import { StatusDot } from '../ui/StatusDot'
 import { TagChip } from '../ui/TagChip'

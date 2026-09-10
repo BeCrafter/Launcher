@@ -1,22 +1,32 @@
 // XML 编辑器(CodeMirror 6;refactor-plan 已确认决策⑥)
-// 主题贴近 demo xml-editor-wrap 配色(--code-bg 暗底/mono/细边框);visual diff 记对照表
+// 高亮 token 色对齐 demo 高亮层(标签青/声明紫/注释 dim,正文 muted);换行行为对齐 demo(textarea pre-wrap)
 import { useEffect, useRef } from 'react'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { tags } from '@lezer/highlight'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { xml } from '@codemirror/lang-xml'
 
-// demo 配色取样:--code-bg 暗底、高亮层 token 色(青键名/紫字串/绿数值)
+// demo 配色(base.css .xml-hl-*):tag=--cyan、decl=--accent2、comment=--dim,正文=--muted
+const DEMO_HIGHLIGHT = HighlightStyle.define([
+  { tag: [tags.tagName, tags.angleBracket, tags.attributeName, tags.attributeValue], color: 'var(--cyan)' },
+  { tag: tags.processingInstruction, color: 'var(--accent2)' },
+  { tag: tags.comment, color: 'var(--dim)' }
+])
+
 const DEMO_THEME = EditorView.theme({
   '&': {
     backgroundColor: 'rgba(0,0,0,0.25)',
-    color: '#e2e2f0',
+    color: 'var(--muted)',
     fontFamily: "'SF Mono', Menlo, monospace",
     fontSize: '11px',
-    height: '100%'
+    height: '100%',
+    width: '100%'
   },
-  '.cm-content': { caretColor: '#a78bfa', padding: '8px 0' },
-  '.cm-scroller': { overflow: 'auto', lineHeight: '1.7' },
+  '.cm-content': { caretColor: '#a78bfa', padding: '14px 0', lineHeight: '1.7' },
+  '.cm-line': { padding: '0 14px' },
+  '.cm-scroller': { overflow: 'auto' },
   '&.cm-focused': { outline: 'none' },
   '.cm-gutters': { display: 'none' },
   '.cm-activeLine': { backgroundColor: 'rgba(124,106,244,0.06)' },
@@ -53,6 +63,8 @@ export function XmlEditor({
         doc: value,
         extensions: [
           xml(),
+          syntaxHighlighting(DEMO_HIGHLIGHT),
+          EditorView.lineWrapping, // demo textarea 默认 soft wrap
           history(),
           keymap.of(defaultKeymap),
           keymap.of(historyKeymap),
@@ -89,7 +101,7 @@ export function XmlEditor({
 
   return (
     <div className={'xml-editor-wrap' + (bordered ? ' bordered' : '')}>
-      <div ref={hostRef} style={{ height: '100%' }} />
+      <div ref={hostRef} style={{ flex: 1, minWidth: 0, height: '100%', position: 'relative' }} />
     </div>
   )
 }

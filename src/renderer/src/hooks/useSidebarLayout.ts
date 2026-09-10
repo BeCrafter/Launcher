@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/modules.js syncSidebarLayout/checkMobile/toggleSidebarCollapse @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 布局同步(逐行为移植 modules.js syncSidebarLayout + checkMobile):
 // 量 .main-content 实际边界 → 写 CSS 变量 + 状态栏内联几何(折叠动画期间随帧更新)
 import { useEffect } from 'react'

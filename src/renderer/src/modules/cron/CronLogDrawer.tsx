@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html #cronLogDrawer + crontab.js showCronLog @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Cron 日志抽屉(demo cronLogDrawer:右侧抽屉 + cronLogLines 近 3 天窗口)
 import { useEffect, useState } from 'react'
 import { useT } from '../../hooks/useT'
