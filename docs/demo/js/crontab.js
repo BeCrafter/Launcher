@@ -62,6 +62,12 @@ function updateCronStats() {
   updateModuleStatusBar('crontab');
 }
 
+// ════════ Cron 分组（按 scope：与顶部过滤标签同维度，与 agents 分组同构）════════
+const CRON_SCOPE_GROUPS = [
+  { key: 'user', icon: 'fa-solid fa-user', color: 'blue', labelKey: 'filter.user' },
+  { key: 'system', icon: 'fa-solid fa-building', color: 'red', labelKey: 'filter.systemEtc' }
+];
+
 function renderCron(filter = activeCronFilter, query = '') {
   const c = document.getElementById('cronList');
   if (!c) return;
@@ -83,8 +89,10 @@ function renderCron(filter = activeCronFilter, query = '') {
     c.innerHTML = emptyState('fa-regular fa-clock', t('cron.empty'));
     return;
   }
-  let html = '';
+  const byGroup = {};
+  CRON_SCOPE_GROUPS.forEach(g => (byGroup[g.key] = []));
   list.forEach(j => {
+    const gKey = j.system ? 'system' : 'user';
     const cronDesc = parseCronExpr(j.expr);
     const main = `<div class="cron-col-card">
         <div class="cron-r1">
@@ -158,9 +166,13 @@ function renderCron(filter = activeCronFilter, query = '') {
           <button class="d-btn accent" onclick="saveCronEdit('${j.id}')"><i class="fa-solid fa-check"></i> ${t('common.save')}</button>
         </div>
       </div>`;
-    html += `<div class="cron-cell">${main}${extra}</div>`;
+    byGroup[gKey].push(`<div class="cron-cell">${main}${extra}</div>`);
   });
-  c.innerHTML = `<div class="group-card-grid" id="cronGrid">${html}</div>`;
+  c.innerHTML = `<div id="cronGrid">${CRON_SCOPE_GROUPS.map(g => {
+    const cards = byGroup[g.key];
+    if (!cards.length) return '';
+    return groupBlock({ id: 'crongrp_' + g.key, icon: `fa-solid ${g.icon}`, color: g.color, label: t(g.labelKey), count: cards.length }, cards.join(''));
+  }).join('')}</div>`;
 }
 
 // ════════ Cron 内联编辑 ════════
@@ -337,6 +349,32 @@ function cronLogLines(j) {
     [ts(300000), 'warn', `[WARN] stdout: 3 lines truncated (retention window)`],
     [ts(0), 'info', `[INFO] log tail — retained; older than ${t('settings.launchd.cronLogRetain.3d')} auto-cleaned`]
   ];
+}
+
+// 复制日志完整路径（clipboard 优先，降级 execCommand；成功后 toast 反馈）
+function copyCronLogPath(id) {
+  const j = cronData.find(x => x.id === id);
+  if (!j || !j.log) return;
+  const path = cronLogPath(id);
+  const done = () => showToast(t('toast.pathCopied'), '#22d3ee', 'fa-copy');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(path).then(done).catch(() => fallbackCopy(path, done));
+  } else {
+    fallbackCopy(path, done);
+  }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand('copy');
+  } catch (e) {}
+  ta.remove();
+  done();
 }
 
 // 查看日志（右侧抽屉，与 Agent 日志 tab 同形态）

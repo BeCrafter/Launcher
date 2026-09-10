@@ -569,24 +569,30 @@
   color: var(--muted);
 }
 
-/* ── 端口服务卡片（响应式网格，与 agent/cron 卡片同族；修复宽行空隙与右下空白）── */
-#svcList {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 10px;
-  align-items: start;
-  /* 容器撑满视口时禁止拉伸行高（默认 stretch 会把剩余高度均分进行间，形成大空隙） */
-  align-content: start;
+/* ── 端口服务卡片（过滤 chips + 类型分组；组内响应式网格，与 agent/cron 卡片同族）── */
+#svcList .group-card-grid {
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
 }
 
 @media(max-width:860px) {
-  #svcList {
+  #svcList .group-card-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
 
+/* ── 定时任务卡片：分组网格最多两列（卡片内容较宽，多列会挤压内部样式）── */
+#cronList .group-card-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media(max-width:520px) {
+  #cronList .group-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media(max-width:560px) {
-  #svcList {
+  #svcList .group-card-grid {
     grid-template-columns: 1fr;
   }
 }

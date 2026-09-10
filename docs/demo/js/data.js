@@ -131,13 +131,17 @@ const MOCK_DATA = {
     log: true
   },
 ],
+  /* 端口服务（模拟 lsof -iTCP -sTCP:LISTEN 输出的关键列：COMMAND/PID/USER/NAME；
+     type/isBrew 不在此标注——由 services.js 分类管线（classifySvc）从 command+brewServices 推导，
+     对齐阶段 3 的 8-Resolver pipeline）*/
   services: [{
     id: 's1',
     port: 3000,
     name: 'Next.js Dev',
     pid: 7821,
+    command: 'node',
+    user: 'wangming',
     cmd: 'node .next/server',
-    type: 'node',
     status: 'running',
     addr: '127.0.0.1',
     proto: 'TCP',
@@ -148,10 +152,10 @@ const MOCK_DATA = {
     port: 8080,
     name: 'Nginx',
     pid: 3201,
+    command: 'nginx',
+    user: 'wangming',
     cmd: 'nginx: worker',
-    type: 'brew',
     status: 'running',
-    isBrew: true,
     addr: '0.0.0.0',
     proto: 'TCP',
     uptime: '5d 4h'
@@ -161,10 +165,10 @@ const MOCK_DATA = {
     port: 5432,
     name: 'PostgreSQL',
     pid: 4310,
+    command: 'postgres',
+    user: 'wangming',
     cmd: 'postgres -D /usr/local/var/postgres',
-    type: 'brew',
     status: 'running',
-    isBrew: true,
     addr: '127.0.0.1',
     proto: 'TCP',
     uptime: '42d'
@@ -174,8 +178,9 @@ const MOCK_DATA = {
     port: 6379,
     name: 'Redis',
     pid: 5001,
+    command: 'redis-server',
+    user: 'wangming',
     cmd: 'redis-server 127.0.0.1:6379',
-    type: 'brew',
     status: 'running',
     addr: '127.0.0.1',
     proto: 'TCP',
@@ -186,14 +191,17 @@ const MOCK_DATA = {
     port: 4040,
     name: 'ngrok',
     pid: 9100,
+    command: 'ngrok',
+    user: 'wangming',
     cmd: 'ngrok http 3000',
-    type: 'process',
     status: 'running',
     addr: '0.0.0.0',
     proto: 'TCP',
     uptime: '1h 20m'
   },
 ],
+  /* brew services list 交叉清单（模拟 `brew services list` 输出；classifySvc 以此判定 Brew 管理服务）*/
+  brewServices: ['nginx', 'postgres', 'redis-server'],
   aiAgents: [{
     id: 'claude',
     name: 'Claude',

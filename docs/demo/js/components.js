@@ -11,10 +11,10 @@ const TAG_COLORS = {
   plist: 'purple', diagnose: 'red', refactor: 'purple', import: 'cyan', cli: 'blue'
 };
 
-// 标签 chip：cls 可为色表键（brew/blue/…）或直接 class（red/yellow/…），icon/style 可选
-function tagChip(text, cls, icon, style) {
+// 标签 chip：cls 可为色表键（brew/blue/…）或直接 class（red/yellow/…），icon/style/title 可选
+function tagChip(text, cls, icon, style, title) {
   const c = TAG_COLORS[cls] || cls || 'purple';
-  return `<span class="tag ${c}"${style ? ` style="${style}"` : ''}>${icon ? `<i class="${icon}" style="margin-right:2px;"></i>` : ''}${text}</span>`;
+  return `<span class="tag ${c}"${style ? ` style="${style}"` : ''}${title ? ` title="${title}"` : ''}>${icon ? `<i class="${icon}" style="margin-right:2px;"></i>` : ''}${text}</span>`;
 }
 
 // 状态点：running / loaded / stopped
@@ -43,11 +43,11 @@ function actBtn(icon, opts = {}) {
 }
 
 // 分组块（FilterChipBar 同族容器）：header + 卡片网格
-function groupBlock({ id, icon, color, label, count }, cardsHtml) {
+function groupBlock({ id, icon, color, label, count, labelTitle }, cardsHtml) {
   return `<div class="group-block">
     <div class="group-block-header" onclick="toggleGroupBlock('${id}',this)">
       <i class="${icon}" style="font-size:11px;color:${color};"></i>
-      <span class="group-block-label">${label}</span>
+      <span class="group-block-label"${labelTitle ? ` title="${labelTitle}"` : ''}>${label}</span>
       <span class="group-block-count">${count}</span>
       <i class="fa-solid fa-chevron-right group-block-chevron open"></i>
     </div>
