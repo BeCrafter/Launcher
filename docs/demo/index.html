@@ -124,7 +124,18 @@
 
           <!-- ★ TCP Services 视图 -->
           <div id="view-services" style="display:none;flex:1;overflow:hidden;flex-direction:column;">
-
+            <div class="filter-bar" id="svcFilterBar">
+              <button class="chip active" onclick="filterServices('all',this)"><i class="fa-solid fa-list"></i> <span data-i18n="filter.all">全部</span></button>
+              <button class="chip brew" onclick="filterServices('brew',this)"><i class="fa-solid fa-beer-mug-empty"></i> <span data-i18n="svc.type.brew">Homebrew</span></button>
+              <button class="chip user" onclick="filterServices('node',this)"><i class="fa-brands fa-node-js"></i> <span data-i18n="svc.type.node">Node.js</span></button>
+              <button class="chip sys" onclick="filterServices('process',this)"><i class="fa-solid fa-terminal"></i> <span data-i18n="svc.type.process">进程</span></button>
+              <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+                <span style="font-size:10.5px;color:var(--dim);">
+                  <span id="svcListeningCount" style="color:var(--green);font-weight:700;"></span> <span data-i18n="filter.runningSep">运行中 /</span>
+                  <span id="svcTotalCount" style="color:var(--muted);"></span> <span data-i18n="filter.total">总计</span>
+                </span>
+              </div>
+            </div>
             <div class="list-container" id="svcList"></div>
           </div>
 
