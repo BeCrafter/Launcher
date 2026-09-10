@@ -1,0 +1,22 @@
+/* 应用原生 chrome(非 demo 移植:标题栏接管相关样式;demo 移植文件见各 ported-from 头注释) */
+/* 顶部统一色带:titleBarStyle hiddenInset 接管标题栏后,自绘 28px 全宽色带,
+   取 --surface 与侧边栏/顶栏同色,随主题即时切换;兼作窗口拖动区 */
+.window-root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.window-root > .app-shell {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.titlebar-drag {
+  height: 28px;
+  flex-shrink: 0;
+  background: var(--surface);
+  -webkit-app-region: drag;
+  user-select: none;
+}

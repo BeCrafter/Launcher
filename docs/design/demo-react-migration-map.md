@@ -144,6 +144,7 @@
 
 ## 已知差异清单(预批准/记录)
 
+0. **窗口标题栏接管**(demo 之外的原生需求):`titleBarStyle: 'hiddenInset'` 隐藏系统标题栏,应用自绘 28px 全宽色带(`--surface`,= 侧边栏色,随主题即时切换)兼作拖动区;无系统居中标题文字(Mission Control 仍读 title 字段);交通灯驻留色带内(`trafficLightPosition x20 y6`);样式在 `styles/app-chrome.css`(非移植文件),外壳结构 `.window-root > (.titlebar-drag + .app-shell)`。
 1. **提权模态无密码输入框**(refactor-plan 预批准;真机走 osascript 原生授权框)。
 2. **XML 编辑器为 CodeMirror 6**(决策⑥),非 demo 轻量 textarea+高亮层;编辑器 chrome 有细微视觉差。
 3. **字体 npm 内置** @fontsource(unicode-range 分片);无 CDN。

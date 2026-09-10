@@ -77,20 +77,24 @@ export function AppShell(): React.JSX.Element {
     }
 
   return (
-    <div className="app-shell">
-      <Sidebar />
-      <div className="main-content">
-        <Topbar />
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-          <ViewHost module={module} />
+    <div className="window-root">
+      {/* 标题栏接管色带:与侧边栏同色(--surface),兼作拖动区(styles/app-chrome.css) */}
+      <div className="titlebar-drag" />
+      <div className="app-shell">
+        <Sidebar />
+        <div className="main-content">
+          <Topbar />
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <ViewHost module={module} />
+          </div>
+          {rec.showStatusBar && model ? (
+            <StatusBar model={model} />
+          ) : (
+            <div className="launch-statusbar hidden" id="launchStatusBar" />
+          )}
         </div>
-        {rec.showStatusBar && model ? (
-          <StatusBar model={model} />
-        ) : (
-          <div className="launch-statusbar hidden" id="launchStatusBar" />
-        )}
+        <Toast />
       </div>
-      <Toast />
     </div>
   )
 }
