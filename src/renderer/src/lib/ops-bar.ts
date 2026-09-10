@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/drawer.js updateOpsBar 视觉分支表 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 抽屉头部操作栏 5 态推导(纯函数化 demo drawer.js updateOpsBar 的视觉分支表)
 // 态:draft(草稿) / unloaded(未加载) / stopped(已停) / ready(就绪) / running(运行)
 import type { OpsState } from '@shared/models'

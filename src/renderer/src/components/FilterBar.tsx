@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html filter-bar/filter-stats @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 过滤栏(demo:#agentFilterBar/#cronFilterBar/#svcFilterBar 同构 = chips + 右侧计数块)
 // chips 由各视图注入(active 态由视图 filter 状态驱动)
 import { useT } from '../hooks/useT'

@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html #view-settings + settings.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 设置页(demo #view-settings + settings.js;六 pane + tab 导航 + 页脚)
 // 各开关接线状态见 docs/design/demo-react-migration-map.md「设置项接线表」
 import { useEffect, useState } from 'react'

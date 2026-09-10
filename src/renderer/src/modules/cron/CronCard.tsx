@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/crontab.js 卡片/内联编辑面板 + index.html #cronGrid 嵌套 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Cron 卡片(demo renderCron 卡片 markup + row-expand hover 详情 + cron-edit-expand 内联编辑)
 // #cronGrid > .cron-cell > (.cron-col-card + .row-expand + .cron-edit-expand) 嵌套为 CSS hover 契约,逐字保留
 import { useMemo, useState } from 'react'

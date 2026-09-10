@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html L67-84 + config.js actions() @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 顶栏(demo index.html L67-84):菜单钮 + 面包屑 + 搜索 + 模块操作区
 // 面包屑/搜索占位来自 MODULES 记录;操作区组件按模块切换(demo actions() 模板等价)
 import { useT } from '../hooks/useT'

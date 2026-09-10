@@ -1,3 +1,4 @@
+// ported-from: docs/demo/js/elevation.js ELEVATION/confirmDangerousAction @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 提权/危险确认 Promise API(demo elevation.js 语义,无密码框)
 // 真机落地:osascript with administrator privileges 系统原生授权框,应用不碰密码(refactor-plan 已确认);
 // demo 的密码输入框按计划移除 → 本轮模态仅展示 detail/command,「授权」直接 resolve。

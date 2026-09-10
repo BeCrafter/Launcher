@@ -1,3 +1,4 @@
+// ported-from: docs/demo/index.html #dft-edit + drawer.js 表单逻辑 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 编辑 tab(demo #dft-edit:标识/执行/调度触发/I/O 四组 + 底部操作栏;内联样式逐字保留)
 import { useState } from 'react'
 import { useT } from '../../../hooks/useT'
