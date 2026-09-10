@@ -144,14 +144,24 @@ def sticker(bg_hex, white_v):
     w = np.where(bgm_np, 1.0, np.where(edge_np, np.minimum(1.0, w0 * 1.6 + 0.15), 0.0))
     out = rgb2 * (1 - w[..., None]) + bg[None, None, :] * w[..., None]
     mapped = Image.fromarray(np.dstack([out.astype(np.uint8), m[..., 3]]))
-    fit = int(CAN * 0.90)
+    # 对齐 macOS 系统应用图标基准（实测系统图标：贴纸/不透明区 = 80.5% 画布 = 824/1024，四角透明）：
+    # 贴纸 80.5%、内部图形约 66% 画布；art 溢出贴纸的部分由圆角 mask 裁切
+    fit = int(CAN * 0.84)
     s = min(fit / W, fit / H)
     art = mapped.resize((int(W * s), int(H * s)), Image.LANCZOS)
     canvas = Image.new('RGBA', (CAN, CAN), (0, 0, 0, 0))
     d = ImageDraw.Draw(canvas)
-    d.rounded_rectangle((0, 0, CAN - 1, CAN - 1), radius=int(CAN * 0.222),
+    stick_m = int(CAN * 0.0975)
+    stick_r = int(CAN * 0.1787)  # 圆角 ≈ 贴纸边长 22.2%（系统图标圆角比例）
+    d.rounded_rectangle((stick_m, stick_m, CAN - 1 - stick_m, CAN - 1 - stick_m), radius=stick_r,
                         fill=tuple(int(bg_hex[i:i+2], 16) for i in (1,3,5)) + (255,))
     canvas.alpha_composite(art, ((CAN - art.width) // 2, (CAN - art.height) // 2))
+    # 圆角 mask 裁切：消除 art 溢出贴纸圆角外的部分
+    mask = Image.new('L', (CAN, CAN), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((stick_m, stick_m, CAN - 1 - stick_m, CAN - 1 - stick_m),
+                                           radius=stick_r, fill=255)
+    from PIL import ImageChops
+    canvas.putalpha(ImageChops.multiply(canvas.getchannel('A'), mask))
     return canvas.resize((OUT, OUT), Image.BOX)
 
 def iconset(light_img):

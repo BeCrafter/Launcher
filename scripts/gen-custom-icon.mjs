@@ -12,8 +12,9 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-// 源图固定放项目内（替换此文件后重跑本脚本即可更新图标）
-const SRC = join(ROOT, '../resources/app-logo-src/app-icon.png')
+// 源图固定放项目内（默认 app-icon.png；历史版本可用 --src 指定归档源，如 app-icon-v1-source.jpg）
+const srcArgPos = process.argv.indexOf('--src')
+const SRC = srcArgPos >= 0 ? process.argv[srcArgPos + 1] : join(ROOT, '../resources/app-logo-src/app-icon.png')
 const WORK = join(ROOT, '../resources/logo-custom')
 // 产出变体名可指定（不覆盖历史）：node scripts/gen-custom-icon.mjs --name rocketOrbit2
 const nameArgPos = process.argv.indexOf('--name')
@@ -213,10 +214,10 @@ console.log('[2] cutout ok (near-white & pale haze → transparent)')
 
 // ── 2.5 内容留白缩放 + 白底 squircle 合成（Dock/应用图标：macOS 规范留白，底座外透明）──
 const TRAY_SRC = rgba // 菜单栏模板仍用纯透明版（满幅 fit 逻辑在步骤 4）
-const CONTENT = fitResize(rgba, w, h, w, 0.12) // 插画内容缩至画布 ~76%，白边收窄成紧凑徽章
+const CONTENT = fitResize(rgba, w, h, w, 0.17) // 插画内容缩至画布 ~66%（对齐系统图标内部图形比例）
 const BASE_RGBA = Buffer.alloc(w * h * 4)
 {
-  const m = w * 0.06 // 满幅白底 squircle（与几何款 SVG 底座同网格，无透明边缘）
+  const m = w * 0.0975 // 贴纸 80.5% 画布（对齐 macOS 系统应用图标基准 824/1024），四角透明
   const a0 = w / 2 - m
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
