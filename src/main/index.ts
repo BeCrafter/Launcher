@@ -91,6 +91,9 @@ function createWindow(): void {
     minHeight: 450,
     show: false,
     title: APP_NAME,
+    // 接管标题栏:应用自绘 28px 色带(与侧边栏同色 --surface),交通灯驻留其上
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 20, y: 6 },
     backgroundColor: windowBgColor(), // 依据生效主题(启动序里 themeSource 已先应用)
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),

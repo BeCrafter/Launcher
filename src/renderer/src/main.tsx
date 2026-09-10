@@ -12,6 +12,7 @@ import './styles/layout.css'
 import './styles/views.css'
 import './styles/settings.css'
 import './styles/drawer.css'
+import './styles/app-chrome.css'
 import App from './App'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
