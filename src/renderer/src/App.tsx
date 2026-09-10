@@ -1,6 +1,9 @@
-// 应用组合根:引导(设置生效 + splash 移除)→ 外壳
+// 应用组合根:引导(设置生效 + splash 移除)→ 外壳 + 浮层
 import { bootstrap } from './state/bootstrap'
 import { AppShell } from './layout/AppShell'
+import { AgentDrawer } from './modules/drawer/AgentDrawer'
+import { ElevationModal, DangerModal } from './components/overlays/ElevationModal'
+import { ImportModal } from './components/overlays/ImportModal'
 
 bootstrap()
 
@@ -14,5 +17,13 @@ export default function App(): React.JSX.Element {
       </div>
     )
   }
-  return <AppShell />
+  return (
+    <>
+      <AppShell />
+      <AgentDrawer />
+      <ImportModal />
+      <ElevationModal />
+      <DangerModal />
+    </>
+  )
 }

@@ -26,7 +26,8 @@ const delay = <T>(v: T): Promise<T> => Promise.resolve(v)
 
 class MockAgentRepo implements AgentRepository {
   async list() {
-    return delay({ agents: MOCK_DATA.agents, invalidPlists: MOCK_DATA.invalidPlists })
+    // 浅拷贝:就地修改后重新 load 需要新引用才会触发订阅更新(zustand 浅比较)
+    return delay({ agents: [...MOCK_DATA.agents], invalidPlists: [...MOCK_DATA.invalidPlists] })
   }
 
   async toggle(id: string): Promise<Agent> {
@@ -50,10 +51,7 @@ class MockAgentRepo implements AgentRepository {
     return delay(a) // demo brewAction 仅 toast,不改状态
   }
 
-  async createDraft(scope: AgentScope, labelPrefix: string): Promise<Agent> {
-    let label = labelPrefix + 'taskname'
-    let idx = 1
-    while (MOCK_DATA.agents.some((a) => a.id === label)) label = labelPrefix + 'taskname.' + idx++
+  async createDraft(scope: AgentScope, label: string): Promise<Agent> {
     const draft: Agent = {
       id: label,
       label,
@@ -140,7 +138,7 @@ export function cronLogPath(id: string): string {
 
 class MockCronRepo implements CronRepository {
   async list(): Promise<CronJob[]> {
-    return delay(MOCK_DATA.crons)
+    return delay([...MOCK_DATA.crons])
   }
 
   async create(job: CronJob): Promise<CronJob> {
@@ -190,7 +188,7 @@ class MockCronRepo implements CronRepository {
 
 class MockServiceRepo implements ServiceRepository {
   async list() {
-    return delay({ services: MOCK_DATA.services, brewServices: MOCK_DATA.brewServices })
+    return delay({ services: [...MOCK_DATA.services], brewServices: [...MOCK_DATA.brewServices] })
   }
 
   // demo killSvc:危险确认后仅 toast,不删数据

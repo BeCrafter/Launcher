@@ -3,6 +3,8 @@ import { initSettingsFromMain } from './settings-store'
 import { useAgentsStore } from './agents-store'
 import { useCronStore } from './cron-store'
 import { useServicesStore } from './services-store'
+import { useSettingsStore } from './settings-store'
+import { setAuthCacheMinGetter, setConfirmDangerousGetter } from '../lib/elevation'
 
 let booted = false
 
@@ -12,6 +14,9 @@ export function bootstrap(): void {
   // 移除「启动中」过渡页(与 index.html #boot-splash 契约)
   document.getElementById('boot-splash')?.remove()
   initSettingsFromMain()
+  // 提权/危险确认读取设置(demo localStorage launcher_authCacheMin / launcher_confirmDangerous 语义)
+  setAuthCacheMinGetter(() => useSettingsStore.getState().settings?.authCacheMin ?? 5)
+  setConfirmDangerousGetter(() => useSettingsStore.getState().settings?.confirmDangerous ?? true)
   // 数据模块首屏加载(mock 立即 resolve;失败不阻断外壳)
   void useAgentsStore.getState().load().catch((e) => console.error('[bootstrap] agents', e))
   void useCronStore.getState().load().catch((e) => console.error('[bootstrap] crons', e))

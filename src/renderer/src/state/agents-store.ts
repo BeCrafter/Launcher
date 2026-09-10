@@ -15,6 +15,8 @@ interface AgentsState {
   select(id: string): void
   toggle(id: string): Promise<void>
   brewAction(kind: 'start' | 'stop', id: string): Promise<void>
+  // 新建/导入统一落点(demo openAgentDraft):以给定 label 建草稿、入列表顶并选中
+  createDraft(scope: 'user' | 'system' | 'daemon', label: string): Promise<Agent>
 }
 
 export const useAgentsStore = create<AgentsState>((set, get) => ({
@@ -52,5 +54,12 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   async brewAction(kind, id) {
     await dataSource().agents.brewAction(kind, id)
     // demo brewAction 仅 toast,不改状态;toast 由视图层发起
+  },
+
+  // demo openAgentDraft:草稿 unshift 到列表顶 + 选中
+  async createDraft(scope, labelPrefix) {
+    const draft = await dataSource().agents.createDraft(scope, labelPrefix)
+    set({ agents: [draft, ...get().agents], selectedId: draft.id })
+    return draft
   }
 }))
