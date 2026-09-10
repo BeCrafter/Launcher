@@ -144,7 +144,7 @@
 
 ## 已知差异清单(预批准/记录)
 
-0. **窗口标题栏接管**(demo 之外的原生需求):`titleBarStyle: 'hiddenInset'` 隐藏系统标题栏,应用自绘 28px 全宽色带(`--surface`,= 侧边栏色,随主题即时切换)兼作拖动区;无系统居中标题文字(Mission Control 仍读 title 字段);交通灯驻留色带内(`trafficLightPosition x20 y6`);样式在 `styles/app-chrome.css`(非移植文件),外壳结构 `.window-root > (.titlebar-drag + .app-shell)`。
+0. **窗口标题栏接管**(demo 之外的原生需求):`titleBarStyle: 'hiddenInset'` 隐藏系统标题栏,应用自绘 28px 全宽色带(`--surface`,= 侧边栏色,随主题即时切换)兼作拖动区;无系统居中标题文字(Mission Control 仍读 title 字段);交通灯驻留色带内(`trafficLightPosition x20 y6`);样式在 `styles/app-chrome.css`(非移植文件),外壳结构 `.window-root > (.titlebar-drag + .app-shell)`。**侧边栏分割线过渡**(多轮迭代后定稿):原 `border-right` 移除,改由 `.sidebar::after` 画 1px 线——**渐变区 = logo/头部区域本身**(用户红框):渐变起点窗口 y32(色带下沿 y28 再留 4px 全透明),向下渐入,至窗口 y110(局部 82px)达实色,其下实线;色带区无线。**三线同色(基准 = 右侧主区域上方的顶栏底边线)**:竖线与 logo 底边横线统一为 demo 原生 `var(--border)`(深 rgba(255,255,255,.06)/浅 rgba(30,38,68,.08)),不再使用加强色;线在侧边栏自己的层叠上下文内,折叠/展开动画原生跟随。⚠ 踩坑:(1) 外挂在 `.app-shell` 外做「上探色带」会被 `overflow:hidden` 裁剪;(2) 挂 `.window-root::before` 配低 z-index 会被 `.sidebar`(z-index:20 的 flex 子项,自成层叠上下文)整体遮住。
 1. **提权模态无密码输入框**(refactor-plan 预批准;真机走 osascript 原生授权框)。
 2. **XML 编辑器为 CodeMirror 6**(决策⑥),非 demo 轻量 textarea+高亮层;编辑器 chrome 有细微视觉差。
 3. **字体 npm 内置** @fontsource(unicode-range 分片);无 CDN。

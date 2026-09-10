@@ -20,3 +20,28 @@
   -webkit-app-region: drag;
   user-select: none;
 }
+
+/* 侧边栏分割线:渐变效果保留 —— 渐变区 = logo/头部区域本身(红框处):
+   头部顶端(紧贴色带下沿)完全透明,向下渐入,至局部 82px(窗口 y110)达实色,其下实线;
+   色带区(窗口 y0-28)无线。替代原生 border-right。
+   ⚠ 必须画在 .sidebar 自己的层叠上下文里(::after):.sidebar 是 z-index:20 的 flex 子项、
+   自成层叠上下文,外挂低层级线会被不透明侧边栏整体遮住(踩过)。
+   线在侧边栏上 → 折叠/展开动画原生跟随。
+   线色 = var(--border),与「右侧主区域上方」的顶栏底边线同值(用户指定基准,
+   深 rgba(255,255,255,.06) / 浅 rgba(30,38,68,.08));logo 底边横线未覆盖、同为 --border。 */
+.sidebar {
+  border-right: none;
+  position: relative;
+}
+
+.sidebar::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  /* 渐变起点 4px = 窗口 y32(色带下沿 y28 再留 4px 全透明);终点 82px = 窗口 y110 达实色 */
+  background: linear-gradient(to bottom, transparent 4px, var(--border) 82px);
+  pointer-events: none;
+}
