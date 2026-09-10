@@ -3,12 +3,12 @@ import { join } from 'node:path'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { APP_NAME } from '../shared/constants'
 
-export const LOGO_VARIANTS = ['power', 'rocket', 'arrow', 'gauge', 'bolt', 'stack', 'bars', 'letterL', 'rocketOrbit', 'rocketOrbit2'] as const
+export const LOGO_VARIANTS = ['rocketOrbit', 'rocketOrbit2'] as const
 export type LogoVariant = (typeof LOGO_VARIANTS)[number]
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-let activeVariant: LogoVariant = 'power'
+let activeVariant: LogoVariant = 'rocketOrbit2'
 
 // 单实例锁：重复启动时唤起既有窗口
 const gotLock = app.requestSingleInstanceLock()
