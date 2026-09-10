@@ -1,7 +1,7 @@
-// 设置变更 → 应用副作用(themeSource / Tray / Dock / 开机自启)
+// 设置变更 → 应用副作用(themeSource / Tray / Dock / 开机自启 / 窗口底色)
 // 副作用集中在此,main/index.ts 保持薄;Tray 与 logoDir 由 index 注入(依赖窗口引用)
 
-import { app, nativeTheme, nativeImage } from 'electron'
+import { app, BrowserWindow, nativeTheme, nativeImage } from 'electron'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import type { LauncherSettings } from '../../shared/settings'
@@ -10,6 +10,16 @@ export interface ApplyRefs {
   logoDir(): string
   createTray(): void
   destroyTray(): void
+  getWindow(): BrowserWindow | null
+}
+
+// 窗口底色(标题栏随之着色):取 demo --bg 深浅两值
+export function windowBgColor(): string {
+  return nativeTheme.shouldUseDarkColors ? '#0e0e17' : '#f6f7fb'
+}
+
+function applyWindowBackground(refs: ApplyRefs): void {
+  refs.getWindow()?.setBackgroundColor(windowBgColor())
 }
 
 function applyDockIcon(refs: ApplyRefs): void {
@@ -26,7 +36,7 @@ function applyDockIcon(refs: ApplyRefs): void {
 
 export function applySettings(s: LauncherSettings, refs: ApplyRefs): void {
   // 唯一写者:main 依据设置(而非仅系统外观)驱动 themeSource;
-  // 由此 renderer 的 prefers-color-scheme 与 Dock 深浅切换自动跟随应用主题。
+  // 由此 renderer 的 prefers-color-scheme、系统标题栏与 Dock 深浅切换自动跟随应用主题。
   nativeTheme.themeSource = s.theme
 
   if (s.trayVisible) {
@@ -43,6 +53,8 @@ export function applySettings(s: LauncherSettings, refs: ApplyRefs): void {
       app.dock?.hide()
     }
   }
+
+  applyWindowBackground(refs)
 
   // 开机自启:仅打包态生效(dev 登记的是 electron 二进制且 macOS 会拒绝,静默跳过)
   if (app.isPackaged) {

@@ -105,7 +105,7 @@
 
 | 设置项 | demo localStorage | config.json | 本轮 | 备注 |
 |---|---|---|---|---|
-| 主题三卡 | launcherTheme | theme | **真** | main `nativeTheme.themeSource` 唯一写者 → Dock 图标随主题、renderer prefers-color-scheme 自动正确 |
+| 主题三卡 | launcherTheme | theme | **真** | main `nativeTheme.themeSource` 唯一写者(启动 + 每次变更都应用)→ 系统标题栏随主题、窗口底色取 demo --bg 深浅值、Dock 图标随动、renderer prefers-color-scheme 自动正确 |
 | 语言 | launcherLanguage | language | **真** | useT 全树重渲染(等价 applyLanguage) |
 | 开机自启 | launcher_launchAtLogin | launchAtLogin | **真** | app.setLoginItemSettings(仅打包态;dev 静默跳过) |
 | 菜单栏常驻 | launcher_menubarOnly | menubarOnly | **真** | 关窗 → hide |
