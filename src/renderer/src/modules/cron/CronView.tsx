@@ -10,6 +10,7 @@ import { GroupBlock } from '../../components/GroupBlock'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { CronCard } from './CronCard'
 import { CronLogDrawer } from './CronLogDrawer'
+import { CronHeaderPanel } from './CronHeaderPanel'
 import { NewCronModal } from './NewCronModal'
 import type { CronFilter } from '../../data/ports'
 
@@ -72,6 +73,7 @@ export function CronView(): React.JSX.Element {
           <Chip key={f.id} active={filter === f.id} icon={f.icon} label={t(f.labelKey)} onClick={() => setFilter(f.id)} />
         ))}
       </FilterBar>
+      <CronHeaderPanel />
       <div className="list-container" id="cronList">
         <div id="cronGrid">
           {CRON_SCOPE_GROUPS.map((g) => {

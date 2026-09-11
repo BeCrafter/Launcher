@@ -4,28 +4,19 @@
 import type {
   Agent,
   AgentForm,
-  AppMeta,
   AppUrls,
-  CronJob,
-  CronPreset,
   DrawerStatusModel,
   InvalidPlist,
   LogLine,
-  OpsState,
-  PortService
+  OpsState
 } from '@shared/models'
 
 export interface MockData {
-  meta: AppMeta
   urls: AppUrls
   agents: Agent[]
   invalidPlists: InvalidPlist[]
-  crons: CronJob[]
-  services: PortService[]
-  brewServices: string[]
   aiAgents: { id: string; name: string; cli: string; version: string; path: string | null; status: 'installed' | 'not_found'; descKey: string; tags: string[]; icon: string }[]
   aiSkills: { id: string; nameKey: string; descKey: string; tag: string; icon: string }[]
-  cronPresets: CronPreset[]
   liveLogs: [LogLine['type'], string][]
   drawer: {
     title: string
@@ -39,10 +30,6 @@ export interface MockData {
 }
 
 export const MOCK_DATA: MockData = {
-  "meta": {
-    "versionFull": "Launcher v2.0.0 (Build 20250228)",
-    "footerVersion": "Launcher v2.0"
-  },
   "urls": {
     "github": "https://github.com/BeCrafter/Launcher",
     "help": "https://github.com/BeCrafter/Launcher/blob/main/Help.md"
@@ -151,116 +138,6 @@ export const MOCK_DATA: MockData = {
       "reason": "XML 解析失败：预期 </dict> 但遇到 EOF"
     }
   ],
-  "crons": [
-    {
-      "id": "c1",
-      "user": "user",
-      "expr": "0 9 * * 1-5",
-      "cmd": "/usr/local/bin/report.sh",
-      "desc": "工作日早 9 点生成报告",
-      "enabled": true,
-      "log": true
-    },
-    {
-      "id": "c2",
-      "user": "user",
-      "expr": "*/30 * * * *",
-      "cmd": "/usr/local/bin/healthcheck.sh",
-      "desc": "每 30 分钟健康检查",
-      "enabled": true,
-      "log": true
-    },
-    {
-      "id": "c3",
-      "user": "root",
-      "expr": "0 2 * * 0",
-      "cmd": "/usr/local/sbin/weekly-clean.sh",
-      "desc": "每周日凌晨 2 点清理",
-      "enabled": false,
-      "system": true
-    },
-    {
-      "id": "c4",
-      "user": "user",
-      "expr": "0 18 * * 5",
-      "cmd": "/usr/local/bin/weekly-backup.sh",
-      "desc": "每周五下午 6 点备份",
-      "enabled": true,
-      "log": true
-    }
-  ],
-  "services": [
-    {
-      "id": "s1",
-      "port": 3000,
-      "name": "Next.js Dev",
-      "pid": 7821,
-      "command": "node",
-      "user": "wangming",
-      "cmd": "node .next/server",
-      "status": "running",
-      "addr": "127.0.0.1",
-      "proto": "TCP",
-      "uptime": "3d 2h"
-    },
-    {
-      "id": "s2",
-      "port": 8080,
-      "name": "Nginx",
-      "pid": 3201,
-      "command": "nginx",
-      "user": "wangming",
-      "cmd": "nginx: worker",
-      "status": "running",
-      "addr": "0.0.0.0",
-      "proto": "TCP",
-      "uptime": "5d 4h"
-    },
-    {
-      "id": "s3",
-      "port": 5432,
-      "name": "PostgreSQL",
-      "pid": 4310,
-      "command": "postgres",
-      "user": "wangming",
-      "cmd": "postgres -D /usr/local/var/postgres",
-      "status": "running",
-      "addr": "127.0.0.1",
-      "proto": "TCP",
-      "uptime": "42d"
-    },
-    {
-      "id": "s4",
-      "port": 6379,
-      "name": "Redis",
-      "pid": 5001,
-      "command": "redis-server",
-      "user": "wangming",
-      "cmd": "redis-server 127.0.0.1:6379",
-      "status": "running",
-      "addr": "127.0.0.1",
-      "proto": "TCP",
-      "uptime": "12h"
-    },
-    {
-      "id": "s5",
-      "port": 4040,
-      "name": "ngrok",
-      "pid": 9100,
-      "command": "ngrok",
-      "user": "wangming",
-      "cmd": "ngrok http 3000",
-      "status": "running",
-      "addr": "0.0.0.0",
-      "proto": "TCP",
-      "uptime": "1h 20m"
-    }
-  ],
-  "brewServices": [
-    "nginx",
-    "postgres",
-    "redis-server"
-  ],
   "aiAgents": [
     {
       "id": "claude",
@@ -346,38 +223,6 @@ export const MOCK_DATA: MockData = {
       "descKey": "ai.skill.import.desc",
       "tag": "import",
       "icon": "fa-file-import"
-    }
-  ],
-  "cronPresets": [
-    {
-      "labelKey": "cron.preset.minute",
-      "expr": "* * * * *",
-      "descKey": "cron.preset.minuteDesc"
-    },
-    {
-      "labelKey": "cron.preset.hourly",
-      "expr": "0 * * * *",
-      "descKey": "cron.preset.hourlyDesc"
-    },
-    {
-      "labelKey": "cron.preset.daily9",
-      "expr": "0 9 * * *",
-      "descKey": "cron.preset.daily9Desc"
-    },
-    {
-      "labelKey": "cron.preset.monday",
-      "expr": "0 9 * * 1",
-      "descKey": "cron.preset.mondayDesc"
-    },
-    {
-      "labelKey": "cron.preset.monthly1",
-      "expr": "0 0 1 * *",
-      "descKey": "cron.preset.monthly1Desc"
-    },
-    {
-      "labelKey": "cron.preset.weekday",
-      "expr": "0 9 * * 1-5",
-      "descKey": "cron.preset.weekdayDesc"
     }
   ],
   "liveLogs": [

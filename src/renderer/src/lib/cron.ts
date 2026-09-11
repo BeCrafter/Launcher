@@ -1,10 +1,21 @@
 // ported-from: docs/demo/js/crontab.js parseCronExpr @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Cron 表达式人话解析(逐行为移植 docs/demo/js/crontab.js parseCronExpr,双语分支保留)
 import { fmt } from '../i18n'
+import { nextCronRun } from '@shared/cron-next-run'
+import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '@shared/ipc'
+import { showToast } from './utils'
 import type { Language } from '@shared/settings'
 
 export function parseCronExpr(expr: string, lang: Language, t: (k: string) => string): string {
-  const parts = expr.trim().split(/\s+/)
+  const raw = expr.trim()
+  if (raw.startsWith('@')) {
+    // 特殊入口(vixie):@reboot/@daily 等,demo 解析器只认 5 字段 → 专用文案
+    const name = raw.slice(1).toLowerCase()
+    const key = `cron.parse.special.${name === 'midnight' ? 'daily' : name === 'annually' ? 'yearly' : name}`
+    const text = t(key)
+    return text === key ? t('cron.parse.invalid') : text
+  }
+  const parts = raw.split(/\s+/)
   if (parts.length < 5) return t('cron.parse.invalid')
   const [min, hour, dom, mon, dow] = parts
   const isEn = lang === 'en-US'
@@ -45,4 +56,30 @@ export function parseCronExpr(expr: string, lang: Language, t: (k: string) => st
       : fmt(t('cron.parse.monthly'), { M, D: dom, T })
   }
   return M + ' ' + dom + '日 ' + T + ' 执行'
+}
+
+// ── 下次执行时间展示(卡片行 + 编辑预览共用;U5 增强项)──
+
+
+export function formatNextRun(expr: string, t: (k: string) => string, now: Date = new Date()): string {
+  if (expr.trim() === '@reboot') return t('cron.next.reboot')
+  const next = nextCronRun(expr, now)
+  if (!next) return t('cron.next.none')
+  const p = (n: number): string => String(n).padStart(2, '0')
+  const hhmm = `${p(next.getHours())}:${p(next.getMinutes())}`
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+  const tomorrow = new Date(now.getTime())
+  tomorrow.setDate(now.getDate() + 1)
+  if (sameDay(next, now)) return fmt(t('cron.next.today'), { T: hhmm })
+  if (sameDay(next, tomorrow)) return fmt(t('cron.next.tomorrow'), { T: hhmm })
+  return fmt(t('cron.next.date'), { D: `${p(next.getMonth() + 1)}-${p(next.getDate())}`, T: hhmm })
+}
+
+// IPC 错误 → 用户提示(提权取消/失败用稳定错误码判定;其余归为通用失败)
+export function cronErrorToast(err: unknown, tr: (k: string) => string): void {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes(ELEVATION_CANCELLED)) showToast(tr('toast.elevCancelled'), '#8888aa', 'fa-ban')
+  else if (msg.includes(ELEVATION_FAILED)) showToast(tr('toast.elevFailed'), '#f87171', 'fa-circle-exclamation')
+  else showToast(tr('toast.cronOpFailed'), '#f87171', 'fa-circle-exclamation')
 }

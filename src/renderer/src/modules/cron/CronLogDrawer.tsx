@@ -5,8 +5,9 @@ import { useT } from '../../hooks/useT'
 import { Modal } from '../../components/Modal'
 import { LogLines } from '../drawer/tabs/LogTab'
 import { useUiStore } from '../../state/ui-store'
+import { useSettingsStore } from '../../state/settings-store'
 import { dataSource } from '../../data'
-import { cronLogPath } from '../../data/mock/mock-source'
+import { fmt } from '../../i18n'
 import type { CronJob, LogLine } from '@shared/models'
 
 // 轻量事件总线:CronCard「查看日志」→ 抽屉(避免为单一消费建全局 store)
@@ -25,6 +26,7 @@ export function CronLogDrawer(): React.JSX.Element {
   const t = useT()
   const open = useUiStore((s) => s.overlays.includes('cronLogDrawer'))
   const closeOverlay = useUiStore((s) => s.closeOverlay)
+  const retainDays = useSettingsStore((s) => s.settings?.cronLogRetainDays ?? 3)
   const [job, setJob] = useState<CronJob | null>(null)
   const [lines, setLines] = useState<LogLine[]>([])
 
@@ -49,7 +51,7 @@ export function CronLogDrawer(): React.JSX.Element {
             <div style={{ minWidth: 0 }}>
               <div className="drawer-title-main">{t('cron.log.title')}</div>
               <div className="drawer-title-sub" id="cronLogPath" style={{ fontFamily: 'monospace' }}>
-                {job ? cronLogPath(job.id) : ''}
+                {job?.logPath ?? ''}
               </div>
             </div>
           </div>
@@ -62,13 +64,20 @@ export function CronLogDrawer(): React.JSX.Element {
         <div className="drawer-body">
           <div className="log-section-body" style={{ flex: 1, minHeight: 0 }}>
             <div className="log-section-content" id="cronLogBody">
-              <LogLines lines={lines} />
+              {lines.length > 0 ? (
+                <LogLines lines={lines} />
+              ) : (
+                <div style={{ padding: '18px 14px', fontSize: 11, color: 'var(--dim)' }}>
+                  <i className="fa-regular fa-file-lines" style={{ marginRight: 6 }} />
+                  {t('cron.log.empty')}
+                </div>
+              )}
             </div>
           </div>
           <div className="xml-section-bottom">
             <span style={{ fontSize: 10.5, color: 'var(--dim)' }}>
               <i className="fa-solid fa-clock-rotate-left" style={{ marginRight: 4 }} />
-              <span>{t('cron.log.retainHint')}</span>
+              <span>{fmt(t('cron.log.retainHintDyn'), { D: retainDays })}</span>
             </span>
             <button className="d-btn" type="button" onClick={() => closeOverlay('cronLogDrawer')}>
               <span>{t('common.close')}</span>

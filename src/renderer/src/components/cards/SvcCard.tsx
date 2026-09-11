@@ -3,7 +3,7 @@
 import { StatusDot } from '../ui/StatusDot'
 import { TagChip } from '../ui/TagChip'
 import { ActBtn } from '../ui/ActBtn'
-import { classifySvc, SVC_GROUP_META } from '../../lib/classify'
+import { effectiveType, SVC_GROUP_META } from '../../lib/classify'
 import { fmt } from '../../i18n'
 import type { PortService } from '@shared/models'
 
@@ -13,7 +13,9 @@ export function SvcCard({
   t,
   onOpen,
   onCopy,
-  onKill
+  onKill,
+  onRestart,
+  onContainerAction
 }: {
   svc: PortService
   brewManaged: ReadonlySet<string>
@@ -21,17 +23,20 @@ export function SvcCard({
   onOpen: () => void
   onCopy: () => void
   onKill: () => void
+  onRestart: () => void
+  onContainerAction?: (action: 'start' | 'stop' | 'restart') => void
 }): React.JSX.Element {
-  const type = classifySvc(svc, brewManaged)
+  const type = effectiveType(svc, brewManaged)
   const meta = SVC_GROUP_META[type]
+  const isContainer = svc.containerId !== undefined
   return (
     <div className="svc-col-card" id={`svc_${svc.id}`}>
       <div className="svc-r1">
-        <StatusDot status={svc.status} />
+        <StatusDot status={svc.status === 'running' ? 'running' : 'stopped'} />
         <span className="svc-name" title={svc.name}>
           {svc.name}
         </span>
-        <span className="svc-port">:{svc.port}</span>
+        {svc.port > 0 && <span className="svc-port">:{svc.port}</span>}
       </div>
       <div className="svc-cmd" title={svc.cmd}>
         {svc.cmd}
@@ -43,12 +48,14 @@ export function SvcCard({
               text={t('svc.type.' + type)}
               cls={type === 'brew' ? 'brew' : 'purple'}
               icon={meta.icon}
-              title={fmt(t(meta.clsKey), { C: svc.command })}
+              title={fmt(t('svc.cls.' + (svc.kind ?? type)), { C: svc.evidence ?? svc.command })}
             />
           )}
-          <span className="tag blue" style={{ fontFamily: "'SF Mono',Menlo,monospace;" }}>
-            PID {svc.pid}
-          </span>
+          {svc.pid ? (
+            <span className="tag blue" style={{ fontFamily: "'SF Mono',Menlo,monospace;" }}>
+              PID {svc.pid}
+            </span>
+          ) : null}
           <span className="tag cyan" style={{ fontFamily: "'SF Mono',Menlo,monospace;" }}>
             {svc.addr}:{svc.port} {svc.proto || ''}
           </span>
@@ -60,7 +67,21 @@ export function SvcCard({
         <div className="row-actions" onClick={(e) => e.stopPropagation()}>
           <ActBtn icon="fa-solid fa-arrow-up-right-from-square" opts={{ title: t('svc.open'), onPress: onOpen }} />
           <ActBtn icon="fa-solid fa-copy" opts={{ title: t('common.copy'), onPress: onCopy }} />
-          <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'red', title: t('common.kill'), onPress: onKill }} />
+          {isContainer ? (
+            svc.status === 'running' ? (
+              <>
+                <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'red', title: t('svc.stop'), onPress: () => onContainerAction?.('stop') }} />
+                <ActBtn icon="fa-solid fa-rotate-right" opts={{ cls: 'accent', title: t('svc.containerRestart'), onPress: () => onContainerAction?.('restart') }} />
+              </>
+            ) : (
+              <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: t('svc.start'), onPress: () => onContainerAction?.('start') }} />
+            )
+          ) : (
+            <>
+              <ActBtn icon="fa-solid fa-rotate-right" opts={{ cls: 'accent', title: t('svc.restart'), onPress: onRestart }} />
+              <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'red', title: t('common.kill'), onPress: onKill }} />
+            </>
+          )}
         </div>
       </div>
     </div>

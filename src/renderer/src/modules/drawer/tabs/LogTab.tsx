@@ -1,9 +1,8 @@
 // ported-from: docs/demo/index.html #dft-log + drawer.js addLogLine/clearLog @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// 日志 tab(demo #dft-log:4.5s live 流 + 初始 MOCK_DATA.drawer.logLines + 清空/导出/查看文件)
+// 日志 tab(阶段 1:真实日志源——文件 stdout/stderr 尾部 512KB 自动跟随 / 系统日志 log show 15m·2000 行手动刷新)
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../../hooks/useT'
 import { useDrawerStore } from '../../../state/drawer-store'
-import { dataSource } from '../../../data'
 import { showToast } from '../../../lib/utils'
 import type { LogLine } from '@shared/models'
 
@@ -24,17 +23,22 @@ export function LogLines({ lines }: { lines: LogLine[] }): React.JSX.Element {
 export function LogTab(): React.JSX.Element {
   const t = useT()
   const logLines = useDrawerStore((s) => s.logLines)
+  const logSource = useDrawerStore((s) => s.logSource)
   const clearLog = useDrawerStore((s) => s.clearLog)
-  const pushLogLine = useDrawerStore((s) => s.pushLogLine)
+  const loadLogs = useDrawerStore((s) => s.loadLogs)
+  const refreshLogs = useDrawerStore((s) => s.refreshLogs)
   const open = useDrawerStore((s) => s.open)
+  const tab = useDrawerStore((s) => s.tab)
+  const isDraft = useDrawerStore((s) => s.isDraft)
   const bodyRef = useRef<HTMLDivElement | null>(null)
   const [level, setLevel] = useState('')
 
-  // 实时日志流(demo 4.5s interval;strictMode 下订阅幂等,退订清理)
+  // 文件日志:tab 打开时每 5s 自动跟随(系统日志较重,手动刷新)
   useEffect(() => {
-    if (!open) return
-    return dataSource().logs.subscribe(pushLogLine)
-  }, [open, pushLogLine])
+    if (!open || tab !== 'log' || isDraft || logSource !== 'file') return
+    const timer = setInterval(() => void refreshLogs(), 5000)
+    return () => clearInterval(timer)
+  }, [open, tab, isDraft, logSource, refreshLogs])
 
   // 自动滚底(demo addLogLine scrollTop = scrollHeight)
   useEffect(() => {
@@ -63,6 +67,23 @@ export function LogTab(): React.JSX.Element {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
+            <select
+              value={logSource}
+              onChange={(e) => void loadLogs(e.target.value as 'file' | 'system')}
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid var(--border2)',
+                borderRadius: 6,
+                color: 'var(--muted)',
+                fontSize: 10.5,
+                padding: '3px 7px',
+                fontFamily: 'inherit',
+                outline: 'none'
+              }}
+            >
+              <option value="file">{t('log.source.file')}</option>
+              <option value="system">{t('log.source.system')}</option>
+            </select>
             <select
               value={level}
               onChange={(e) => setLevel(e.target.value)}
@@ -93,7 +114,10 @@ export function LogTab(): React.JSX.Element {
             <span style={{ fontSize: 10, color: 'var(--dim)' }}>{t('log.trackLive')}</span>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            <button className="d-btn" type="button" style={{ padding: '4px 9px', fontSize: 10.5 }} onClick={clearLog}>
+            <button className="d-btn" type="button" style={{ padding: '4px 9px', fontSize: 10.5 }} onClick={() => void refreshLogs()}>
+              <i className="fa-solid fa-arrows-rotate" /> <span>{t('log.refresh')}</span>
+            </button>
+            <button className="d-btn" type="button" style={{ padding: '4px 9px', fontSize: 10.5 }} onClick={() => void clearLog()}>
               <i className="fa-solid fa-trash-can" /> <span>{t('log.clear')}</span>
             </button>
             <button
