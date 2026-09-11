@@ -6,8 +6,6 @@ import { useT } from '../hooks/useT'
 import { MODULES, SIDEBAR_MODULES } from '../lib/modules'
 import { useUiStore } from '../state/ui-store'
 import { useSettingsStore } from '../state/settings-store'
-import { useCronStore } from '../state/cron-store'
-import { useServicesStore } from '../state/services-store'
 import { toggleSidebarCollapse } from '../hooks/useSidebarLayout'
 import { HELP_URL } from '../data/mock/mock-data'
 import { openExternal, showToast } from '../lib/utils'
@@ -24,10 +22,6 @@ export function Sidebar(): React.JSX.Element {
   const module = useUiStore((s) => s.module)
   const switchModule = useUiStore((s) => s.switchModule)
   const collapsed = useSettingsStore((s) => s.settings?.sidebarCollapsed ?? false)
-  // 阶段 3 角标:计数实时来自 store(cron 任务数 / 端口服务数);agents 留待阶段 1
-  const cronCount = useCronStore((s) => s.crons.length)
-  const svcCount = useServicesStore((s) => s.services.length)
-  const badgeCount = (id: string): number => (id === 'crontab' ? cronCount : id === 'services' ? svcCount : 0)
 
   const onToggle = (): void => {
     toggleSidebarCollapse(undefined, (collapsed) => {
@@ -57,51 +51,12 @@ export function Sidebar(): React.JSX.Element {
         {SIDEBAR_MODULES.map((id) => {
           const active = module === id
           const label = id === 'agents' ? 'Launch Agents' : t(`nav.${id}`)
-          const count = badgeCount(id)
           return (
-            <div
-              key={id}
-              className={`nav-item${active ? ' active' : ''}`}
-              style={{ position: 'relative' }}
-              onClick={() => switchModule(id)}
-            >
+            <div key={id} className={`nav-item${active ? ' active' : ''}`} onClick={() => switchModule(id)}>
               <div className="nav-icon">
                 <i className={NAV_ICONS[id]} />
               </div>
               <span className="nav-label">{label}</span>
-              {count > 0 &&
-                (collapsed ? (
-                  <span
-                    style={{
-                      position: 'absolute',
-                      top: 3,
-                      right: 8,
-                      fontSize: 8.5,
-                      lineHeight: '13px',
-                      padding: '0 4px',
-                      borderRadius: 7,
-                      background: 'var(--accent)',
-                      color: '#fff'
-                    }}
-                  >
-                    {count}
-                  </span>
-                ) : (
-                  <span
-                    style={{
-                      marginLeft: 'auto',
-                      fontSize: 9.5,
-                      lineHeight: '15px',
-                      padding: '0 6px',
-                      borderRadius: 8,
-                      background: 'var(--accent)',
-                      color: '#fff',
-                      flexShrink: 0
-                    }}
-                  >
-                    {count}
-                  </span>
-                ))}
             </div>
           )
         })}

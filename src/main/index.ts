@@ -149,14 +149,18 @@ app.whenReady().then(() => {
     watchDirs: launchdWatchDirs(app.getPath('home')),
     broadcast
   }
-  const registry = createApplierRegistry(ctx)
-  registry.apply(store.get())
-  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用
-  store.onChange((s) => registry.apply(s))
+  const registry = createApplierRegistry(ctx, { onDirsChanged: () => plists.invalidate() })
 
   // 执行层(阶段 2/3):ShellRunner(cmdTimeout 注入)/ 提权 / 定时任务服务
   const runner = createShellRunner({ getTimeoutMs: () => store.get().cmdTimeout })
   const elevate = createElevationExecutor()
+
+  // plist 服务(先于 registry 建好:fsevents applier 的 onDirsChanged 需失效其 scanAll 记忆)
+  const plists = createPlistService({ runner, elevate, home: app.getPath('home') })
+  registry.apply(store.get())
+  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用
+  store.onChange((s) => registry.apply(s))
+
   const cron = createCrontabService({
     runner,
     elevate,
@@ -173,7 +177,7 @@ app.whenReady().then(() => {
   const agents = createAgentService({
     runner,
     launchctl: createLaunchctlService({ runner, elevate, uid: process.getuid?.() ?? 501 }),
-    plists: createPlistService({ runner, elevate, home: app.getPath('home') }),
+    plists,
     brew: createBrewAgentService({ runner, elevate }),
     getXmlIndent: xmlIndentOf
   })

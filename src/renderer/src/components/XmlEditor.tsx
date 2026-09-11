@@ -3,7 +3,7 @@
 // 缩进随设置 xmlIndent(Compartment 动态重配,不必重建编辑器)
 import { useEffect, useRef } from 'react'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
+import { EditorView, drawSelection, highlightActiveLine, keymap } from '@codemirror/view'
 import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
@@ -19,26 +19,26 @@ const DEMO_HIGHLIGHT = HighlightStyle.define([
 
 const DEMO_THEME = EditorView.theme({
   '&': {
-    backgroundColor: 'rgba(0,0,0,0.25)',
+    // 背景透明对齐 demo textarea(容器底色透出);bordered 模态场景由 .xml-editor-wrap.bordered 的 var(--code-bg) 提供
+    backgroundColor: 'transparent',
     color: 'var(--muted)',
     fontFamily: "'SF Mono', Menlo, monospace",
     fontSize: '11px',
     height: '100%',
     width: '100%'
   },
-  '.cm-content': { caretColor: '#a78bfa', padding: '14px 0', lineHeight: '1.7' },
+  '.cm-content': { padding: '14px 0', lineHeight: '1.7' },
+  // drawSelection 接管光标渲染(原生 caret 被其 transparent !important 隐藏)→ 光标色由 .cm-cursor 描边决定
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--cyan)' },
   '.cm-line': { padding: '0 14px' },
   '.cm-scroller': { overflow: 'auto' },
   '&.cm-focused': { outline: 'none' },
   '.cm-gutters': { display: 'none' },
-  '.cm-activeLine': { backgroundColor: 'rgba(124,106,244,0.06)' },
-  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
-    backgroundColor: 'rgba(124,106,244,0.25)'
-  },
-  '.cm-keyword, .cm-tag': { color: '#45cbe0' },
-  '.cm-atom': { color: '#3ecf8e' },
-  '.cm-string': { color: '#c3a6ff' },
-  '.cm-comment': { color: '#4f4f6e' }
+  '.cm-activeLine': { backgroundColor: 'var(--wash-accent)' },
+  // 选择器与 CM6 baseTheme 的 &light.cm-focused > … 同特异性(5 类),排在 baseTheme 之后生效
+  '.cm-selectionLayer .cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
+    { backgroundColor: 'var(--wash-accent)' }
+  // token 色全部由 DEMO_HIGHLIGHT 的 CSS 变量输出(--cyan/--accent2/--dim),不再写死深浅单主题色
 })
 
 function indentExtensions(indent: XmlIndent): Extension[] {
@@ -77,6 +77,8 @@ export function XmlEditor({
           xml(),
           syntaxHighlighting(DEMO_HIGHLIGHT),
           EditorView.lineWrapping, // demo textarea 默认 soft wrap
+          drawSelection(), // 选区走 .cm-selectionBackground(主题 wash 变量),不用系统默认蓝
+          highlightActiveLine(), // 当前行浅底(.cm-activeLine),深浅主题一致的行指示
           indentComp.of(indentExtensions(indentRef.current)),
           history(),
           keymap.of(defaultKeymap),

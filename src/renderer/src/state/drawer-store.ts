@@ -29,6 +29,8 @@ interface DrawerState {
   ops: OpsState
   tab: DrawerTab
   form: AgentForm | null
+  /** 表单编辑历史(撤销栈,上限 50;openFor 时清空) */
+  formHistory: AgentForm[]
   statusModel: DrawerStatusModel | null
   logLines: LogLine[]
   logSource: LogSource
@@ -40,6 +42,7 @@ interface DrawerState {
   close(): void
   setTab(tab: DrawerTab): void
   updateForm(patch: Partial<AgentForm>): void
+  undoForm(): void
   setXml(xml: string): void
   setOps(next: Partial<OpsState>): void
   opsAction(action: 'load' | 'enable' | 'kickstart'): Promise<void>
@@ -62,6 +65,7 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
   ops: { loaded: false, enabled: false, running: false },
   tab: 'edit',
   form: null,
+  formHistory: [],
   statusModel: null,
   logLines: [],
   logSource: 'file',
@@ -88,6 +92,7 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
       isDraft: false,
       tab: 'edit',
       form,
+      formHistory: [],
       statusModel,
       logLines: logs,
       logSource: 'file',
@@ -125,7 +130,18 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
 
   updateForm(patch) {
     const form = get().form
-    if (form) set({ form: { ...form, ...patch } })
+    if (!form) return
+    const history = [...get().formHistory, form]
+    if (history.length > 50) history.shift()
+    set({ form: { ...form, ...patch }, formHistory: history })
+  },
+
+  // 撤销上一次表单编辑(栈空 → 无操作;按钮侧禁用)
+  undoForm() {
+    const history = get().formHistory
+    if (history.length === 0) return
+    set({ form: history[history.length - 1], formHistory: history.slice(0, -1) })
+    showToast(t()('toast.undone'), '#888888', 'fa-rotate-left')
   },
 
   setXml(xml) {

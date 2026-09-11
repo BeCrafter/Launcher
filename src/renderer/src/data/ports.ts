@@ -13,6 +13,7 @@ import type {
   OpsState,
   PortService
 } from '@shared/models'
+import type { MissingAgent } from '@shared/ipc'
 import type {
   ContainerAction,
   CronUpdateResult,
@@ -49,6 +50,8 @@ export interface AgentRepository {
   validateXml(xml: string): Promise<{ ok: boolean; error: string | null }>
   /** 删除无效 plist 文件(横幅删除按钮) */
   removeInvalid(path: string): Promise<void>
+  /** 定向复核:候选条目是否「仍被加载但 plist 已不存在」 */
+  checkMissing(candidates: { scope: AgentScope; label: string }[]): Promise<MissingAgent[]>
 }
 
 export interface CronRepository {

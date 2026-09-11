@@ -1,12 +1,13 @@
 // 端口服务发现(阶段 3):lsof 扫描 + ps 补全 + 分类管线 + 变更推送
 // - 轮询仅在「端口服务」页激活且用户未暂停时进行(resource 友好);启动扫一次给角标初值
 // - 稳定 id = pid:port;结果集合变化才推送(diff);lsof 失败保留上次数据并记录 error
-// - brew services list 低频(30s)刷新,分类交叉用;docker 每 10s(不可用每 15s 重试),静默降级
+// - brew services list 极慢(实测 11-13s)且低频(10min)刷新,分类交叉用;docker 每 10s(不可用每 15s 重试),静默降级
 
 import { classifyService } from '../domains/service-classify'
 import { dedupeRows, etimeToUptime, parseLsofListen } from '../domains/lsof-parse'
 import { portsRawToPort } from '../domains/docker-parse'
 import type { DockerContainer, PortService } from '../../shared/models'
+import { resolveBrewPath } from './brew-path'
 import type { DockerService } from './docker-service'
 import type { ShellRunner } from './shell-runner'
 
@@ -46,11 +47,16 @@ export function createProcessDiscovery(deps: {
   onChange(r: ScanResult): void
   pollMs?: number
   brewRefreshMs?: number
+  brewTimeoutMs?: number
+  /** 覆盖 brew 可执行路径(默认 resolveBrewPath 自动探测;测试固定值) */
+  brewPath?: string
   dockerRefreshMs?: number
   log?(m: string): void
 }): ProcessDiscovery {
   const pollMs = deps.pollMs ?? 3000
-  const brewRefreshMs = deps.brewRefreshMs ?? 30_000
+  const brewRefreshMs = deps.brewRefreshMs ?? 600_000 // brew 极慢(11-13s),低频即可;名集合仅影响分类展示
+  const brewTimeoutMs = deps.brewTimeoutMs ?? 45_000 // 超过默认 cmdTimeout(10s)必被 SIGTERM,显式放宽
+  const brewFile = deps.brewPath ?? resolveBrewPath()
   const dockerRefreshMs = deps.dockerRefreshMs ?? 10_000
   const log = deps.log ?? ((): void => {})
 
@@ -66,9 +72,10 @@ export function createProcessDiscovery(deps: {
   let polling = true
 
   async function refreshBrewIfDue(): Promise<void> {
+    // lastBrewAt 先置位 = 单飞:刷新期间后续调用立即返回,不会叠加并发 brew( brew 单次 13s)
     if (Date.now() - lastBrewAt < brewRefreshMs) return
     lastBrewAt = Date.now()
-    const r = await deps.runner.run('brew', ['services', 'list'])
+    const r = await deps.runner.run(brewFile, ['services', 'list'], { timeoutMs: brewTimeoutMs })
     if (r.code !== 0) return
     brewServices = r.stdout
       .split('\n')

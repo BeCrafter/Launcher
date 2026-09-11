@@ -592,6 +592,13 @@ export const zhCN: Record<string, string> = {
   "log.refresh": "刷新",
   "toast.xmlInvalid": "plist 校验未通过",
   "xml.saveHint": "写入 plist 文件",
+  "dialog.pickExecutable": "选择可执行文件",
+  "dialog.pickPlist": "选择 plist 文件",
+  "dialog.exportLog": "导出日志",
+  "toast.logExportedTo": "日志已导出到 {P}",
+  "toast.logFileMissing": "日志文件不存在(任务可能尚未产生输出)",
+  "agents.missing.title": "已加载但 plist 已不存在",
+  "agents.missing.hint": "该服务仍被 launchd 加载(管理目录中已无对应 plist 文件);可手工 bootout 或重建该 plist",
   "agent.override": "已禁用",
   "agent.override.title": "launchctl 覆盖状态为 disabled(可用抽屉「启用」按钮恢复)",
   "toast.cronHeaderSaved": "文件头已保存",
@@ -616,5 +623,6 @@ export const zhCN: Record<string, string> = {
   "toast.svcKillDenied": "无权限终止该进程,可尝试管理员授权",
   "toast.pollingOff": "已暂停端口监听扫描",
   "toast.containerActionFailed": "容器操作失败,请查看 Docker 状态",
-  "svc.dockerUnavailable": "Docker 未运行"
+  "svc.dockerUnavailable": "Docker 未运行",
+  "cron.systemUnavailable": "系统级不可用:/etc/crontab 不存在(macOS 系统保护禁止新建)"
 }
