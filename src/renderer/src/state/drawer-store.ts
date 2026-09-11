@@ -1,17 +1,17 @@
-// Agent 抽屉状态机(demo drawer.js 的 drawerAgentState + openEditFloat/saveFloatAgent/drawerOpsAction/dpAction)
-// 提权分流在此处;toast 文案与 demo 逐字对齐
+// Agent 抽屉状态机(阶段 1:真实 launchctl/plist;demo drawer.js 的状态语义 + 真实 ops/保存/克隆/删除)
+// 提权说明窗(应用侧)在此处发起;真实授权由 main 侧 osascript 弹出(密码不进应用)
 import { create } from 'zustand'
 import type { Agent, AgentForm, DrawerStatusModel, LogLine, OpsState } from '@shared/models'
 import type { AgentScope } from '../data/ports'
 import { dataSource } from '../data'
-import { MOCK_DATA } from '../data/mock/mock-data'
-import { nowTs } from '../data/mock/mock-source'
 import { ELEVATION, confirmDangerous } from '../lib/elevation'
 import { showToast } from '../lib/utils'
+import { cronErrorToast } from '../lib/cron'
 import { useAgentsStore } from './agents-store'
 import { makeT, getCurrentLang } from '../i18n'
 
 export type DrawerTab = 'edit' | 'status' | 'log' | 'xml'
+export type LogSource = 'file' | 'system'
 
 // demo openEditFloat 的 scopeMap(逐字对应)
 const SCOPE_LABEL: Record<AgentScope, string> = {
@@ -31,7 +31,10 @@ interface DrawerState {
   form: AgentForm | null
   statusModel: DrawerStatusModel | null
   logLines: LogLine[]
+  logSource: LogSource
   xml: string
+  xmlFormMode: boolean
+  unsupportedKeys: string[]
   openFor(agent: Agent): Promise<void>
   openDraft(agent: Agent): Promise<void>
   close(): void
@@ -43,10 +46,12 @@ interface DrawerState {
   save(): Promise<void>
   remove(): Promise<void>
   clone(): Promise<void>
-  addLogLine(type: LogLine['type'], text: string): void
-  clearLog(): void
-  pushLogLine(line: LogLine): void
+  loadLogs(source: LogSource): Promise<void>
+  refreshLogs(): Promise<void>
+  clearLog(): Promise<void>
 }
+
+const t = (): ((k: string) => string) => makeT(getCurrentLang())
 
 export const useDrawerStore = create<DrawerState>((set, get) => ({
   open: false,
@@ -59,20 +64,22 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
   form: null,
   statusModel: null,
   logLines: [],
+  logSource: 'file',
   xml: '',
+  xmlFormMode: true,
+  unsupportedKeys: [],
 
-  // demo openEditFloat:填充表单(阶段 1 前共用 MOCK_DATA.drawer 表单)+ 推导 ops 三态
+  // 真实数据装载:表单/状态/XML/日志(文件源)并行读取
   async openFor(agent) {
-    const t = makeT(getCurrentLang())
     useAgentsStore.getState().select(agent.id)
-    const [form, statusModel] = await Promise.all([
+    const [form, statusModel, xmlInfo, logs] = await Promise.all([
       dataSource().agents.readForm(agent.id),
-      dataSource().agents.readStatus(agent.id)
+      dataSource().agents.readStatus(agent.id),
+      dataSource().agents.readXml(agent.id),
+      dataSource().agents.readLogs(agent.id, 'file').catch(() => [])
     ])
-    // 表单前 3 字段取自当前 agent(demo setVal 行为)
     form.label = agent.label
     form.desc = agent.desc
-    form.program = agent.program || ''
     set({
       open: true,
       agentId: agent.id,
@@ -82,24 +89,23 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
       tab: 'edit',
       form,
       statusModel,
-      // 初始日志行(demo populateDrawerDefaults:MOCK_DATA.drawer.logLines)
-      logLines: MOCK_DATA.drawer.logLines.map(([ts, type, text]) => ({ ts, type, text })),
+      logLines: logs,
+      logSource: 'file',
+      xml: xmlInfo.xml,
+      xmlFormMode: xmlInfo.formMode,
+      unsupportedKeys: xmlInfo.unsupportedKeys,
       ops: {
-        loaded: agent.status !== 'stopped' || !!agent.pid,
-        enabled: true,
+        loaded: agent.status !== 'stopped' || agent.pid !== null,
+        enabled: !agent.isDisabledByOverride,
         running: agent.status === 'running'
-      },
-      // XML tab 原文(demo populateDrawerDefaults:MOCK_DATA.drawer.xml;按 agent 区分属后端阶段)
-      xml: MOCK_DATA.drawer.xml
+      }
     })
-    void t
   },
 
-  // demo openAgentDraft 尾段:isDraft=true,ops 禁用
   async openDraft(agent) {
     await get().openFor(agent)
     set({ isDraft: true })
-    showToast(makeT(getCurrentLang())('modal.newAgent.createdOpen').replace('{L}', agent.label), '#a78bfa', 'fa-wand-magic-sparkles')
+    showToast(t()('modal.newAgent.createdOpen').replace('{L}', agent.label), '#a78bfa', 'fa-wand-magic-sparkles')
   },
 
   close() {
@@ -108,6 +114,13 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
 
   setTab(tab) {
     set({ tab })
+    if (tab === 'status' && get().agentId && !get().isDraft) {
+      void dataSource()
+        .agents.readStatus(get().agentId!)
+        .then((statusModel) => set({ statusModel }))
+        .catch(() => {})
+    }
+    if (tab === 'log') void get().loadLogs(get().logSource)
   },
 
   updateForm(patch) {
@@ -123,135 +136,143 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
     set({ ops: { ...get().ops, ...next } })
   },
 
-  // demo drawerOpsAction(提权分流 + toast + 日志副作用,逐字对齐)
+  // 真实 ops:load/unload 与 enable/disable 为开关语义;kickstart 强制立即运行
   async opsAction(action) {
     const s = get()
-    if (s.isDraft) return
-    const t = makeT(getCurrentLang())
-    if (s.scope === 'system' || s.scope === 'daemon') {
-      const labels: Record<string, string> = {
-        load: t('drawer.op.load'),
-        enable: t('drawer.op.enable'),
-        kickstart: t('drawer.op.kickstart')
+    if (s.isDraft || !s.agentId) return
+    const tr = t()
+    try {
+      if (s.scope !== 'user') {
+        const labels: Record<string, string> = {
+          load: tr('drawer.op.load'),
+          enable: tr('drawer.op.enable'),
+          kickstart: tr('drawer.op.kickstart')
+        }
+        const ok = await ELEVATION.request({
+          detail: tr('elev.ops.detail').replace('{A}', labels[action] ?? action).replace('{L}', s.agentLabel),
+          command: `launchctl <domain>/${s.agentLabel}`
+        })
+        if (!ok) return
       }
-      const ok = await ELEVATION.request({
-        detail: t('elev.ops.detail').replace('{A}', labels[action] ?? action).replace('{L}', s.agentLabel),
-        command: `osascript -e 'do shell script "launchctl ${action === 'load' ? 'bootout' : action} ${s.agentLabel}" with administrator privileges'`
-      })
-      if (!ok) return
-    }
-    if (action === 'load') {
-      if (s.ops.loaded) {
-        s.setOps({ loaded: false, running: false })
-        showToast(t('toast.bootoutSuccess'), '#60a5fa', 'fa-plug-circle-xmark')
-        get().addLogLine('info', '[INFO] bootout: task unloaded.')
+      if (action === 'load') {
+        const next = await dataSource().agents.ops(s.agentId, s.ops.loaded ? 'unload' : 'load')
+        s.setOps(next)
+        showToast(s.ops.loaded ? tr('toast.bootoutSuccess') : tr('toast.bootstrapSuccess'), s.ops.loaded ? '#60a5fa' : '#4ade80', 'fa-plug')
+      } else if (action === 'enable') {
+        if (!s.ops.loaded) {
+          showToast(tr('toast.loadFirst'), '#fbbf24', 'fa-circle-exclamation')
+          return
+        }
+        const next = await dataSource().agents.ops(s.agentId, s.ops.enabled ? 'disable' : 'enable')
+        s.setOps(next)
+        showToast(next.enabled ? tr('toast.taskEnabled') : tr('toast.taskDisabled'), next.enabled ? '#4ade80' : '#fbbf24', next.enabled ? 'fa-circle-check' : 'fa-circle-pause')
       } else {
-        s.setOps({ loaded: true, enabled: true, running: false })
-        showToast(t('toast.bootstrapSuccess'), '#4ade80', 'fa-plug')
-        get().addLogLine('ok', '[OK] bootstrap: task loaded.')
+        if (!s.ops.loaded) {
+          showToast(tr('toast.notLoaded'), '#fbbf24', 'fa-circle-exclamation')
+          return
+        }
+        showToast(tr('toast.kickstarting'), '#a78bfa', 'fa-bolt')
+        const next = await dataSource().agents.ops(s.agentId, 'kickstart')
+        s.setOps(next)
       }
-    } else if (action === 'enable') {
-      if (!s.ops.loaded) {
-        showToast(t('toast.loadFirst'), '#fbbf24', 'fa-circle-exclamation')
-        return
-      }
-      if (s.ops.enabled) {
-        s.setOps({ enabled: false, running: false })
-        showToast(t('toast.taskDisabled'), '#fbbf24', 'fa-circle-pause')
-        get().addLogLine('warn', '[WARN] disabled: Disabled=true.')
-      } else {
-        s.setOps({ enabled: true })
-        showToast(t('toast.taskEnabled'), '#4ade80', 'fa-circle-check')
-        get().addLogLine('ok', '[OK] enabled.')
-      }
-    } else if (action === 'kickstart') {
-      if (!s.ops.loaded) {
-        showToast(t('toast.notLoaded'), '#fbbf24', 'fa-circle-exclamation')
-        return
-      }
-      s.setOps({ running: true })
-      showToast(t('toast.kickstarting'), '#a78bfa', 'fa-bolt')
-      get().addLogLine('info', '[INFO] kickstart: forcing immediate run…')
-      setTimeout(
-        () => get().addLogLine('ok', '[OK] kickstart: started. PID=' + (Math.floor(Math.random() * 8000) + 2000)),
-        600
-      )
+      await useAgentsStore.getState().load()
+    } catch (err) {
+      cronErrorToast(err, tr)
     }
   },
 
-  // demo saveFloatAgent(提权 + 回写 + 脱草稿态)
+  // 真实保存:表单 → plist 写盘(main 侧;提权作用域自动走系统授权)
   async save() {
     const s = get()
-    if (!s.agentId) return
-    const entry = useAgentsStore.getState().agents.find((x) => x.id === s.agentId)
-    if (!entry) return
-    const t = makeT(getCurrentLang())
-    const label = s.form?.label?.trim() || entry.label
-    if (s.scope === 'system' || s.scope === 'daemon') {
-      const ok = await ELEVATION.request({
-        detail: t('elev.saveAgent.detail').replace('{L}', label),
-        command: `mkdir -p ${s.scope === 'daemon' ? '/Library/LaunchDaemons' : '/Library/LaunchAgents'} && plutil -lint /Library/LaunchAgents/${label}.plist`
+    if (!s.agentId || !s.form) return
+    const tr = t()
+    const label = s.form.label.trim() || s.agentLabel
+    try {
+      if (!s.isDraft && (s.scope === 'system' || s.scope === 'daemon')) {
+        const ok = await ELEVATION.request({
+          detail: tr('elev.saveAgent.detail').replace('{L}', label),
+          command: `写入 ${s.scope === 'daemon' ? '/Library/LaunchDaemons' : '/Library/LaunchAgents'}/${label}.plist`
+        })
+        if (!ok) return
+      }
+      const f = s.form
+      const agent = await dataSource().agents.save(s.agentId, {
+        ...f,
+        label,
+        desc: f.desc.trim()
       })
-      if (!ok) return
+      await useAgentsStore.getState().load()
+      set({ isDraft: false, agentId: agent.id, agentLabel: agent.label, ops: { loaded: agent.status !== 'stopped', enabled: !agent.isDisabledByOverride, running: agent.status === 'running' } })
+      get().close()
+      showToast(tr('toast.configSavedReload'), '#4ade80', 'fa-check')
+    } catch (err) {
+      cronErrorToast(err, tr)
     }
-    await dataSource().agents.save(s.agentId, {
-      label,
-      desc: s.form?.desc?.trim() ?? '',
-      program: s.form?.program?.trim() ?? ''
-    })
-    await useAgentsStore.getState().load()
-    // 保存后脱离草稿态:plist 已落地但尚未 bootstrap
-    set({ isDraft: false, ops: { loaded: false, enabled: false, running: false }, agentLabel: label })
-    get().close()
-    showToast(t('toast.configSavedReload'), '#4ade80', 'fa-check')
-    get().addLogLine('ok', '[OK] Config saved. Reloading…')
   },
 
-  // demo dpAction('delete'):危险确认 + 系统级提权(bootout+rm 一次授权)
+  // 真实删除(危险确认;提权作用域 bootout+rm 合并一次授权,含用户域半状态防护)
   async remove() {
     const s = get()
     if (!s.agentId) return
     const label = s.agentLabel
-    const t = makeT(getCurrentLang())
+    const tr = t()
     const detail =
-      t('elev.delete.detail').replace('{L}', label) +
+      tr('elev.delete.detail').replace('{L}', label) +
       (s.scope === 'system' || s.scope === 'daemon' ? '（bootout + rm 一次授权）' : '（bootout 后删除）')
     const confirmed = await confirmDangerous.request(detail)
     if (!confirmed) return
-    if (s.scope === 'system' || s.scope === 'daemon') {
-      const ok = await ELEVATION.request({
-        detail: t('elev.delete.detail').replace('{L}', label),
-        command: `osascript -e 'do shell script "launchctl bootout ${s.scope === 'daemon' ? 'system' : 'gui'}/${label} && rm -f ${s.scope === 'daemon' ? '/Library/LaunchDaemons' : '/Library/LaunchAgents'}/${label}.plist" with administrator privileges'`
-      })
-      if (!ok) return
+    try {
+      if (s.scope === 'system' || s.scope === 'daemon') {
+        const ok = await ELEVATION.request({
+          detail: tr('elev.delete.detail').replace('{L}', label),
+          command: `launchctl bootout <domain>/${label}; rm <plist>`
+        })
+        if (!ok) return
+      }
+      await dataSource().agents.remove(s.agentId)
+      await useAgentsStore.getState().load()
+      get().close()
+      showToast(tr('toast.deletedTask'), '#f87171', 'fa-trash-can')
+    } catch (err) {
+      cronErrorToast(err, tr)
     }
-    await dataSource().agents.remove(s.agentId)
-    await useAgentsStore.getState().load()
-    get().close()
-    showToast(t('toast.deletedTask'), '#f87171', 'fa-trash-can')
-    get().addLogLine('warn', `[WARN] deleted: ${label}`)
   },
 
-  // demo dpAction('clone'):'.copy' 去重循环
+  // 真实克隆(读 XML → 替换 Label → 另存 .copy;去重循环在 main)
   async clone() {
     const id = get().agentId
     if (!id) return
-    await dataSource().agents.clone(id)
-    await useAgentsStore.getState().load()
-    showToast(makeT(getCurrentLang())('toast.clonedTask'), '#22d3ee', 'fa-copy')
+    try {
+      await dataSource().agents.clone(id)
+      await useAgentsStore.getState().load()
+      showToast(t()('toast.clonedTask'), '#22d3ee', 'fa-copy')
+    } catch (err) {
+      cronErrorToast(err, t())
+    }
   },
 
-  addLogLine(type, text) {
-    set({ logLines: [...get().logLines, { ts: nowTs(), type, text }] })
+  // 日志加载(文件源 512KB 尾读 / 系统源 log show 15m·2000 行)
+  async loadLogs(source) {
+    const id = get().agentId
+    if (!id || get().isDraft) return
+    set({ logSource: source })
+    try {
+      const lines = await dataSource().agents.readLogs(id, source)
+      if (get().agentId === id) set({ logLines: lines })
+    } catch (err) {
+      cronErrorToast(err, t())
+    }
   },
 
-  clearLog() {
-    const t = makeT(getCurrentLang())
-    set({ logLines: [{ ts: nowTs(), type: '', text: '日志已清空' }] })
-    void t
+  async refreshLogs() {
+    await get().loadLogs(get().logSource)
   },
 
-  pushLogLine(line) {
-    set({ logLines: [...get().logLines, line] })
+  // 清空 = 写空串到 stdout/stderr 文件(开源同款语义)
+  async clearLog() {
+    const id = get().agentId
+    if (!id || get().isDraft) return
+    await dataSource().agents.clearLogs(id)
+    set({ logLines: [] })
   }
 }))

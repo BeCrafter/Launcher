@@ -1,8 +1,9 @@
 // ported-from: docs/demo/index.html #view-settings + settings.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 设置页(demo #view-settings + settings.js;六 pane + tab 导航 + 页脚)
 // 各开关接线状态见 docs/design/demo-react-migration-map.md「设置项接线表」
-import { useEffect, useState } from 'react'
-import { useT } from '../../hooks/useT'
+import { useState } from 'react'
+import { useT, useFmt } from '../../hooks/useT'
+import { useAppInfo } from '../../hooks/useAppInfo'
 import { useSettingsStore } from '../../state/settings-store'
 import { showToast } from '../../lib/utils'
 import { openExternal } from '../../lib/utils'
@@ -10,6 +11,9 @@ import { SettingsSection, SettingsRow, SettingsHero } from './SettingsBits'
 import { ThemeCards } from './ThemeCards'
 import { Toggle } from '../../components/ui/Toggle'
 import { MOCK_DATA } from '../../data/mock/mock-data'
+
+// macOS 系统设置「登录项」面板(main 侧 url-guard 白名单放行)
+const MACOS_LOGIN_ITEMS_URL = 'x-apple.systempreferences:com.apple.LoginItems-Settings.extension'
 
 const TABS = [
   { id: 'general', icon: 'fa-solid fa-sliders', labelKey: 'settings.tab.general' },
@@ -24,13 +28,40 @@ type TabId = (typeof TABS)[number]['id']
 
 export function SettingsView(): React.JSX.Element {
   const t = useT()
+  const fmt = useFmt()
+  const info = useAppInfo()
   const [tab, setTab] = useState<TabId>('general')
+  const [checking, setChecking] = useState(false)
   const settings = useSettingsStore((s) => s.settings)
   const set = useSettingsStore((s) => s.set)
 
   if (!settings) return <div className="settings-layout" />
 
   const savedToast = (): void => showToast(t('toast.prefsSaved'), '#4ade80', 'fa-check')
+
+  // 检查更新:main 侧请求 GitHub Releases(四态;仓库未发布 → noRelease)
+  const checkAppUpdates = async (): Promise<void> => {
+    if (checking) return
+    setChecking(true)
+    showToast(t('toast.updating'), '#60a5fa', 'fa-arrows-rotate')
+    try {
+      const r = await window.launcher.checkForUpdate()
+      if (r.status === 'upToDate') {
+        showToast(fmt(t('toast.update.upToDate'), { V: r.currentVersion }), '#4ade80', 'fa-circle-check')
+      } else if (r.status === 'available') {
+        showToast(fmt(t('toast.update.available'), { V: r.latest?.version ?? '' }), '#a78bfa', 'fa-arrow-up')
+      } else if (r.status === 'noRelease') {
+        showToast(t('toast.update.noRelease'), '#8888aa', 'fa-circle-info')
+      } else {
+        showToast(t('toast.update.error'), '#f87171', 'fa-circle-exclamation')
+      }
+    } catch (err) {
+      console.error('[settings] checkForUpdate failed:', err)
+      showToast(t('toast.update.error'), '#f87171', 'fa-circle-exclamation')
+    } finally {
+      setChecking(false)
+    }
+  }
 
   return (
     <div className="settings-layout">
@@ -323,9 +354,9 @@ export function SettingsView(): React.JSX.Element {
               >
                 <SettingsRow
                   title={t('settings.about.version.rowTitle')}
-                  desc={MOCK_DATA.meta.versionFull}
+                  desc={info ? `Launcher v${info.version}` : ''}
                   control={
-                    <button className="d-btn blue" type="button" onClick={() => checkAppUpdates(t)}>
+                    <button className="d-btn blue" type="button" disabled={checking} onClick={() => void checkAppUpdates()}>
                       <i className="fa-solid fa-arrows-rotate" />
                       <span>{t('settings.about.btn.checkUpdates')}</span>
                     </button>
@@ -394,7 +425,10 @@ export function SettingsView(): React.JSX.Element {
                     <button
                       className="d-btn accent"
                       type="button"
-                      onClick={() => showToast(t('toast.openSysSettings'), '#60a5fa', 'fa-arrow-up-right-from-square')}
+                      onClick={() => {
+                        showToast(t('toast.openSysSettings'), '#60a5fa', 'fa-arrow-up-right-from-square')
+                        openExternal(MACOS_LOGIN_ITEMS_URL)
+                      }}
                     >
                       <i className="fa-solid fa-arrow-up-right-from-square" />
                       <span>{t('settings.login.btn.openSettings')}</span>
@@ -410,16 +444,12 @@ export function SettingsView(): React.JSX.Element {
               <i className="fa-solid fa-circle-check" style={{ color: 'var(--green)', marginRight: 5 }} />
               <span>{t('settings.footer.hint')}</span>
             </span>
-            <span style={{ fontSize: 10.5, color: 'var(--dim)' }}>{MOCK_DATA.meta.footerVersion}</span>
+            <span style={{ fontSize: 10.5, color: 'var(--dim)' }}>
+              {info ? `Launcher v${info.version}` : ''}
+            </span>
           </div>
         </div>
       </div>
     </div>
   )
-}
-
-// 检查更新(demo checkAppUpdates:800ms 后提示最新)
-function checkAppUpdates(t: (k: string) => string): void {
-  showToast(t('toast.updating'), '#60a5fa', 'fa-arrows-rotate')
-  setTimeout(() => showToast(t('toast.upToDate'), '#4ade80', 'fa-circle-check'), 800)
 }

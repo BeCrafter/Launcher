@@ -7,19 +7,24 @@ export type Language = 'zh-CN' | 'en-US'
 export type XmlIndent = '2' | '4' | 'tab'
 
 export interface LauncherSettings {
+  // ── 外观与语言 ──
   theme: ThemeMode
   language: Language
+  // ── 窗口与形态 ──
   sidebarCollapsed: boolean
   launchAtLogin: boolean
   menubarOnly: boolean
   trayVisible: boolean
   dockVisible: boolean
   menubarBadge: boolean
+  // ── launchd 引擎 ──
   fseventsActive: boolean
   cmdTimeout: number
   cronLogRetainDays: number
+  // ── 编辑器 ──
   labelPrefix: string
   xmlIndent: XmlIndent
+  // ── 安全 ──
   authCacheMin: number
   confirmDangerous: boolean
 }
@@ -67,19 +72,24 @@ export function normalizeSettings(raw: unknown): LauncherSettings {
   const r = (raw ?? {}) as Record<string, unknown>
   const d = DEFAULT_SETTINGS
   return {
+    // 外观与语言
     theme: enumOr(r.theme, THEME_VALUES, d.theme),
     language: enumOr(r.language, LANGUAGE_VALUES, d.language),
+    // 窗口与形态
     sidebarCollapsed: boolOr(r.sidebarCollapsed, d.sidebarCollapsed),
     launchAtLogin: boolOr(r.launchAtLogin, d.launchAtLogin),
     menubarOnly: boolOr(r.menubarOnly, d.menubarOnly),
     trayVisible: boolOr(r.trayVisible, d.trayVisible),
     dockVisible: boolOr(r.dockVisible, d.dockVisible),
     menubarBadge: boolOr(r.menubarBadge, d.menubarBadge),
+    // launchd 引擎
     fseventsActive: boolOr(r.fseventsActive, d.fseventsActive),
     cmdTimeout: enumNumberOr(r.cmdTimeout, CMD_TIMEOUT_VALUES, d.cmdTimeout),
     cronLogRetainDays: enumNumberOr(r.cronLogRetainDays, CRON_RETAIN_VALUES, d.cronLogRetainDays),
+    // 编辑器
     labelPrefix: typeof r.labelPrefix === 'string' && r.labelPrefix.length > 0 ? r.labelPrefix : d.labelPrefix,
     xmlIndent: enumOr(r.xmlIndent, XML_INDENT_VALUES, d.xmlIndent),
+    // 安全
     authCacheMin: enumNumberOr(r.authCacheMin, AUTH_CACHE_VALUES, d.authCacheMin),
     confirmDangerous: boolOr(r.confirmDangerous, d.confirmDangerous)
   }

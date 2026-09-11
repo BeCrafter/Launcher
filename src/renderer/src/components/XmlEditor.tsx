@@ -1,12 +1,14 @@
 // XML 编辑器(CodeMirror 6;refactor-plan 已确认决策⑥)
 // 高亮 token 色对齐 demo 高亮层(标签青/声明紫/注释 dim,正文 muted);换行行为对齐 demo(textarea pre-wrap)
+// 缩进随设置 xmlIndent(Compartment 动态重配,不必重建编辑器)
 import { useEffect, useRef } from 'react'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { HighlightStyle, indentUnit, syntaxHighlighting } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { xml } from '@codemirror/lang-xml'
+import type { XmlIndent } from '@shared/settings'
 
 // demo 配色(base.css .xml-hl-*):tag=--cyan、decl=--accent2、comment=--dim,正文=--muted
 const DEMO_HIGHLIGHT = HighlightStyle.define([
@@ -39,19 +41,29 @@ const DEMO_THEME = EditorView.theme({
   '.cm-comment': { color: '#4f4f6e' }
 })
 
+function indentExtensions(indent: XmlIndent): Extension[] {
+  return indent === 'tab'
+    ? [indentUnit.of('\t'), EditorState.tabSize.of(4)]
+    : [indentUnit.of(' '.repeat(Number(indent)))]
+}
+
 export function XmlEditor({
   value,
   onChange,
   placeholder,
-  bordered
+  bordered,
+  indent = '2'
 }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
   bordered?: boolean
+  indent?: XmlIndent
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const indentComp = useRef(new Compartment()).current
+  const indentRef = useRef(indent)
   // 外部 value 变化(如导入预填)→ 替换文档;内部输入不回灌(避免光标跳动)
   const externalValue = useRef(value)
 
@@ -65,6 +77,7 @@ export function XmlEditor({
           xml(),
           syntaxHighlighting(DEMO_HIGHLIGHT),
           EditorView.lineWrapping, // demo textarea 默认 soft wrap
+          indentComp.of(indentExtensions(indentRef.current)),
           history(),
           keymap.of(defaultKeymap),
           keymap.of(historyKeymap),
@@ -98,6 +111,13 @@ export function XmlEditor({
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
     }
   }, [value])
+
+  // 缩进设置变更 → 动态重配(不动文档,无光标丢失)
+  useEffect(() => {
+    if (indentRef.current === indent) return
+    indentRef.current = indent
+    viewRef.current?.dispatch({ effects: indentComp.reconfigure(indentExtensions(indent)) })
+  }, [indent, indentComp])
 
   return (
     <div className={'xml-editor-wrap' + (bordered ? ' bordered' : '')}>
