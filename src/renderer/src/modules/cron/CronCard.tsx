@@ -7,10 +7,10 @@ import { StatusDot } from '../../components/ui/StatusDot'
 import { TagChip } from '../../components/ui/TagChip'
 import { ActBtn } from '../../components/ui/ActBtn'
 import { Toggle } from '../../components/ui/Toggle'
-import { parseCronExpr } from '../../lib/cron'
-import { cronLogPath } from '../../data/mock/mock-source'
-import { MOCK_DATA } from '../../data/mock/mock-data'
+import { parseCronExpr, formatNextRun, cronErrorToast } from '../../lib/cron'
+import { CRON_PRESETS } from '../../lib/cron-presets'
 import { copyText, showToast } from '../../lib/utils'
+import { fmt } from '../../i18n'
 import { useCronStore } from '../../state/cron-store'
 import { useSettingsStore } from '../../state/settings-store'
 import { useUiStore } from '../../state/ui-store'
@@ -23,6 +23,7 @@ const FIELDS = ['Min', 'Hour', 'Dom', 'Mon', 'Dow'] as const
 export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
   const t = useT()
   const lang = useSettingsStore((s) => s.settings?.language ?? 'zh-CN')
+  const retainDays = useSettingsStore((s) => s.settings?.cronLogRetainDays ?? 3)
   const editingId = useCronStore((s) => s.editingId)
   const setEditingId = useCronStore((s) => s.setEditingId)
   const setEnabled = useCronStore((s) => s.setEnabled)
@@ -30,6 +31,7 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
   const save = useCronStore((s) => s.save)
   const remove = useCronStore((s) => s.remove)
   const cronDesc = useMemo(() => parseCronExpr(job.expr, lang, t), [job.expr, lang, t])
+  const nextDesc = useMemo(() => formatNextRun(job.expr, t), [job.expr, t])
 
   // 内联编辑字段(demo 由 DOM 输入框直接承载;React 收敛为本地 state)
   const [fields, setFields] = useState(job.expr.split(' '))
@@ -64,31 +66,41 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
   const liveDesc = parseCronExpr(liveExpr, lang, t)
 
   const onSave = async (): Promise<void> => {
-    if (job.system) {
-      const ok = await ELEVATION.request({
-        detail: t('elev.cron.detail'),
-        command: `osascript -e 'do shell script "crontab -l > /tmp/crontab.bak" with administrator privileges'`
-      })
-      if (!ok) return
+    try {
+      if (job.system) {
+        // 应用侧说明窗(密码在系统原生框输入,macOS 授权缓存由系统控制)
+        const ok = await ELEVATION.request({
+          detail: t('elev.cron.detail'),
+          command: t('elev.cron.cmdEdit')
+        })
+        if (!ok) return
+      }
+      await save(job, { expr: liveExpr, cmd, desc })
+    } catch (err) {
+      cronErrorToast(err, t)
     }
-    await save(job.id, { expr: liveExpr, cmd, desc })
   }
 
   const onDelete = async (): Promise<void> => {
-    if (job.system) {
-      const confirmed = await confirmDangerous.request(t('elev.cron.detail') + '（/etc/crontab）')
-      if (!confirmed) return
-      const ok = await ELEVATION.request({
-        detail: t('elev.cron.detail'),
-        command: `osascript -e 'do shell script "crontab -r" with administrator privileges'`
-      })
-      if (!ok) return
+    try {
+      if (job.system) {
+        const confirmed = await confirmDangerous.request(t('elev.cron.detail') + '（/etc/crontab）')
+        if (!confirmed) return
+        const ok = await ELEVATION.request({
+          detail: t('elev.cron.detail'),
+          command: t('elev.cron.cmdDelete')
+        })
+        if (!ok) return
+      }
+      await remove(job)
+    } catch (err) {
+      cronErrorToast(err, t)
     }
-    await remove(job.id)
   }
 
   const copyPath = async (): Promise<void> => {
-    await copyText(cronLogPath(job.id))
+    if (!job.logPath) return
+    await copyText(job.logPath)
     showToast(t('toast.pathCopied'), '#22d3ee', 'fa-copy')
   }
 
@@ -109,19 +121,24 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
             <input
               type="checkbox"
               checked={job.enabled}
-              onChange={(e) => void setEnabled(job.id, e.target.checked)}
+              onChange={(e) => void setEnabled(job, e.target.checked).catch((err) => cronErrorToast(err, t))}
             />
             <div className="toggle-track" />
             <div className="toggle-thumb" />
           </label>
         </div>
-        <div className="cron-desc">{job.desc}</div>
+        <div className="cron-desc">{job.desc || cronDesc}</div>
         <div className="cron-repeat">
           <span className="cron-repeat-text">{cronDesc}</span>
           <span className="cron-repeat-tags">
             <TagChip text={job.user} cls="blue" />
             <TagChip text={job.system ? t('cron.tag.systemEtc') : t('cron.tag.user')} cls={job.system ? 'red' : 'blue'} />
           </span>
+        </div>
+        <div id={`cronNext_${job.id}`} style={{ fontSize: 10.5, color: 'var(--dim)', display: 'flex', alignItems: 'center', gap: 5, marginTop: 3 }}>
+          <i className="fa-regular fa-hourglass-half" style={{ fontSize: 10 }} />
+          <span>{t('cron.next.label')}</span>
+          <span style={{ color: 'var(--muted)' }}>{nextDesc}</span>
         </div>
         <div className="cron-r4">
           <span className="cron-expr" title={job.expr}>
@@ -140,11 +157,11 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
           <div className="expand-field" style={{ marginBottom: 8 }}>
             <div className="expand-key">{t('cron.log.path')}</div>
             <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} className="expand-val">
-              {job.log ? cronLogPath(job.id) : t('cron.log.no')}
+              {job.log && job.logPath ? job.logPath : t('cron.log.no')}
             </div>
           </div>
           <div className="cron-log-row" style={{ display: job.log ? 'flex' : 'none', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: 'var(--dim)' }}>{t('cron.log.retainHint')}</span>
+            <span style={{ fontSize: 10, color: 'var(--dim)' }}>{fmt(t('cron.log.retainHintDyn'), { D: retainDays })}</span>
             <div style={{ display: 'flex', gap: 6 }}>
               <button className="d-btn blue" type="button" style={{ padding: '4px 10px', fontSize: 10.5 }} disabled={!job.log} onClick={() => void copyPath()}>
                 <i className="fa-solid fa-copy" /> <span>{t('cron.log.copyPath')}</span>
@@ -165,7 +182,7 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
         </div>
         <div style={{ fontSize: 10.5, color: 'var(--muted)', marginBottom: 6, fontWeight: 600 }}>{t('cron.quickPreset')}</div>
         <div className="cron-preset-row" id={`cronPresets_${job.id}`}>
-          {MOCK_DATA.cronPresets.map((p) => (
+          {CRON_PRESETS.map((p) => (
             <button
               key={p.expr}
               type="button"
@@ -180,6 +197,10 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
           <i className="fa-regular fa-clock" style={{ color: 'var(--cyan)', fontSize: 13, flexShrink: 0 }} />
           <code id={`cronExprCode_${job.id}`}>{liveExpr}</code>
           <span className="cron-expr-desc" id={`cronExprDescText_${job.id}`}>{liveDesc}</span>
+          <span style={{ fontSize: 10, color: 'var(--dim)', flexShrink: 0 }}>
+            <i className="fa-regular fa-hourglass-half" style={{ marginRight: 3 }} />
+            {formatNextRun(liveExpr, t)}
+          </span>
         </div>
         <div className="cron-edit-grid">
           {FIELDS.map((f, i) => (
@@ -208,7 +229,7 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
         </div>
         <div className="f-row center">
           <span className="f-lbl" style={{ width: 60 }}>{t('cron.log.label')}</span>
-          <Toggle checked={!!job.log} onChange={(v) => void setLog(job.id, v)} />
+          <Toggle checked={!!job.log} onChange={(v) => void setLog(job, v).catch((err) => cronErrorToast(err, t))} />
           <span style={{ fontSize: 10, color: 'var(--dim)', flex: 1, minWidth: 0 }}>{t('cron.log.hint')}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 7, marginTop: 12 }}>

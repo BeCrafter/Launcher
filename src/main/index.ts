@@ -1,17 +1,38 @@
-import { app, BrowserWindow, Tray, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
+import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import { APP_NAME } from '../shared/constants'
+import { IPC_EVENTS } from '../shared/ipc'
 import { createSettingsStore, defaultConfigPath, type SettingsStore } from './settings/store'
-import { applyDockIcon, applySettings, windowBgColor } from './settings/apply'
+import { applyDockIcon } from './settings/appliers/dock'
+import { windowBgColor } from './settings/appliers/appearance'
+import { createTrayController } from './settings/appliers/tray'
+import { createApplierRegistry } from './settings/appliers'
+import { launchdWatchDirs } from './services/dir-watcher'
+import { createShellRunner } from './services/shell-runner'
+import { createElevationExecutor } from './services/elevation'
+import { createCrontabService } from './services/crontab-service'
+import { createLaunchctlService } from './services/launchctl-service'
+import { createPlistService } from './services/plist-service'
+import { createBrewAgentService } from './services/brew-agent-service'
+import { createAgentService } from './services/agent-service'
+import { createDockerService } from './services/docker-service'
+import { createProcessDiscovery } from './services/process-discovery'
+import { createTermination } from './services/termination'
+import type { ApplyCtx } from './settings/types'
 import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
-let tray: Tray | null = null
 let store: SettingsStore
 
 // dev 自动化验证端口(如 CDP 交互测试);生产不生效
 if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_DEV_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['LAUNCHER_DEV_DEBUG_PORT'])
+}
+
+// dev E2E:隔离 userData(与正在运行的打包版互不争抢单实例锁/缓存);必须在取锁之前设置
+if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_E2E_USER_DATA']) {
+  app.setPath('userData', process.env['LAUNCHER_E2E_USER_DATA'])
 }
 
 // 单实例锁：重复启动时唤起既有窗口
@@ -35,51 +56,15 @@ function logoDir(): string {
   return base
 }
 
-// ── Tray（图标 = v2 星际火箭模板图，系统自动适配明暗菜单栏）──
-function createTray(): void {
-  if (tray) return
-  const icon = nativeImage.createFromPath(join(logoDir(), 'iconTemplate.png'))
-  icon.setTemplateImage(true)
-  tray = new Tray(icon)
-  tray.setToolTip(APP_NAME)
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      {
-        label: `显示 ${APP_NAME}`,
-        click: () => {
-          mainWindow?.show()
-          mainWindow?.focus()
-        }
-      },
-      { type: 'separator' },
-      {
-        label: '退出',
-        click: () => {
-          app.quit()
-        }
-      }
-    ])
-  )
-  tray.on('click', () => {
-    if (mainWindow?.isVisible()) {
-      mainWindow.hide()
-    } else {
-      mainWindow?.show()
-    }
-  })
+// main → renderer 推送(applier 事件与 settings:changed 共用;renderer 侧经 preload 白名单订阅)
+function broadcast(channel: string, payload?: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
 }
-
-function destroyTray(): void {
-  tray?.destroy()
-  tray = null
-}
-
-// 副作用引用(全模块级依赖,whenReady 与 nativeTheme 监听共用)
-const refs = { logoDir, createTray, destroyTray, getWindow: () => mainWindow }
 
 // 主进程主题(应用内切换或系统外观变化)变化 → 窗口底色 + Dock 图标随明暗切换
+// 窄路径:不重跑 registry(themeSource 重赋值虽幂等,避免潜在 'updated' 回环)
 nativeTheme.on('updated', () => {
-  applyDockIcon(refs)
+  applyDockIcon(logoDir)
   mainWindow?.setBackgroundColor(windowBgColor())
 })
 
@@ -154,12 +139,65 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  // 启动序:设置加载 → 副作用(themeSource/Tray/Dock/登录项/窗口底色) → 建窗 → IPC
+  // 启动序:设置加载 → applier 注册表副作用(themeSource/Tray/Dock/登录项/目录监听) → 建窗 → IPC
   store = createSettingsStore(defaultConfigPath(app.getPath('home')))
-  applySettings(store.get(), refs)
-  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用(themeSource/Tray/Dock/底色)
-  store.onChange((s) => applySettings(s, refs))
-  registerIpc(store)
+  const trayCtl = createTrayController({ logoDir, getWindow: () => mainWindow })
+  const ctx: ApplyCtx = {
+    logoDir,
+    getWindow: () => mainWindow,
+    tray: trayCtl,
+    watchDirs: launchdWatchDirs(app.getPath('home')),
+    broadcast
+  }
+  const registry = createApplierRegistry(ctx)
+  registry.apply(store.get())
+  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用
+  store.onChange((s) => registry.apply(s))
+
+  // 执行层(阶段 2/3):ShellRunner(cmdTimeout 注入)/ 提权 / 定时任务服务
+  const runner = createShellRunner({ getTimeoutMs: () => store.get().cmdTimeout })
+  const elevate = createElevationExecutor()
+  const cron = createCrontabService({
+    runner,
+    elevate,
+    home: app.getPath('home'),
+    username: userInfo().username,
+    getRetainDays: () => store.get().cronLogRetainDays
+  })
+
+  // Launch Agents(阶段 1):launchctl/plist/brew 门面
+  const xmlIndentOf = (): string => {
+    const v = store.get().xmlIndent
+    return v === 'tab' ? '\t' : ' '.repeat(Number(v))
+  }
+  const agents = createAgentService({
+    runner,
+    launchctl: createLaunchctlService({ runner, elevate, uid: process.getuid?.() ?? 501 }),
+    plists: createPlistService({ runner, elevate, home: app.getPath('home') }),
+    brew: createBrewAgentService({ runner, elevate }),
+    getXmlIndent: xmlIndentOf
+  })
+
+  // 端口服务(阶段 3):docker 容器 + 终止/重启 + 进程发现(轮询仅在服务页激活时进行)
+  const docker = createDockerService({ runner })
+  const termination = createTermination({ runner, elevate })
+  const discovery = createProcessDiscovery({
+    runner,
+    docker,
+    log: (m) => console.log(`[svc] ${m}`),
+    onChange: (r) =>
+      broadcast(IPC_EVENTS.servicesUpdated, {
+        services: r.services,
+        brewServices: r.brewServices,
+        containers: r.containers,
+        dockerAvailable: r.dockerAvailable,
+        polling: discovery.polling,
+        scannedAt: r.scannedAt
+      })
+  })
+  discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
+
+  registerIpc({ store, tray: trayCtl, agents, cron, discovery, termination, docker })
 
   createWindow()
 

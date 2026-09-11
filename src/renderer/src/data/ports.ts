@@ -1,22 +1,31 @@
-// 数据接缝:视图/store 只依赖此接口,后端阶段将 data/index.ts 换成 ipcDataSource() 即可
+// 数据接缝:视图/store 只依赖此接口,后端实现见 data/ipc/*(data/index.ts 组合)
 // 全部方法返回 Promise;mock 实现立即 resolve(不加人为延迟,保持 demo 同步交互节奏)
 
 import type {
   Agent,
   AgentForm,
   CronJob,
+  CronListPayload,
+  CronScope,
   DrawerStatusModel,
   InvalidPlist,
   LogLine,
   OpsState,
   PortService
 } from '@shared/models'
+import type {
+  ContainerAction,
+  CronUpdateResult,
+  KillOutcome,
+  RestartOutcome,
+  ServicesListPayload
+} from '@shared/ipc'
 
-export type OpAction = 'load' | 'enable' | 'kickstart'
+export type OpAction = 'load' | 'unload' | 'enable' | 'disable' | 'kickstart'
 export type AgentScope = 'user' | 'system' | 'daemon'
 export type AgentFilter = 'all' | 'brew' | 'user' | 'system' | 'daemon'
 export type CronFilter = 'all' | 'user' | 'system'
-export type SvcFilter = 'all' | 'brew' | 'node' | 'process'
+export type SvcFilter = 'all' | 'brew' | 'node' | 'process' | 'docker'
 
 export interface AgentRepository {
   list(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }>
@@ -30,32 +39,45 @@ export interface AgentRepository {
   clone(id: string): Promise<Agent>
   // 抽屉 ops 模拟状态机(demo drawerOpsAction)
   ops(id: string, action: OpAction): Promise<OpsState>
-  // 阶段 1 前:全部卡片共用 MOCK_DATA.drawer 的表单/状态/原料(demo populateDrawerDefaults 行为)
+  // 阶段 1 起:per-agent plist/launchctl 真实数据
   readForm(id: string): Promise<AgentForm>
   readStatus(id: string): Promise<DrawerStatusModel>
+  readXml(id: string): Promise<{ xml: string; formMode: boolean; unsupportedKeys: string[] }>
+  saveXml(id: string, xml: string): Promise<void>
+  readLogs(id: string, source: 'file' | 'system'): Promise<LogLine[]>
+  clearLogs(id: string): Promise<void>
+  validateXml(xml: string): Promise<{ ok: boolean; error: string | null }>
+  /** 删除无效 plist 文件(横幅删除按钮) */
+  removeInvalid(path: string): Promise<void>
 }
 
 export interface CronRepository {
-  list(): Promise<CronJob[]>
-  create(job: CronJob): Promise<CronJob>
-  update(id: string, patch: Partial<CronJob>): Promise<CronJob>
-  remove(id: string): Promise<void>
-  // demo cronLogLines:按任务的 log 路径构造近 3 天日志
+  list(): Promise<CronListPayload>
+  /** id 由后端按内容推导(scope|expr|cmd 哈希),调用方不传 */
+  create(job: Omit<CronJob, 'id'>): Promise<CronJob>
+  /** stale=true 表示原 id 失配、按命令降级匹配成功(外部改动过文件) */
+  update(job: CronJob, patch: Partial<CronJob>): Promise<CronUpdateResult>
+  remove(job: CronJob): Promise<void>
+  /** 读取任务日志文件尾(上限 2000 行 / 256KB) */
   readLog(id: string): Promise<LogLine[]>
+  /** 覆写指定作用域 crontab 的文件头(首个任务前的注释/env 块原文) */
+  writeHeader(scope: CronScope, text: string): Promise<void>
 }
 
 export interface ServiceRepository {
-  list(): Promise<{ services: PortService[]; brewServices: string[] }>
-  kill(id: string): Promise<void>
-}
-
-export interface LogStream {
-  subscribe(handler: (line: LogLine) => void): () => void
+  list(): Promise<ServicesListPayload>
+  /** privileged=true 时经 osascript 管理员提权(他人进程) */
+  kill(id: string, opts?: { privileged?: boolean }): Promise<KillOutcome>
+  restart(id: string): Promise<RestartOutcome>
+  containerAction(id: string, action: ContainerAction): Promise<void>
+  /** 监听状态开关(会话语义,不落配置) */
+  setPolling(enabled: boolean): Promise<ServicesListPayload>
+  /** 页面激活时开启 3s 轮询,离开停止(resource 友好) */
+  setActive(active: boolean): Promise<void>
 }
 
 export interface DataSource {
   agents: AgentRepository
   crons: CronRepository
   services: ServiceRepository
-  logs: LogStream
 }

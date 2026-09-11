@@ -1,12 +1,20 @@
 // 数据源工厂:整个应用唯一的数据入口
-// 当前 = mock;阶段 1-3 起按 refactor-plan 替换为 ipcDataSource()(接口不变,组件/store 零改动)
+// 阶段 1 起三域全部真实后端(IPC);mock 数据源已退场(仅 MOCK_DATA.urls 等静态链接仍保留)
 
 import type { DataSource } from './ports'
-import { createMockDataSource } from './mock/mock-source'
+import { createIpcAgentRepo } from './ipc/agents-source'
+import { createIpcCronRepo } from './ipc/cron-source'
+import { createIpcServicesRepo } from './ipc/services-source'
 
 let instance: DataSource | null = null
 
 export function dataSource(): DataSource {
-  if (!instance) instance = createMockDataSource()
+  if (!instance) {
+    instance = {
+      agents: createIpcAgentRepo(),
+      crons: createIpcCronRepo(),
+      services: createIpcServicesRepo()
+    }
+  }
   return instance
 }

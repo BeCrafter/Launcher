@@ -51,6 +51,13 @@ export const ELEVATION = {
     elevationReq = null
     emitElevation()
     resolve(false)
+  },
+
+  // 真实提权成功回调:记录时间戳 → authCacheMin 窗口内跳过应用侧说明窗
+  // (应用不缓存密码;macOS 自身的 admin 授权缓存约 5 分钟,系统框弹不弹由系统决定)
+  noteSuccess(): void {
+    const min = authCacheMinGetter()
+    if (min > 0) cachedUntil = Date.now() + min * 60000
   }
 }
 

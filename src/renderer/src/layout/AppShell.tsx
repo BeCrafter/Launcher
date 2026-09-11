@@ -1,7 +1,7 @@
 // ported-from: docs/demo/index.html .app-shell + statusbar.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 应用外壳(demo .app-shell 布局):侧边栏 + 主内容(顶栏/视图/状态栏)+ Toast
 // 状态栏显隐由 MODULES[module].showStatusBar 驱动;模型按模块从数据 store 派生
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 import { ViewHost } from './ViewHost'
@@ -12,6 +12,7 @@ import { useUiStore } from '../state/ui-store'
 import { useSettingsStore } from '../state/settings-store'
 import { useSidebarLayout, toggleSidebarCollapse } from '../hooks/useSidebarLayout'
 import { useT, useFmt } from '../hooks/useT'
+import { useAppInfo } from '../hooks/useAppInfo'
 import { agentsStatusBar, crontabStatusBar, servicesStatusBar } from '../lib/statusbars'
 import { themeLabelKey, languageLabel } from '../lib/labels'
 import { archLabel } from '../lib/arch'
@@ -20,7 +21,6 @@ import { useAgentsStore } from '../state/agents-store'
 import { useCronStore } from '../state/cron-store'
 import { useServicesStore } from '../state/services-store'
 import { MOCK_DATA } from '../data/mock/mock-data'
-import type { AppInfo } from '@shared/ipc'
 
 export function AppShell(): React.JSX.Element {
   const t = useT()
@@ -32,15 +32,9 @@ export function AppShell(): React.JSX.Element {
   const services = useServicesStore((s) => s.services)
   const theme = useSettingsStore((s) => s.settings?.theme ?? 'system')
   const language = useSettingsStore((s) => s.settings?.language ?? 'zh-CN')
-  const [arch, setArch] = useState('')
+  const info = useAppInfo()
+  const arch = info ? archLabel(info.arch) : ''
   useSidebarLayout(sidebarCollapsed)
-
-  useEffect(() => {
-    void window.launcher
-      .getAppInfo()
-      .then((i: AppInfo) => setArch(archLabel(i.arch)))
-      .catch(() => setArch(''))
-  }, [])
 
   // 设置页默认折叠侧边栏(demo switchModule('settings') 行为,toast 文案同款)
   useEffect(() => {
@@ -64,7 +58,7 @@ export function AppShell(): React.JSX.Element {
   else if (module === 'settings')
     model = {
       summaryIcon: 'fa-sliders',
-      summaryHtml: `Launcher <strong>${MOCK_DATA.meta.versionFull.replace('Launcher ', '')}</strong>`,
+      summaryHtml: `Launcher${info ? ` <strong>v${info.version}</strong>` : ''}`,
       items: [
         { dot: 'running', textHtml: `${t('statusbar.theme')} <strong>${t(themeLabelKey(theme))}</strong>` },
         { dot: 'loaded', textHtml: `${t('statusbar.language')} <strong>${languageLabel(language, t)}</strong>` },
