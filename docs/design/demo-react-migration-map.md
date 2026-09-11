@@ -170,7 +170,7 @@
 16. 端口服务新增:重启按钮、Docker 分组与过滤 chip(fa-box 代 logo)、容器 start/stop/restart;TagChip 文字保持 3 桶,细分 kind(python/php/jvm/ruby/docker/dev)进 tooltip。
 17. Topbar 刷新/重新扫描/监听状态真实接线(demo/迁移版此前仅 toast);Open = 系统浏览器打开 `http://127.0.0.1:<port>`,Copy = 真实剪贴板;**轮询仅服务页激活时进行**(离开停扫,已有数据冻结保留)。
 18. 侧边栏计数角标:阶段 2/3 曾提前落地 cron/services 两项(内联样式),**2026-09-11 按用户要求移除**——侧边栏恢复 demo 基线(仅图标+文字);refactor-plan 阶段 1 追加的「counts badge」仍为待办,需要时再评估。
-19. 提权真实化:osascript `with administrator privileges`(密码仅进系统原生框,应用不接触);`authCacheMin` 诚实语义 = 应用侧说明窗的免打扰窗口(与 macOS 约 5 分钟系统授权缓存对齐,弹不弹由系统决定);取消 `(-128)` → toast;`/etc` 下**新建**文件受 SIP 限制即使 root 也被拒(本机实测 EPERM)——系统级任务仅在 /etc/crontab 已存在时可用,读取不受限,文件头面板已显示诚实提示。
+19. 提权真实化:osascript `with administrator privileges`(密码仅进系统原生框,应用不接触);`authCacheMin` 诚实语义 = 应用侧说明窗的免打扰窗口(与 macOS 约 5 分钟系统授权缓存对齐,弹不弹由系统决定);取消 `(-128)` → toast;`/etc` 下**新建**文件受 SIP 限制即使 root 也被拒(本机实测 EPERM)——系统级任务仅在 /etc/crontab 已存在时可用,读取不受限。**入口前置拦截(2026-09-11)**:`headers.system.exists === false` 时新建模态的「系统级」选项置灰 + 说明(`cron.systemUnavailable`),文件头面板的系统级保存按钮置灰——避免「填完整张表单点保存才报 ELEVATION_FAILED」;用户级不受限(`crontab -` 会建表,仅实测无 crontab 时也可写)。
 20. next-run 预测落位 `src/shared/`(而非 main/domains):渲染层实时预览需本地计算。
 
 ## 已知差异清单(预批准/记录)
@@ -212,3 +212,15 @@
 | menubarBadge → Tray 角标 | **已完成**(setTitle 数字;阶段 1 后计数改由 main 自算) | 5 |
 | APP_VERSION → 设置页/关于 | **已完成**(useAppInfo hook;真实版本三处) | 5 |
 | aiAgents/aiSkills(已生成在 mock) | AI 视图 | 4 |
+
+## 打开慢修复(2026-09-11,机制同源开源 AgentStore/BrewManagedSupport)
+
+首屏数据路径实测(本机 32 plist):文件扫描 31ms / launchctl 全家 ~150ms,唯一慢源是 `brew services list --json`(11-13s,曾观测 >120s;`HOMEBREW_NO_AUTO_UPDATE=1` 无效)——且被 `cmdTimeout: 10000` 第 10 秒 SIGTERM 后 `catch(() => [])` 整体丢弃,白等 10s 且 brew 合从未生效。开源 LaunchManager 的 agents 列表关键路径**零 brew**(`AgentStore.refresh()` = plist + launchctl + print-disabled;isBrew 是 `BrewManagedSupport` 纯字符串启发式;brew 数据在独立 `HomebrewServiceStore` 后台 Task)。本次修复即消除移植偏差:
+
+1. **isBrew 纯启发式**:新增 `main/domains/brew-heuristic.ts`(`isBrewManaged`/`brewFormulaName`:label 前缀 `homebrew.mxcl.` → `/opt|Cellar/<公式>` 路径反推,复用 `matchBrewService` 原有分支);`agent-service.listImpl` 从 `Promise.all` 移除 `brewList()`,`buildAgent` 改用启发式。brew 数据仅在 `brewAction`(用户显式启停)按需拉取。**与开源偏差消除**;本机 4 个 brew plist 的 Label 实测均为 `homebrew.mxcl.*`,渲染层 brew 标签/过滤/按钮路由零变化(消费点只依赖 `agent.isBrew` 布尔值)
+2. **brew 调用收尾**:`resolveBrewPath()` 提为 `services/brew-path.ts` 共享(process-discovery 原用裸 `brew`,Finder 启动 PATH 精简会 ENOENT);process-discovery brew TTL 30s → 10min + lastBrewAt 先置位单飞
+3. **scanAll 记忆 + 单飞**:`plist-service.scanAll()` 结果记忆 1500ms + 进行中 promise 共享;`write/remove/removeWithBootout` 成功后失效;launchd 目录被应用外修改时 fsevents applier 经 `onDirsChanged → plists.invalidate()` 失效(保证 dirChanged reload 读到新状态)。消除抽屉 4 路并发 IPC 各自全量重扫
+4. **首屏骨架态**:新增 L0 原语 `components/ui/Skeleton.tsx`(纯视觉无文案,i18n 字典从冻结 demo 生成不新增键;样式在 app-chrome.css);三域视图 `!loaded && 数据为空` 时渲染骨架替代 EmptyState(加载中曾被误呈现为「没有数据」)
+5. **长命令显式超时**:`log show`(实测 2.8-31.8s 波动,与 `--last` 窗口大小无关)与 brew 全部调用点(list/action、process-discovery)显式 `timeoutMs: 45_000` 覆盖 `cmdTimeout`,修复系统源日志恒空 / brew 启停必超时;`brew.action` 原本也被 10s 杀死
+
+E2E(CDP,dev 模式):warm reload → 首张卡片中位 **879ms**(修复前 ~10s);brew 过滤 30 → 2 张卡片;invalid 横幅/系统日志/toggle/dirChanged 回归通过。已知遗留(非本次引入):`log show --predicate process == <label>` 对真实进程名 ≠ label 的服务拿不到日志(如 com.deepseek.dsh.web),属预置条件表达式口径问题。

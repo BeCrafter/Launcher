@@ -5,7 +5,7 @@ import { IPC_EVENTS } from '../../../shared/ipc'
 import { createDebouncedDirWatcher, type DebouncedDirWatcher } from '../../services/dir-watcher'
 import type { SettingsApplier } from '../types'
 
-export function createFsEventsApplier(opts?: { debounceMs?: number }): SettingsApplier {
+export function createFsEventsApplier(opts?: { debounceMs?: number; onDirsChanged?: (dirs: string[]) => void }): SettingsApplier {
   const debounceMs = opts?.debounceMs ?? 400
   let watcher: DebouncedDirWatcher | null = null
 
@@ -18,7 +18,10 @@ export function createFsEventsApplier(opts?: { debounceMs?: number }): SettingsA
           dirs: ctx.watchDirs,
           debounceMs,
           log: (msg) => console.log(`[fswatch] ${msg}`),
-          onChange: (dirs) => ctx.broadcast(IPC_EVENTS.agentsDirChanged, { dirs })
+          onChange: (dirs) => {
+            opts?.onDirsChanged?.(dirs) // 目录已变 → 失效 main 侧扫描缓存,保证随后的 reload 读到新状态
+            ctx.broadcast(IPC_EVENTS.agentsDirChanged, { dirs })
+          }
         })
         watcher.start()
       } else if (watcher) {

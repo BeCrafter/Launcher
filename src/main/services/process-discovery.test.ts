@@ -64,7 +64,7 @@ function harness(opts?: { lsofFail?: boolean; dockerAvailable?: boolean }) {
     action: async () => {}
   }
   const onChange = vi.fn<(r: ScanResult) => void>()
-  const discovery = createProcessDiscovery({ runner, docker, onChange, pollMs: 30, brewRefreshMs: 0, dockerRefreshMs: 0 })
+  const discovery = createProcessDiscovery({ runner, docker, onChange, pollMs: 30, brewRefreshMs: 0, brewPath: 'brew', dockerRefreshMs: 0 })
   return { discovery, onChange, calls, setLsofFail: (v: boolean) => (lsofFailOnce = v) }
 }
 

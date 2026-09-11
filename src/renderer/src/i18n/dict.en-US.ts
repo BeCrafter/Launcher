@@ -623,5 +623,6 @@ export const enUS: Record<string, string> = {
   "toast.svcKillDenied": "Not permitted to terminate this process; try administrator authorization",
   "toast.pollingOff": "Port listening scan paused",
   "toast.containerActionFailed": "Container action failed, check Docker status",
-  "svc.dockerUnavailable": "Docker is not running"
+  "svc.dockerUnavailable": "Docker is not running",
+  "cron.systemUnavailable": "System scope unavailable: /etc/crontab missing (macOS protection blocks creating it)"
 }

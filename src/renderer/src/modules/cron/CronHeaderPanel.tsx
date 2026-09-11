@@ -90,7 +90,14 @@ export function CronHeaderPanel(): React.JSX.Element {
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
             <span style={{ fontSize: 10, color: 'var(--dim)', flex: 1, minWidth: 0 }}>{t('cron.header.hint')}</span>
-            <button className="d-btn accent" type="button" id="cronHeaderSave" onClick={() => void onSave()}>
+            <button
+              className="d-btn accent"
+              type="button"
+              id="cronHeaderSave"
+              // 系统级 /etc/crontab 不存在时写入必失败(SIP 禁止新建);用户级 crontab - 会建表,不受此限
+              disabled={scope === 'system' && !data.exists}
+              onClick={() => void onSave()}
+            >
               <i className="fa-solid fa-check" /> <span>{t('common.save')}</span>
             </button>
           </div>
