@@ -28,6 +28,10 @@ export function AgentCard({
   const t = useT()
   const tagHtml = agent.tags.slice(0, 3).map((tg) => <TagChip key={tg} text={tg} cls={tg} />)
   const brewBadge = agent.isBrew ? <TagChip text="brew" cls="brew" /> : null
+  // 开源 isDisabledByOverride:launchctl 覆盖禁用 → 橙标提示(抽屉「启用」可恢复)
+  const overrideBadge = agent.isDisabledByOverride ? (
+    <TagChip text={t('agent.override')} cls="yellow" title={t('agent.override.title')} />
+  ) : null
   const toggleBtn = agent.isBrew ? (
     <>
       <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: 'brew start', onPress: onBrew.bind(null, 'start') }} />

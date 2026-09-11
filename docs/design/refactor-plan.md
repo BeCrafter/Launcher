@@ -5,12 +5,12 @@
 
 **覆盖度复核结论（2026-09-04）**：与开源逐项比对后确认——主体已覆盖，追加以下修订（详见 refactor-gap-analysis.md）：
 
-- **阶段 1 追加**：目录监听自动刷新（fs.watch 替代 FSEvents，0.4s 防抖 + 回前台刷新）；launchctl override 检测（gui+system 两域 print-disabled 合并，橙点 + 启用按钮）；侧边栏 agents/cron/services 计数 badge；新建流程（scope 选择 + 剪贴板 `<plist` 预填 + label 格式校验 + 同 scope 重名守卫）；删除单命令合并提权（bootout+rm 一次授权，修二次密码框）；删除用户域半状态防护（bootout 失败中止删除）；日志机制细节（512KB 尾截断 / 2000 行上限 terminate / 15m 窗口 / 关键字过滤）；brew 未注册服务「注册并启动」（brew services start）；跨 Store 事件总线（brew 变更 → agents 刷新）；无效 plist 的 XML 修复编辑（U6 已拍板）
+- **阶段 1 追加**：目录监听自动刷新（fs.watch 替代 FSEvents，0.4s 防抖 + 回前台刷新；**监听/去抖/广播/前端重载链路已在 2026-09-10 设置后端完善中落地**，数据源接入仍属本阶段）；launchctl override 检测（gui+system 两域 print-disabled 合并，橙点 + 启用按钮）；侧边栏 agents/cron/services 计数 badge；新建流程（scope 选择 + 剪贴板 `<plist` 预填 + label 格式校验 + 同 scope 重名守卫）；删除单命令合并提权（bootout+rm 一次授权，修二次密码框）；删除用户域半状态防护（bootout 失败中止删除）；日志机制细节（512KB 尾截断 / 2000 行上限 terminate / 15m 窗口 / 关键字过滤）；brew 未注册服务「注册并启动」（brew services start）；跨 Store 事件总线（brew 变更 → agents 刷新）；无效 plist 的 XML 修复编辑（U6 已拍板）
 - **阶段 2 追加**：cron 下次执行时间预测（U5 已拍板，纯函数 + vitest）
 - **阶段 3 追加**：本地服务启停/重启（SIGTERM→SIGKILL 复用终止管线，docker 容器 start/stop，U2 已拍板）
 - **阶段 1 新建弹窗内置最小模板库**（每 scope 3-5 个常用模板，U1 已拍板）
 - **测试基线**：以开源约 80 个用例为索引（LaunchManagerTests.swift），vitest 逐条对齐落点
-- 已会修复的开源残缺点：无命令超时（执行层统一超时 3/5/10s 可配）、nsAppleScript 主线程阻塞（osascript 子进程异步）、表单 12 键限制、无 XML 高亮等
+- 已会修复的开源残缺点：无命令超时（执行层统一超时 3/5/10s 可配；**ShellRunner 地基已在 2026-09-10 设置后端完善中落地**——`main/services/shell-runner.ts` 超时 SIGTERM→宽限 SIGKILL、值经 getter 注入、配单测；首个调用方 LaunchctlService 属阶段 1）、nsAppleScript 主线程阻塞（osascript 子进程异步）、表单 12 键限制、无 XML 高亮等
 - 未排入（YAGNI 确认）：批量 load/unload（U7）；HTTP health probe/workspace 分组（U3/U4，后置）；服务模块 v2 其余 backlog；E2E Playwright 阶段 4 后评估（U8）
 
 ## Context
@@ -121,7 +121,7 @@ lsof 发现（Unicode 规范化）→ 8 Resolver 分类管线 + Docker → kill 
 domains 复用 → ToolRegistry（只读 9 工具）→ MCP stdio 挂载实测 → pi-ai LlmClient + 专家提示词 → pi-agent-core + skill-plist 校验闭环/skill-diag → 聊天 UI → 写操作确认与安全。验收：plutil 闭环、3 故障案例、Claude Code 挂载、范围约束。
 
 ### 阶段 5 — 双形态/设置/主题/收尾
-菜单栏双形态（Tray badge、常驻开关、关窗隐藏）→ 9 设置 pane 落地 → 主题/语言切换 → 登录项指南/onboarding/更新检查（低优）→ 模块开关并入设置 → 打包配置预留。
+菜单栏双形态（Tray badge、常驻开关、关窗隐藏）→ 9 设置 pane 落地 → 主题/语言切换 → 登录项指南/onboarding/更新检查（低优）→ 模块开关并入设置 → 打包配置预留。**注（2026-09-10）**：Tray badge（setTitle 计数）、真实版本号（app:info）、检查更新（GitHub Releases 四态）、打开系统设置跳转已在设置后端完善中提前接线；本阶段保留其扩展项（角标异常数、i18n 化 Tray 菜单等）。
 
 ## 交付物
 

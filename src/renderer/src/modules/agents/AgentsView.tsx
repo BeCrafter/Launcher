@@ -13,6 +13,9 @@ import { ActBtn } from '../../components/ui/ActBtn'
 import { AgentCard } from '../../components/cards/AgentCard'
 import { useDrawerStore } from '../../state/drawer-store'
 import { showToast } from '../../lib/utils'
+import { confirmDangerous } from '../../lib/elevation'
+import { cronErrorToast } from '../../lib/cron'
+import { dataSource } from '../../data'
 import type { Agent, AgentScope } from '@shared/models'
 import type { AgentFilter } from '../../data/ports'
 
@@ -120,7 +123,19 @@ export function AgentsView(): React.JSX.Element {
                   cls: 'red',
                   title: t('common.delete'),
                   iconStyle: { fontSize: 10 },
-                  onPress: () => showToast(t('toast.plistDeleted'), '#f87171', 'fa-trash-can')
+                  onPress: () => {
+                    void (async () => {
+                      const confirmed = await confirmDangerous.request(t('common.delete') + ': ' + inv.path)
+                      if (!confirmed) return
+                      try {
+                        await dataSource().agents.removeInvalid(inv.path)
+                        await useAgentsStore.getState().load()
+                        showToast(t('toast.plistDeleted'), '#f87171', 'fa-trash-can')
+                      } catch (err) {
+                        cronErrorToast(err, t)
+                      }
+                    })()
+                  }
                 }}
               />
             </div>

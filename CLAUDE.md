@@ -32,20 +32,24 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - 阶段 0（脚手架：electron-vite + React 19 + TS + 单实例 + 窗口/Tray）✅
 - 阶段 0.5（图标定稿：v2 唯一图标 + 设置持久化 `~/.config/launcher/config.json`）✅
 - **UI 层迁移**（demo → React，mock 驱动）：Agents / 定时任务 / 端口服务 / 设置页六 pane / Agent 抽屉(4 tab)/ 全部浮层 ✅——逐项映射见 `docs/design/demo-react-migration-map.md`
-- 阶段 1（Agents 真实后端 launchctl/plist）——下一步；阶段 2 Cron 后端 / 阶段 3 端口服务后端 / 阶段 4 AI+MCP / 阶段 5 双形态与设置收尾（待办）
+- **设置后端完善**（2026-09-10）：15 键全部「落盘 + 生效」；appliers 按域模块化；menubarBadge→Tray 角标 / fseventsActive→fs.watch 链路 / cmdTimeout→ShellRunner 地基 / xmlIndent→编辑器+格式化 全部真实接线（cronLogRetainDays 待阶段 2）；关于页/登录页 mock 真实化（app:info 版本 / GitHub Releases 检查更新 / 系统设置跳转）✅
+- **阶段 2/3 真实后端**（2026-09-11）：定时任务（真实 crontab 读写/提权/日志/文件头面板/下次执行预测）+ 端口服务（lsof 发现/分类管线/kill/重启/Docker 降级/按需轮询/角标）✅——差异见 `docs/design/demo-react-migration-map.md`「阶段 2/3 落地差异」
+- **阶段 1 真实后端**（2026-09-11）：Launch Agents（launchctl 域映射/bootstrap-bootout-kickstart-enable/plist 三目录扫描与提权写/表单⇄XML 双向/真实状态与日志/brew 合并与路由）✅——差异见 migration-map「阶段 1 落地差异」；**三域（agents/cron/services）至此全部真实**
+- 阶段 4 AI+MCP / 阶段 5 双形态与设置收尾（待办）
 
 ## src/ 文件地图（Electron 应用，UI 迁移后）
 
 ```
 src/
 ├── main/              # 主进程（唯一事实来源）
-│   ├── index.ts       # 窗口/Tray 单实例 + 启动序(设置→副作用→建窗→IPC) + dev-check + 关窗常驻(menubarOnly) + windowOpen 拦截
+│   ├── index.ts       # 窗口单实例 + 启动序(设置→applier 注册表→建窗→IPC) + dev-check + 关窗常驻(menubarOnly) + windowOpen 拦截
 │   ├── settings/
 │   │   ├── store.ts   # config.json 原子写存储(损坏回 .bak/onChange/路径注入)
-│   │   └── apply.ts   # 设置副作用:themeSource(唯一写者)/Tray/Dock 深浅/登录项
-│   ├── ipc.ts         # settings:get/set/reset、app:info、shell:openExternal(https 白名单)、settings:changed 广播
-│   ├── domains/       # 纯函数领域层（阶段 1：launchd/plist/brew/cron/process）
-│   ├── services/      # 执行层（ShellRunner/osascript 提权/LaunchctlService/Resolvers）
+│   │   ├── types.ts   # ApplyCtx/SettingsApplier/TrayController(域间唯一契约)
+│   │   └── appliers/  # 按域副作用模块(appearance/dock/tray/login/fsevents)+ index.ts 注册表调度
+│   ├── ipc.ts         # settings:get/set/reset、app:info、agents:badgeCount、app:checkUpdates、shell:openExternal(url-guard 白名单)、settings:changed 广播
+│   ├── services/      # 执行层:shell-runner/dir-watcher/update-check/elevation(提权)/launchctl-service+plist-service+brew-agent-service+agent-service(阶段1)/crontab-service/process-discovery/termination/docker-service
+│   ├── domains/       # 纯函数领域层:launchctl-parse/plist-xml/agent-form(阶段1)+crontab/cron-next-run→shared/lsof-parse/service-classify/docker-parse/log-lines
 │   ├── stores/        # AgentStore/CronStore/ServiceStore（阶段 1 起）
 │   ├── ai/            # registry/llm/agent/skills/prompts（阶段 4）
 │   └── mcp/           # MCP stdio server（launcher-mcp 入口，阶段 4）
@@ -55,16 +59,16 @@ src/
 │   ├── modules/       # 视图:agents/cron(卡片+内联编辑+日志抽屉+新建模态)/services/drawer(壳+4 tab+SciBuilder+MultiValueList)/settings(6 pane)
 │   ├── layout/        # AppShell/Sidebar/Topbar/ViewHost
 │   ├── state/         # zustand:settings(乐观+IPC)/ui(路由/浮层/toast)/agents/cron/services/drawer(抽屉状态机)/bootstrap
-│   ├── data/          # 数据接缝:ports(仓储接口)/index(工厂,mock→IPC 可换)/mock/(MOCK_DATA 生成 + 行为化数据源)
+│   ├── data/          # 数据接缝:ports(仓储接口)/index(三域全 IPC)/ipc/(真实后端映射)/mock/(仅剩 mock-data 静态镜像:urls/aiAgents 等)
 │   ├── i18n/          # dict.*.ts 由 scripts/port-demo-i18n.mjs 生成(勿手改)+ t/fmt/useT
 │   ├── lib/           # 纯函数:cron/sci/plist/classify/ops-bar(5 态表)/elevation(Promise API)/utils/modules(注册表)/statusbars
-│   ├── hooks/         # useT/useFmt/useSidebarLayout(ResizeObserver+折叠三重同步)
+│   ├── hooks/         # useT/useFmt/useSidebarLayout(ResizeObserver+折叠三重同步)/useAppInfo(app:info 模块级缓存)
 │   ├── assets/        # rocketOrbit2Theme.ts(生成的双主题 dataURL)
 │   └── styles/        # base/layout/views/settings/drawer.css(逐字节移植自 demo,勿就地修改)
-└── shared/            # settings.ts(schema+normalize)/models.ts(领域类型)/ipc.ts(通道契约)/constants/api
+└── shared/            # settings.ts(schema+normalize)/models.ts(领域类型)/ipc.ts(通道契约+事件)/url-guard(外链 scheme 白名单)/constants/api
 ```
 
-约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 i18n 字典勿手改**。
+约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed`/`agents:dirChanged` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；新增设置 = `shared/settings.ts` 加键 + `main/settings/appliers/` 对应域模块 + 渲染层消费点（配置单文件不散落）；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 i18n 字典/`mock-data.ts` 勿手改（生成脚本见 scripts/）**。
 
 ## 页面架构（docs/demo/，冻结基线——以下为 demo 自身约定，仅作对照阅读）
 

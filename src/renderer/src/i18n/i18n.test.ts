@@ -4,7 +4,7 @@ import { enUS } from './dict.en-US'
 import { fmt, getCurrentLang, makeT, setRuntimeLang, t } from './index'
 
 describe('i18n dictionaries', () => {
-  it('中英键集合一致(555 键)', () => {
+  it('中英键集合一致(demo 555 键 + 应用 EXTRA 键)', () => {
     const zk = new Set(Object.keys(zhCN))
     const ek = new Set(Object.keys(enUS))
     expect(zk.size).toBeGreaterThanOrEqual(555)
@@ -12,6 +12,19 @@ describe('i18n dictionaries', () => {
     const onlyEn = [...ek].filter((k) => !zk.has(k))
     expect(onlyZh).toEqual([])
     expect(onlyEn).toEqual([])
+  })
+
+  it('应用新增的更新检查四键在两份字典均存在', () => {
+    const keys = [
+      'toast.update.upToDate',
+      'toast.update.available',
+      'toast.update.noRelease',
+      'toast.update.error'
+    ]
+    for (const k of keys) {
+      expect(zhCN[k], `zh-CN 缺 ${k}`).toBeTruthy()
+      expect(enUS[k], `en-US 缺 ${k}`).toBeTruthy()
+    }
   })
 })
 

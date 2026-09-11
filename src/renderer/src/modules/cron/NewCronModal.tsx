@@ -4,13 +4,13 @@ import { useState } from 'react'
 import { useT } from '../../hooks/useT'
 import { Modal } from '../../components/Modal'
 import { Toggle } from '../../components/ui/Toggle'
-import { parseCronExpr } from '../../lib/cron'
+import { parseCronExpr, formatNextRun, cronErrorToast } from '../../lib/cron'
+import { CRON_PRESETS } from '../../lib/cron-presets'
 import { showToast } from '../../lib/utils'
 import { useCronStore } from '../../state/cron-store'
 import { useSettingsStore } from '../../state/settings-store'
 import { useUiStore } from '../../state/ui-store'
 import { ELEVATION } from '../../lib/elevation'
-import { MOCK_DATA } from '../../data/mock/mock-data'
 import type { CronJob } from '@shared/models'
 
 const FIELDS = [
@@ -48,28 +48,31 @@ export function NewCronModal(): React.JSX.Element {
       showToast(t('toast.requireCommand'), '#f87171', 'fa-circle-exclamation')
       return
     }
-    if (scope === 'system') {
-      const ok = await ELEVATION.request({
-        detail: t('elev.cron.detail'),
-        command: `osascript -e 'do shell script "crontab -l | sed 1d" with administrator privileges'`
-      })
-      if (!ok) return
+    try {
+      if (scope === 'system') {
+        const ok = await ELEVATION.request({
+          detail: t('elev.cron.detail'),
+          command: t('elev.cron.cmdCreate')
+        })
+        if (!ok) return
+      }
+      const input: Omit<CronJob, 'id'> = {
+        user: scope === 'system' ? 'root' : 'user',
+        expr,
+        cmd: cmd.trim(),
+        desc: desc.trim(),
+        enabled: true,
+        system: scope === 'system',
+        log
+      }
+      await create(input)
+      setCmd('')
+      setDesc('')
+      setLog(false)
+      closeOverlay('newCronModal')
+    } catch (err) {
+      cronErrorToast(err, t)
     }
-    const job: CronJob = {
-      id: 'c' + Date.now(),
-      user: scope === 'system' ? 'root' : 'user',
-      expr,
-      cmd: cmd.trim(),
-      desc: exprDesc,
-      enabled: true,
-      system: scope === 'system',
-      log
-    }
-    await create(job)
-    setCmd('')
-    setDesc('')
-    setLog(false)
-    closeOverlay('newCronModal')
   }
 
   return (
@@ -89,7 +92,7 @@ export function NewCronModal(): React.JSX.Element {
             {t('modal.newCron.presetHeader')}
           </div>
           <div className="cron-preset-row" id="newCronPresets" style={{ marginBottom: 10 }}>
-            {MOCK_DATA.cronPresets.map((p) => (
+            {CRON_PRESETS.map((p) => (
               <button
                 key={p.expr}
                 type="button"
@@ -105,6 +108,10 @@ export function NewCronModal(): React.JSX.Element {
             <i className="fa-regular fa-clock" style={{ color: 'var(--cyan)', fontSize: 13, flexShrink: 0 }} />
             <code id="newCronExprCode">{expr}</code>
             <span className="cron-expr-desc" id="newCronExprDesc">{exprDesc}</span>
+            <span style={{ fontSize: 10, color: 'var(--dim)', flexShrink: 0 }}>
+              <i className="fa-regular fa-hourglass-half" style={{ marginRight: 3 }} />
+              {formatNextRun(expr, t)}
+            </span>
           </div>
 
           <div className="cron-edit-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, marginBottom: 12 }}>

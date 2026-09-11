@@ -7,6 +7,9 @@ import { useUiStore } from '../state/ui-store'
 import { useSettingsStore } from '../state/settings-store'
 import { useAgentsStore } from '../state/agents-store'
 import { useDrawerStore } from '../state/drawer-store'
+import { useCronStore } from '../state/cron-store'
+import { useServicesStore } from '../state/services-store'
+import { cronErrorToast } from '../lib/cron'
 import { showToast } from '../lib/utils'
 
 export function Topbar(): React.JSX.Element {
@@ -133,7 +136,14 @@ function CrontabActions(): React.JSX.Element {
       <button
         className="topbar-btn"
         type="button"
-        onClick={() => showToast(t('toast.crontabReloaded'), '#4ade80', 'fa-arrows-rotate')}
+        onClick={() => {
+          // 真实重读 crontab(外部改动后手动同步的入口)
+          void useCronStore
+            .getState()
+            .load()
+            .then(() => showToast(t('toast.crontabReloaded'), '#4ade80', 'fa-arrows-rotate'))
+            .catch((err) => cronErrorToast(err, t))
+        }}
       >
         <i className="fa-solid fa-arrows-rotate" />
         <span>{t('topbar.refresh')}</span>
@@ -148,20 +158,35 @@ function CrontabActions(): React.JSX.Element {
 
 function ServicesActions(): React.JSX.Element {
   const t = useT()
+  const polling = useServicesStore((s) => s.polling)
   return (
     <>
       <button
         className="topbar-btn"
         type="button"
-        onClick={() => showToast(t('toast.scanRefreshed'), '#4ade80', 'fa-arrows-rotate')}
+        onClick={() => {
+          // 立即重扫一次(不等下一轮轮询)
+          void useServicesStore
+            .getState()
+            .load()
+            .then(() => showToast(t('toast.scanRefreshed'), '#4ade80', 'fa-arrows-rotate'))
+            .catch(() => showToast(t('toast.containerActionFailed'), '#f87171', 'fa-circle-exclamation'))
+        }}
       >
         <i className="fa-solid fa-arrows-rotate" />
         <span>{t('topbar.rescan')}</span>
       </button>
       <button
-        className="topbar-btn accent"
+        className={`topbar-btn${polling ? ' accent' : ''}`}
         type="button"
-        onClick={() => showToast(t('toast.autoPollingOn'), '#22d3ee', 'fa-bolt')}
+        onClick={() => {
+          const next = !polling
+          void useServicesStore
+            .getState()
+            .setPolling(next)
+            .then(() => showToast(next ? t('toast.autoPollingOn') : t('toast.pollingOff'), '#22d3ee', 'fa-bolt'))
+            .catch(() => {})
+        }}
       >
         <i className="fa-solid fa-bolt" />
         <span>{t('topbar.watchState')}</span>
