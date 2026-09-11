@@ -91,7 +91,7 @@ function AgentsActions(): React.JSX.Element {
     let label = prefix + 'taskname'
     let idx = 1
     const agents = useAgentsStore.getState().agents
-    while (agents.some((a) => a.id === label)) label = prefix + 'taskname.' + idx++
+    while (agents.some((a) => a.scope === scope && a.label === label)) label = prefix + 'taskname.' + idx++
     const draft = await useAgentsStore.getState().createDraft(scope, label)
     await useDrawerStore.getState().openDraft(draft)
   }

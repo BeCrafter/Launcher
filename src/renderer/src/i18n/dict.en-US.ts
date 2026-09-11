@@ -592,6 +592,13 @@ export const enUS: Record<string, string> = {
   "log.refresh": "Refresh",
   "toast.xmlInvalid": "plist validation failed",
   "xml.saveHint": "Write plist file",
+  "dialog.pickExecutable": "Choose executable",
+  "dialog.pickPlist": "Choose plist file",
+  "dialog.exportLog": "Export log",
+  "toast.logExportedTo": "Log exported to {P}",
+  "toast.logFileMissing": "Log file does not exist yet (no output so far)",
+  "agents.missing.title": "Loaded but plist is missing",
+  "agents.missing.hint": "Still loaded by launchd while its plist no longer exists; boot it out manually or recreate the plist",
   "agent.override": "Disabled",
   "agent.override.title": "Disabled by launchctl override (use the Enable action in the drawer)",
   "toast.cronHeaderSaved": "File header saved",
@@ -616,5 +623,6 @@ export const enUS: Record<string, string> = {
   "toast.svcKillDenied": "Not permitted to terminate this process; try administrator authorization",
   "toast.pollingOff": "Port listening scan paused",
   "toast.containerActionFailed": "Container action failed, check Docker status",
-  "svc.dockerUnavailable": "Docker is not running"
+  "svc.dockerUnavailable": "Docker is not running",
+  "cron.systemUnavailable": "System scope unavailable: /etc/crontab missing (macOS protection blocks creating it)"
 }

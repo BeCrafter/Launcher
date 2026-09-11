@@ -23,9 +23,16 @@ export interface PlistFile {
   desc: string
 }
 
+export interface ScanResult {
+  valid: PlistFile[]
+  invalid: InvalidPlist[]
+}
+
 export interface PlistService {
   dirs(): { scope: AgentScope; dir: string; privileged: boolean }[]
-  scanAll(): Promise<{ valid: PlistFile[]; invalid: InvalidPlist[] }>
+  scanAll(): Promise<ScanResult>
+  /** 失效 scanAll 记忆(launchd 目录被应用外修改时由 fsevents applier 调用) */
+  invalidate(): void
   read(scope: AgentScope, path: string): Promise<PlistFile>
   write(scope: AgentScope, path: string, xml: string): Promise<void>
   remove(scope: AgentScope, path: string): Promise<void>
@@ -41,12 +48,24 @@ export function createPlistService(deps: {
   runner: ShellRunner
   elevate: ElevationExecutor
   home: string
+  /** scanAll 结果记忆时长(ms,默认 1500);write/remove/目录变更都会显式失效 */
+  memoTtlMs?: number
 }): PlistService {
+  const memoTtlMs = deps.memoTtlMs ?? 1500
   const dirs = (): { scope: AgentScope; dir: string; privileged: boolean }[] => [
     { scope: 'user', dir: join(deps.home, 'Library/LaunchAgents'), privileged: false },
     { scope: 'system', dir: '/Library/LaunchAgents', privileged: true },
     { scope: 'daemon', dir: '/Library/LaunchDaemons', privileged: true }
   ]
+
+  // scanAll 记忆 + 单飞:抽屉一次打开 4 路并发 IPC(readForm/readStatus/readXml/readLogs)各自
+  // findAgent 全量重扫 → 合并为共享 1 次。launchd 状态(pid 等)不在此层,无过期风险。
+  let memo: { at: number; result: ScanResult } | null = null
+  let pending: Promise<ScanResult> | null = null
+
+  const invalidate = (): void => {
+    memo = null
+  }
 
   async function readFile(scope: AgentScope, path: string): Promise<PlistFile> {
     let xml = await fs.readFile(path, 'utf8')
@@ -62,31 +81,49 @@ export function createPlistService(deps: {
     return { path, scope, fileName: basename(path), xml, value: parsed.value, label, desc: extractPlistDesc(xml) }
   }
 
+  async function scanAllImpl(): Promise<ScanResult> {
+    const valid: PlistFile[] = []
+    const invalid: InvalidPlist[] = []
+    for (const { scope, dir } of dirs()) {
+      let names: string[]
+      try {
+        names = await fs.readdir(dir)
+      } catch {
+        continue // 目录不存在(如 /Library/LaunchDaemons 在极简系统)
+      }
+      for (const name of names) {
+        if (!name.endsWith('.plist')) continue
+        const path = join(dir, name)
+        try {
+          valid.push(await readFile(scope, path))
+        } catch (err) {
+          invalid.push({ path, reason: err instanceof Error ? err.message : String(err) })
+        }
+      }
+    }
+    return { valid, invalid }
+  }
+
+  function scanAll(): Promise<ScanResult> {
+    if (memo && Date.now() - memo.at < memoTtlMs) return Promise.resolve(memo.result)
+    if (pending) return pending
+    pending = scanAllImpl()
+      .then((result) => {
+        memo = { at: Date.now(), result }
+        return result
+      })
+      .finally(() => {
+        pending = null
+      })
+    return pending
+  }
+
   return {
     dirs,
 
-    async scanAll() {
-      const valid: PlistFile[] = []
-      const invalid: InvalidPlist[] = []
-      for (const { scope, dir } of dirs()) {
-        let names: string[]
-        try {
-          names = await fs.readdir(dir)
-        } catch {
-          continue // 目录不存在(如 /Library/LaunchDaemons 在极简系统)
-        }
-        for (const name of names) {
-          if (!name.endsWith('.plist')) continue
-          const path = join(dir, name)
-          try {
-            valid.push(await readFile(scope, path))
-          } catch (err) {
-            invalid.push({ path, reason: err instanceof Error ? err.message : String(err) })
-          }
-        }
-      }
-      return { valid, invalid }
-    },
+    scanAll,
+
+    invalidate,
 
     read: readFile,
 
@@ -98,6 +135,7 @@ export function createPlistService(deps: {
       await fs.writeFile(tmp, xml, 'utf8')
       if (!privileged) {
         await fs.rename(tmp, path)
+        invalidate()
         return
       }
       const r = await deps.elevate.run(`mv ${tmp} ${path} && chown root:wheel ${path} && chmod 644 ${path}`)
@@ -105,17 +143,20 @@ export function createPlistService(deps: {
         await fs.unlink(tmp).catch(() => {})
         throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
       }
+      invalidate()
     },
 
     async remove(scope, path) {
       if (scope === 'user') {
         await fs.unlink(path)
+        invalidate()
         return
       }
       const r = await deps.elevate.run(`rm ${path}`)
       if (!r.ok) {
         throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
       }
+      invalidate()
     },
 
     async lint(xml) {
@@ -132,6 +173,7 @@ export function createPlistService(deps: {
         if (r.cancelled) throw new Error(ELEVATION_CANCELLED)
         if (!tolerated) throw new Error(`${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
       }
+      invalidate()
     },
 
     pathFor(scope, label) {

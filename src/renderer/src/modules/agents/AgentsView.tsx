@@ -9,6 +9,7 @@ import { FilterBar, FilterCounts } from '../../components/FilterBar'
 import { Chip } from '../../components/ui/Chip'
 import { GroupBlock } from '../../components/GroupBlock'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { Skeleton } from '../../components/ui/Skeleton'
 import { ActBtn } from '../../components/ui/ActBtn'
 import { AgentCard } from '../../components/cards/AgentCard'
 import { useDrawerStore } from '../../state/drawer-store'
@@ -38,6 +39,8 @@ export function AgentsView(): React.JSX.Element {
   const t = useT()
   const agents = useAgentsStore((s) => s.agents)
   const invalidPlists = useAgentsStore((s) => s.invalidPlists)
+  const missingPlists = useAgentsStore((s) => s.missingPlists)
+  const loaded = useAgentsStore((s) => s.loaded)
   const filter = useAgentsStore((s) => s.filter)
   const setFilter = useAgentsStore((s) => s.setFilter)
   const selectedId = useAgentsStore((s) => s.selectedId)
@@ -45,6 +48,8 @@ export function AgentsView(): React.JSX.Element {
   const toggle = useAgentsStore((s) => s.toggle)
   const brewAction = useAgentsStore((s) => s.brewAction)
   const searchQuery = useUiStore((s) => s.searchQuery)
+  // 首屏加载中(!loaded 且仓库为空):渲染骨架,避免「加载中」被误呈现为「没有数据」
+  const loading = !loaded && agents.length === 0
 
   const list = useMemo(() => {
     // demo renderAgents 过滤分支
@@ -109,6 +114,31 @@ export function AgentsView(): React.JSX.Element {
         ))}
       </FilterBar>
       <div className="list-container" id="agentList" style={{ gap: 16 }}>
+        {missingPlists.length > 0 && (
+          <div id="missingPlistsBanner" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--yellow)' }}>
+              <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />
+              {t('agents.missing.title')}
+            </div>
+            {missingPlists
+              .filter((m) => filter === 'all' || filter === m.scope)
+              .map((m) => (
+                <div className="invalid-plist-row" key={`${m.scope}:${m.label}`}>
+                  <i className="fa-solid fa-unlink invalid-icon" style={{ color: 'var(--yellow)' }} />
+                  <div className="invalid-info">
+                    <div className="invalid-path">
+                      {m.label}
+                      {m.pid ? <span style={{ color: 'var(--dim)' }}> · PID {m.pid}</span> : null}
+                    </div>
+                    <div className="invalid-sub">
+                      {t('agents.missing.hint')}
+                      {m.path ? <span style={{ marginLeft: 6, color: 'var(--dim)' }}>{m.path}</span> : null}
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
         {(filter === 'all' || filter === 'user') &&
           invalidPlists.map((inv) => (
             <div className="invalid-plist-row" key={inv.path}>
@@ -169,7 +199,7 @@ export function AgentsView(): React.JSX.Element {
             </GroupBlock>
           )
         })}
-        {!list.length && <EmptyState icon="fa-solid fa-magnifying-glass" text={t('agents.empty')} />}
+        {!list.length && (loading ? <Skeleton rows={6} /> : <EmptyState icon="fa-solid fa-magnifying-glass" text={t('agents.empty')} />)}
       </div>
     </div>
   )

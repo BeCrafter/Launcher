@@ -35,6 +35,8 @@ const api: LauncherApi = {
   resetSettings: () => ipcRenderer.invoke(IPC.settingsReset),
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
+  pickFile: (opts) => ipcRenderer.invoke(IPC.shellPickFile, opts),
+  saveTextFile: (opts) => ipcRenderer.invoke(IPC.shellSaveText, opts),
   reportBadgeCount: (count) => ipcRenderer.invoke(IPC.agentsBadge, count),
   checkForUpdate: () => ipcRenderer.invoke(IPC.appCheckUpdates),
   agents: {
@@ -53,7 +55,9 @@ const api: LauncherApi = {
     readLogs: (id, source) => ipcRenderer.invoke(IPC.agReadLogs, id, source),
     clearLogs: (id) => ipcRenderer.invoke(IPC.agClearLogs, id),
     validateXml: (xml) => ipcRenderer.invoke(IPC.agValidateXml, xml),
-    removeInvalid: (path) => ipcRenderer.invoke(IPC.agRemoveInvalid, path)
+    removeInvalid: (path) => ipcRenderer.invoke(IPC.agRemoveInvalid, path),
+    checkMissing: (candidates) => ipcRenderer.invoke(IPC.agCheckMissing, candidates),
+    revealLog: (id) => ipcRenderer.invoke(IPC.shellRevealLog, id)
   },
   cron: {
     list: () => ipcRenderer.invoke(IPC.cronList),

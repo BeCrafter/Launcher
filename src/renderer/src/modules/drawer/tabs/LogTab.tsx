@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../../hooks/useT'
 import { useDrawerStore } from '../../../state/drawer-store'
 import { showToast } from '../../../lib/utils'
+import { fmt } from '../../../i18n'
 import type { LogLine } from '@shared/models'
 
 // 日志行渲染(抽屉日志 tab 与 Cron 日志抽屉共用形态)
@@ -45,6 +46,25 @@ export function LogTab(): React.JSX.Element {
     const el = bodyRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [logLines.length])
+
+  // 导出:原生保存框 + main 侧写文件(取消 → 静默)
+  const exportLog = async (): Promise<void> => {
+    const s = useDrawerStore.getState()
+    const content = s.logLines.map((l) => `${l.ts}\t${l.text}`).join('\n')
+    const path = await window.launcher
+      .saveTextFile({ suggestedName: `${s.agentLabel || 'agent'}-${s.logSource}.log`, content, title: t('dialog.exportLog') })
+      .catch(() => null)
+    if (path) showToast(fmt(t('toast.logExportedTo'), { P: path }), '#4ade80', 'fa-download')
+  }
+
+  // 查看文件:在访达中显示该 agent 的日志文件(系统日志源无文件 → 按钮禁用)
+  const viewFile = async (): Promise<void> => {
+    const s = useDrawerStore.getState()
+    if (!s.agentId) return
+    const path = await window.launcher.agents.revealLog(s.agentId).catch(() => null)
+    if (path) showToast(t('toast.logFileJumped'), '#a78bfa', 'fa-file-lines')
+    else showToast(t('toast.logFileMissing'), '#f87171', 'fa-circle-exclamation')
+  }
 
   const visible = level
     ? logLines.filter((l) =>
@@ -124,7 +144,7 @@ export function LogTab(): React.JSX.Element {
               className="d-btn"
               type="button"
               style={{ padding: '4px 9px', fontSize: 10.5 }}
-              onClick={() => showToast(t('toast.logExported'), '#4ade80', 'fa-download')}
+              onClick={() => void exportLog()}
             >
               <i className="fa-solid fa-download" /> <span>{t('log.export')}</span>
             </button>
@@ -132,7 +152,8 @@ export function LogTab(): React.JSX.Element {
               className="d-btn accent"
               type="button"
               style={{ padding: '4px 9px', fontSize: 10.5 }}
-              onClick={() => showToast(t('toast.logFileJumped'), '#a78bfa', 'fa-file-lines')}
+              disabled={logSource === 'system'}
+              onClick={() => void viewFile()}
             >
               <i className="fa-solid fa-file-lines" /> <span>{t('log.viewFile')}</span>
             </button>

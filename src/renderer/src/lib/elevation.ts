@@ -27,8 +27,9 @@ export const ELEVATION = {
   },
 
   // demo 语义:缓存窗口内静默通过;取消 resolve(false) 并可 toast
+  // 注意:窗口有效性同时受「当前设置」约束 —— 设为 0(每次确认)时已置热的窗口立即失效
   request({ detail, command }: ElevationRequest): Promise<boolean> {
-    if (Date.now() < cachedUntil) return Promise.resolve(true)
+    if (authCacheMinGetter() > 0 && Date.now() < cachedUntil) return Promise.resolve(true)
     return new Promise<boolean>((resolve) => {
       elevationReq = { detail, command, resolve }
       emitElevation()

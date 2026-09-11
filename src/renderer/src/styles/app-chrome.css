@@ -45,3 +45,35 @@
   background: linear-gradient(to bottom, transparent 4px, var(--border) 82px);
   pointer-events: none;
 }
+
+/* 首屏数据加载骨架(应用新增,非 demo 移植):三域视图 !loaded 时的加载态 */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 2px;
+}
+
+.skeleton-row {
+  height: 52px;
+  border-radius: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-row::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--border2), transparent);
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}

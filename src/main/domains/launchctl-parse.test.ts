@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseLaunchctlList, parseLaunchctlPrint, parsePrintDisabled } from './launchctl-parse'
+import { parseDomainServices, parseLaunchctlList, parseLaunchctlPrint, parsePrintDisabled } from './launchctl-parse'
 
 const LIST = ['PID\tStatus\tLabel', '-   \t0\tio.tailscale.ipn.macsys.login-item-helper', '97961\t-9\tcom.apple.cloudphotod', '-\t-\tcom.foo.bar', ''].join('\n')
 
@@ -10,6 +10,33 @@ describe('parseLaunchctlList', () => {
     expect(m.get('io.tailscale.ipn.macsys.login-item-helper')).toEqual({ label: 'io.tailscale.ipn.macsys.login-item-helper', pid: null, lastExitCode: 0 })
     expect(m.get('com.apple.cloudphotod')).toMatchObject({ pid: 97961, lastExitCode: -9 })
     expect(m.get('com.foo.bar')).toMatchObject({ pid: null, lastExitCode: null })
+  })
+})
+
+describe('parseDomainServices(system 域服务表)', () => {
+  const sample = [
+    '\tservices = {',
+    '\t\t     324      - \tcom.brocadesoft.BSPrintMonitor',
+    '\t\t       0   (pe) \tcom.apple.noticeboard.state',
+    '\t\t       0     78 \tcom.apple.appleh13camerad',
+    '\t\t   66884      - \tcom.apple.diskimagesiod.09000001-0000-0000-9BD3-5B0100000000',
+    '\t\tactive count = 1',      // 非表格行不误收
+    '\t\tstate = running',
+    '\t}'
+  ].join('\n')
+  it('pid/状态码/label 解析;(pe) 等标记 → 退出码 null;非表格行忽略', () => {
+    const m = parseDomainServices(sample)
+    expect(m.size).toBe(4)
+    expect(m.get('com.brocadesoft.BSPrintMonitor')).toMatchObject({ pid: 324, lastExitCode: null })
+    expect(m.get('com.apple.noticeboard.state')).toMatchObject({ pid: null, lastExitCode: null })
+    expect(m.get('com.apple.appleh13camerad')).toMatchObject({ pid: null, lastExitCode: 78 })
+    expect(m.get('com.apple.diskimagesiod.09000001-0000-0000-9BD3-5B0100000000')?.pid).toBe(66884)
+  })
+  it('真实机输出回放:能解析出 BSPrintMonitor 且带 pid', () => {
+    // 取真实 launchctl print system 片段(实测该服务 pid 非 0)
+    const real = '\t\t     324      - \tcom.brocadesoft.BSPrintMonitor\n\t\t     143      - \tcom.apple.usbmuxd\n'
+    const m = parseDomainServices(real)
+    expect(m.get('com.brocadesoft.BSPrintMonitor')?.pid).toBe(324)
   })
 })
 
