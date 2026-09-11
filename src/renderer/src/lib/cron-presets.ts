@@ -1,4 +1,4 @@
-// cron 快速预设(demo MOCK_DATA.cronPresets 的真实化落位;文案键沿用 i18n 字典)
+// cron 快速预设(demo cronPresets 的真实化落位;文案键沿用 i18n 字典)
 import type { CronPreset } from '@shared/models'
 
 export const CRON_PRESETS: CronPreset[] = [

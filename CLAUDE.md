@@ -33,7 +33,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - 阶段 0.5（图标定稿：v2 唯一图标 + 设置持久化 `~/.config/launcher/config.json`）✅
 - **UI 层迁移**（demo → React，mock 驱动）：Agents / 定时任务 / 端口服务 / 设置页六 pane / Agent 抽屉(4 tab)/ 全部浮层 ✅——逐项映射见 `docs/design/demo-react-migration-map.md`
 - **设置后端完善**（2026-09-10）：15 键全部「落盘 + 生效」；appliers 按域模块化；menubarBadge→Tray 角标 / fseventsActive→fs.watch 链路 / cmdTimeout→ShellRunner 地基 / xmlIndent→编辑器+格式化 全部真实接线（cronLogRetainDays 待阶段 2）；关于页/登录页 mock 真实化（app:info 版本 / GitHub Releases 检查更新 / 系统设置跳转）✅
-- **阶段 2/3 真实后端**（2026-09-11）：定时任务（真实 crontab 读写/提权/日志/文件头面板/下次执行预测）+ 端口服务（lsof 发现/分类管线/kill/重启/Docker 降级/按需轮询/角标）✅——差异见 `docs/design/demo-react-migration-map.md`「阶段 2/3 落地差异」
+- **阶段 2/3 真实后端**（2026-09-11）：定时任务（真实 crontab 读写/提权/日志/文件头面板/下次执行预测）+ 端口服务（lsof 发现/分类管线/kill/重启/Docker 降级/按需轮询）✅——差异见 `docs/design/demo-react-migration-map.md`「阶段 2/3 落地差异」
 - **阶段 1 真实后端**（2026-09-11）：Launch Agents（launchctl 域映射/bootstrap-bootout-kickstart-enable/plist 三目录扫描与提权写/表单⇄XML 双向/真实状态与日志/brew 合并与路由）✅——差异见 migration-map「阶段 1 落地差异」；**三域（agents/cron/services）至此全部真实**
 - 阶段 4 AI+MCP / 阶段 5 双形态与设置收尾（待办）
 
@@ -59,7 +59,7 @@ src/
 │   ├── modules/       # 视图:agents/cron(卡片+内联编辑+日志抽屉+新建模态)/services/drawer(壳+4 tab+SciBuilder+MultiValueList)/settings(6 pane)
 │   ├── layout/        # AppShell/Sidebar/Topbar/ViewHost
 │   ├── state/         # zustand:settings(乐观+IPC)/ui(路由/浮层/toast)/agents/cron/services/drawer(抽屉状态机)/bootstrap
-│   ├── data/          # 数据接缝:ports(仓储接口)/index(三域全 IPC)/ipc/(真实后端映射)/mock/(仅剩 mock-data 静态镜像:urls/aiAgents 等)
+│   ├── data/          # 数据接缝:ports(仓储接口)/index(三域全 IPC)/ipc/(真实后端映射)/mock/(mock-data 仅剩静态 urls)
 │   ├── i18n/          # dict.*.ts 由 scripts/port-demo-i18n.mjs 生成(勿手改)+ t/fmt/useT
 │   ├── lib/           # 纯函数:cron/sci/plist/classify/ops-bar(5 态表)/elevation(Promise API)/utils/modules(注册表)/statusbars
 │   ├── hooks/         # useT/useFmt/useSidebarLayout(ResizeObserver+折叠三重同步)/useAppInfo(app:info 模块级缓存)

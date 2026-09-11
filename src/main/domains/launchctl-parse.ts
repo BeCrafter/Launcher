@@ -29,6 +29,25 @@ export function parseLaunchctlList(output: string): Map<string, LaunchctlEntry> 
   return out
 }
 
+/** 解析 `launchctl print <domain>` 内的服务表(pid / 状态码 / label;状态码可为 -、数字或 (pe) 等标记)
+ *  用户态 `launchctl list` 不含 system 域服务(实测:/Library/LaunchDaemons 守护进程缺失),
+ *  故 daemon 作用域的状态需从此表合并。 */
+export function parseDomainServices(output: string): Map<string, LaunchctlEntry> {
+  const out = new Map<string, LaunchctlEntry>()
+  for (const raw of output.split('\n')) {
+    const m = raw.match(/^\t+ *(\d+) +(\S+) +\t?([A-Za-z0-9][A-Za-z0-9._-]*) *$/)
+    if (!m) continue
+    const label = m[3]
+    const statusRaw = m[2]
+    out.set(label, {
+      label,
+      pid: Number.parseInt(m[1], 10) || null,
+      lastExitCode: /^-?\d+$/.test(statusRaw) ? Number.parseInt(statusRaw, 10) : null
+    })
+  }
+  return out
+}
+
 /** 返回被 disable 的 label 集合(print-disabled;<domain> 输出) */
 export function parsePrintDisabled(output: string): Set<string> {
   const disabled = new Set<string>()

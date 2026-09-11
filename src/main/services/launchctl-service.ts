@@ -6,13 +6,21 @@
 
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
 import type { AgentScope } from '../../shared/models'
-import { parseLaunchctlList, parseLaunchctlPrint, parsePrintDisabled, type LaunchctlEntry, type LaunchctlPrintInfo } from '../domains/launchctl-parse'
+import {
+  parseDomainServices,
+  parseLaunchctlList,
+  parseLaunchctlPrint,
+  parsePrintDisabled,
+  type LaunchctlEntry,
+  type LaunchctlPrintInfo
+} from '../domains/launchctl-parse'
 import type { ElevationExecutor } from './elevation'
 import type { ShellRunner } from './shell-runner'
 
 export interface LaunchctlService {
   domainOf(scope: AgentScope): string
-  list(): Promise<{ entries: Map<string, LaunchctlEntry>; disabled: Set<string> }>
+  /** gui = 用户态 `launchctl list`(不含 system 域);system = `launchctl print system` 服务表;按作用域取用 */
+  list(): Promise<{ gui: Map<string, LaunchctlEntry>; system: Map<string, LaunchctlEntry>; disabled: Set<string> }>
   print(label: string, scope: AgentScope): Promise<LaunchctlPrintInfo>
   bootstrap(plistPath: string, scope: AgentScope): Promise<void>
   bootout(plistPath: string, scope: AgentScope): Promise<void>
@@ -72,14 +80,16 @@ export function createLaunchctlService(deps: {
     domainOf,
 
     async list() {
-      const [all, guiDisabled, sysDisabled] = await Promise.all([
+      const [all, sysDomain, guiDisabled, sysDisabled] = await Promise.all([
         deps.runner.run('launchctl', ['list']),
+        deps.runner.run('launchctl', ['print', 'system']),
         deps.runner.run('launchctl', ['print-disabled', `gui/${deps.uid}`]),
         deps.runner.run('launchctl', ['print-disabled', 'system'])
       ])
-      const entries = parseLaunchctlList(all.stdout)
+      const gui = parseLaunchctlList(all.stdout)
+      const system = parseDomainServices(sysDomain.stdout)
       const disabled = new Set([...parsePrintDisabled(guiDisabled.stdout), ...parsePrintDisabled(sysDisabled.stdout)])
-      return { entries, disabled }
+      return { gui, system, disabled }
     },
 
     async print(label, scope) {

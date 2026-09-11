@@ -101,7 +101,7 @@ Launcher/（electron-vite + TS + React 19）
 ### 阶段 0 — 脚手架
 electron-vite（React+TS）+ vitest + 目录骨架 + 单实例锁 + 空壳 Tray/窗口切换。验收：dev 起来有空窗口 + 菜单栏图标。
 
-### 阶段 1 — Agents 模块端到端（最大阶段）
+### 阶段 1 — Agents 模块端到端（最大阶段）✅(2026-09-11 落地;差异见 migration-map「阶段 1 落地差异」)
 domains（launchctl list/print/print-disabled、plist CRUD/validate/解析）→ 扫描/分组/过滤/搜索/状态栏 → 抽屉编辑器：
 - 编辑 tab：全字段表单（标识/执行/调度/Stdio 四区）+ SCI 构建器 + KeepAlive dict + CodeMirror XML 双向同步 + 不兼容拒绝策略（formManagedKeys 扩至 20+）
 - ops bar：bootstrap/bootout/kickstart/enable + PendingOperation 状态机 + **override 橙点与启用按钮**（launchctl override 与 plist Disabled 双机制区分）
@@ -111,10 +111,10 @@ domains（launchctl list/print/print-disabled、plist CRUD/validate/解析）→
 - **目录监听自动刷新**（fs.watch 0.4s 防抖 + 回前台刷新）+ 跨 Store 事件总线 + 侧边栏 badge
 验收：与开源逐功能比对清单（含 512KB 日志截断、重复点击、错误格式化、提权路径、无效 plist、override），视觉对照 demo。
 
-### 阶段 2 — Cron 模块
+### 阶段 2 — Cron 模块 ✅(2026-09-11 落地;差异见 migration-map「阶段 2/3 落地差异」)
 CrontabParser round-trip（注释/env 保真、引号感知切分）→ 行内编辑 + 预设 + 人读翻译 + **下次执行时间预测** + 文件头面板 + /etc/crontab 提权 + 侧边栏 badge。验收：文件往返一致（vitest + 手工），对齐开源 10 个 cron 用例。
 
-### 阶段 3 — 端口服务
+### 阶段 3 — 端口服务 ✅(2026-09-11 落地;「重命名/生成 LA 草稿」经用户确认跳过)
 lsof 发现（Unicode 规范化）→ 8 Resolver 分类管线 + Docker → kill 确认/终止 + **本地服务启停/重启**（SIGTERM→SIGKILL 复用终止管线；docker 容器 start/stop）→ 重命名 → 生成 LA 草稿 → dev filter + 侧边栏 badge。验收：docker/colima 场景手工验证，对齐开源服务分类 30+ 用例。
 
 ### 阶段 4 — AI + MCP（按 docs/design/ai-capability.md 步骤 1-7）
