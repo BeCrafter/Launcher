@@ -1,5 +1,5 @@
 // ported-from: docs/demo/index.html #dft-xml + drawer.js validateXml/copyXml @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// XML tab(demo #dft-xml:CodeMirror 6 编辑器 + 验证/复制 + 格式化/保存;初始原文 = MOCK_DATA.drawer.xml)
+// XML tab(demo #dft-xml:CodeMirror 6 编辑器 + 验证/复制 + 格式化/保存;初始原文 = per-agent plist 真实读取)
 // 格式化 = 真实重排(formatPlistXml,缩进取设置 xmlIndent);保存仍假(写盘属阶段 1)
 import { useT } from '../../../hooks/useT'
 import { useDrawerStore } from '../../../state/drawer-store'

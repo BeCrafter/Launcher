@@ -1,6 +1,6 @@
 // IPC 通道常量与负载类型(main ↔ preload ↔ renderer 契约,防字符串漂移)
 
-import type { CronJob } from './models'
+import type { AgentScope, CronJob } from './models'
 import type { CronScope, DockerContainer, PortService } from './models'
 import type { LauncherSettings } from './settings'
 
@@ -11,6 +11,9 @@ export const IPC = {
   settingsReset: 'settings:reset',
   appInfo: 'app:info',
   openExternal: 'shell:openExternal',
+  shellPickFile: 'shell:pickFile',
+  shellSaveText: 'shell:saveText',
+  shellRevealLog: 'agents:revealLog',
   agentsBadge: 'agents:badgeCount',
   // ── Launch Agents(阶段 1) ──
   agList: 'agents:list',
@@ -29,6 +32,7 @@ export const IPC = {
   agClearLogs: 'agents:clearLogs',
   agValidateXml: 'agents:validateXml',
   agRemoveInvalid: 'agents:removeInvalid',
+  agCheckMissing: 'agents:checkMissing',
   appCheckUpdates: 'app:checkUpdates',
   // ── 定时任务(阶段 2) ──
   cronList: 'cron:list',
@@ -80,6 +84,26 @@ export interface UpdateCheckResult {
   currentVersion: string
   latest: LatestRelease | null
   errorMessage: string | null
+}
+
+// ── 原生对话框负载(渲染层只传意图,路径选择由系统对话框完成) ──
+
+export type PickFileMode = 'executable' | 'plist'
+
+export interface PickedFile {
+  path: string
+  /** plist 模式返回文件内容(≤1MB);executable 模式为 null */
+  content: string | null
+}
+
+// ── Launch Agents 负载 ──
+
+/** 「已加载但 plist 已不存在」的孤儿服务(定向复核结果) */
+export interface MissingAgent {
+  label: string
+  scope: AgentScope
+  path: string | null
+  pid: number | null
 }
 
 // ── 定时任务负载 ──

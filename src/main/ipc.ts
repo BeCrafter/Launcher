@@ -1,11 +1,15 @@
 // IPC 注册:settings 读写重置 / app 信息 / 外链打开 / Agent 角标计数 / 定时任务(阶段 2);设置变更广播到所有窗口
 
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { existsSync, promises as fsp } from 'node:fs'
+import { join } from 'node:path'
 import {
   IPC,
   IPC_EVENTS,
   type AppInfo,
   type ContainerAction,
+  type PickedFile,
+  type PickFileMode,
   type ServicesListPayload,
   type SettingsPatch
 } from '../shared/ipc'
@@ -77,6 +81,39 @@ export function registerIpc(deps: IpcDeps): void {
   // 检查更新:main 侧请求 GitHub Releases(8s 超时;四态见 services/update-check.ts)
   ipcMain.handle(IPC.appCheckUpdates, () => checkForUpdate(app.getVersion()))
 
+  // ── 原生对话框(渲染层传意图,系统对话框选路径;文件读写都在 main) ──
+  ipcMain.handle(IPC.shellPickFile, async (e, opts: { mode: PickFileMode; title?: string }): Promise<PickedFile | null> => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const isPlist = opts?.mode === 'plist'
+    const r = await dialog.showOpenDialog(win ?? undefined as never, {
+      title: opts?.title,
+      defaultPath: isPlist ? join(app.getPath('home'), 'Library/LaunchAgents') : '/usr/local/bin',
+      properties: ['openFile', 'showHiddenFiles'],
+      filters: isPlist ? [{ name: 'Property List', extensions: ['plist'] }] : undefined
+    })
+    if (r.canceled || r.filePaths.length === 0) return null
+    const path = r.filePaths[0]
+    let content: string | null = null
+    if (isPlist) {
+      const st = await fsp.stat(path)
+      if (st.size > 1024 * 1024) throw new Error('plist 文件过大(>1MB)')
+      content = await fsp.readFile(path, 'utf8')
+    }
+    return { path, content }
+  })
+
+  ipcMain.handle(IPC.shellSaveText, async (e, opts: { suggestedName: string; content: string; title?: string }): Promise<string | null> => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const r = await dialog.showSaveDialog(win ?? undefined as never, {
+      title: opts?.title,
+      defaultPath: opts?.suggestedName
+    })
+    if (r.canceled || !r.filePath) return null
+    await fsp.writeFile(r.filePath, opts?.content ?? '', 'utf8')
+    console.log(`[ipc] saveText ${r.filePath}`)
+    return r.filePath
+  })
+
   // ── Launch Agents(阶段 1) ──
   ipcMain.handle(IPC.agList, () => deps.agents.list())
   ipcMain.handle(IPC.agToggle, (_e, id: string) => deps.agents.toggle(id))
@@ -96,6 +133,16 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.agClearLogs, (_e, id: string) => deps.agents.clearLogs(id))
   ipcMain.handle(IPC.agValidateXml, (_e, xml: string) => deps.agents.validateXml(xml))
   ipcMain.handle(IPC.agRemoveInvalid, (_e, path: string) => deps.agents.removeInvalid(path))
+  ipcMain.handle(IPC.agCheckMissing, (_e, candidates: { scope: AgentScope; label: string }[]) =>
+    deps.agents.checkMissing(candidates ?? [])
+  )
+  // 日志文件在访达中显示(路径解析在 agent-service,揭示在 shell)
+  ipcMain.handle(IPC.shellRevealLog, async (_e, id: string): Promise<string | null> => {
+    const path = await deps.agents.logFilePath(id)
+    if (path === null || !existsSync(path)) return null
+    shell.showItemInFolder(path)
+    return path
+  })
 
   // ── 定时任务(阶段 2) ──
   ipcMain.handle(IPC.cronList, () => deps.cron.list())

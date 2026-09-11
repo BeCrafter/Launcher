@@ -78,6 +78,8 @@ export function EditTab(): React.JSX.Element {
   const t = useT()
   const form = useDrawerStore((s) => s.form)
   const updateForm = useDrawerStore((s) => s.updateForm)
+  const formHistory = useDrawerStore((s) => s.formHistory)
+  const undoForm = useDrawerStore((s) => s.undoForm)
   const remove = useDrawerStore((s) => s.remove)
   const clone = useDrawerStore((s) => s.clone)
   const save = useDrawerStore((s) => s.save)
@@ -145,7 +147,14 @@ export function EditTab(): React.JSX.Element {
               className="act-btn"
               type="button"
               style={{ flexShrink: 0, width: 28 }}
-              onClick={() => showToast(t('toast.chooseExecutable'), '#60a5fa', 'fa-folder-open')}
+              onClick={() => {
+                void window.launcher
+                  .pickFile({ mode: 'executable', title: t('dialog.pickExecutable') })
+                  .then((picked) => {
+                    if (picked) updateForm({ program: picked.path })
+                  })
+                  .catch((err) => showToast(String(err), '#f87171', 'fa-circle-exclamation'))
+              }}
             >
               <i className="fa-solid fa-folder-open" style={{ fontSize: 10 }} />
             </button>
@@ -302,7 +311,13 @@ export function EditTab(): React.JSX.Element {
       {/* 编辑 Tab 固定底部操作栏 */}
       <div className="section-footer">
         <div className="section-footer-left">
-          <button className="d-btn" type="button" onClick={() => showToast(t('toast.undone'), '#888', 'fa-rotate-left')}>
+          <button
+            className="d-btn"
+            type="button"
+            disabled={formHistory.length === 0}
+            title={t('btn.undo')}
+            onClick={() => undoForm()}
+          >
             <i className="fa-solid fa-rotate-left" /> <span>{t('btn.undo')}</span>
           </button>
           <button className="d-btn red" type="button" onClick={() => void remove()}>

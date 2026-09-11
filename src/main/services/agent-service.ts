@@ -2,8 +2,10 @@
 // 机制对齐开源 AgentStore/PlistService/LaunchctlService;BrewManagedSupport 合并规则见 brew-agent-service
 // id 约定:`<scope>:<label>`(label 跨作用域可重名,id 唯一);草稿 id 同构,落盘发生在 save
 
+import { existsSync } from 'node:fs'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
 import type { Agent, AgentForm, AgentScope, DrawerStatusModel, InvalidPlist, LogLine, OpsState } from '../../shared/models'
+import type { MissingAgent } from '../../shared/ipc'
 import { formFromPlist, plistFromForm } from '../domains/agent-form'
 import { parseLogText } from '../domains/log-lines'
 import { parsePlistXml, toPlistXml, type PlistDict } from '../domains/plist-xml'
@@ -38,6 +40,10 @@ export interface AgentService {
   validateXml(xml: string): Promise<{ ok: boolean; error: string | null }>
   /** 删除无效 plist 文件(demo 横幅删除按钮真实化;作用域按路径判定) */
   removeInvalid(path: string): Promise<void>
+  /** 定向复核:候选条目是否「仍被 launchctl 加载、但管理目录内 plist 已不存在」 */
+  checkMissing(candidates: { scope: AgentScope; label: string }[]): Promise<MissingAgent[]>
+  /** 该 agent 的日志文件路径(stdout 优先,其次 stderr;均无 → null) */
+  logFilePath(id: string): Promise<string | null>
 }
 
 export const agentId = (scope: AgentScope, label: string): string => `${scope}:${label}`
@@ -61,6 +67,12 @@ export function createAgentService(deps: {
 }): AgentService {
   const { runner, launchctl, plists, brew } = deps
   const drafts = new Map<string, Agent>() // 未落盘草稿(createDraft → save)
+
+  /** gui 域(用户态 list)与 system 域(`print system` 服务表)按作用域取用 */
+  const tableFor = (
+    tables: { gui: Map<string, { label: string; pid: number | null; lastExitCode: number | null }>; system: Map<string, { label: string; pid: number | null; lastExitCode: number | null }> },
+    scope: AgentScope
+  ): Map<string, { label: string; pid: number | null; lastExitCode: number | null }> => (scope === 'daemon' ? tables.system : tables.gui)
 
   async function brewList(): Promise<BrewServiceInfo[]> {
     return brew.list().catch(() => [])
@@ -119,17 +131,18 @@ export function createAgentService(deps: {
   }
 
   async function listImpl(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }> {
-    const [{ valid, invalid }, { entries, disabled }, brews] = await Promise.all([
+    const [{ valid, invalid }, tables, brews] = await Promise.all([
       plists.scanAll(),
       launchctl.list(),
       brewList()
     ])
+    const { disabled } = tables
     const runningPids = valid
-      .map((p) => entries.get(p.label)?.pid ?? null)
+      .map((p) => tableFor(tables, p.scope).get(p.label)?.pid ?? null)
       .filter((p): p is number => p !== null)
     const uptimes = await uptimesFor(runningPids)
-    const agents = valid.map((pf) => buildAgent(pf, entries, disabled, brews, uptimes))
-    for (const draft of drafts.values()) agents.unshift({ ...draft })
+    const agents = valid.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), disabled, brews, uptimes))
+    // 草稿(未落盘)不占列表行:保存后经 reload 出现
     return { agents, invalidPlists: invalid }
   }
 
@@ -141,8 +154,9 @@ export function createAgentService(deps: {
   }
 
   async function opsStateFor(pf: PlistFile, label: string): Promise<OpsState> {
-    const { entries, disabled } = await launchctl.list()
-    const entry = entries.get(label)
+    const tables = await launchctl.list()
+    const { disabled } = tables
+    const entry = tableFor(tables, pf.scope).get(label)
     return {
       loaded: entry !== undefined,
       enabled: !disabled.has(label),
@@ -156,8 +170,7 @@ export function createAgentService(deps: {
     async toggle(id) {
       const found = await findAgent(id)
       if (!found) throw new Error(`agent not found: ${id}`)
-      const { entries } = await launchctl.list()
-      const entry = entries.get(found.label)
+      const entry = tableFor(await launchctl.list(), found.scope).get(found.label)
       if (entry && entry.pid !== null) {
         // running → 停止:SIGTERM 轮询 + bootout(KeepAlive 兜底),达成 demo 的 stopped 语义
         await launchctl.stop(found.label, found.scope, entry.pid)
@@ -229,8 +242,9 @@ export function createAgentService(deps: {
 
       if (found && newPath !== found.pf.path) {
         await plists.write(scope, newPath, xml)
-        const { entries } = await launchctl.list()
-        if (entries.has(prevLabel)) await launchctl.bootout(found.pf.path, scope)
+        if (tableFor(await launchctl.list(), found.scope).has(prevLabel)) {
+          await launchctl.bootout(found.pf.path, scope)
+        }
         await plists.remove(scope, found.pf.path)
       } else if (found) {
         await plists.write(scope, found.pf.path, xml)
@@ -245,8 +259,7 @@ export function createAgentService(deps: {
       const found = await findAgent(id)
       drafts.delete(id)
       if (!found) return
-      const { entries } = await launchctl.list()
-      const loaded = entries.has(found.label)
+      const loaded = tableFor(await launchctl.list(), found.scope).has(found.label)
       if (found.scope !== 'user') {
         // 合并提权:一条命令完成 bootout + rm(开源同款),避免二次授权
         await plists.removeWithBootout(found.scope, found.pf.path, loaded, launchctl.domainOf(found.scope))
@@ -319,9 +332,29 @@ export function createAgentService(deps: {
 
     async readStatus(id) {
       const found = await findAgent(id)
-      if (!found) throw new Error(`agent not found: ${id}`)
-      const { entries, disabled } = await launchctl.list()
-      const entry = entries.get(found.label)
+      if (!found) {
+        // 草稿:返回零值状态,抽屉「状态」tab 可正常打开(尚无运行时)
+        const draft = drafts.get(id)
+        const parsed = parseAgentId(id)
+        if (!draft || !parsed) throw new Error(`agent not found: ${id}`)
+        return {
+          state: 'stopped',
+          pid: null,
+          uptime: null,
+          cpu: '0%',
+          cpuWidth: '0%',
+          mem: '0%',
+          memWidth: '0%',
+          exitCode: null,
+          restarts: 0,
+          startTime: '-',
+          plistPath: plists.pathFor(parsed.scope, draft.label),
+          workDir: '',
+          scope: parsed.scope
+        }
+      }
+      const tables = await launchctl.list()
+      const entry = tableFor(tables, found.scope).get(found.label)
       const info = entry ? await launchctl.print(found.label, found.scope) : null
       let cpu = '0%'
       let mem = '0%'
@@ -356,7 +389,10 @@ export function createAgentService(deps: {
 
     async readLogs(id, source) {
       const found = await findAgent(id)
-      if (!found) throw new Error(`agent not found: ${id}`)
+      if (!found) {
+        if (drafts.has(id)) return [] // 草稿尚无日志
+        throw new Error(`agent not found: ${id}`)
+      }
       if (source === 'system') {
         const r = await runner.run('/usr/bin/log', [
           'show',
@@ -413,6 +449,33 @@ export function createAgentService(deps: {
 
     async validateXml(xml) {
       return plists.lint(xml)
+    },
+
+    async logFilePath(id) {
+      const found = await findAgent(id)
+      if (!found) return null
+      const out = typeof found.pf.value.StandardOutPath === 'string' ? found.pf.value.StandardOutPath : ''
+      const err = typeof found.pf.value.StandardErrorPath === 'string' ? found.pf.value.StandardErrorPath : ''
+      const preferred = out !== '' ? out : err
+      if (preferred !== '' && existsSync(preferred)) return preferred
+      if (err !== '' && existsSync(err)) return err
+      return preferred !== '' ? preferred : null
+    },
+
+    async checkMissing(candidates) {
+      const dirs = plists.dirs()
+      const out: MissingAgent[] = []
+      for (const c of candidates) {
+        const info = await launchctl.print(c.label, c.scope)
+        if (!info.found) continue // 已不在 launchd 中(普通移除,非孤儿)
+        const path = info.path ?? ''
+        if (path === '') continue
+        // 仅关心三个管理目录内的服务:辅助进程(ShipIt 等)的 print path 为 submitted/系统目录,天然被过滤
+        if (!dirs.some((d) => path.startsWith(`${d.dir}/`))) continue
+        if (existsSync(path)) continue // 文件仍在(如重命名/移动)→ 非孤儿
+        out.push({ label: c.label, scope: c.scope, path, pid: info.pid })
+      }
+      return out
     },
 
     async removeInvalid(path) {

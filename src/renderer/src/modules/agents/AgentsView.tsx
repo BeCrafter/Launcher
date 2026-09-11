@@ -38,6 +38,7 @@ export function AgentsView(): React.JSX.Element {
   const t = useT()
   const agents = useAgentsStore((s) => s.agents)
   const invalidPlists = useAgentsStore((s) => s.invalidPlists)
+  const missingPlists = useAgentsStore((s) => s.missingPlists)
   const filter = useAgentsStore((s) => s.filter)
   const setFilter = useAgentsStore((s) => s.setFilter)
   const selectedId = useAgentsStore((s) => s.selectedId)
@@ -109,6 +110,31 @@ export function AgentsView(): React.JSX.Element {
         ))}
       </FilterBar>
       <div className="list-container" id="agentList" style={{ gap: 16 }}>
+        {missingPlists.length > 0 && (
+          <div id="missingPlistsBanner" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--yellow)' }}>
+              <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />
+              {t('agents.missing.title')}
+            </div>
+            {missingPlists
+              .filter((m) => filter === 'all' || filter === m.scope)
+              .map((m) => (
+                <div className="invalid-plist-row" key={`${m.scope}:${m.label}`}>
+                  <i className="fa-solid fa-unlink invalid-icon" style={{ color: 'var(--yellow)' }} />
+                  <div className="invalid-info">
+                    <div className="invalid-path">
+                      {m.label}
+                      {m.pid ? <span style={{ color: 'var(--dim)' }}> · PID {m.pid}</span> : null}
+                    </div>
+                    <div className="invalid-sub">
+                      {t('agents.missing.hint')}
+                      {m.path ? <span style={{ marginLeft: 6, color: 'var(--dim)' }}>{m.path}</span> : null}
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
         {(filter === 'all' || filter === 'user') &&
           invalidPlists.map((inv) => (
             <div className="invalid-plist-row" key={inv.path}>

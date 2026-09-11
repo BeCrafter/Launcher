@@ -82,11 +82,11 @@
 | 状态 tab | stat 卡 + CPU/内存条 + 退出码/重启/启动时间 + 路径信息组 | `tabs/StatusTab.tsx` | ✅(数据共用 MOCK_DATA.drawer.status,demo 同) |
 | 日志 tab | 初始 MOCK_DATA.drawer.logLines;4.5s 实时追加;级别 select(过滤为 React 增强,demo 的 select 无功能);清空(硬编码中文「日志已清空」)/导出/查看 toast | `tabs/LogTab.tsx` | 🔶 |
 | XML tab | demo 轻量高亮编辑器 → **CodeMirror 6**(决策⑥);validate/copy/format/save 按钮语义(demo 仅 toast) | `tabs/XmlTab.tsx` + `components/XmlEditor.tsx` | 🔶 |
-| XML 高亮映射 | demo 正则三类:`<...>` 整体青 / `<?...?>` 紫 / 注释 dim,正文 muted;textarea soft-wrap | CM HighlightStyle:tagName/angleBracket/attributeName/attributeValue→青、processingInstruction→紫、comment→dim、正文 muted;lineWrapping 对齐;容器 host 补 flex:1 修正 demo CSS `.xml-editor-wrap{display:flex}` 对流内子元素的收缩 |
+| XML 高亮映射 | demo 正则三类:`<...>` 整体青 / `<?...?>` 紫 / 注释 dim,正文 muted;textarea soft-wrap | CM HighlightStyle:tagName/angleBracket/attributeName/attributeValue→青、processingInstruction→紫、comment→dim、正文 muted(全部 CSS 变量输出,深浅主题自动切换,详见差异 32);lineWrapping 对齐;容器 host 补 flex:1 修正 demo CSS `.xml-editor-wrap{display:flex}` 对流内子元素的收缩;体验升级:`drawSelection()`(选区/光标走主题 wash+`--cyan`)与 `highlightActiveLine()`(当前行浅底) |
 | 表单数据 | 全部卡片共用 MOCK_DATA.drawer 表单(populateDrawerDefaults 行为;per-agent 属阶段 1) | mock readForm | ✅(忠实) |
 | 保存 | Label 重命名即重指 id;系统级提权;保存后脱草稿 + unloaded 态 | drawer-store.save | ✅ |
 | 删除/克隆 | 危险确认(系统级附加「bootout + rm 一次授权」)+ 提权;'.copy' 去重循环 | drawer-store.remove/clone | ✅ |
-| 草稿流 | 新建(scope)→ 列表顶插入 + 抽屉 isDraft(ops 全禁用「未保存草稿」)| Topbar.newWithScope + drawer-store.openDraft | ✅ |
+| 草稿流 | 新建(scope)→ 列表顶插入 + 抽屉 isDraft(ops 全禁用「未保存草稿」)| Topbar.newWithScope + drawer-store.openDraft | 🔶(差异 32:草稿不占列表行) |
 | 导入 | 剪贴板含 plist 预填;parsePlistXml 提 Label/Program;label 去重循环;XML 带入 | `components/overlays/ImportModal.tsx` + `lib/plist.ts` | ✅ |
 | SCI 聚合 preview | `ef_sciPlistPreview` 在 demo 中无对应元素(死代码) | 不移植 | ✅(记录) |
 
@@ -153,6 +153,14 @@
 27. brew 合并升级:匹配顺序 = brew `services list --json` 的 **file 字段精确匹配**(实测本机 brew 标签前缀为 `sh.brew.*` 而非 `homebrew.mxcl.*`)→ `homebrew.mxcl.` 前缀(开源原规则)→ Homebrew 安装路径推断公式名;操作路由 `brew services start/stop/restart`(root 服务提权);brew stop 会移除 plist → 动作后条目消失时容错返回修正状态。
 28. 域映射修正(开源同款):`/Library/LaunchAgents`(systemAgent)属**用户 gui 域**,仅 `/Library/LaunchDaemons`(daemon)属 `system` 域(E2E 实测错映射会导致载入失败)。
 
+29. **mock 死数据清理 + 孤儿服务定向复核(2026-09-11 收尾)**:`MOCK_DATA` 剔除 `agents`/`invalidPlists`/`liveLogs`/`drawer`/`aiAgents`/`aiSkills`(均零引用;生成脚本 delete 行注释注明可一行恢复),仅剩 `urls`——demo 假条目 `com.old.broken.plist`(「XML 解析失败」)随之消失,真实横幅只显示真文件(如本机 2 个 keystone 空 `<dict/>`)。**孤儿复核**:列表刷新时对本会话消失的条目 + 上次已命中的孤儿做定向复核(逐个 `launchctl print`,path 须落在三管理目录且文件不存在),命中显示只读横幅「已加载但 plist 已不存在」(粘性,直到 bootout/重建后自动清空);辅助进程(print path 为 `(submitted)`/系统目录)天然被过滤,实测零误报。
+
+30. **原生对话框接线(2026-09-11)**:编辑 tab「浏览可执行文件」→ `dialog.showOpenDialog`(选中路径写回表单);「撤销」→ 真实表单撤销栈(drawer-store `formHistory` 上限 50,栈空按钮禁用);日志 tab「导出」→ `dialog.showSaveDialog` + main 侧写文件(取消静默);「查看文件」→ 访达揭示该 agent 日志文件(`agents:revealLog`,路径解析在 agent-service;无文件返回 null → toast;系统日志源禁用该按钮);导入弹窗「选择 plist」→ 原生选文件并读入编辑器(≤1MB;粘贴导入原本即真实)。
+
+31. **daemon/system 作用域状态修复 + 提权窗口语义核实(2026-09-11)**:实测**用户态 `launchctl list` 不含 system 域服务**(/Library/LaunchDaemons 守护进程全部缺失)→ 曾把运行中的 daemon 误判为「已停止/未加载」;现合并 `launchctl print system` 的服务表(`parseDomainServices`,17ms/次)按作用域取用,16 条 system/daemon 条目与 `launchctl print` 真值逐项一致(BSPrintMonitor 正确显示 running/PID 324)。**提权缓存窗口(authCacheMin)核实**:链路 = 设置页 → 配置 → `bootstrap` 注入 getter → `lib/elevation.ts`;窗口只管**应用侧说明窗**的免打扰(真实系统授权框由 macOS 控制、应用不缓存密码),`grant`(应用内点授权)/`noteSuccess`(真实提权成功)置热、`cancel` 不置热、设为 0 时**已热窗口立即失效**(本轮修复:窗口有效性同时受当前设置约束)+ 5 项单测覆盖。
+
+32. **草稿流更正:新建/导入只开抽屉,保存后才进列表(2026-09-11,用户要求覆盖 demo 行为)**:demo `openAgentDraft` 把草稿 unshift 进列表(迁移版曾忠实移植,观感上「点了新建列表直接多一行」);现改为:`createDraft` 仅置选中 + 打开抽屉,main 侧 `listImpl` 不再合并 drafts、`readStatus`/`readLogs` 对草稿返回零值模型/空数组(抽屉状态/日志 tab 可正常打开,此前会 Promise.all 拒绝导致抽屉打不开),**保存落盘经 reload 后条目才出现**;重名去重修正为 `scope+label` 匹配(原比较 `a.id === label` 恒不命中);导入弹窗在 openFor 后补 `updateForm({program})` 保持预填(bordered XML 编辑器配色:token/caret/光标/选区/activeLine 全部走主题变量——深色 `#45cbe0`/浅色 `#1f9bb3`,选区与当前行用 wash;`drawSelection()` 接管光标渲染 → `.cm-cursor` 描边取 `--cyan`,浅色下不再出现深色残留)。
+
 ## 阶段 2/3 落地差异(2026-09-11 定时任务/端口服务真实后端)
 
 12. Cron 数据源真实化(mock 移除);卡片 hover 日志路径 = 后端 `job.logPath`;desc 来自**紧邻上方注释行**(通用约定);禁用 = `# [disabled] ` 前缀(应用自有标记);日志 = `( cmd ) >> ~/Library/Logs/BeCrafter-Launcher/cron/<id>.log 2>&1` 包裹;`readLog` 尾读 256KB/2000 行。`MOCK_DATA.crons/services/brewServices/cronPresets` 已从生成脚本剔除,预设迁至 `lib/cron-presets.ts`。
@@ -160,8 +168,8 @@
 14. 新增 Cron 文件头面板(设计文档要求,开源有 demo 无):编辑首个任务前的注释/env 块,保存仅替换该区块。
 15. `cron.log.retainHint` 换用动态 {D} 键(demo 冻结文案写死 3 天);`@daily` 等特殊入口新增专用描述文案(修复 demo 解析器只认 5 字段导致的「表达式格式错误」回退)。
 16. 端口服务新增:重启按钮、Docker 分组与过滤 chip(fa-box 代 logo)、容器 start/stop/restart;TagChip 文字保持 3 桶,细分 kind(python/php/jvm/ruby/docker/dev)进 tooltip。
-17. Topbar 刷新/重新扫描/监听状态真实接线(demo/迁移版此前仅 toast);Open = 系统浏览器打开 `http://127.0.0.1:<port>`,Copy = 真实剪贴板;**轮询仅服务页激活时进行**(离开停扫,角标用最近一次)。
-18. 侧边栏 cron/services 计数角标(阶段 1 追加项提前落地两项;内联样式,无新 CSS)。
+17. Topbar 刷新/重新扫描/监听状态真实接线(demo/迁移版此前仅 toast);Open = 系统浏览器打开 `http://127.0.0.1:<port>`,Copy = 真实剪贴板;**轮询仅服务页激活时进行**(离开停扫,已有数据冻结保留)。
+18. 侧边栏计数角标:阶段 2/3 曾提前落地 cron/services 两项(内联样式),**2026-09-11 按用户要求移除**——侧边栏恢复 demo 基线(仅图标+文字);refactor-plan 阶段 1 追加的「counts badge」仍为待办,需要时再评估。
 19. 提权真实化:osascript `with administrator privileges`(密码仅进系统原生框,应用不接触);`authCacheMin` 诚实语义 = 应用侧说明窗的免打扰窗口(与 macOS 约 5 分钟系统授权缓存对齐,弹不弹由系统决定);取消 `(-128)` → toast;`/etc` 下**新建**文件受 SIP 限制即使 root 也被拒(本机实测 EPERM)——系统级任务仅在 /etc/crontab 已存在时可用,读取不受限,文件头面板已显示诚实提示。
 20. next-run 预测落位 `src/shared/`(而非 main/domains):渲染层实时预览需本地计算。
 

@@ -50,6 +50,7 @@ export function ImportModal(): React.JSX.Element | null {
     closeOverlay('importModal')
     const drawer = useDrawerStore.getState()
     await drawer.openFor({ ...draft, program: parsed.program })
+    drawer.updateForm({ program: parsed.program }) // openFor 只回填 label/desc,导入的 program 在此补入表单
     drawer.setXml(xmlRaw)
     setXml('')
     showToast(t('modal.newAgent.createdOpen').replace('{L}', label), '#a78bfa', 'fa-wand-magic-sparkles')
@@ -70,7 +71,14 @@ export function ImportModal(): React.JSX.Element | null {
         <div className="modal-body">
           <div
             className="import-drop"
-            onClick={() => showToast(t('toast.choosePlist'), '#60a5fa', 'fa-folder-open')}
+            onClick={() => {
+              void window.launcher
+                .pickFile({ mode: 'plist', title: t('dialog.pickPlist') })
+                .then((picked) => {
+                  if (picked?.content) setXml(picked.content)
+                })
+                .catch((err) => showToast(String(err), '#f87171', 'fa-circle-exclamation'))
+            }}
           >
             <i className="fa-solid fa-file-arrow-up" />
             <div>

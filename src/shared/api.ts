@@ -3,6 +3,9 @@
 import type {
   AppInfo,
   ContainerAction,
+  MissingAgent,
+  PickedFile,
+  PickFileMode,
   CronUpdateResult,
   IpcEventChannel,
   KillOutcome,
@@ -39,6 +42,10 @@ export interface LauncherApi {
   resetSettings: () => Promise<LauncherSettings>
   getAppInfo: () => Promise<AppInfo>
   openExternal: (url: string) => Promise<void>
+  /** 原生文件选择:plist(含内容,用于导入)/ executable(仅路径,用于表单) */
+  pickFile: (opts: { mode: PickFileMode; title?: string }) => Promise<PickedFile | null>
+  /** 原生保存框 + 写文本(日志导出);取消 → null */
+  saveTextFile: (opts: { suggestedName: string; content: string; title?: string }) => Promise<string | null>
   // 运行中 Agent 计数上报(menubarBadge 角标;数据在 renderer,阶段 1 换真实源后由 main 自算)
   reportBadgeCount: (count: number) => Promise<void>
   checkForUpdate: () => Promise<UpdateCheckResult>
@@ -60,6 +67,10 @@ export interface LauncherApi {
     clearLogs: (id: string) => Promise<void>
     validateXml: (xml: string) => Promise<{ ok: boolean; error: string | null }>
     removeInvalid: (path: string) => Promise<void>
+    /** 定向复核:这些(scope,label)对是否「仍被加载但 plist 已不存在」 */
+    checkMissing: (candidates: { scope: AgentScope; label: string }[]) => Promise<MissingAgent[]>
+    /** 在访达中显示该 agent 的日志文件;无文件 → null */
+    revealLog: (id: string) => Promise<string | null>
   }
   // 定时任务(阶段 2:真实 crontab 读写)
   cron: {
