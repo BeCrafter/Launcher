@@ -8,6 +8,7 @@ import { FilterBar, FilterCounts } from '../../components/FilterBar'
 import { Chip } from '../../components/ui/Chip'
 import { GroupBlock } from '../../components/GroupBlock'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { Skeleton } from '../../components/ui/Skeleton'
 import { CronCard } from './CronCard'
 import { CronLogDrawer } from './CronLogDrawer'
 import { CronHeaderPanel } from './CronHeaderPanel'
@@ -29,10 +30,13 @@ const FILTERS: { id: CronFilter; icon: string; labelKey: string }[] = [
 export function CronView(): React.JSX.Element {
   const t = useT()
   const crons = useCronStore((s) => s.crons)
+  const loaded = useCronStore((s) => s.loaded)
   const filter = useCronStore((s) => s.filter)
   const setFilter = useCronStore((s) => s.setFilter)
   const setEditingId = useCronStore((s) => s.setEditingId)
   const searchQuery = useUiStore((s) => s.searchQuery)
+  // 首屏加载中(!loaded 且仓库为空):渲染骨架,避免「加载中」被误呈现为「没有数据」
+  const loading = !loaded && crons.length === 0
 
   const list = useMemo(() => {
     let l = crons.filter((j) => {
@@ -95,7 +99,7 @@ export function CronView(): React.JSX.Element {
             )
           })}
         </div>
-        {!list.length && <EmptyState icon="fa-regular fa-clock" text={t('cron.empty')} />}
+        {!list.length && (loading ? <Skeleton rows={4} /> : <EmptyState icon="fa-regular fa-clock" text={t('cron.empty')} />)}
       </div>
       <CronLogDrawer />
       <NewCronModal />

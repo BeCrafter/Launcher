@@ -4,9 +4,9 @@
 //   否则按可执行路径在 Homebrew 目录下推断公式名
 // - 操作路由:brew 管理的条目 start/stop/restart 走 `brew services <action> <name>`;root 服务需提权
 
-import { existsSync } from 'node:fs'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
 import type { ElevationExecutor } from './elevation'
+import { resolveBrewPath } from './brew-path'
 import type { ShellRunner } from './shell-runner'
 
 export interface BrewServiceInfo {
@@ -27,7 +27,7 @@ export interface BrewAgentService {
 const BREW_LABEL_PREFIX = 'homebrew.mxcl.'
 const HOMEBREW_PATH_RE = /\/homebrew\/|\/opt\/homebrew\/|\/usr\/local\/(?:opt|Cellar)\//
 
-/** brew 记录的 file 字段与 agent plist 文件名一致 → 精确命中(前缀无关;本机实测 brew 用 sh.brew.<name>) */
+/** brew 记录的 file 字段与 agent plist 文件名一致 → 精确命中(前缀无关;file 字段是 brew 输出的 plist 路径,天然带扩展名) */
 function matchByFile(plistPath: string, services: BrewServiceInfo[]): BrewServiceInfo | null {
   if (plistPath === '') return null
   const file = plistPath.slice(plistPath.lastIndexOf('/') + 1)
@@ -69,20 +69,14 @@ export function isBrewRootService(info: BrewServiceInfo): boolean {
 export function createBrewAgentService(deps: { runner: ShellRunner; elevate: ElevationExecutor }): BrewAgentService {
   let brewPath: string | null = null
   const resolveBrew = (): string => {
-    if (brewPath) return brewPath
-    for (const p of ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']) {
-      if (existsSync(p)) {
-        brewPath = p
-        return p
-      }
-    }
-    brewPath = 'brew'
+    if (brewPath === null) brewPath = resolveBrewPath()
     return brewPath
   }
 
   return {
     async list() {
-      const r = await deps.runner.run(resolveBrew(), ['services', 'list', '--json'])
+      // 仅 brewAction(用户显式启停)调用:不在 agents 列表关键路径;超时放宽避免被 cmdTimeout 杀掉
+      const r = await deps.runner.run(resolveBrew(), ['services', 'list', '--json'], { timeoutMs: 45_000 })
       if (r.code !== 0) return []
       try {
         const parsed = JSON.parse(r.stdout) as Record<string, unknown>[]
@@ -102,6 +96,7 @@ export function createBrewAgentService(deps: { runner: ShellRunner; elevate: Ele
     },
 
     async action(kind, info) {
+      // brew 单条命令实测 11-13s,默认 cmdTimeout(10s)必杀 → 显式放宽(用户显式操作,可接受等待)
       const safeName = info.name.replace(/[^A-Za-z0-9@._+-]/g, '')
       if (isBrewRootService(info)) {
         const r = await deps.elevate.run(`${resolveBrew()} services ${kind} ${safeName}`)
@@ -110,7 +105,7 @@ export function createBrewAgentService(deps: { runner: ShellRunner; elevate: Ele
         }
         return
       }
-      const r = await deps.runner.run(resolveBrew(), ['services', kind, safeName])
+      const r = await deps.runner.run(resolveBrew(), ['services', kind, safeName], { timeoutMs: 45_000 })
       if (r.code !== 0) throw new Error(`brew services ${kind} failed: ${r.stderr || r.code}`)
     }
   }

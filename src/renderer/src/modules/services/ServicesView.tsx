@@ -8,6 +8,7 @@ import { FilterBar, FilterCounts } from '../../components/FilterBar'
 import { Chip } from '../../components/ui/Chip'
 import { GroupBlock } from '../../components/GroupBlock'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { Skeleton } from '../../components/ui/Skeleton'
 import { SvcCard } from '../../components/cards/SvcCard'
 import { containerToService, effectiveType, filterServices, SVC_GROUP_META, SVC_GROUP_ORDER } from '../../lib/classify'
 import { ELEVATION, confirmDangerous } from '../../lib/elevation'
@@ -30,9 +31,12 @@ export function ServicesView(): React.JSX.Element {
   const services = useServicesStore((s) => s.services)
   const containers = useServicesStore((s) => s.containers)
   const brewServices = useServicesStore((s) => s.brewServices)
+  const loaded = useServicesStore((s) => s.loaded)
   const filter = useServicesStore((s) => s.filter)
   const setFilter = useServicesStore((s) => s.setFilter)
   const searchQuery = useUiStore((s) => s.searchQuery)
+  // 首屏加载中(!loaded 且仓库为空):渲染骨架,避免「加载中」被误呈现为「没有数据」
+  const loading = !loaded && services.length === 0 && containers.length === 0
 
   // 页面激活门控:进入本页开启 3s 轮询,离开停止(resource 友好)
   useEffect(() => {
@@ -170,7 +174,7 @@ export function ServicesView(): React.JSX.Element {
             </GroupBlock>
           )
         })}
-        {!list.length && <EmptyState icon="fa-solid fa-network-wired" text={t('svc.empty')} />}
+        {!list.length && (loading ? <Skeleton rows={5} /> : <EmptyState icon="fa-solid fa-network-wired" text={t('svc.empty')} />)}
       </div>
     </div>
   )

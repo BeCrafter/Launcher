@@ -27,6 +27,9 @@ export function NewCronModal(): React.JSX.Element {
   const open = useUiStore((s) => s.overlays.includes('newCronModal'))
   const closeOverlay = useUiStore((s) => s.closeOverlay)
   const create = useCronStore((s) => s.create)
+  // /etc/crontab 不存在时系统级写入必失败(SIP 禁止在 /etc 下新建,见 crontab-service.ts:25)
+  // → 提前置灰入口,避免「填完整张表单、点保存才报错」
+  const systemAvailable = useCronStore((s) => s.headers.system.exists)
 
   const [fields, setFields] = useState<string[]>(FIELDS.map((f) => f.init))
   const [activePreset, setActivePreset] = useState<string | null>('0 9 * * *')
@@ -146,9 +149,14 @@ export function NewCronModal(): React.JSX.Element {
             <span className="f-lbl">{t('modal.newCron.scope')}</span>
             <select className="f-input" id="newCronScope" value={scope} onChange={(e) => setScope(e.target.value as 'user' | 'system')}>
               <option value="user">{t('modal.newCron.scopeUser')}</option>
-              <option value="system">{t('modal.newCron.scopeSystem')}</option>
+              <option value="system" disabled={!systemAvailable}>
+                {t('modal.newCron.scopeSystem')}
+              </option>
             </select>
           </div>
+          {!systemAvailable && (
+            <div style={{ fontSize: 10, color: 'var(--dim)', marginBottom: 8 }}>{t('cron.systemUnavailable')}</div>
+          )}
           <div className="f-row center">
             <span className="f-lbl">{t('cron.log.label')}</span>
             <Toggle checked={log} onChange={setLog} />
@@ -159,7 +167,12 @@ export function NewCronModal(): React.JSX.Element {
           <button className="d-btn" type="button" onClick={() => closeOverlay('newCronModal')}>
             <span>{t('common.cancel')}</span>
           </button>
-          <button className="d-btn accent" type="button" onClick={() => void onCreate()}>
+          <button
+            className="d-btn accent"
+            type="button"
+            disabled={scope === 'system' && !systemAvailable}
+            onClick={() => void onCreate()}
+          >
             <i className="fa-solid fa-plus" /> <span>{t('modal.newCron.addTask')}</span>
           </button>
         </div>

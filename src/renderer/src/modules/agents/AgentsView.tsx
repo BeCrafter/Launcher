@@ -9,6 +9,7 @@ import { FilterBar, FilterCounts } from '../../components/FilterBar'
 import { Chip } from '../../components/ui/Chip'
 import { GroupBlock } from '../../components/GroupBlock'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { Skeleton } from '../../components/ui/Skeleton'
 import { ActBtn } from '../../components/ui/ActBtn'
 import { AgentCard } from '../../components/cards/AgentCard'
 import { useDrawerStore } from '../../state/drawer-store'
@@ -39,6 +40,7 @@ export function AgentsView(): React.JSX.Element {
   const agents = useAgentsStore((s) => s.agents)
   const invalidPlists = useAgentsStore((s) => s.invalidPlists)
   const missingPlists = useAgentsStore((s) => s.missingPlists)
+  const loaded = useAgentsStore((s) => s.loaded)
   const filter = useAgentsStore((s) => s.filter)
   const setFilter = useAgentsStore((s) => s.setFilter)
   const selectedId = useAgentsStore((s) => s.selectedId)
@@ -46,6 +48,8 @@ export function AgentsView(): React.JSX.Element {
   const toggle = useAgentsStore((s) => s.toggle)
   const brewAction = useAgentsStore((s) => s.brewAction)
   const searchQuery = useUiStore((s) => s.searchQuery)
+  // 首屏加载中(!loaded 且仓库为空):渲染骨架,避免「加载中」被误呈现为「没有数据」
+  const loading = !loaded && agents.length === 0
 
   const list = useMemo(() => {
     // demo renderAgents 过滤分支
@@ -195,7 +199,7 @@ export function AgentsView(): React.JSX.Element {
             </GroupBlock>
           )
         })}
-        {!list.length && <EmptyState icon="fa-solid fa-magnifying-glass" text={t('agents.empty')} />}
+        {!list.length && (loading ? <Skeleton rows={6} /> : <EmptyState icon="fa-solid fa-magnifying-glass" text={t('agents.empty')} />)}
       </div>
     </div>
   )

@@ -623,5 +623,6 @@ export const zhCN: Record<string, string> = {
   "toast.svcKillDenied": "无权限终止该进程,可尝试管理员授权",
   "toast.pollingOff": "已暂停端口监听扫描",
   "toast.containerActionFailed": "容器操作失败,请查看 Docker 状态",
-  "svc.dockerUnavailable": "Docker 未运行"
+  "svc.dockerUnavailable": "Docker 未运行",
+  "cron.systemUnavailable": "系统级不可用:/etc/crontab 不存在(macOS 系统保护禁止新建)"
 }

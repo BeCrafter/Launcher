@@ -1,5 +1,6 @@
-// Agents 门面服务(阶段 1):plist 扫描 + launchctl 状态 + brew 合并 → Agent 列表与操作
-// 机制对齐开源 AgentStore/PlistService/LaunchctlService;BrewManagedSupport 合并规则见 brew-agent-service
+// Agents 门面服务(阶段 1):plist 扫描 + launchctl 状态 → Agent 列表与操作
+// 机制对齐开源 AgentStore/PlistService/LaunchctlService;isBrew 纯启发式判定(见 brew-heuristic),
+// brew 数据只在 brewAction(用户显式启停)时按需拉取;BrewManagedSupport 合并规则见 brew-agent-service
 // id 约定:`<scope>:<label>`(label 跨作用域可重名,id 唯一);草稿 id 同构,落盘发生在 save
 
 import { existsSync } from 'node:fs'
@@ -7,6 +8,7 @@ import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
 import type { Agent, AgentForm, AgentScope, DrawerStatusModel, InvalidPlist, LogLine, OpsState } from '../../shared/models'
 import type { MissingAgent } from '../../shared/ipc'
 import { formFromPlist, plistFromForm } from '../domains/agent-form'
+import { isBrewManaged } from '../domains/brew-heuristic'
 import { parseLogText } from '../domains/log-lines'
 import { parsePlistXml, toPlistXml, type PlistDict } from '../domains/plist-xml'
 import { matchBrewService, type BrewAgentService, type BrewServiceInfo } from './brew-agent-service'
@@ -101,10 +103,9 @@ export function createAgentService(deps: {
     return etime
   }
 
-  function buildAgent(pf: PlistFile, entries: Map<string, { pid: number | null; lastExitCode: number | null }>, disabled: Set<string>, brews: BrewServiceInfo[], uptimes: Map<number, string>): Agent {
+  function buildAgent(pf: PlistFile, entries: Map<string, { pid: number | null; lastExitCode: number | null }>, disabled: Set<string>, uptimes: Map<number, string>): Agent {
     const entry = entries.get(pf.label)
     const program = typeof pf.value.Program === 'string' ? pf.value.Program : Array.isArray(pf.value.ProgramArguments) ? String(pf.value.ProgramArguments[0] ?? '') : ''
-    const brewInfo = matchBrewService(pf.label, program, brews, pf.path)
     return {
       id: agentId(pf.scope, pf.label),
       label: pf.label,
@@ -117,7 +118,7 @@ export function createAgentService(deps: {
       program,
       exitCode: entry?.lastExitCode ?? null,
       restarts: 0,
-      isBrew: brewInfo !== null,
+      isBrew: isBrewManaged(pf.label, program),
       isDisabledByOverride: disabled.has(pf.label)
     }
   }
@@ -131,17 +132,14 @@ export function createAgentService(deps: {
   }
 
   async function listImpl(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }> {
-    const [{ valid, invalid }, tables, brews] = await Promise.all([
-      plists.scanAll(),
-      launchctl.list(),
-      brewList()
-    ])
+    // brew 不在关键路径(brew services list 实测 11-13s):isBrew 用纯启发式判定,机制同源开源 AgentStore
+    const [{ valid, invalid }, tables] = await Promise.all([plists.scanAll(), launchctl.list()])
     const { disabled } = tables
     const runningPids = valid
       .map((p) => tableFor(tables, p.scope).get(p.label)?.pid ?? null)
       .filter((p): p is number => p !== null)
     const uptimes = await uptimesFor(runningPids)
-    const agents = valid.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), disabled, brews, uptimes))
+    const agents = valid.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), disabled, uptimes))
     // 草稿(未落盘)不占列表行:保存后经 reload 出现
     return { agents, invalidPlists: invalid }
   }
@@ -394,6 +392,7 @@ export function createAgentService(deps: {
         throw new Error(`agent not found: ${id}`)
       }
       if (source === 'system') {
+        // log show 实测 2.8-31.8s 高度波动,必超默认 cmdTimeout(10s) → 显式放宽(每调用覆盖)
         const r = await runner.run('/usr/bin/log', [
           'show',
           '--predicate',
@@ -402,7 +401,7 @@ export function createAgentService(deps: {
           '15m',
           '--style',
           'compact'
-        ])
+        ], { timeoutMs: 45_000 })
         const lines = r.stdout
           .split('\n')
           .filter((l) => l.trim() !== '' && !l.startsWith('Timestamp') && !/^-+$/.test(l.trim()))

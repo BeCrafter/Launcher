@@ -35,6 +35,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - **设置后端完善**（2026-09-10）：15 键全部「落盘 + 生效」；appliers 按域模块化；menubarBadge→Tray 角标 / fseventsActive→fs.watch 链路 / cmdTimeout→ShellRunner 地基 / xmlIndent→编辑器+格式化 全部真实接线（cronLogRetainDays 待阶段 2）；关于页/登录页 mock 真实化（app:info 版本 / GitHub Releases 检查更新 / 系统设置跳转）✅
 - **阶段 2/3 真实后端**（2026-09-11）：定时任务（真实 crontab 读写/提权/日志/文件头面板/下次执行预测）+ 端口服务（lsof 发现/分类管线/kill/重启/Docker 降级/按需轮询）✅——差异见 `docs/design/demo-react-migration-map.md`「阶段 2/3 落地差异」
 - **阶段 1 真实后端**（2026-09-11）：Launch Agents（launchctl 域映射/bootstrap-bootout-kickstart-enable/plist 三目录扫描与提权写/表单⇄XML 双向/真实状态与日志/brew 合并与路由）✅——差异见 migration-map「阶段 1 落地差异」；**三域（agents/cron/services）至此全部真实**
+- **打开慢修复**（2026-09-11）：brew 移出 agents 列表关键路径（isBrew 改 `domains/brew-heuristic` 纯启发式，机制同源开源 BrewManagedSupport；brew services list 实测 11-13s 且被 cmdTimeout 杀掉）、scanAll 记忆+单飞、首屏骨架态（`components/ui/Skeleton`）、log show / brew 全调用点显式 45s 超时——差异见 migration-map「打开慢修复」；首屏 ~10s → ~0.9s
 - 阶段 4 AI+MCP / 阶段 5 双形态与设置收尾（待办）
 
 ## src/ 文件地图（Electron 应用，UI 迁移后）

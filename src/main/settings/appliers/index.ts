@@ -12,13 +12,13 @@ export interface ApplierRegistry {
   apply(s: LauncherSettings): void
 }
 
-export function createApplierRegistry(ctx: ApplyCtx): ApplierRegistry {
+export function createApplierRegistry(ctx: ApplyCtx, opts?: { onDirsChanged?: (dirs: string[]) => void }): ApplierRegistry {
   const appliers: SettingsApplier[] = [
     createAppearanceApplier(),
     createDockApplier(),
     createTrayApplier(),
     createLoginApplier(),
-    createFsEventsApplier()
+    createFsEventsApplier({ onDirsChanged: opts?.onDirsChanged })
   ]
   let prev: LauncherSettings | null = null
   return {
