@@ -6,6 +6,7 @@ import type { AgentScope } from '../data/ports'
 import { dataSource } from '../data'
 import { ELEVATION, confirmDangerous } from '../lib/elevation'
 import { showToast } from '../lib/utils'
+import { runAgentIntent } from '../lib/agent-ops'
 import { cronErrorToast } from '../lib/cron'
 import { useAgentsStore } from './agents-store'
 import { makeT, getCurrentLang } from '../i18n'
@@ -45,7 +46,7 @@ interface DrawerState {
   undoForm(): void
   setXml(xml: string): void
   setOps(next: Partial<OpsState>): void
-  opsAction(action: 'load' | 'enable' | 'kickstart'): Promise<void>
+  opsAction(action: DrawerAction): Promise<void>
   save(): Promise<void>
   remove(): Promise<void>
   clone(): Promise<void>
@@ -55,6 +56,9 @@ interface DrawerState {
 }
 
 const t = (): ((k: string) => string) => makeT(getCurrentLang())
+
+/** 抽屉头部的意图动作(用户语义) */
+export type DrawerAction = 'start' | 'stop' | 'restart' | 'autostart'
 
 export const useDrawerStore = create<DrawerState>((set, get) => ({
   open: false,
@@ -152,49 +156,15 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
     set({ ops: { ...get().ops, ...next } })
   },
 
-  // 真实 ops:load/unload 与 enable/disable 为开关语义;kickstart 强制立即运行
+  // 意图动作:交互外壳(提权/询问/toast)在 lib/agent-ops 统一实现,抽屉与列表卡片共用同一份
   async opsAction(action) {
     const s = get()
     if (s.isDraft || !s.agentId) return
-    const tr = t()
-    try {
-      if (s.scope !== 'user') {
-        const labels: Record<string, string> = {
-          load: tr('drawer.op.load'),
-          enable: tr('drawer.op.enable'),
-          kickstart: tr('drawer.op.kickstart')
-        }
-        const ok = await ELEVATION.request({
-          detail: tr('elev.ops.detail').replace('{A}', labels[action] ?? action).replace('{L}', s.agentLabel),
-          command: `launchctl <domain>/${s.agentLabel}`
-        })
-        if (!ok) return
-      }
-      if (action === 'load') {
-        const next = await dataSource().agents.ops(s.agentId, s.ops.loaded ? 'unload' : 'load')
-        s.setOps(next)
-        showToast(s.ops.loaded ? tr('toast.bootoutSuccess') : tr('toast.bootstrapSuccess'), s.ops.loaded ? '#60a5fa' : '#4ade80', 'fa-plug')
-      } else if (action === 'enable') {
-        if (!s.ops.loaded) {
-          showToast(tr('toast.loadFirst'), '#fbbf24', 'fa-circle-exclamation')
-          return
-        }
-        const next = await dataSource().agents.ops(s.agentId, s.ops.enabled ? 'disable' : 'enable')
-        s.setOps(next)
-        showToast(next.enabled ? tr('toast.taskEnabled') : tr('toast.taskDisabled'), next.enabled ? '#4ade80' : '#fbbf24', next.enabled ? 'fa-circle-check' : 'fa-circle-pause')
-      } else {
-        if (!s.ops.loaded) {
-          showToast(tr('toast.notLoaded'), '#fbbf24', 'fa-circle-exclamation')
-          return
-        }
-        showToast(tr('toast.kickstarting'), '#a78bfa', 'fa-bolt')
-        const next = await dataSource().agents.ops(s.agentId, 'kickstart')
-        s.setOps(next)
-      }
-      await useAgentsStore.getState().load()
-    } catch (err) {
-      cronErrorToast(err, tr)
-    }
+    const agent = useAgentsStore.getState().agents.find((a) => a.id === s.agentId)
+    if (!agent) return
+    const next = await runAgentIntent(agent, action)
+    if (!next) return
+    s.setOps(next) // 列表刷新由 lib/agent-ops 统一负责
   },
 
   // 真实保存:表单 → plist 写盘(main 侧;提权作用域自动走系统授权)

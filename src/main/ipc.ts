@@ -116,7 +116,6 @@ export function registerIpc(deps: IpcDeps): void {
 
   // ── Launch Agents(阶段 1) ──
   ipcMain.handle(IPC.agList, () => deps.agents.list())
-  ipcMain.handle(IPC.agToggle, (_e, id: string) => deps.agents.toggle(id))
   ipcMain.handle(IPC.agBrewAction, (_e, kind: 'start' | 'stop', id: string) => deps.agents.brewAction(kind, id))
   ipcMain.handle(IPC.agCreateDraft, (_e, scope: AgentScope, label: string) => deps.agents.createDraft(scope, label))
   ipcMain.handle(IPC.agSave, (_e, id: string, patch: Partial<AgentForm> & { label: string; desc: string }) =>
@@ -124,7 +123,7 @@ export function registerIpc(deps: IpcDeps): void {
   )
   ipcMain.handle(IPC.agRemove, (_e, id: string) => deps.agents.remove(id))
   ipcMain.handle(IPC.agClone, (_e, id: string) => deps.agents.clone(id))
-  ipcMain.handle(IPC.agOps, (_e, id: string, action: 'load' | 'unload' | 'enable' | 'disable' | 'kickstart') => deps.agents.ops(id, action))
+  ipcMain.handle(IPC.agOps, (_e, id: string, action: 'start' | 'stop' | 'restart' | 'enable' | 'disable') => deps.agents.ops(id, action))
   ipcMain.handle(IPC.agReadForm, (_e, id: string) => deps.agents.readForm(id))
   ipcMain.handle(IPC.agReadXml, (_e, id: string) => deps.agents.readXml(id))
   ipcMain.handle(IPC.agSaveXml, (_e, id: string, xml: string) => deps.agents.saveXml(id, xml))

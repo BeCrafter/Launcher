@@ -16,7 +16,8 @@ import type { LaunchctlService } from './launchctl-service'
 import type { PlistFile, PlistService } from './plist-service'
 import type { ShellRunner } from './shell-runner'
 
-export type OpAction = 'load' | 'unload' | 'enable' | 'disable' | 'kickstart'
+/** 意图动作(用户语义):启动 / 停止 / 重启 / 开机自启开停 / 立即执行一次 —— 顺序逻辑在 main 内部完成 */
+export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
 
 export interface AgentXmlInfo {
   xml: string
@@ -26,7 +27,6 @@ export interface AgentXmlInfo {
 
 export interface AgentService {
   list(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }>
-  toggle(id: string): Promise<Agent>
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
   createDraft(scope: AgentScope, label: string): Promise<Agent>
   save(id: string, patch: Partial<AgentForm> & { label: string; desc: string }): Promise<Agent>
@@ -60,6 +60,13 @@ export function parseAgentId(id: string): { scope: AgentScope; label: string } |
 const LOG_TAIL_BYTES = 512 * 1024
 const SYSTEM_LOG_MAX_LINES = 2000
 
+/** `launchctl.list()` 的返回形状(域表 + per-domain 覆盖位) */
+interface LaunchctlTables {
+  gui: Map<string, { label: string; pid: number | null; lastExitCode: number | null }>
+  system: Map<string, { label: string; pid: number | null; lastExitCode: number | null }>
+  disabled: { gui: Set<string>; system: Set<string> }
+}
+
 export function createAgentService(deps: {
   runner: ShellRunner
   launchctl: LaunchctlService
@@ -71,10 +78,12 @@ export function createAgentService(deps: {
   const drafts = new Map<string, Agent>() // 未落盘草稿(createDraft → save)
 
   /** gui 域(用户态 list)与 system 域(`print system` 服务表)按作用域取用 */
-  const tableFor = (
-    tables: { gui: Map<string, { label: string; pid: number | null; lastExitCode: number | null }>; system: Map<string, { label: string; pid: number | null; lastExitCode: number | null }> },
-    scope: AgentScope
-  ): Map<string, { label: string; pid: number | null; lastExitCode: number | null }> => (scope === 'daemon' ? tables.system : tables.gui)
+  const tableFor = (tables: LaunchctlTables, scope: AgentScope): LaunchctlTables['gui'] =>
+    scope === 'daemon' ? tables.system : tables.gui
+
+  /** print-disabled 覆盖位按作用域取用(域映射与 tableFor/domainOf 一致:system 作用域也属 gui 域) */
+  const disabledFor = (tables: { disabled: { gui: Set<string>; system: Set<string> } }, scope: AgentScope): Set<string> =>
+    scope === 'daemon' ? tables.disabled.system : tables.disabled.gui
 
   async function brewList(): Promise<BrewServiceInfo[]> {
     return brew.list().catch(() => [])
@@ -103,7 +112,7 @@ export function createAgentService(deps: {
     return etime
   }
 
-  function buildAgent(pf: PlistFile, entries: Map<string, { pid: number | null; lastExitCode: number | null }>, disabled: Set<string>, uptimes: Map<number, string>): Agent {
+  function buildAgent(pf: PlistFile, entries: Map<string, { pid: number | null; lastExitCode: number | null }>, tables: LaunchctlTables, uptimes: Map<number, string>): Agent {
     const entry = entries.get(pf.label)
     const program = typeof pf.value.Program === 'string' ? pf.value.Program : Array.isArray(pf.value.ProgramArguments) ? String(pf.value.ProgramArguments[0] ?? '') : ''
     return {
@@ -119,7 +128,7 @@ export function createAgentService(deps: {
       exitCode: entry?.lastExitCode ?? null,
       restarts: 0,
       isBrew: isBrewManaged(pf.label, program),
-      isDisabledByOverride: disabled.has(pf.label)
+      isDisabledByOverride: disabledFor(tables, pf.scope).has(pf.label)
     }
   }
 
@@ -134,12 +143,11 @@ export function createAgentService(deps: {
   async function listImpl(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }> {
     // brew 不在关键路径(brew services list 实测 11-13s):isBrew 用纯启发式判定,机制同源开源 AgentStore
     const [{ valid, invalid }, tables] = await Promise.all([plists.scanAll(), launchctl.list()])
-    const { disabled } = tables
     const runningPids = valid
       .map((p) => tableFor(tables, p.scope).get(p.label)?.pid ?? null)
       .filter((p): p is number => p !== null)
     const uptimes = await uptimesFor(runningPids)
-    const agents = valid.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), disabled, uptimes))
+    const agents = valid.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), tables, uptimes))
     // 草稿(未落盘)不占列表行:保存后经 reload 出现
     return { agents, invalidPlists: invalid }
   }
@@ -153,34 +161,53 @@ export function createAgentService(deps: {
 
   async function opsStateFor(pf: PlistFile, label: string): Promise<OpsState> {
     const tables = await launchctl.list()
-    const { disabled } = tables
     const entry = tableFor(tables, pf.scope).get(label)
     return {
       loaded: entry !== undefined,
-      enabled: !disabled.has(label),
+      enabled: !disabledFor(tables, pf.scope).has(label),
       running: entry?.pid !== null && entry?.pid !== undefined
     }
   }
 
+  /**
+   * 意图动作:顺序逻辑集中在此层,UI 不再拼命令序列,也不需要因顺序问题置灰按钮。
+   * 三个 launchd 维度(bootstrap/bootout · enable/disable · kickstart/kill)对用户不可见。
+   */
+
+  /** 启动:确保「已启用 → 已载入 → 运行中」——按需跳过已满足的步骤,结果确定为"正在运行" */
+  async function intentStart(pf: PlistFile, tables: LaunchctlTables): Promise<void> {
+    if (disabledFor(tables, pf.scope).has(pf.label)) {
+      // launchd 硬约束:disable 阻塞 bootstrap,不启用无法载入 → 连带开启开机自启(UI 会可见地翻开关)
+      await launchctl.enable(pf.label, pf.scope)
+    }
+    let entry = tableFor(tables, pf.scope).get(pf.label)
+    if (entry === undefined) {
+      await launchctl.bootstrap(pf.path, pf.scope)
+      entry = tableFor(await launchctl.list(), pf.scope).get(pf.label)
+    }
+    // 载入后仍未运行(任务无 RunAtLoad/等触发条件)→ kickstart,让「启动」名副其实
+    if (entry === undefined || entry.pid === null) {
+      await launchctl.kickstart(pf.label, pf.scope)
+    }
+  }
+
+  /** 停止:移出 launchd(进程随之终止,且不会被 KeepAlive 拉起);不改动「开机自启」 */
+  async function intentStop(pf: PlistFile): Promise<void> {
+    await launchctl.bootout(pf.path, pf.scope)
+  }
+
+  /** 重启:运行中 → kickstart -k(先杀再起);未载入 → 走启动序列 */
+  async function intentRestart(pf: PlistFile, tables: LaunchctlTables): Promise<void> {
+    const entry = tableFor(tables, pf.scope).get(pf.label)
+    if (entry !== undefined && entry.pid !== null) {
+      await launchctl.kickstart(pf.label, pf.scope, { kill: true })
+      return
+    }
+    await intentStart(pf, tables)
+  }
+
   return {
     list: listImpl,
-
-    async toggle(id) {
-      const found = await findAgent(id)
-      if (!found) throw new Error(`agent not found: ${id}`)
-      const entry = tableFor(await launchctl.list(), found.scope).get(found.label)
-      if (entry && entry.pid !== null) {
-        // running → 停止:SIGTERM 轮询 + bootout(KeepAlive 兜底),达成 demo 的 stopped 语义
-        await launchctl.stop(found.label, found.scope, entry.pid)
-        await launchctl.bootout(found.pf.path, found.scope)
-      } else if (entry) {
-        // 已加载未运行(如一次性任务已退出)→ kickstart 启动(对已加载服务 bootstrap 会报 I/O error)
-        await launchctl.kickstart(found.label, found.scope)
-      } else {
-        await launchctl.bootstrap(found.pf.path, found.scope)
-      }
-      return currentAgent(id)
-    },
 
     async brewAction(kind, id) {
       const found = await findAgent(id)
@@ -287,11 +314,12 @@ export function createAgentService(deps: {
     async ops(id, action) {
       const found = await findAgent(id)
       if (!found) throw new Error(`agent not found: ${id}`)
-      if (action === 'load') await launchctl.bootstrap(found.pf.path, found.scope)
-      else if (action === 'unload') await launchctl.bootout(found.pf.path, found.scope)
-      else if (action === 'enable') await launchctl.enable(found.label, found.scope)
-      else if (action === 'disable') await launchctl.disable(found.label, found.scope)
-      else await launchctl.kickstart(found.label, found.scope)
+      const tables = await launchctl.list()
+      if (action === 'start') await intentStart(found.pf, tables)
+      else if (action === 'stop') await intentStop(found.pf)
+      else if (action === 'restart') await intentRestart(found.pf, tables)
+      else if (action === 'enable') await launchctl.enable(found.label, found.scope) // 开机自启:开
+      else await launchctl.disable(found.label, found.scope) // 开机自启:关
       return opsStateFor(found.pf, found.label)
     },
 
