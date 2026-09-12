@@ -33,36 +33,60 @@ describe('parsePlistXml', () => {
   })
 })
 
-describe('deriveOpsBar(5 态表)', () => {
-  it('草稿态:三钮全禁,dot unloaded,文案 draft', () => {
+describe('deriveOpsBar(意图层:启动/停止 · 重启 · 开机自启 + 未来时句)', () => {
+  it('草稿态:三控件全禁,chip 未保存草稿,无未来时句', () => {
     const m = deriveOpsBar({ loaded: true, enabled: true, running: true, isDraft: true })
     expect(m.state).toBe('draft')
-    expect(m.loadDisabled && m.enableDisabled && m.kickDisabled).toBe(true)
-    expect(m.chipColor).toBe('var(--dim)')
+    expect(m.primary.disabled && m.restart.disabled && m.autostart.disabled).toBe(true)
+    expect(m.chip.labelKey).toBe('ops.state.draft')
+    expect(m.futureHintKey).toBeNull()
   })
-  it('未加载:Load 可用(active-green),其余禁用', () => {
-    const m = deriveOpsBar({ loaded: false, enabled: false, running: false, isDraft: false })
-    expect(m.state).toBe('unloaded')
-    expect(m.loadDisabled).toBe(false)
-    expect(m.load.cls).toContain('active-green')
-    expect(m.enableDisabled).toBe(true)
-  })
-  it('已加载未启用:stopped / 黄色', () => {
-    const m = deriveOpsBar({ loaded: true, enabled: false, running: false, isDraft: false })
+
+  it('未运行未载入:主操作「启动」,chip 已停止', () => {
+    const m = deriveOpsBar({ loaded: false, enabled: true, running: false, isDraft: false })
     expect(m.state).toBe('stopped')
-    expect(m.chipColor).toBe('var(--yellow)')
-    expect(m.enable.labelKey).toBe('drawer.op.enable')
+    expect(m.primary.action).toBe('start')
+    expect(m.primary.labelKey).toBe('ops.start')
+    expect(m.primary.disabled).toBe(false) // 意图层:启动恒可用(main 内部按需启用/载入)
+    expect(m.chip.labelKey).toBe('ops.state.stopped')
+    expect(m.autostart.on).toBe(true)
+    expect(m.futureHintKey).toBe('ops.hint.autoOn')
   })
-  it('就绪未运行:ready / accent2', () => {
+
+  it('已载入未运行(定时任务两次执行之间)= 待运行,且提示"仍会被自动触发"', () => {
     const m = deriveOpsBar({ loaded: true, enabled: true, running: false, isDraft: false })
-    expect(m.state).toBe('ready')
-    expect(m.chipColor).toBe('var(--accent2)')
+    expect(m.state).toBe('pending')
+    expect(m.chip.labelKey).toBe('ops.state.pending')
+    expect(m.chip.dot).toBe('loaded')
+    expect(m.futureHintKey).toBe('ops.hint.pending')
+    expect(m.primary.action).toBe('start')
   })
-  it('运行中:running / 绿色,Enable 显示 disable', () => {
-    const m = deriveOpsBar({ loaded: true, enabled: true, running: true, isDraft: false })
-    expect(m.state).toBe('running')
-    expect(m.chipColor).toBe('var(--green)')
-    expect(m.enable.labelKey).toBe('drawer.op.disable')
-    expect(m.load.labelKey).toBe('drawer.op.unload')
+
+  it('运行中:主操作「停止」,未来时句随开机自启翻转', () => {
+    const on = deriveOpsBar({ loaded: true, enabled: true, running: true, isDraft: false })
+    expect(on.state).toBe('running')
+    expect(on.primary.action).toBe('stop')
+    expect(on.primary.labelKey).toBe('ops.stop')
+    expect(on.chip.labelKey).toBe('ops.state.running')
+    expect(on.futureHintKey).toBe('ops.hint.autoOn')
+
+    const off = deriveOpsBar({ loaded: true, enabled: false, running: true, isDraft: false })
+    expect(off.state).toBe('running') // 运行中 + 开机不自启:进程照跑(严格语义)
+    expect(off.autostart.on).toBe(false)
+    expect(off.futureHintKey).toBe('ops.hint.autoOff')
+  })
+
+  it('意图层没有任何"因顺序而置灰"的按钮(仅草稿态禁用)', () => {
+    for (const s of [
+      { loaded: false, enabled: false, running: false },
+      { loaded: true, enabled: false, running: false },
+      { loaded: true, enabled: false, running: true },
+      { loaded: false, enabled: true, running: false }
+    ]) {
+      const m = deriveOpsBar({ ...s, isDraft: false })
+      expect(m.primary.disabled).toBe(false)
+      expect(m.restart.disabled).toBe(false)
+      expect(m.autostart.disabled).toBe(false)
+    }
   })
 })

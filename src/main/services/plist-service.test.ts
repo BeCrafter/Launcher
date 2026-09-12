@@ -12,6 +12,16 @@ const PLIST_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>Label</key><string>com.test.memo</string></dict></plist>`
 
+/** 合法 plist 但未定义任务(无 Label,如 Google keystone 的 <dict/> 占位) */
+const EMPTY_DICT_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict/></plist>`
+
+/** 另一个任务(label 与 PLIST_XML 不同),用于覆盖冲突用例 */
+const OTHER_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>Label</key><string>com.test.other</string></dict></plist>`
+
 function harness(ttl: number) {
   const home = mkdtempSync(join(tmpdir(), 'plist-memo-'))
   const userDir = join(home, 'Library/LaunchAgents')
@@ -89,6 +99,71 @@ describe('plist-service.scanAll 记忆', () => {
       expect(r2).toBe(r1)
       expect(r3).toBe(r1)
       expect(h.userCount(r1)).toBe(1)
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+describe('非任务 plist(合法 plist 但缺 Label)', () => {
+  it('scanAll 静默跳过:既不在 valid 也不在 invalid', async () => {
+    const h = harness(60_000)
+    try {
+      writeFileSync(join(h.userDir, 'com.google.keystone.agent.plist'), EMPTY_DICT_XML)
+      writeFileSync(join(h.userDir, 'ok.plist'), PLIST_XML)
+      const r = await h.svc.scanAll()
+      expect(h.userLabels(r)).toEqual(['com.test.memo']) // 占位不出现在 agents
+      expect(r.invalid.filter((i) => i.path.endsWith('com.google.keystone.agent.plist'))).toEqual([]) // 也不报错
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('写入时允许覆盖占位(标签为空)', async () => {
+    const h = harness(60_000)
+    try {
+      const target = join(h.userDir, 'com.test.memo.plist')
+      writeFileSync(target, EMPTY_DICT_XML)
+      await h.svc.write('user', target, PLIST_XML)
+      const r = await h.svc.scanAll()
+      expect(h.userLabels(r)).toEqual(['com.test.memo'])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('写入时允许覆盖同名任务自身(正常编辑)', async () => {
+    const h = harness(60_000)
+    try {
+      const target = join(h.userDir, 'com.test.memo.plist')
+      await h.svc.write('user', target, PLIST_XML)
+      await h.svc.write('user', target, PLIST_XML) // 第二次 = 编辑自身
+      expect(h.userLabels(await h.svc.scanAll())).toEqual(['com.test.memo'])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('目标已被他人任务占用 → 拒绝覆盖,且原文件不变', async () => {
+    const h = harness(60_000)
+    try {
+      const target = join(h.userDir, 'com.test.memo.plist')
+      writeFileSync(target, OTHER_XML) // 文件名说 memo,Label 却是 other(改名/拷贝而来的错位文件)
+      await expect(h.svc.write('user', target, PLIST_XML)).rejects.toThrow(/已被任务「com.test.other」占用/)
+      // 原文件未被清掉
+      const r = await h.svc.scanAll()
+      expect(h.userLabels(r)).toEqual(['com.test.other'])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('目标已存在但无法解析 → 拒绝覆盖', async () => {
+    const h = harness(60_000)
+    try {
+      const target = join(h.userDir, 'broken.plist')
+      writeFileSync(target, '<plist><dict><key>Label</key>')
+      await expect(h.svc.write('user', target, PLIST_XML)).rejects.toThrow(/无法解析,拒绝覆盖/)
     } finally {
       h.cleanup()
     }

@@ -17,7 +17,6 @@ export const IPC = {
   agentsBadge: 'agents:badgeCount',
   // ── Launch Agents(阶段 1) ──
   agList: 'agents:list',
-  agToggle: 'agents:toggle',
   agBrewAction: 'agents:brewAction',
   agCreateDraft: 'agents:createDraft',
   agSave: 'agents:save',

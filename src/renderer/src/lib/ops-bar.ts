@@ -1,89 +1,55 @@
-// ported-from: docs/demo/js/drawer.js updateOpsBar 视觉分支表 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// 抽屉头部操作栏 5 态推导(纯函数化 demo drawer.js updateOpsBar 的视觉分支表)
-// 态:draft(草稿) / unloaded(未加载) / stopped(已停) / ready(就绪) / running(运行)
+// 抽屉头部操作栏:意图层模型(应用新增,非 demo 移植)
+// 用户只表达意图(启动/停止/重启/开机自启),launchctl 的三轴
+// (bootstrap/bootout · enable/disable · kickstart)顺序逻辑全部下沉在 main 的意图动作里。
+// 因此这里没有任何"因顺序而置灰"的按钮——约束不需要用户学,也不会以灰按钮形式出现。
+// 维度之间的联动用「未来时句」(futureHintKey)表达:直接告诉用户接下来会发生什么。
 import type { OpsState } from '@shared/models'
 
 export interface OpsBarModel {
-  state: 'draft' | 'unloaded' | 'stopped' | 'ready' | 'running'
-  loadDisabled: boolean
-  enableDisabled: boolean
-  kickDisabled: boolean
-  load: { icon: string; labelKey: string; cls: string }
-  enable: { icon: string; labelKey: string; cls: string }
-  dot: string // hdr-state-dot class
-  labelKey: string
-  chipColor: string // CSS var
+  state: 'draft' | 'stopped' | 'pending' | 'running'
+  /** 主操作:未运行→启动 / 运行中→停止 */
+  primary: { action: 'start' | 'stop'; labelKey: string; icon: string; cls: string; disabled: boolean }
+  restart: { labelKey: string; icon: string; cls: string; disabled: boolean }
+  /** 开机自启开关(与当前运行状态无关:只管下次登录) */
+  autostart: { on: boolean; labelKey: string; disabled: boolean }
+  chip: { labelKey: string; dot: string; color: string }
+  /** 未来时句:说清"接下来会发生什么"(联动表达;草稿态为 null) */
+  futureHintKey: string | null
 }
 
 export function deriveOpsBar(s: OpsState & { isDraft: boolean }): OpsBarModel {
   if (s.isDraft) {
     return {
       state: 'draft',
-      loadDisabled: true,
-      enableDisabled: true,
-      kickDisabled: true,
-      load: { icon: 'fa-solid fa-plug', labelKey: 'drawer.op.load', cls: 'hdr-ops-btn' },
-      enable: { icon: 'fa-solid fa-circle-check', labelKey: 'drawer.op.enable', cls: 'hdr-ops-btn' },
-      dot: 'unloaded',
-      labelKey: 'drawer.state.draft',
-      chipColor: 'var(--dim)'
+      primary: { action: 'start', labelKey: 'ops.start', icon: 'fa-solid fa-play', cls: 'hdr-ops-btn', disabled: true },
+      restart: { labelKey: 'ops.restart', icon: 'fa-solid fa-rotate-right', cls: 'hdr-ops-btn', disabled: true },
+      autostart: { on: false, labelKey: 'ops.autostart', disabled: true },
+      chip: { labelKey: 'ops.state.draft', dot: 'unloaded', color: 'var(--dim)' },
+      futureHintKey: null
     }
   }
-  const load = s.loaded
-    ? { icon: 'fa-solid fa-plug-circle-xmark', labelKey: 'drawer.op.unload', cls: 'hdr-ops-btn active-blue' }
-    : { icon: 'fa-solid fa-plug', labelKey: 'drawer.op.load', cls: 'hdr-ops-btn active-green' }
-  const enable =
-    s.loaded && s.enabled
-      ? { icon: 'fa-solid fa-circle-pause', labelKey: 'drawer.op.disable', cls: 'hdr-ops-btn active-yellow' }
-      : { icon: 'fa-solid fa-circle-check', labelKey: 'drawer.op.enable', cls: 'hdr-ops-btn active-accent' }
-  if (!s.loaded) {
-    return {
-      state: 'unloaded',
-      loadDisabled: false,
-      enableDisabled: true,
-      kickDisabled: true,
-      load,
-      enable,
-      dot: 'unloaded',
-      labelKey: 'drawer.state.unloaded',
-      chipColor: 'var(--dim)'
-    }
-  }
-  if (!s.enabled) {
-    return {
-      state: 'stopped',
-      loadDisabled: false,
-      enableDisabled: false,
-      kickDisabled: false,
-      load,
-      enable,
-      dot: 'stopped',
-      labelKey: 'drawer.state.stopped',
-      chipColor: 'var(--yellow)'
-    }
-  }
-  if (s.running) {
-    return {
-      state: 'running',
-      loadDisabled: false,
-      enableDisabled: false,
-      kickDisabled: false,
-      load,
-      enable,
-      dot: 'running',
-      labelKey: 'status.running',
-      chipColor: 'var(--green)'
-    }
-  }
+  // 待运行 := 仍由 launchd 管理但当前没有进程(定时/触发型任务在两次执行之间)
+  const pending = s.loaded && !s.running
+  const state = s.running ? 'running' : pending ? 'pending' : 'stopped'
+  const chip = {
+    running: { labelKey: 'ops.state.running', dot: 'running', color: 'var(--green)' },
+    pending: { labelKey: 'ops.state.pending', dot: 'loaded', color: 'var(--accent2)' },
+    stopped: { labelKey: 'ops.state.stopped', dot: 'unloaded', color: 'var(--dim)' }
+  }[state]
+  // 联动:待运行时最该知道的是"它仍会被自动触发";否则说清"下次登录会不会自动起"
+  const futureHintKey = pending ? 'ops.hint.pending' : s.enabled ? 'ops.hint.autoOn' : 'ops.hint.autoOff'
   return {
-    state: 'ready',
-    loadDisabled: false,
-    enableDisabled: false,
-    kickDisabled: false,
-    load,
-    enable,
-    dot: 'loaded',
-    labelKey: 'drawer.state.ready',
-    chipColor: 'var(--accent2)'
+    state,
+    primary: s.running
+      ? { action: 'stop', labelKey: 'ops.stop', icon: 'fa-solid fa-stop', cls: 'hdr-ops-btn active-blue', disabled: false }
+      : { action: 'start', labelKey: 'ops.start', icon: 'fa-solid fa-play', cls: 'hdr-ops-btn active-green', disabled: false },
+    restart: { labelKey: 'ops.restart', icon: 'fa-solid fa-rotate-right', cls: 'hdr-ops-btn', disabled: false },
+    autostart: {
+      on: s.enabled,
+      labelKey: 'ops.autostart',
+      disabled: false
+    },
+    chip,
+    futureHintKey
   }
 }

@@ -5,7 +5,6 @@ export function createIpcAgentRepo(): AgentRepository {
   const api = (): Window['launcher']['agents'] => window.launcher.agents
   return {
     list: () => api().list(),
-    toggle: (id) => api().toggle(id),
     brewAction: (kind, id) => api().brewAction(kind, id),
     createDraft: (scope, label) => api().createDraft(scope, label),
     save: (id, patch) => api().save(id, patch),

@@ -16,7 +16,6 @@ interface AgentsState {
   load(): Promise<void>
   setFilter(f: AgentFilter): void
   select(id: string): void
-  toggle(id: string): Promise<void>
   brewAction(kind: 'start' | 'stop', id: string): Promise<void>
   // 新建/导入统一落点(demo openAgentDraft):以给定 label 建草稿、入列表顶并选中
   createDraft(scope: 'user' | 'system' | 'daemon', label: string): Promise<Agent>
@@ -65,12 +64,6 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
 
   select(id) {
     set({ selectedId: id })
-  },
-
-  // demo toggleAgent:状态翻转 + toast 文案与 demo 一致(toast 在视图层调这里前发)
-  async toggle(id) {
-    const updated = await dataSource().agents.toggle(id)
-    set({ agents: get().agents.map((a) => (a.id === updated.id ? { ...updated } : a)) })
   },
 
   async brewAction(kind, id) {

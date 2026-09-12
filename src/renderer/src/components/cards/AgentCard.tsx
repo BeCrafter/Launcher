@@ -23,30 +23,26 @@ export function AgentCard({
   onToggle: () => void
   onBrew: (kind: 'start' | 'stop') => void
   onEdit: () => void
-  onMore: () => void
+  onMore: (anchor: { x: number; y: number }) => void
 }): React.JSX.Element {
   const t = useT()
   const tagHtml = agent.tags.slice(0, 3).map((tg) => <TagChip key={tg} text={tg} cls={tg} />)
   const brewBadge = agent.isBrew ? <TagChip text="brew" cls="brew" /> : null
-  // 开源 isDisabledByOverride:launchctl 覆盖禁用 → 橙标提示(抽屉「启用」可恢复)
+  // 开源 isDisabledByOverride:launchctl 覆盖禁用 → 橙标提示(更多菜单/抽屉「启用」可恢复)
   const overrideBadge = agent.isDisabledByOverride ? (
     <TagChip text={t('agent.override')} cls="yellow" title={t('agent.override.title')} />
   ) : null
+  // 意图层:未运行→启动 / 运行中→停止(launchctl 的载入/启用等步骤由 main 内部按序完成)
   const toggleBtn = agent.isBrew ? (
     <>
       <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: 'brew start', onPress: onBrew.bind(null, 'start') }} />
       {'  '}
       <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'blue', title: 'brew stop', onPress: onBrew.bind(null, 'stop') }} />
     </>
+  ) : agent.status === 'running' ? (
+    <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'blue', title: t('ops.stop'), onPress: onToggle }} />
   ) : (
-    <ActBtn
-      icon={agent.status === 'running' ? 'fa-solid fa-stop' : 'fa-solid fa-play'}
-      opts={{
-        cls: agent.status === 'running' ? 'blue' : 'green',
-        title: agent.status === 'running' ? 'bootout' : 'bootstrap',
-        onPress: onToggle
-      }}
-    />
+    <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: t('ops.start'), onPress: onToggle }} />
   )
   return (
     <div className={`agent-col-card${selected ? ' selected' : ''}`} id={`rc_${agent.id}`} onClick={onSelect}>
@@ -92,7 +88,16 @@ export function AgentCard({
         <div className="acc-actions" onClick={(e) => e.stopPropagation()}>
           {toggleBtn}
           <ActBtn icon="fa-solid fa-pen" opts={{ cls: 'accent', title: t('agents.editConfig'), onPress: onEdit }} />
-          <ActBtn icon="fa-solid fa-ellipsis" opts={{ title: t('common.more'), onPress: onMore }} />
+          <ActBtn
+            icon="fa-solid fa-ellipsis"
+            opts={{
+              title: t('common.more'),
+              onPress: (e) => {
+                const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                onMore({ x: r.right, y: r.bottom })
+              }
+            }}
+          />
         </div>
       </div>
     </div>

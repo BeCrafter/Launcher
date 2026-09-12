@@ -2,6 +2,7 @@
 // Agent 编辑抽屉(demo #editAgentFloat/#editDrawer:头部状态 chip + ops bar 5 态 + 4 tab + 遮罩关闭)
 import { useT } from '../../hooks/useT'
 import { Modal } from '../../components/Modal'
+import { Toggle } from '../../components/ui/Toggle'
 import { deriveOpsBar } from '../../lib/ops-bar'
 import { useDrawerStore, type DrawerTab } from '../../state/drawer-store'
 import { EditTab } from './tabs/EditTab'
@@ -46,49 +47,50 @@ export function AgentDrawer(): React.JSX.Element {
             <div className="drawer-title-icon">
               <i className="fa-solid fa-pen-to-square" />
             </div>
-            <div>
+            <div className="drawer-title-text">
               <div className="drawer-title-main" id="efLabel">{agentLabel}</div>
               <div className="drawer-title-sub" id="efScope">{SCOPE_LABEL[scope] ?? scope}</div>
+              {/* 未来时句:说清"接下来会发生什么"(联动表达);放在标题区,右侧只留控件 */}
+              {bar.futureHintKey && <div className="ops-future-hint" id="opsFutureHint">{t(bar.futureHintKey)}</div>}
             </div>
           </div>
           <div className="drawer-hdr-right">
-            <div className="hdr-state-chip" id="opsStateChip" style={{ color: bar.chipColor }}>
-              <span className={`hdr-state-dot ${bar.dot}`} id="opsStateDot" />
-              <span id="opsStateLabel">{t(bar.labelKey)}</span>
+            <div className="hdr-state-chip" id="opsStateChip" style={{ color: bar.chip.color }}>
+              <span className={`hdr-state-dot ${bar.chip.dot}`} id="opsStateDot" />
+              <span id="opsStateLabel">{t(bar.chip.labelKey)}</span>
             </div>
             <div className="hdr-ops-group">
               <button
-                className={bar.load.cls}
-                id="opsBtnLoad"
+                className={bar.primary.cls}
+                id="opsBtnPrimary"
                 type="button"
-                disabled={bar.loadDisabled}
-                onClick={() => void opsAction('load')}
+                disabled={bar.primary.disabled}
+                onClick={() => void opsAction(bar.primary.action)}
               >
-                <i className={bar.load.icon} />
-                <span id="opsBtnLoadLabel">{t(bar.load.labelKey)}</span>
+                <i className={bar.primary.icon} />
+                <span id="opsBtnPrimaryLabel">{t(bar.primary.labelKey)}</span>
+              </button>
+              <button
+                className={bar.restart.cls}
+                id="opsBtnRestart"
+                type="button"
+                disabled={bar.restart.disabled}
+                onClick={() => void opsAction('restart')}
+              >
+                <i className={bar.restart.icon} />
+                <span>{t(bar.restart.labelKey)}</span>
               </button>
               <div className="hdr-ops-divider" />
-              <button
-                className={bar.enable.cls}
-                id="opsBtnEnable"
-                type="button"
-                disabled={bar.enableDisabled}
-                onClick={() => void opsAction('enable')}
-              >
-                <i className={bar.enable.icon} id="opsEnableIcon" />
-                <span id="opsBtnEnableLabel">{t(bar.enable.labelKey)}</span>
-              </button>
-              <div className="hdr-ops-divider" />
-              <button
-                className="hdr-ops-btn"
-                id="opsBtnKickstart"
-                type="button"
-                disabled={bar.kickDisabled}
-                onClick={() => void opsAction('kickstart')}
-              >
-                <i className="fa-solid fa-bolt" />
-                <span>{t('drawer.op.kickstart')}</span>
-              </button>
+              {/* 开机自启:只管下次登录,不动当前运行状态 */}
+              <span className="hdr-ops-switch">
+                <span className="hdr-ops-switch-label">{t(bar.autostart.labelKey)}</span>
+                <Toggle
+                  checked={bar.autostart.on}
+                  onChange={() => {
+                    if (!bar.autostart.disabled) void opsAction('autostart')
+                  }}
+                />
+              </span>
             </div>
             <button className="modal-close" type="button" onClick={close} title={t('common.close')}>
               <i className="fa-solid fa-xmark" />

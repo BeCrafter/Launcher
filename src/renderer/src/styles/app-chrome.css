@@ -77,3 +77,100 @@
     transform: translateX(100%);
   }
 }
+
+/* 抽屉操作栏:停用态「载入」旁的顺序提示(应用新增,非 demo 移植) */
+.ops-load-hint {
+  font-size: 10px;
+  color: var(--yellow);
+  align-self: center;
+  white-space: nowrap;
+}
+
+/* Agent 卡片「更多」菜单(根级浮层,应用新增):启用/停用快捷入口 */
+.agent-card-menu {
+  position: fixed;
+  z-index: 90;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-card-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  border-radius: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.agent-card-menu-item i {
+  font-size: 11px;
+  color: var(--dim);
+  width: 14px;
+  text-align: center;
+}
+
+.agent-card-menu-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.agent-card-menu-item:hover i {
+  color: var(--accent2);
+}
+
+/* 抽屉操作栏:未来时提示(意图层联动表达)与「开机自启」开关组 */
+/* 未来时句:标题区第三行(与 scope 副标题同族),不再占右侧控件位 */
+.ops-future-hint {
+  font-size: 10px;
+  color: var(--dim);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 抽屉顶栏:标题区可收缩(否则右侧控件会把标题压成 0 宽并与后续元素重叠) */
+.drawer-title-text {
+  min-width: 0;
+}
+
+.drawer-title-main,
+.drawer-title-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 抽屉加宽(600 → 860):头部控件不再拥挤,编辑表单/XML/日志同步变宽
+   (demo 基线为 600px,此为应用侧调整,已在 migration-map 记录) */
+.edit-drawer {
+  width: 860px;
+}
+
+.hdr-ops-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hdr-ops-switch-label {
+  font-size: 10.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
