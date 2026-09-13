@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cronLogDir, cronLogPath } from '../../shared/cron-log'
+import { cronLogDir, cronLogLegacyPath, cronLogTemplate } from '../../shared/cron-log'
 import { ELEVATION_CANCELLED } from '../../shared/ipc'
 import type { CronJob } from '../../shared/models'
 import type { ElevationExecutor } from './elevation'
@@ -143,10 +143,12 @@ describe('crontab-service(list/create/update/remove)', () => {
     })
     const install = h.runnerCalls.find((c) => c.args[0] === '-')
     expect(install).toBeTruthy()
+    // 重定向目标为日期模板(% 已转义);模板态不返回 logPath(文件可能尚未产生)
     expect(install!.input).toBe(
-      `# 每分钟\n* * * * * ( echo hi ) >> ${cronLogPath(h.home, job.id)} 2>&1\n`
+      `# 每分钟\n* * * * * ( echo hi ) >> ${cronLogDir(h.home)}/${job.id}-$(date +\\%Y\\%m\\%d\\%H).log 2>&1\n`
     )
-    expect(job.logPath).toBe(cronLogPath(h.home, job.id))
+    expect(job.logTemplate).toBe(true)
+    expect(job.logPath).toBeUndefined()
     expect(existsSync(cronLogDir(h.home))).toBe(true)
 
     // 写回内容再 list → 解析一致
@@ -235,7 +237,7 @@ describe('crontab-service(list/create/update/remove)', () => {
     const logged = await h.service.update(job, { log: true })
     mkdirSync(cronLogDir(h.home), { recursive: true })
     writeFileSync(
-      cronLogPath(h.home, logged.job.id),
+      cronLogLegacyPath(h.home, logged.job.id),
       '2026-09-11 10:00:00 任务开始\n2026-09-11 10:00:01 error: boom\n2026-09-11 10:00:02 warn: slow\n2026-09-11 10:00:03 done\n'
     )
     const lines = await h.service.readLog(logged.job.id)
@@ -302,5 +304,36 @@ describe('crontab-service(system scope 提权路径)', () => {
         system: true
       })
     ).rejects.toThrow(ELEVATION_CANCELLED)
+  })
+})
+
+describe('crontab-service(日志按小时分段)', () => {
+  it('readLog 跨段累积(按时间先后);list 把 logPath 解析为该任务最新的非空段', async () => {
+    const h = makeHarness()
+    h.setUserCrontab('0 9 * * * /usr/bin/run --flag\n')
+    const payload = await h.service.list()
+    const id = payload.jobs[0].id
+
+    // 启用日志 → 写回应为日期模板形态
+    const { job } = await h.service.update(payload.jobs[0], { log: true })
+    expect(job.logTemplate).toBe(true)
+
+    const dir = cronLogDir(h.home)
+    mkdirSync(dir, { recursive: true })
+    const older = join(dir, `${id}-2026091310.log`)
+    const newer = join(dir, `${id}-2026091311.log`)
+    writeFileSync(older, 'older line\n')
+    writeFileSync(newer, 'newer line\n')
+    const past = Date.now() / 1000 - 3600
+    utimesSync(older, past, past) // 明确拉开 mtime,保证排序确定
+
+    // 跨段累积:旧段在前、新段在后
+    const lines = await h.service.readLog(id)
+    expect(lines.map((l) => l.text)).toEqual(['older line', 'newer line'])
+
+    // list 解析出的 logPath = 最新非空段(供抽屉显示/复制/访达揭示)
+    const after = await h.service.list()
+    expect(after.jobs[0].logTemplate).toBe(true)
+    expect(after.jobs[0].logPath).toBe(newer)
   })
 })

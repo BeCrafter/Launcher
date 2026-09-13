@@ -27,6 +27,7 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
   const editingId = useCronStore((s) => s.editingId)
   const setEditingId = useCronStore((s) => s.setEditingId)
   const setEnabled = useCronStore((s) => s.setEnabled)
+  const repairEscaping = useCronStore((s) => s.repairEscaping)
   const setLog = useCronStore((s) => s.setLog)
   const save = useCronStore((s) => s.save)
   const remove = useCronStore((s) => s.remove)
@@ -117,6 +118,20 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
           <span className="cron-cmd" title={job.cmd}>
             {job.cmd}
           </span>
+          {job.percentUnescaped && (
+            <button
+              className="d-btn"
+              type="button"
+              style={{ padding: '2px 7px', fontSize: 10, flexShrink: 0, color: 'var(--yellow)', borderColor: 'rgba(250,204,21,.45)' }}
+              title={t('cron.percentWarn.title')}
+              onClick={(e) => {
+                e.stopPropagation()
+                void repairEscaping(job).catch((err) => cronErrorToast(err, t))
+              }}
+            >
+              <i className="fa-solid fa-triangle-exclamation" style={{ fontSize: 9 }} /> {t('cron.percentWarn')}
+            </button>
+          )}
           <label className="toggle" title={job.enabled ? t('cron.disable') : t('cron.enable')}>
             <input
               type="checkbox"
@@ -223,6 +238,12 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
           <span className="f-lbl" style={{ width: 60 }}>{t('cron.field.cmd')}</span>
           <input className="f-input mono" type="text" value={cmd} onChange={(e) => setCmd(e.target.value)} />
         </div>
+        {job.percentUnescaped && (
+          <div style={{ fontSize: 10, color: 'var(--yellow)', marginBottom: 8, paddingLeft: 60 }}>
+            <i className="fa-solid fa-triangle-exclamation" style={{ fontSize: 9, marginRight: 4 }} />
+            {t('cron.percentWarn.hint')}
+          </div>
+        )}
         <div className="f-row center" style={{ marginBottom: 8 }}>
           <span className="f-lbl" style={{ width: 60 }}>{t('cron.field.desc')}</span>
           <input className="f-input" type="text" value={desc} onChange={(e) => setDesc(e.target.value)} />

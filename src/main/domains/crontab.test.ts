@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cronLogPath } from '../../shared/cron-log'
+import { cronLogDir, cronLogLegacyPath, cronLogTemplate } from '../../shared/cron-log'
 import {
   hashJobId,
   headerRawOf,
@@ -89,7 +89,7 @@ describe('parseCrontab 往返保真', () => {
     const target = doc.jobs[0]
     doc.lines[target.lineIndex] = renderJobLine(
       { ...target.job, cmd: '/usr/bin/c' },
-      cronLogPath(HOME, target.job.id)
+      cronLogTemplate(HOME, target.job.id)
     )
     const out = serializeCrontab(doc)
     expect(out.startsWith('# 头注释  \nSHELL=/bin/zsh\n')).toBe(true) // 首两行含尾随空格逐字节不变
@@ -105,25 +105,43 @@ describe('parseCrontab 往返保真', () => {
     expect(doc.jobs[0].descLineIndex).toBe(0)
 
     // 再渲染(启用)后重新解析 → 状态回归
-    const line = renderJobLine({ ...doc.jobs[0].job, enabled: true }, cronLogPath(HOME, doc.jobs[0].job.id))
+    const line = renderJobLine({ ...doc.jobs[0].job, enabled: true }, cronLogTemplate(HOME, doc.jobs[0].job.id))
     expect(line).toBe('0 2 * * * /usr/bin/backup')
     const doc2 = parseCrontab(text.replace('# [disabled] ', ''), 'user', USER, HOME)
     expect(doc2.jobs[0].job.enabled).toBe(true)
     expect(doc2.jobs[0].job.id).toBe(doc.jobs[0].job.id) // id 与启用态无关
   })
 
-  it('10. 日志包裹:应用路径解包(log=true/cmd 还原/id 一致);用户自有重定向不误判', () => {
+  it('10. 日志包裹(新式日期模板):重定向目标为 $(date …)(% 已转义);解析标 logTemplate', () => {
     const base = parseCrontab('0 9 * * * /usr/bin/run --flag\n', 'user', USER, HOME)
     const id = base.jobs[0].job.id
-    const path = cronLogPath(HOME, id)
-    const wrapped = renderJobLine({ ...base.jobs[0].job, log: true }, path)
-    expect(wrapped).toBe(`0 9 * * * ( /usr/bin/run --flag ) >> ${path} 2>&1`)
+    const target = cronLogTemplate(HOME, id)
+    const wrapped = renderJobLine({ ...base.jobs[0].job, log: true }, target)
+    // 模板里的日期 % 必须被转义(cron 语义),shell 收到后才展开为 YYYYMMDDHH
+    expect(wrapped).toBe(`0 9 * * * ( /usr/bin/run --flag ) >> ${cronLogDir(HOME)}/${id}-$(date +\\%Y\\%m\\%d\\%H).log 2>&1`)
 
     const doc = parseCrontab(`${wrapped}\n`, 'user', USER, HOME)
     expect(doc.jobs[0].job.log).toBe(true)
-    expect(doc.jobs[0].job.cmd).toBe('/usr/bin/run --flag')
+    expect(doc.jobs[0].job.logTemplate).toBe(true) // 模板态:实际文件按 id 扫目录解析
+    expect(doc.jobs[0].job.logPath).toBeUndefined()
+    expect(doc.jobs[0].job.cmd).toBe('/usr/bin/run --flag') // 解包还原
     expect(doc.jobs[0].job.id).toBe(id) // 解包后 id 与未包裹一致(幂等)
+  })
 
+  it('10b. 日志包裹(旧式单文件):仍识别并给出具体 logPath(新老共存)', () => {
+    const base = parseCrontab('0 9 * * * /usr/bin/run --flag\n', 'user', USER, HOME)
+    const id = base.jobs[0].job.id
+    const legacy = cronLogLegacyPath(HOME, id)
+    const wrapped = renderJobLine({ ...base.jobs[0].job, log: true }, legacy)
+    expect(wrapped).toBe(`0 9 * * * ( /usr/bin/run --flag ) >> ${legacy} 2>&1`)
+
+    const doc = parseCrontab(`${wrapped}\n`, 'user', USER, HOME)
+    expect(doc.jobs[0].job.log).toBe(true)
+    expect(doc.jobs[0].job.logPath).toBe(legacy) // 旧式有具体路径
+    expect(doc.jobs[0].job.logTemplate).toBeUndefined()
+  })
+
+  it('10c. 用户自有重定向不误判', () => {
     const userOwn = parseCrontab('0 9 * * * /usr/bin/x >> /var/log/x.log 2>&1\n', 'user', USER, HOME)
     expect(userOwn.jobs[0].job.log).toBe(false)
     expect(userOwn.jobs[0].job.cmd).toBe('/usr/bin/x >> /var/log/x.log 2>&1')
@@ -158,5 +176,82 @@ describe('parseCrontab 往返保真', () => {
     expect(renderDescLine('备份')).toBe('# 备份')
     const doc = parseCrontab(`# 备份\n0 2 * * * /usr/bin/backup\n`, 'user', USER, HOME)
     expect(doc.jobs[0].job.desc).toBe('备份')
+  })
+})
+
+describe('命令字段的 % 转义(cron 语义:未转义 % = 换行 + stdin)', () => {
+  it('renderJobLine:命令里的 % 一律转义为 \\%(含日志包裹)', () => {
+    const job = { expr: '0 9 * * *', cmd: 'date +"%Y-%m-%d"', user: 'tester', enabled: true, log: false, system: undefined, special: false }
+    expect(renderJobLine(job as never, '')).toBe('0 9 * * * date +"\\%Y-\\%m-\\%d"')
+
+    const withLog = { ...job, log: true }
+    const line = renderJobLine(withLog as never, '/p/x.log')
+    expect(line).toBe('0 9 * * * ( date +"\\%Y-\\%m-\\%d" ) >> /p/x.log 2>&1')
+    expect(line).not.toMatch(/(^|[^\\])%/) // 不存在未转义的 %
+  })
+
+  it('解析:已转义的 \\% 还原为 %(界面显示用户原命令)', () => {
+    const doc = parseCrontab('0 9 * * * date +"\\%Y" >> /Users/tester/Library/Logs/BeCrafter-Launcher/cron/a.log 2>&1\n', 'user', USER, HOME)
+    const job = doc.jobs[0].job
+    expect(job.cmd).toBe('date +"%Y"')
+    expect(job.log).toBe(true)
+  })
+
+  it('往返稳定:% 命令「读入 → 写回」字节一致', () => {
+    const escaped = '0 9 * * * ( date +"\\%Y-\\%m" ) >> /Users/tester/Library/Logs/BeCrafter-Launcher/cron/a.log 2>&1\n'
+    const job = parseCrontab(escaped, 'user', USER, HOME).jobs[0].job
+    expect(renderJobLine(job, job.logPath!)).toBe(escaped.trim())
+  })
+
+  it('未转义的 %(历史遗留/手写)仍能解析出完整命令,写回时被修正', () => {
+    // 用户当前两条任务就属于这种:磁盘上未转义 → cron 截断命令 → 日志永远为空
+    const legacy = '0 9 * * * date +"%Y" >> /Users/tester/Library/Logs/BeCrafter-Launcher/cron/a.log 2>&1\n'
+    const job = parseCrontab(legacy, 'user', USER, HOME).jobs[0].job
+    expect(job.cmd).toBe('date +"%Y"') // 界面显示正常
+    expect(renderJobLine(job, cronLogTemplate(HOME, job.id))).toContain('date +"\\%Y"') // 写回即修正
+  })
+})
+
+describe('未转义 % 的检测与修复闭环(cron 会把未转义 % 当换行 → 命令被截断、静默失败)', () => {
+  const LOG = '/Users/tester/Library/Logs/BeCrafter-Launcher/cron/a.log'
+  const bare = `* * * * * echo "$(date +"%Y")" >> ${LOG} 2>&1\n`
+
+  it('裸 % → 置 percentUnescaped,但界面仍显示原命令', () => {
+    const job = parseCrontab(bare, 'user', USER, HOME).jobs[0].job
+    expect(job.percentUnescaped).toBe(true)
+    expect(job.cmd).toBe('echo "$(date +"%Y")"')
+  })
+
+  it('已转义 \\% → 不置位', () => {
+    const escaped = `* * * * * echo "$(date +"\\%Y")" >> ${LOG} 2>&1\n`
+    const job = parseCrontab(escaped, 'user', USER, HOME).jobs[0].job
+    expect(job.percentUnescaped).toBeUndefined()
+    expect(job.cmd).toBe('echo "$(date +"%Y")"')
+  })
+
+  it('偶数反斜杠(\\\\%)仍视为未转义', () => {
+    const job = parseCrontab('* * * * * printf \'a\\\\%b\'\n', 'user', USER, HOME).jobs[0].job
+    expect(job.percentUnescaped).toBe(true)
+  })
+
+  it('无 % / 无日志包裹时的判定', () => {
+    expect(parseCrontab('* * * * * /usr/bin/date\n', 'user', USER, HOME).jobs[0].job.percentUnescaped).toBeUndefined()
+    expect(parseCrontab('* * * * * date +"%Y"\n', 'user', USER, HOME).jobs[0].job.percentUnescaped).toBe(true) // 无包裹同样告警
+  })
+
+  it('已停用的任务不告警(启用时会经 renderJobLine 自动修正)', () => {
+    const job = parseCrontab('# [disabled] * * * * * date +"%Y"\n', 'user', USER, HOME).jobs[0].job
+    expect(job.enabled).toBe(false)
+    expect(job.percentUnescaped).toBeUndefined()
+  })
+
+  it('修复闭环:重写该行 → 命令被转义、再解析不再告警、命令内容不变', () => {
+    const job = parseCrontab(bare, 'user', USER, HOME).jobs[0].job
+    expect(job.percentUnescaped).toBe(true)
+    const rewritten = renderJobLine(job, job.logPath!)
+    expect(rewritten).toContain('\\%Y') // 已转义
+    const again = parseCrontab(`${rewritten}\n`, 'user', USER, HOME).jobs[0].job
+    expect(again.percentUnescaped).toBeUndefined()
+    expect(again.cmd).toBe(job.cmd) // 界面命令不受影响
   })
 })

@@ -41,6 +41,10 @@ export interface CronJob {
   special?: boolean
   /** log=true 时的日志文件绝对路径(后端填充;解析时由包裹行推导) */
   logPath?: string
+  /** 该任务在 crontab 中的命令含**未转义的 %**(cron 会截断命令 → 静默失败);后端解析时填充,供 UI 告警/一键修复 */
+  percentUnescaped?: boolean
+  /** 日志重定向为「日期模板」形式(每小时一段):实际文件需按 id 扫目录解析,故 logPath 由后端填充 */
+  logTemplate?: boolean
 }
 
 /** 单个 crontab 作用域的元信息 */

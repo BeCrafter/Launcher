@@ -75,6 +75,10 @@ const EXTRA = {
     'toast.elevCancelled': '已取消管理员授权',
     'toast.elevFailed': '管理员授权失败或操作未完成',
     'toast.cronOpFailed': '操作失败,请重试',
+    'cron.percentWarn': '需修复转义',
+    'cron.percentWarn.title': '该任务的命令含未转义的「%」。crontab 里未转义的 % 会被 cron 当作换行,命令从此处被截断 → 任务不会正常执行、也不会产生日志。点击此处自动修复(转义为 \\%)。',
+    'cron.percentWarn.hint': '命令含未转义的 %,cron 会截断该命令;保存后会自动修正',
+    'toast.cronPercentFixed': '已修复:crontab 中的 % 已转义,任务将正常执行并产生日志',
     // ── 端口服务(阶段 3) ──
     'svc.restart': '重启服务(终止后按原命令行启动)',
     'svc.start': '启动容器',
@@ -171,6 +175,10 @@ const EXTRA = {
     'toast.elevCancelled': 'Administrator authorization cancelled',
     'toast.elevFailed': 'Administrator authorization failed or the operation did not complete',
     'toast.cronOpFailed': 'Operation failed, please retry',
+    'cron.percentWarn': 'Escape fix needed',
+    'cron.percentWarn.title': 'This command contains an unescaped "%". In a crontab an unescaped % becomes a newline, truncating the command there → the job will not run properly and produces no logs. Click to fix it automatically (escape as \\%).',
+    'cron.percentWarn.hint': 'Command has an unescaped %; cron will truncate it. Saving will fix it automatically',
+    'toast.cronPercentFixed': 'Fixed: % in the crontab is now escaped — the job will run and produce logs',
     // ── Port services (phase 3) ──
     'svc.restart': 'Restart service (terminate, then run original command)',
     'svc.start': 'Start container',
