@@ -2,6 +2,7 @@
 
 > 本文档是 demo 原型 → React 应用迁移的逐项比对记录。后续调整任一侧时,按此表逐项核对行为与视觉。
 > **冻结基线**:demo 基线 commit `da1e34a`(logo 基线 `06ff9ba`);demo 目录自此不再改动。
+> **冻结例外(2026-09-13,用户明确要求)**:demo「AI 助手」页整体重设计为对话式 Agent 页(`index.html #view-ai` / `css/ai.css` / `js/ai.js` / `data.js aiChats+aiScenes` / `config.js MODULES.ai` / i18n `ai.*` 重写),其余页面继续冻结;逐项说明见文末「AI 对话页重设计」。
 > **比对方法**:`npm run dev` 与 `docs/demo/index.html` 并排,1200×800 与最小宽度、双主题、双语各走一遍。
 
 ## 状态图例
@@ -17,7 +18,7 @@
 
 | 演示源 | React 落点 | 状态 | 备注 |
 |---|---|---|---|
-| `index.html` L19-62 侧边栏 | `layout/Sidebar.tsx` | 🔶 | AI 入口不迁移;Logo 用 v2 双主题组件(等效 logo-dark/light img 对);nav 图标 crontab 为 fa-regular(硬编码保留) |
+| `index.html` L19-62 侧边栏 | `layout/Sidebar.tsx` | 🔶 | AI 入口不迁移(demo 侧 AI 页已于 2026-09-13 重设计为对话页,React 迁移仍推迟);Logo 用 v2 双主题组件(等效 logo-dark/light img 对);nav 图标 crontab 为 fa-regular(硬编码保留) |
 | `index.html` L65-84 顶栏 | `layout/Topbar.tsx` | 🔶 | agents 导入/新建已接线;crontab 刷新 = 真实重读(2026-09-11);services 重新扫描/监听状态 = 真实(轮询暂停有会话语义) |
 | `index.html` L1493 statusbar | `components/StatusBar.tsx` + `layout/AppShell.tsx` | ✅ | summary/items 含 `<strong>` 经字典 HTML 渲染(demo innerHTML 等价) |
 | `index.html` L1499 toast | `components/ui/Toast.tsx` + `state/ui-store.ts` | ✅ | 单条 2600ms;明暗色值映射表逐字 |
@@ -32,7 +33,7 @@
 | crontab | ✅ | 同上 |
 | services | ✅ | searchHandler 在 demo 亦仅 toast,如实移植 |
 | settings | ✅ | 状态栏含版本/主题/语言/架构/GitHub |
-| ai / login / plist / design | ❌ | AI 未迁移;login 为设置页 login pane;plist/design 静态说明页 |
+| ai / login / plist / design | ❌ | AI 未迁移(demo 侧已重设计为对话式 Agent,见文末;React 落点属阶段 4);login 为设置页 login pane;plist/design 静态说明页 |
 
 ## 视图 1:Launch Agents(`js/agents.js` → `modules/agents/AgentsView.tsx`)
 
@@ -209,7 +210,7 @@
 - `sciRefreshPlistPreview` 目标元素不存在(死代码)→ 不移植聚合 preview。
 - `rowCard`/`rowInfo`(components.js)**零调用** → 不移植。
 - `refreshSettingsStatusBar` 定义两次(settings.js 胜出)→ React 由 store 派生,天然单份。
-- `addCronEntryTo` 忽略参数;`ai.js` 部分函数无引用 → 属未迁移域,注明。
+- `addCronEntryTo` 忽略参数;`ai.js` 部分函数无引用 → 属未迁移域,注明(**2026-09-13 AI 页重写后旧函数整组移除**:`renderAi`/`filterAi`/`handleAiSearch`/`scanAiAgents`/`runWithAgent`/`aiIconBadgeCls`,该条目已消除)。
 - 折叠 toast「侧边栏已折叠」等硬编码中文 → 如实移植(记差异 6)。
 - demo 对 `0 * * * *` 的 cron 人话输出「每天 每小时 执行」等怪癖 → 如实移植并有测试锚定。
 
@@ -227,7 +228,7 @@
 | ServiceRepository.list/kill | **已完成** `domains/lsof-parse`(-F 机器可读)+ `services/process-discovery`(ps 补全/3s 按需轮询/diff 推送)+ `termination`(SIGTERM→5s→SIGKILL)+ `docker-service`(daemon 未运行静默降级) | 3 |
 | menubarBadge → Tray 角标 | **已完成**(setTitle 数字;阶段 1 后计数改由 main 自算) | 5 |
 | APP_VERSION → 设置页/关于 | **已完成**(useAppInfo hook;真实版本三处) | 5 |
-| aiAgents/aiSkills(已生成在 mock) | AI 视图 | 4 |
+| aiAgents/aiSkills(已生成在 mock) | AI 视图(demo 已改为对话页:`aiAgents` → MCP 接入 modal 数据源;`aiSkills` → 欢迎技能建议卡;新增 `aiChats`/`aiScenes` 场景数据) | 4 |
 
 ## 打开慢修复(2026-09-11,机制同源开源 AgentStore/BrewManagedSupport)
 
@@ -240,3 +241,25 @@
 5. **长命令显式超时**:`log show`(实测 2.8-31.8s 波动,与 `--last` 窗口大小无关)与 brew 全部调用点(list/action、process-discovery)显式 `timeoutMs: 45_000` 覆盖 `cmdTimeout`,修复系统源日志恒空 / brew 启停必超时;`brew.action` 原本也被 10s 杀死
 
 E2E(CDP,dev 模式):warm reload → 首张卡片中位 **879ms**(修复前 ~10s);brew 过滤 30 → 2 张卡片;invalid 横幅/系统日志/toggle/dirChanged 回归通过。已知遗留(非本次引入):`log show --predicate process == <label>` 对真实进程名 ≠ label 的服务拿不到日志(如 com.deepseek.dsh.web),属预置条件表达式口径问题。
+
+## AI 对话页重设计(2026-09-13,冻结例外)
+
+用户判定原 AI 页(「本机 CLI Agent + 技能卡片」目录页)不符合预期,要求重开冻结、整体重设计为**对话式 Agent 页**;引擎形态对齐 `docs/design/ai-capability.md`(pi = `@earendil-works/pi-ai` 流式 + `pi-agent-core` tool calling;用户口径「Phi Agent」= 该 pi 引擎,2026-09-13 已与用户确认)。demo 全 mock,但交互面按 pi 能力设计(流式逐字 / 工具调用步骤可视化 / 写操作授权)。
+
+**布局(用户选定,A/B/C 三案中选 B)**:左侧会话栏(232px,可折叠、<900px 窄屏改覆盖层;localStorage `launcherAiRailCollapsed` 记忆)+ 居中对话列(~720px);工具执行步骤为消息流内**可折叠步骤块**(运行中展开、「执行中 · 已完成 N 步」,完成后自动折叠为「已执行 N 步 · 用时 T」);写操作**授权卡内联**在对话流;底部 composer(引擎 chip / @ 引用 / 发送↔停止切换)。
+
+**逐文件改动**:
+
+| 文件 | 内容 |
+|---|---|
+| `index.html` | `#view-ai` 旧结构(filter-bar + 计数 span + `#aiList`)整块替换为对话骨架(`.ai-shell` 双栏 + composer);新增 `#aiMcpModal`(MCP 接入);head 增 `css/ai.css` link |
+| `css/ai.css` | **新建**(锚点 `.ai-shell`,已加入 check.mjs cssAnchors):rail/欢迎态/消息/步骤块/卡片/授权卡/composer/@ 弹层;全部走主题变量;步骤输出行复用 drawer.css `.log-line` 族;@ 弹层 fixed 挂 body(沿「浮层须挂根部防裁剪」教训);composer 底部预留 50px 避让固定状态栏(同 list-container 64px 同源) |
+| `js/ai.js` | **整体重写**(97 行 → ~700 行)。模块级 `chatState`(timers 句柄池/typer/botMi/pendingApprove/afterApprove/runElapsed+runTickStart 计时);入口 `renderAiChat`(语言切换经 switchModule 重入 → `aiAbortRun` + 从 messages 静态重渲染);运行器 `aiStartLive/aiNextStep/aiExecStep/aiTypewriter`(16ms 逐字、字符同步回写消息对象)/`aiStopRun`/`aiAbortRun`(运行中项归一 warn,无残 spinner);授权 `aiApprove`(dangerous→`confirmDangerousAction`→`ELEVATION.request`)→ approved 后**续播 afterApprove 步骤到同一步骤块**;`aiCancelApprove` 追加取消文案并终止;@ 引用(`aiMention*`,按钮/@ 输入双入口,data-* 传参防引号注入);MCP modal(`aiOpenMcpModal/aiRenderMcpModal/aiCopyMcpCmd/aiToggleMcpPerm`);**旧函数整组移除**(renderAi/filterAi/handleAiSearch/scanAiAgents/runWithAgent/aiIconBadgeCls) |
+| `js/data.js` | 新增 `aiChats`(4 条预置已完成会话,静态直出、含 approved 态授权卡)+ `aiScenes`(6 个场景时间线:health/sk-diag/sk-refactor/sk-import/sk-plist/**fallback**;步骤联合类型 user/think/tool/stream/card/suggest,`res:true` 的行经 `aiResolve` 实时取 `agentData/cronData/svcData` 计数)+ 共享 `AI_PLIST_DRAFT` 常量(定义在 MOCK_DATA 前,场景与预置会话共用)+ 别名 `aiChatData/aiSceneData`;`aiAgents`/`aiSkills` 保留(check.mjs 非空数组硬约束),改作 MCP modal / 欢迎技能卡数据源 |
+| `js/config.js` + `js/modules.js` | `MODULES.ai` 重写:顶栏 = [接入 MCP] + [新对话 accent],**去搜索框**(search 字段不配即合法);状态栏 = 引擎 pi 已连接 · 流式就绪 / 只读工具 9 / 写工具 5(需授权)/ 技能 4 / 本会话工具调用 N;`switchModule('ai')` 分支 `renderAi()` → `renderAiChat()` |
+| `js/i18n.js` | 删 20 个废弃 `ai.*` 键(searchPh/filter/group/run/scan 等);新增 ~50 键(rail/engine/welcome/input/mention/steps/thinking/suggest/appr/report/plist/cron/stopped/scroll/mcp/sb);`ai.sb.path/monitor` 改值;zh/en 严格成对(585 键) |
+
+**关键行为(已 CDP E2E 全量验证,零 console 报错)**:欢迎态(问候 + 一键体检主卡 + 4 技能卡;技能卡 `data i18n` 名/描述)→ 点卡起新 live 会话(user→think 思考中→tool 步骤逐条+输出行逐条→正文逐字→卡片→建议 chips);写操作授权卡暂停时间轴(**授权等待不计入用时**,计时冻结/恢复)→ 提权 modal(复用零新增 markup)→ approved 续播进同一步骤块;取消 → 「已取消」+ 取消文案 + 终止;任意自由输入 → fallback(概览数字与 mock 实时一致 6/3/4/3/5);运行中发送钮变停止(清定时器/待授权卡置取消/折叠/toast「已停止生成」);预置 4 会话静态直出(cron 卡经 `parseCronExpr` 人话:如 `30 18 * * *` → 「每天 18:30 执行」);@ 引用(过滤 → 选择 → composer chip → 用户气泡内 chip);MCP modal(挂载命令复制/写权限开关 localStorage `launcher_mcpAllowWrite`/本机 CLI Agent 列表);深浅双主题、zh↔en 切换(流式中途切也安全)、900px 断点(rail 收为覆盖层)、rail 折叠跨模块记忆。体检报告卡「前往处理」= `switchModule` 跳对应模块(跳转前 `aiStopRun`)。
+
+**已知遗留(demo 范围,阶段 4 落地时以真实能力替换)**:流式/延时为脚本模拟;MCP 挂载命令为示意(真实 `launcher-mcp` 入口属阶段 4);「在编辑器中打开」= 跳转 agents 模块的演示指代;未配 Key 引导态未建(demo 无设置耦合,阶段 4 随 safeStorage 配置落地);多轮上下文为单轮场景(每次发送起新 live 会话)。
+

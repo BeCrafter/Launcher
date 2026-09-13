@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab / 端口服务），基于开源 [LaunchManager](https://github.com/Sean10000/LaunchManager)（Swift）重构为 **TS + Electron** 实现（`src/`），核心目标是解决编辑体验问题并新增 AI 能力。
 
-- **demo 是 UI/UX 设计基准（冻结）**：`docs/demo/` 的视觉/交互作为验收对照基线，**自 2026-09 起冻结不再改动**；demo → React 的逐项映射与已知差异见 `docs/design/demo-react-migration-map.md`（改任一侧时按表核对）
+- **demo 是 UI/UX 设计基准（冻结）**：`docs/demo/` 的视觉/交互作为验收对照基线，**自 2026-09 起冻结不再改动**（**冻结例外 2026-09-13：AI 助手页整体重设计为对话式 Agent 页**，其余页面继续冻结，逐项说明见 migration-map 文末「AI 对话页重设计」）；demo → React 的逐项映射与已知差异见 `docs/design/demo-react-migration-map.md`（改任一侧时按表核对）
 - **长期方向文档**：`docs/design/refactor-plan.md`（迁移矩阵 + 分阶段计划 + 已确认决策）、`docs/design/ai-capability.md`（AI 引擎/MCP/专家提示词方案，阶段 4 按此落地）
 - README 为占位内容
 
@@ -98,6 +98,7 @@ src/
 - `views.css`：filter-bar/chip、list-container、group-block、agent-col-card、row-expand/chevron、invalid-plist、Cron 内联编辑样式、文档页（doc-* / overview-cards / phase / mermaid-wrap）、key-table / key-status
 - `settings.css`：设置页整块（settings-layout / tab-nav / pane / hero / section / theme-cards / footer 与 760 响应式）
 - `drawer.css`：抽屉（mask / hdr / ops 按钮 / 状态点 / tab 导航 / body / scroll / footer）、log-section、xml-section、cfg-group、trigger / ka / sched / socket 卡片、stat-grid、log-line
+- `ai.css`：AI 对话页（会话栏 rail / 消息流 / 工具步骤块 / 授权卡与结果卡 / composer / @ 引用弹层 / MCP modal 内部样式；步骤输出行复用 drawer.css 的 log-line 族）
 
 ### js/（经典脚本，全局作用域，加载顺序见上）
 
@@ -110,7 +111,7 @@ src/
 - `agents.js`：`renderAgents`（分组渲染 + invalid-plist 横幅）、`filterAgents` / `handleSearch`、`selectAgent` / `toggleAgent` / `brewAction`、`updateAgentFilterCounts`（过滤栏计数）
 - `crontab.js`：`parseCronExpr`、`renderCron`、`filterCrons` / `updateCronStats`、内联编辑（`toggleCronEdit` / `applyCronPreset` / `updateCronExpr` / `saveCronEdit` / `cancelCronEdit` / `deleteCronJob` / `toggleCronJob`）；`saveCronEdit` / `deleteCronJob` 对 system 任务先 `confirmDangerousAction` 再 `ELEVATION.request` 提权
 - `services.js`：`renderServices` + `killSvc` / `copyPort`
-- `ai.js`：`renderAi`（Agent 组 + 技能组）、`filterAi` / `handleAiSearch` / `scanAiAgents` / `runWithAgent`、`aiIconBadgeCls`
+- `ai.js`：AI 对话页（2026-09-13 重写）——`renderAiChat` 入口 + 会话栏（`aiRenderRail`/`aiSelectChat`/`aiNewChat`/`aiToggleRail`）+ 消息渲染族（`aiMsgHtml`/`aiStepsHtml`/`aiCardHtml`）+ 场景运行器（`aiRunScene`/`aiStartLive`/`aiExecStep`/`aiTypewriter`/`aiStopRun`/`aiAbortRun`；数据源 `MOCK_DATA.aiChats/aiScenes`）+ 授权卡（`aiApprove` 接 `ELEVATION.request`，通过后续播 afterApprove）+ @ 引用（`aiMention*`）+ MCP 接入 modal（`aiOpenMcpModal`）；旧目录页函数（renderAi/filterAi/scanAiAgents 等）已整组移除
 - `drawer.js`：`openEditFloat` / `closeDrawerMask`、`drawerAgentState`、`updateOpsBar` / `drawerOpsAction`、`dpAction`（抽屉底部删除/克隆，原为未定义死代码已补齐）、`switchDrawerTab`（按 data-tab 属性匹配）、`efToggleTrig` / `efToggleSection` / `efSetKaMode`、`saveFloatAgent`、表单行构建（`addArgTo` / `addEnvTo` / `addWatchTo` / `delMvRow`）、`sci*`（StartCalendarInterval 规则构建器）、`toggleCfg`、日志（`clearLog` / `addLogLine` / `getTs`）、XML（`validateXml` / `copyXml`）、`populateDrawerDefaults`（初始化时从 MOCK_DATA.drawer 填充抽屉全部样例值）；`drawerOpsAction` / `saveFloatAgent` / `dpAction(delete)` 对 system/daemon scope 接入提权流程
 - `settings.js`：`switchSettingsSection`、`setTheme`、`setLanguage`、`saveSetting`、`checkAppUpdates`、`resetSettings`、`loadSettings`、`fillSettingsMeta`（页脚/关于页版本号）
 - `modules.js`：`switchModule`（配置驱动：读取 MODULES 记录完成视图显隐 / 顶栏重建 / 状态栏开关）、`handleModuleSearch`（顶栏搜索统一分发）、`syncSidebarLayout`、`toggleSidebarCollapse`、`checkMobile` / `toggleSidebar`
@@ -121,7 +122,7 @@ src/
 
 ### MOCK_DATA 关键结构
 
-- 顶层键：`agents` / `invalidPlists` / `crons` / `services` / `aiAgents` / `aiSkills` / `cronPresets` / `liveLogs` / `drawer` / `meta` / `urls`
+- 顶层键：`agents` / `invalidPlists` / `crons` / `services` / `aiAgents` / `aiSkills` / `cronPresets` / `liveLogs` / `drawer` / `meta` / `urls`；AI 对话页另有 `aiChats`（预置会话，messages 静态直出）/ `aiScenes`（场景时间线：user/think/tool/stream/card/suggest 步骤联合类型，`res:true` 的行经 `aiResolve` 实时取三域计数）；共享 plist 草稿常量 `AI_PLIST_DRAFT` 定义在 MOCK_DATA 之前（场景与预置会话共用，避免漂移）
 - `agents[].status`：`running` / `loaded` / `stopped`；`agents[].scope`：`user` / `system` / `daemon`；`isBrew: true` 标记 brew 服务
 - `drawer.form`：编辑表单默认值（label / desc / processType / program / args / workingDir / nice / throttleInterval / env / triggers / keepAliveMode / keepAliveDict / watchPaths / sciEntries / stdout / stderr）；`drawer.status`：状态 tab 指标；`drawer.logLines`：初始日志行 `[ts, type, text]`；`drawer.xml`：XML tab 原文；`drawer.opsState`：抽屉操作栏初始态（loaded / enabled / running）
 - `meta` / `urls`：版本号（设置页页脚、关于页）与 GitHub / 帮助链接（`HELP_URL` 供侧边栏帮助按钮使用）

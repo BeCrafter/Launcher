@@ -27,7 +27,8 @@ const cssAnchors = {
   'layout.css': '.app-shell',
   'views.css': '.list-container',
   'settings.css': '.settings-layout',
-  'drawer.css': '.edit-drawer'
+  'drawer.css': '.edit-drawer',
+  'ai.css': '.ai-shell'
 };
 for (const [name, anchor] of Object.entries(cssAnchors)) {
   const p = join(DEMO, 'css', name);

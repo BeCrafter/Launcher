@@ -97,7 +97,7 @@ function switchModule(mod, navItem) {
   } else if (mod === 'services') {
     updateModuleStatusBar('services');
   } else if (mod === 'ai') {
-    renderAi();
+    renderAiChat();
     updateModuleStatusBar('ai');
   }
   document.getElementById('topBreadcrumb').innerHTML = `<i class="fa-solid ${cfg.icon}" style="color:var(--accent2);font-size:12px;"></i><span>${cfg.breadcrumb || (cfg.breadcrumbKey ? t(cfg.breadcrumbKey) : mod)}</span>`;

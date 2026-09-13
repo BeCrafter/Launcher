@@ -102,26 +102,22 @@ const MODULES = {
     viewId: 'view-ai',
     icon: 'fa-wand-magic-sparkles',
     breadcrumbKey: 'ai.module',
-    searchPlaceholderKey: 'ai.searchPh',
-    searchHandler: (v) => handleAiSearch(v),
+    /* 对话页不设顶栏搜索框：searchPlaceholderKey / searchHandler 有意省略（校验中为可选项） */
     actions: () => `
-              <div class="search-wrap">
-                <i class="fa-solid fa-magnifying-glass"></i>
-                <input type="text" placeholder="${t('ai.searchPh')}" id="globalSearch" oninput="handleModuleSearch(this.value)" />
-              </div>
-              <button class="topbar-btn" onclick="scanAiAgents()"><i class="fa-solid fa-arrows-rotate"></i><span>${t('topbar.rescan')}</span></button>
-              <button class="topbar-btn accent" onclick="showToast(t('ai.skillLibToast'),'#a78bfa','fa-wand-magic-sparkles')"><i class="fa-solid fa-wand-magic-sparkles"></i><span>${t('ai.openSkills')}</span></button>
+              <button class="topbar-btn" onclick="aiOpenMcpModal()"><i class="fa-solid fa-plug"></i><span>${t('ai.mcp.title')}</span></button>
+              <button class="topbar-btn accent" onclick="aiNewChat()"><i class="fa-solid fa-plus"></i><span>${t('ai.rail.new')}</span></button>
             `,
     showStatusBar: true,
     statusbar: (d = {}) => ({
       summaryIcon: 'fa-wand-magic-sparkles',
-      summary: fmt(t('ai.sb.summary'), { N: aiAgentData.filter(a => a.status === 'installed').length }),
+      summary: t('ai.sb.engine'),
       items: [
-        `<span class="launch-status-dot running"></span><span>${fmt(t('ai.sb.installed'), { N: aiAgentData.filter(a => a.status === 'installed').length })}</span>`,
+        `<span class="launch-status-dot running"></span><span>${t('ai.sb.tools')}</span>`,
+        `<span class="launch-status-dot loaded"></span><span>${t('ai.sb.wtools')}</span>`,
         `<span class="launch-status-dot loaded"></span><span>${fmt(t('ai.sb.skills'), { N: aiSkillData.length })}</span>`,
-        `<span class="launch-status-dot unloaded"></span><span>${fmt(t('ai.sb.notfound'), { N: aiAgentData.filter(a => a.status === 'not_found').length })}</span>`
+        `<span class="launch-status-dot unloaded"></span><span>${fmt(t('ai.sb.calls'), { N: d.calls ?? 0 })}</span>`
       ],
-      pathIcon: 'fa-solid fa-magnifying-glass',
+      pathIcon: 'fa-solid fa-plug',
       path: t('ai.sb.path'),
       monitor: t('ai.sb.monitor')
     })

@@ -13,6 +13,7 @@
     <link rel="stylesheet" href="css/views.css" />
     <link rel="stylesheet" href="css/settings.css" />
     <link rel="stylesheet" href="css/drawer.css" />
+    <link rel="stylesheet" href="css/ai.css" />
     <script src="https://static0.xesimg.com/alading-resources/js/mermaid.min.js"></script>
   </head>
   <body>
@@ -139,21 +140,40 @@
             <div class="list-container" id="svcList"></div>
           </div>
 
-          <!-- ★ AI 助手视图（原型/模拟） -->
+          <!-- ★ AI 助手视图（对话式 Agent · 原型/模拟，2026-09-13 重设计） -->
           <div id="view-ai" style="display:none;flex-direction:column;flex:1;overflow:hidden;min-height:0;">
-            <div class="filter-bar" id="aiFilterBar">
-              <button class="chip active" onclick="filterAi('all',this)"><i class="fa-solid fa-list"></i> <span data-i18n="filter.all">全部</span></button>
-              <button class="chip user" onclick="filterAi('installed',this)"><i class="fa-solid fa-check"></i> <span data-i18n="ai.filter.installed">已安装</span></button>
-              <button class="chip brew" onclick="filterAi('skills',this)"><i class="fa-solid fa-wand-magic-sparkles"></i> <span data-i18n="ai.filter.skills">内置技能</span></button>
-              <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
-                <span style="font-size:10.5px;color:var(--dim);">
-                  <span id="aiInstalledCount" style="color:var(--green);font-weight:700;"></span> <span data-i18n="ai.filter.installed">已安装</span> /
-                  <span id="aiAgentCount" style="color:var(--muted);"></span> <span data-i18n="ai.agentUnit">Agent</span> ·
-                  <span id="aiSkillCount" style="color:var(--accent2);"></span> <span data-i18n="ai.count.skills">技能</span>
-                </span>
-              </div>
+            <div class="ai-shell" id="aiShell">
+              <!-- 左：会话栏 -->
+              <aside class="ai-rail" id="aiRail">
+                <div class="ai-rail-hd">
+                  <span class="ai-rail-title" data-i18n="ai.rail.title">会话</span>
+                  <button class="ai-rail-collapse" onclick="aiToggleRail()" data-i18n-title="ai.rail.collapse" title="收起会话栏"><i class="fa-solid fa-angles-left"></i></button>
+                </div>
+                <button class="ai-rail-new" onclick="aiNewChat()"><i class="fa-solid fa-plus"></i><span data-i18n="ai.rail.new">新对话</span></button>
+                <div class="ai-rail-list" id="aiRailList"></div>
+              </aside>
+              <button class="ai-rail-expand" id="aiRailExpand" onclick="aiToggleRail()" data-i18n-title="ai.rail.expand" title="展开会话栏"><i class="fa-solid fa-angles-right"></i></button>
+
+              <!-- 右：对话列 -->
+              <section class="ai-main">
+                <div class="ai-scroll" id="aiScroll" onscroll="aiOnScroll()">
+                  <div class="ai-col" id="aiCol"></div>
+                </div>
+                <button class="ai-scroll-bot" id="aiScrollBot" onclick="aiScrollBottom(true)" data-i18n-title="ai.scroll.bottom" title="回到底部"><i class="fa-solid fa-arrow-down"></i></button>
+                <div class="ai-composer">
+                  <div class="ai-composer-inner">
+                    <span class="ai-engine-chip" data-i18n-title="ai.engine.info" title="pi 引擎（pi-ai + pi-agent-core）：流式输出 · 14 个领域工具 · 4 项内置技能"><span class="ai-engine-dot"></span><span data-i18n="ai.engine.connected">pi 引擎 · 已连接</span></span>
+                    <div class="ai-composer-chips" id="aiComposerChips"></div>
+                    <div class="ai-composer-box">
+                      <button class="ai-comp-btn" id="aiMentionBtn" onclick="aiMentionToggle()" data-i18n-title="ai.input.mention" title="引用本机任务"><i class="fa-solid fa-at"></i></button>
+                      <textarea class="ai-input" id="aiInput" rows="1" data-i18n-placeholder="ai.input.ph" placeholder="描述你的需求，或输入 @ 引用任务…" oninput="aiOnInput(this)" onkeydown="aiInputKey(event)"></textarea>
+                      <button class="ai-send" id="aiSendBtn" onclick="aiSend()" data-i18n-title="ai.input.send" title="发送"><i class="fa-solid fa-arrow-up"></i></button>
+                    </div>
+                    <div class="ai-composer-hint" data-i18n="ai.welcome.hint">Enter 发送 · Shift+Enter 换行 · 输入 @ 引用本机任务</div>
+                  </div>
+                </div>
+              </section>
             </div>
-            <div class="list-container" id="aiList" style="gap:16px;"></div>
           </div>
 
           <!-- ★ Login Items 视图 -->
@@ -1485,6 +1505,40 @@
         <div class="modal-footer">
           <button class="d-btn" id="dgrCancel"><span data-i18n="common.cancel">取消</span></button>
           <button class="d-btn red" id="dgrOk"><i class="fa-solid fa-trash-can"></i> <span data-i18n="common.confirm">确认</span></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 模态框：AI 接入 MCP（挂载命令 / 外部写权限 / 本机 CLI Agent） -->
+    <div class="modal-mask" id="aiMcpModal" onclick="closeModalBg(event,'aiMcpModal')">
+      <div class="modal-box" style="width:520px;">
+        <div class="modal-hdr">
+          <span class="modal-title"><i class="fa-solid fa-plug" style="color:var(--accent2);margin-right:7px;"></i><span data-i18n="ai.mcp.title">接入 MCP</span></span>
+          <button class="modal-close" onclick="closeModal('aiMcpModal')"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="modal-body">
+          <div style="font-size:11px;color:var(--muted);line-height:1.6;" data-i18n="ai.mcp.lead"></div>
+          <div>
+            <div class="ai-mcp-lbl" data-i18n="ai.mcp.cmdLabel">挂载命令</div>
+            <div class="ai-appr-cmd" id="aiMcpCmd" style="margin:0;"></div>
+          </div>
+          <div class="ai-mcp-perm">
+            <div>
+              <div class="ai-mcp-perm-t" data-i18n="ai.mcp.permTitle">允许外部 Agent 修改</div>
+              <div class="ai-mcp-perm-d" data-i18n="ai.mcp.permDesc"></div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="aiMcpWriteToggle" onchange="aiToggleMcpPerm(this)" />
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+          <div>
+            <div class="ai-mcp-lbl" data-i18n="ai.mcp.agentsTitle">本机已装 CLI Agent</div>
+            <div class="ai-mcp-agents" id="aiMcpAgents"></div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="d-btn accent" onclick="aiCopyMcpCmd()"><i class="fa-solid fa-copy"></i> <span data-i18n="xml.copy">复制</span></button>
         </div>
       </div>
     </div>
