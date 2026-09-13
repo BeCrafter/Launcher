@@ -31,7 +31,7 @@ BeCrafter/Launcher 是基于开源项目 [Sean10000/LaunchManager](https://githu
 |---|---|---|---|
 | 3 范围扫描/分组/过滤/搜索 | AgentListView + AgentStore（launchctl list + print-disabled） | MODULES 注册表 + groupBlock 分组 + 5 过滤 chip | demo 交互为准，数据逻辑直迁 |
 | launchctl 启停/启用 | LaunchctlService（现代 API：bootstrap/bootout/kickstart/enable） | drawer ops bar 4 态（loaded/enabled/running）+ 动词 toast/日志 | 开源逻辑 + demo UI |
-| 无效 plist 内联展示/删除 | InvalidPlistRowView + PrivilegeService | invalid-plist 横幅 | 迁移（补删除确认） |
+| 无效 plist 内联展示/删除 | InvalidPlistRowView + PrivilegeService | invalid 横幅 → **列表内置灰行**(可编辑/可删除) | ✅ 2026-09-13(横幅并入列表行;见 migration-map 第 37 条) |
 | Homebrew 服务合并 | BrewManagedSupport + 未注册区 + brew tag | brew filter chip + brew start/stop 按钮 | 开源全面实现 + demo 位置 |
 | 日志查看 | LogViewerSheet（文件 tail 512KB cap / log show 2000 行止） | drawer 日志 tab（级别过滤/清空/导出） | demo 抽屉位置 + 开源实现 |
 | Crontab 用户/系统 | CrontabService（crontab - / /etc/crontab 提权、注释保真 round-trip） | 行内编辑 + 预设 + 全局可读化 | **demo 行内编辑为准** + 开源保真策略 + 补「文件头部」面板（开源有、demo 无） |
@@ -107,7 +107,7 @@ domains（launchctl list/print/print-disabled、plist CRUD/validate/解析）→
 - ops bar：bootstrap/bootout/kickstart/enable + PendingOperation 状态机 + **override 橙点与启用按钮**（launchctl override 与 plist Disabled 双机制区分）
 - 状态 tab / 日志 tab（文件 tail 512KB 截断 + log show 15m 窗口 2000 行上限 terminate + 关键字过滤，对齐开源机制）
 - 新建（scope 选择 + 剪贴板 `<plist` 预填 + **内置最小模板库** + label 格式校验/同 scope 重名守卫）、导入、克隆、删除（**bootout+rm 单命令合并提权** + 用户域 bootout 失败防半状态）
-- invalid plist 内联展示/删除/**XML 修复编辑**、brew 合并（含未注册服务「注册并启动」）
+- invalid plist 内联展示/删除/**XML 修复编辑**(✅ 2026-09-13:migration-map 第 37 条)、brew 合并（含未注册服务「注册并启动」）
 - **目录监听自动刷新**（fs.watch 0.4s 防抖 + 回前台刷新）+ 跨 Store 事件总线 + 侧边栏 badge
 验收：与开源逐功能比对清单（含 512KB 日志截断、重复点击、错误格式化、提权路径、无效 plist、override），视觉对照 demo。
 

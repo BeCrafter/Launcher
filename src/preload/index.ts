@@ -54,7 +54,6 @@ const api: LauncherApi = {
     readLogs: (id, source) => ipcRenderer.invoke(IPC.agReadLogs, id, source),
     clearLogs: (id) => ipcRenderer.invoke(IPC.agClearLogs, id),
     validateXml: (xml) => ipcRenderer.invoke(IPC.agValidateXml, xml),
-    removeInvalid: (path) => ipcRenderer.invoke(IPC.agRemoveInvalid, path),
     checkMissing: (candidates) => ipcRenderer.invoke(IPC.agCheckMissing, candidates),
     revealLog: (id) => ipcRenderer.invoke(IPC.shellRevealLog, id)
   },

@@ -25,8 +25,14 @@ interface DrawerState {
   open: boolean
   agentId: string | null
   agentLabel: string
+  /** 非任务文件的原文件名(label 为空时作展示名;保存说明句用它,因为原地重写不改名) */
+  agentFile: string
   scope: AgentScope
   isDraft: boolean
+  /** 文件在但不是 launchd 任务(缺 Label):可编辑,补上 Label 即成为任务;启停禁用 */
+  isNotTask: boolean
+  /** plist 无法解析:编辑走 XML 修复模式 */
+  isBroken: boolean
   ops: OpsState
   tab: DrawerTab
   form: AgentForm | null
@@ -64,8 +70,11 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
   open: false,
   agentId: null,
   agentLabel: '',
+  agentFile: '',
   scope: 'user',
   isDraft: false,
+  isNotTask: false,
+  isBroken: false,
   ops: { loaded: false, enabled: false, running: false },
   tab: 'edit',
   form: null,
@@ -80,29 +89,41 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
   // 真实数据装载:表单/状态/XML/日志(文件源)并行读取
   async openFor(agent) {
     useAgentsStore.getState().select(agent.id)
+    const broken = !!agent.parseError
+    // 每个读调用各自兜底:Promise.all 任一 reject 会让抽屉静默不开(损坏文件正是可能读不出来的那类)
     const [form, statusModel, xmlInfo, logs] = await Promise.all([
-      dataSource().agents.readForm(agent.id),
-      dataSource().agents.readStatus(agent.id),
-      dataSource().agents.readXml(agent.id),
+      dataSource().agents.readForm(agent.id).catch(() => null),
+      dataSource().agents.readStatus(agent.id).catch(() => null),
+      dataSource().agents.readXml(agent.id).catch(() => null),
       dataSource().agents.readLogs(agent.id, 'file').catch(() => [])
     ])
-    form.label = agent.label
-    form.desc = agent.desc
+    if (form) {
+      form.label = agent.label
+      form.desc = agent.desc
+    }
     set({
       open: true,
       agentId: agent.id,
-      agentLabel: agent.label,
+      // 非任务/损坏文件没有 label:展示名与删除确认都退到文件名
+      agentLabel: agent.label || agent.fileName || '',
+      agentFile: agent.fileName ?? '',
       scope: agent.scope,
       isDraft: false,
-      tab: 'edit',
-      form,
+      isNotTask: !!agent.isNotTask,
+      isBroken: broken,
+      // 损坏文件没有可解析的字典,表单无从填起 → 直接落到 XML 修复入口
+      tab: broken ? 'xml' : 'edit',
+      // 损坏文件没有可解析的字典:readForm 会"成功地"给出一张空表单(main 对空 dict 照样映射),
+      // 但那张表单既不是文件内容、保存也只会把损坏文件写成另一坨垃圾 → 明确置空,
+      // 由 EditTab 给出「请走 XML 修复」+ 删除入口
+      form: broken ? null : form,
       formHistory: [],
       statusModel,
       logLines: logs,
       logSource: 'file',
-      xml: xmlInfo.xml,
-      xmlFormMode: xmlInfo.formMode,
-      unsupportedKeys: xmlInfo.unsupportedKeys,
+      xml: xmlInfo?.xml ?? '',
+      xmlFormMode: xmlInfo?.formMode ?? true,
+      unsupportedKeys: xmlInfo?.unsupportedKeys ?? [],
       ops: {
         loaded: agent.status !== 'stopped' || agent.pid !== null,
         enabled: !agent.isDisabledByOverride,
@@ -172,12 +193,20 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
     const s = get()
     if (!s.agentId || !s.form) return
     const tr = t()
-    const label = s.form.label.trim() || s.agentLabel
+    const typed = s.form.label.trim()
+    // 非任务文件必须补上 Label:否则落盘后仍是一行置灰,与「保存失败」无从区分
+    if (s.isNotTask && typed === '') {
+      showToast(tr('agents.notTask.labelRequired'), '#eec04d', 'fa-triangle-exclamation')
+      return
+    }
+    const label = typed || s.agentLabel
     try {
       if (!s.isDraft && (s.scope === 'system' || s.scope === 'daemon')) {
+        // 非任务文件是原地重写、保留原文件名(不会产生 <Label>.plist),说明句必须照实说
+        const fileName = s.isNotTask ? s.agentFile : `${label}.plist`
         const ok = await ELEVATION.request({
           detail: tr('elev.saveAgent.detail').replace('{L}', label),
-          command: `写入 ${s.scope === 'daemon' ? '/Library/LaunchDaemons' : '/Library/LaunchAgents'}/${label}.plist`
+          command: `写入 ${s.scope === 'daemon' ? '/Library/LaunchDaemons' : '/Library/LaunchAgents'}/${fileName}`
         })
         if (!ok) return
       }
@@ -188,7 +217,20 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
         desc: f.desc.trim()
       })
       await useAgentsStore.getState().load()
-      set({ isDraft: false, agentId: agent.id, agentLabel: agent.label, ops: { loaded: agent.status !== 'stopped', enabled: !agent.isDisabledByOverride, running: agent.status === 'running' } })
+      set({
+        isDraft: false,
+        agentId: agent.id,
+        agentLabel: agent.label || agent.fileName || '',
+        agentFile: agent.fileName ?? '',
+        // 占位文件补上 Label 后就不再是非任务了,状态位跟着刷新
+        isNotTask: !!agent.isNotTask,
+        isBroken: !!agent.parseError,
+        ops: {
+          loaded: agent.status !== 'stopped',
+          enabled: !agent.isDisabledByOverride,
+          running: agent.status === 'running'
+        }
+      })
       get().close()
       showToast(tr('toast.configSavedReload'), '#4ade80', 'fa-check')
     } catch (err) {

@@ -174,3 +174,99 @@
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* ── 非任务/损坏 plist 行(应用新增,非 demo 移植;migration-map 记有意分歧)──
+   管理目录里的每个 .plist 都要在列表里有一行:文件存在却不可见,用户无从区分「不存在」与「被过滤」。
+   置灰但**不置灰动作区** —— 编辑是这类行唯一的出路,铅笔必须看起来还能点(所以 opacity 不加在 .acc-actions 上)。 */
+.agent-col-card.not-task,
+.agent-col-card.broken {
+  border-style: dashed;
+  border-color: var(--border2);
+}
+
+.agent-col-card.not-task .acc-label,
+.agent-col-card.not-task .acc-desc,
+.agent-col-card.not-task .acc-meta-left {
+  opacity: 0.55;
+}
+
+.agent-col-card.broken .acc-label,
+.agent-col-card.broken .acc-meta-left {
+  opacity: 0.55;
+}
+
+/* 损坏行的描述就是失败原因,是这一行最有用的信息 → 不压暗,给红色 */
+.agent-col-card.broken .acc-desc {
+  color: var(--red);
+  opacity: 0.85;
+  font-size: 10.5px;
+}
+
+.acc-nontask-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px dashed var(--border2);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dim);
+  white-space: nowrap;
+  cursor: help;
+}
+
+.acc-nontask-chip.broken {
+  color: var(--red);
+  border-color: var(--wash-red);
+  background: var(--wash-red);
+}
+
+/* 开关禁用态(应用新增:非任务/损坏文件的抽屉里,「开机自启」没有作用对象) */
+.toggle:has(input:disabled) {
+  cursor: default;
+  opacity: 0.4;
+}
+
+/* 抽屉内的非任务/损坏说明条(应用新增,非 demo 移植):
+   它替代了表单 —— 非任务文件靠「填 Label」变任务,损坏文件靠 XML 修复,两者都得先说清处境 */
+.nontask-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px dashed var(--border2);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  cursor: help;
+}
+
+.nontask-notice i {
+  margin-top: 2px;
+  color: var(--dim);
+}
+
+.nontask-notice.broken {
+  border-color: var(--wash-red);
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.nontask-notice.broken i {
+  color: var(--red);
+}
+
+/* 非任务/损坏行:启停与「更多」禁用(base.css 的 .act-btn.green/.blue:hover 特异性同为 3 类,
+   靠本文件后置导入取胜 —— 不禁用 hover 态的话禁用按钮看起来还是能点) */
+.agent-col-card .act-btn:disabled,
+.agent-col-card .act-btn:disabled:hover {
+  opacity: 0.3;
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: default;
+}

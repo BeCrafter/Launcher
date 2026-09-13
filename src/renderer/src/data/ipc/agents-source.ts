@@ -18,7 +18,6 @@ export function createIpcAgentRepo(): AgentRepository {
     readLogs: (id, source) => api().readLogs(id, source),
     clearLogs: (id) => api().clearLogs(id),
     validateXml: (xml) => api().validateXml(xml),
-    removeInvalid: (path) => api().removeInvalid(path),
     checkMissing: (candidates) => api().checkMissing(candidates)
   }
 }

@@ -8,7 +8,6 @@ import type {
   CronListPayload,
   CronScope,
   DrawerStatusModel,
-  InvalidPlist,
   LogLine,
   OpsState,
   PortService
@@ -30,7 +29,7 @@ export type CronFilter = 'all' | 'user' | 'system'
 export type SvcFilter = 'all' | 'brew' | 'node' | 'process' | 'docker'
 
 export interface AgentRepository {
-  list(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }>
+  list(): Promise<{ agents: Agent[] }>
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
   // 草稿:以给定 label 新建未加载条目并插入列表顶(demo openAgentDraft;label 去重在调用方完成)
   createDraft(scope: AgentScope, label: string): Promise<Agent>
@@ -47,8 +46,6 @@ export interface AgentRepository {
   readLogs(id: string, source: 'file' | 'system'): Promise<LogLine[]>
   clearLogs(id: string): Promise<void>
   validateXml(xml: string): Promise<{ ok: boolean; error: string | null }>
-  /** 删除无效 plist 文件(横幅删除按钮) */
-  removeInvalid(path: string): Promise<void>
   /** 定向复核:候选条目是否「仍被加载但 plist 已不存在」 */
   checkMissing(candidates: { scope: AgentScope; label: string }[]): Promise<MissingAgent[]>
 }

@@ -131,7 +131,6 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.agReadLogs, (_e, id: string, source: 'file' | 'system') => deps.agents.readLogs(id, source))
   ipcMain.handle(IPC.agClearLogs, (_e, id: string) => deps.agents.clearLogs(id))
   ipcMain.handle(IPC.agValidateXml, (_e, xml: string) => deps.agents.validateXml(xml))
-  ipcMain.handle(IPC.agRemoveInvalid, (_e, path: string) => deps.agents.removeInvalid(path))
   ipcMain.handle(IPC.agCheckMissing, (_e, candidates: { scope: AgentScope; label: string }[]) =>
     deps.agents.checkMissing(candidates ?? [])
   )

@@ -19,11 +19,16 @@ export interface Agent {
   isBrew?: boolean
   /** launchctl print-disabled 显示为 disabled(开源 isDisabledByOverride:橙点 + enable 修复) */
   isDisabledByOverride?: boolean
-}
-
-export interface InvalidPlist {
-  path: string
-  reason: string
+  /**
+   * 文件存在但不是可操作的 launchd 任务(plist 未定义 Label,如 Google keystone 的空 <dict/> 占位)。
+   * 列表内置灰、不可启停/克隆,但可编辑(补上 Label 即成为真正的任务)与删除。
+   * 这类行的 label 为空,身份与展示名都用 fileName。
+   */
+  isNotTask?: boolean
+  /** plist 无法解析(损坏/不可读)的原因;有此值时同样置灰,编辑走 XML 修复 */
+  parseError?: string
+  /** 非任务文件的原文件名(仅 isNotTask 时填充;label 为空时作展示名与身份) */
+  fileName?: string
 }
 
 export type CronScope = 'user' | 'system'

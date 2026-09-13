@@ -17,7 +17,23 @@ export interface OpsBarModel {
   futureHintKey: string | null
 }
 
-export function deriveOpsBar(s: OpsState & { isDraft: boolean }): OpsBarModel {
+export function deriveOpsBar(s: OpsState & { isDraft: boolean; isNotTask?: boolean; isBroken?: boolean }): OpsBarModel {
+  // 非任务/损坏文件不是 launchd 任务:没有任何可执行的意图动作 —— 启停/重启/自启全禁用,
+  // 未来时句位置改为说明「为什么这里什么都不能点」
+  if (s.isNotTask || s.isBroken) {
+    return {
+      state: 'stopped',
+      primary: { action: 'start', labelKey: 'ops.start', icon: 'fa-solid fa-play', cls: 'hdr-ops-btn', disabled: true },
+      restart: { labelKey: 'ops.restart', icon: 'fa-solid fa-rotate-right', cls: 'hdr-ops-btn', disabled: true },
+      autostart: { on: false, labelKey: 'ops.autostart', disabled: true },
+      chip: {
+        labelKey: s.isBroken ? 'agent.broken' : 'agent.notTask',
+        dot: 'unloaded',
+        color: s.isBroken ? 'var(--red)' : 'var(--dim)'
+      },
+      futureHintKey: s.isBroken ? 'agent.broken.title' : 'agent.notTask.title'
+    }
+  }
   if (s.isDraft) {
     return {
       state: 'draft',

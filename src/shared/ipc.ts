@@ -30,7 +30,6 @@ export const IPC = {
   agReadLogs: 'agents:readLogs',
   agClearLogs: 'agents:clearLogs',
   agValidateXml: 'agents:validateXml',
-  agRemoveInvalid: 'agents:removeInvalid',
   agCheckMissing: 'agents:checkMissing',
   appCheckUpdates: 'app:checkUpdates',
   // ── 定时任务(阶段 2) ──

@@ -31,12 +31,14 @@ export function AgentDrawer(): React.JSX.Element {
   const agentLabel = useDrawerStore((s) => s.agentLabel)
   const scope = useDrawerStore((s) => s.scope)
   const isDraft = useDrawerStore((s) => s.isDraft)
+  const isNotTask = useDrawerStore((s) => s.isNotTask)
+  const isBroken = useDrawerStore((s) => s.isBroken)
   const ops = useDrawerStore((s) => s.ops)
   const opsAction = useDrawerStore((s) => s.opsAction)
   const tab = useDrawerStore((s) => s.tab)
   const setTab = useDrawerStore((s) => s.setTab)
 
-  const bar = deriveOpsBar({ ...ops, isDraft })
+  const bar = deriveOpsBar({ ...ops, isDraft, isNotTask, isBroken })
 
   return (
     <Modal id="editAgentFloat" kind="drawer" open={open} onClose={close}>
@@ -86,6 +88,7 @@ export function AgentDrawer(): React.JSX.Element {
                 <span className="hdr-ops-switch-label">{t(bar.autostart.labelKey)}</span>
                 <Toggle
                   checked={bar.autostart.on}
+                  disabled={bar.autostart.disabled}
                   onChange={() => {
                     if (!bar.autostart.disabled) void opsAction('autostart')
                   }}

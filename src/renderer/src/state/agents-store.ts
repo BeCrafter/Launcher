@@ -1,13 +1,12 @@
 // Agents 数据 store:demo agents.js 的状态部分(selectedAgent/activeFilter + 数据数组)
 import { create } from 'zustand'
-import type { Agent, InvalidPlist } from '@shared/models'
+import type { Agent } from '@shared/models'
 import type { MissingAgent } from '@shared/ipc'
 import type { AgentFilter } from '../data/ports'
 import { dataSource } from '../data'
 
 interface AgentsState {
   agents: Agent[]
-  invalidPlists: InvalidPlist[]
   /** 已加载但 plist 已不存在的孤儿(定向复核;refresh 时 diff 出消失条目后核对) */
   missingPlists: MissingAgent[]
   filter: AgentFilter
@@ -23,7 +22,6 @@ interface AgentsState {
 
 export const useAgentsStore = create<AgentsState>((set, get) => ({
   agents: [],
-  invalidPlists: [],
   missingPlists: [],
   filter: 'all',
   selectedId: null,
@@ -31,19 +29,20 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
 
   async load() {
     const prev = get().agents
-    const { agents, invalidPlists } = await dataSource().agents.list()
+    const { agents } = await dataSource().agents.list()
     set({
       agents,
-      invalidPlists,
       loaded: true,
       // demo: let selectedAgent = agentData[0]
       selectedId: get().selectedId ?? agents[0]?.id ?? null
     })
     // 孤儿定向复核(粘性):候选 = 本次刷新消失的条目 ∪ 上次已命中的孤儿;
-    // 复核仍命中则横幅保持,已处理(bootout/重建)→ 自动清空
+    // 复核仍命中则横幅保持,已处理(bootout/重建)→ 自动清空。
+    // 非任务/损坏文件没有 launchd 身份(label 为空),不参与复核
     try {
       const candidates = new Map<string, { scope: Agent['scope']; label: string }>()
       for (const pv of prev) {
+        if (pv.isNotTask || pv.label === '') continue
         if (!agents.some((n) => n.id === pv.id)) candidates.set(pv.id, { scope: pv.scope, label: pv.label })
       }
       for (const m of get().missingPlists) candidates.set(`${m.scope}:${m.label}`, { scope: m.scope, label: m.label })

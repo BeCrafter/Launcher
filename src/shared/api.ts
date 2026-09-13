@@ -22,7 +22,6 @@ import type {
   CronListPayload,
   CronScope,
   DrawerStatusModel,
-  InvalidPlist,
   LogLine,
   OpsState
 } from './models'
@@ -51,7 +50,7 @@ export interface LauncherApi {
   checkForUpdate: () => Promise<UpdateCheckResult>
   // Launch Agents(阶段 1:真实 launchctl/plist)
   agents: {
-    list: () => Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }>
+    list: () => Promise<{ agents: Agent[] }>
     brewAction: (kind: 'start' | 'stop', id: string) => Promise<Agent>
     createDraft: (scope: AgentScope, label: string) => Promise<Agent>
     save: (id: string, patch: Partial<AgentForm> & { label: string; desc: string }) => Promise<Agent>
@@ -65,7 +64,6 @@ export interface LauncherApi {
     readLogs: (id: string, source: 'file' | 'system') => Promise<LogLine[]>
     clearLogs: (id: string) => Promise<void>
     validateXml: (xml: string) => Promise<{ ok: boolean; error: string | null }>
-    removeInvalid: (path: string) => Promise<void>
     /** 定向复核:这些(scope,label)对是否「仍被加载但 plist 已不存在」 */
     checkMissing: (candidates: { scope: AgentScope; label: string }[]) => Promise<MissingAgent[]>
     /** 在访达中显示该 agent 的日志文件;无文件 → null */

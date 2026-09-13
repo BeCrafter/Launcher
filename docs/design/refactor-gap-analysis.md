@@ -34,7 +34,7 @@
 | 10 | **无模板库**（外链网站） | 2026-07-04 spec：模板库 YAGNI，改外链 launchmanager.dev/templates | 不确定项 #1，建议内置模板（编辑体验卖点） |
 | 11 | **更新检查自研、无自动安装** | GitHubReleaseService + DMG 跳转 | 分发暂不做；P5 对齐开源实现，electron-updater 留待分发阶段定 |
 | 12 | **纯轮询/扫描驱动**（服务 3s、cron/brew 手动刷新） | 无端到端事件驱动 | 可接受（开源已用 FSEvents 事件 + 轮询混合）；不强制改 |
-| 13 | **无法编辑无效 plist** | InvalidPlistRowView 只能查看 + 删除 | 不确定项 #6，建议修复（XML 模式编辑） |
+| 13 | **无法编辑无效 plist** | InvalidPlistRowView 只能查看 + 删除 | ✅ 2026-09-13 已修:坏 plist 与「缺 Label 的非任务 plist」一并成为列表内的置灰行,均可在抽屉里编辑(缺 Label 走表单补 Label;损坏走 XML 修复),不再是只读横幅(见 migration-map 第 37 条) |
 
 ## 三、新项目方案已有优势（优于开源）
 

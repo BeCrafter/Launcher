@@ -1,6 +1,7 @@
 // ported-from: docs/demo/js/components.js agentCard + agents.js 卡片装配 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // Agent 卡片(demo components.js agentCard + agents.js 卡片装配;class 名逐字对齐)
 // 槽位复用 L0 原语(StatusDot/StatusLabel/TagChip/ActBtn);动作经 props 上抛
+// 非任务/损坏文件(2026-09-13):整卡置灰、启停与「更多」禁用,但**编辑保持可用** —— 这类行唯一的出路就是编辑
 import { StatusDot } from '../ui/StatusDot'
 import { StatusLabel } from '../ui/StatusLabel'
 import { TagChip } from '../ui/TagChip'
@@ -26,6 +27,10 @@ export function AgentCard({
   onMore: (anchor: { x: number; y: number }) => void
 }): React.JSX.Element {
   const t = useT()
+  const broken = !!agent.parseError
+  // 非任务文件与损坏文件都不是 launchd 任务:没有可启停/自启的对象
+  const locked = !!agent.isNotTask || broken
+  const displayName = agent.label || agent.fileName || ''
   const tagHtml = agent.tags.slice(0, 3).map((tg) => <TagChip key={tg} text={tg} cls={tg} />)
   const brewBadge = agent.isBrew ? <TagChip text="brew" cls="brew" /> : null
   // 开源 isDisabledByOverride:launchctl 覆盖禁用 → 橙标提示(更多菜单/抽屉「启用」可恢复)
@@ -35,21 +40,43 @@ export function AgentCard({
   // 意图层:未运行→启动 / 运行中→停止(launchctl 的载入/启用等步骤由 main 内部按序完成)
   const toggleBtn = agent.isBrew ? (
     <>
-      <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: 'brew start', onPress: onBrew.bind(null, 'start') }} />
+      <ActBtn
+        icon="fa-solid fa-play"
+        opts={{ cls: 'green', title: 'brew start', onPress: onBrew.bind(null, 'start'), disabled: locked }}
+      />
       {'  '}
-      <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'blue', title: 'brew stop', onPress: onBrew.bind(null, 'stop') }} />
+      <ActBtn
+        icon="fa-solid fa-stop"
+        opts={{ cls: 'blue', title: 'brew stop', onPress: onBrew.bind(null, 'stop'), disabled: locked }}
+      />
     </>
   ) : agent.status === 'running' ? (
-    <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'blue', title: t('ops.stop'), onPress: onToggle }} />
+    <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'blue', title: t('ops.stop'), onPress: onToggle, disabled: locked }} />
   ) : (
-    <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: t('ops.start'), onPress: onToggle }} />
+    <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: t('ops.start'), onPress: onToggle, disabled: locked }} />
   )
   return (
-    <div className={`agent-col-card${selected ? ' selected' : ''}`} id={`rc_${agent.id}`} onClick={onSelect}>
+    <div
+      className={`agent-col-card${selected ? ' selected' : ''}${agent.isNotTask ? ' not-task' : ''}${broken ? ' broken' : ''}`}
+      id={`rc_${agent.id}`}
+      onClick={onSelect}
+    >
       <div className="acc-top">
         <div className="acc-status-row">
-          <StatusDot status={agent.status} />
-          <StatusLabel status={agent.status} />
+          {locked ? (
+            <span
+              className={`acc-nontask-chip${broken ? ' broken' : ''}`}
+              title={broken ? t('agent.broken.title') : t('agent.notTask.title')}
+            >
+              <i className={`fa-solid ${broken ? 'fa-triangle-exclamation' : 'fa-file-circle-question'}`} />
+              {broken ? t('agent.broken') : t('agent.notTask')}
+            </span>
+          ) : (
+            <>
+              <StatusDot status={agent.status} />
+              <StatusLabel status={agent.status} />
+            </>
+          )}
         </div>
         <div className="row-tags" style={{ flex: 1, justifyContent: 'flex-end', overflow: 'hidden' }}>
           {brewBadge}
@@ -57,10 +84,16 @@ export function AgentCard({
         </div>
       </div>
       <div className="acc-body">
-        <div className="acc-label" title={agent.label}>
-          {agent.label}
+        <div className="acc-label" title={displayName}>
+          {displayName}
         </div>
-        <div className="acc-desc">{agent.desc}</div>
+        <div className="acc-desc" title={broken ? agent.parseError : undefined}>
+          {broken
+            ? t('agents.broken.reason').replace('{R}', agent.parseError ?? '')
+            : agent.isNotTask
+              ? t('agents.notTask.hint')
+              : agent.desc}
+        </div>
       </div>
       <div className="acc-meta">
         <div className="acc-meta-left">
@@ -87,11 +120,19 @@ export function AgentCard({
         </div>
         <div className="acc-actions" onClick={(e) => e.stopPropagation()}>
           {toggleBtn}
-          <ActBtn icon="fa-solid fa-pen" opts={{ cls: 'accent', title: t('agents.editConfig'), onPress: onEdit }} />
+          <ActBtn
+            icon="fa-solid fa-pen"
+            opts={{
+              cls: 'accent',
+              title: locked ? (broken ? t('agent.broken.title') : t('agent.notTask.title')) : t('agents.editConfig'),
+              onPress: onEdit
+            }}
+          />
           <ActBtn
             icon="fa-solid fa-ellipsis"
             opts={{
               title: t('common.more'),
+              disabled: locked,
               onPress: (e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
                 onMore({ x: r.right, y: r.bottom })
