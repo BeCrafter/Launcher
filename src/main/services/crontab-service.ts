@@ -5,7 +5,7 @@
 // - 不新增存储:状态即 crontab 文件;日志文件是日志功能自身产物
 
 import { promises as fs } from 'node:fs'
-import { cronLogDir, cronLogPath } from '../../shared/cron-log'
+import { cronLogDir, cronLogTemplate, matchCronLogFile } from '../../shared/cron-log'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED, type CronUpdateResult } from '../../shared/ipc'
 import type { CronJob, CronListPayload, CronScope, LogLine } from '../../shared/models'
 import {
@@ -113,6 +113,45 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
     return out
   }
 
+/**
+ * 某任务的日志文件(新式 `<id>-YYYYMMDDHH.log` 与旧式 `<id>.log` 并存),按 mtime 降序。
+ * 按 mtime 排序对两种形态都成立:每段只在它所属的小时内被写入。
+ */
+async function listLogFiles(id: string): Promise<{ path: string; size: number; mtimeMs: number }[]> {
+  let names: string[]
+  try {
+    names = await fs.readdir(cronLogDir(deps.home))
+  } catch {
+    return []
+  }
+  const out: { path: string; size: number; mtimeMs: number }[] = []
+  for (const n of names.filter((f) => matchCronLogFile(id, f))) {
+    const p = `${cronLogDir(deps.home)}/${n}`
+    try {
+      const st = await fs.stat(p)
+      if (st.isFile()) out.push({ path: p, size: st.size, mtimeMs: st.mtimeMs })
+    } catch {
+      /* 单个文件失败不影响其余 */
+    }
+  }
+  return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
+}
+
+/**
+ * 模板态任务(`logTemplate`)的 logPath 解析为该任务**最新的非空**文件(供抽屉显示/复制/访达揭示)。
+ * 一次 readdir 后按 id 归组,不做逐任务的目录扫描。
+ */
+async function resolveLogPaths(jobs: CronJob[]): Promise<CronJob[]> {
+  if (!jobs.some((j) => j.logTemplate)) return jobs
+  const resolved = new Map<string, string>()
+  for (const j of jobs) {
+    if (!j.logTemplate) continue
+    const files = (await listLogFiles(j.id)).find((f) => f.size > 0)
+    if (files) resolved.set(j.id, files.path)
+  }
+  return jobs.map((j) => (j.logTemplate && resolved.has(j.id) ? { ...j, logPath: resolved.get(j.id) } : j))
+}
+
   async function cleanupLogsInternal(): Promise<void> {
     const dir = cronLogDir(deps.home)
     const cutoff = Date.now() - deps.getRetainDays() * 86400_000
@@ -141,7 +180,7 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
         void cleanupLogsInternal()
       }
       return {
-        jobs: [...user.doc.jobs.map((e) => e.job), ...system.doc.jobs.map((e) => e.job)],
+        jobs: await resolveLogPaths([...user.doc.jobs.map((e) => e.job), ...system.doc.jobs.map((e) => e.job)]),
         headers: {
           user: { headerRaw: headerRawOf(user.doc), exists: user.exists },
           system: { headerRaw: headerRawOf(system.doc), exists: system.exists }
@@ -161,13 +200,14 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
         id = `${base}-${n}`
       }
       const job: CronJob = { ...input, id }
-      const logPath = cronLogPath(deps.home, id)
+      const logTarget = cronLogTemplate(deps.home, id)
       if (job.log) await fs.mkdir(cronLogDir(deps.home), { recursive: true })
       const added: string[] = []
       if (job.desc !== '') added.push(renderDescLine(job.desc))
-      added.push(renderJobLine(job, logPath))
+      added.push(renderJobLine(job, logTarget))
       await writeScope(scope, appendLines(doc.lines, added).join('\n'))
-      return { ...job, logPath: job.log ? logPath : undefined }
+      // 模板态不返回 logPath(文件可能尚未产生);由 list() 的 resolveLogPaths 按 id 解析最新文件
+      return { ...job, ...(job.log ? { logTemplate: true as const } : {}) }
     },
 
     async update(job, patch) {
@@ -193,7 +233,7 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
         newId = `${newBase}-${n}`
       }
       const next: CronJob = { ...merged, id: newId }
-      const logPath = cronLogPath(deps.home, newId)
+      const logTarget = cronLogTemplate(deps.home, newId)
       if (next.log) await fs.mkdir(cronLogDir(deps.home), { recursive: true })
 
       const lines = [...doc.lines]
@@ -211,9 +251,9 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
           idx += 1
         }
       }
-      lines[idx] = renderJobLine(next, logPath)
+      lines[idx] = renderJobLine(next, logTarget)
       await writeScope(scope, lines.join('\n'))
-      return { job: { ...next, logPath: next.log ? logPath : undefined }, stale }
+      return { job: { ...next, ...(next.log ? { logTemplate: true as const } : {}) }, stale }
     },
 
     async remove(job) {
@@ -235,27 +275,37 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
     async readLog(id) {
       const [user, system] = await Promise.all([parseScope('user'), parseScope('system')])
       const job = [...user.doc.jobs, ...system.doc.jobs].map((e) => e.job).find((j) => j.id === id)
-      if (!job?.logPath) return []
-      let text = ''
-      let mtime = new Date()
-      try {
-        const st = await fs.stat(job.logPath)
-        if (st.size === 0) return []
-        mtime = st.mtime
-        const fh = await fs.open(job.logPath, 'r')
+      if (!job?.log) return [] // 模板态无 logPath(实际文件按 id 归组),判 log 而非 logPath
+      const files = await listLogFiles(id)
+      if (files.length === 0) return []
+      // 从新到旧累积,受 LOG_TAIL_BYTES 预算约束 —— 得到的是「最近的日志尾部」,跨小时段不丢连续性
+      const chunks: string[] = []
+      let budget = LOG_TAIL_BYTES
+      for (const f of files) {
+        if (budget <= 0 || f.size === 0) continue
         try {
-          const start = Math.max(0, st.size - LOG_TAIL_BYTES)
-          const buf = Buffer.alloc(st.size - start)
-          await fh.read(buf, 0, buf.length, start)
-          text = buf.toString('utf8')
-          if (start > 0) text = text.slice(text.indexOf('\n') + 1) // 丢弃截断的半行
-        } finally {
-          await fh.close()
+          const take = Math.min(budget, f.size)
+          const start = f.size - take
+          const fh = await fs.open(f.path, 'r')
+          try {
+            const buf = Buffer.alloc(take)
+            await fh.read(buf, 0, take, start)
+            let part = buf.toString('utf8')
+            if (start > 0) part = part.slice(part.indexOf('\n') + 1) // 丢弃截断的半行
+            if (part !== '') {
+              chunks.unshift(part) // 保持时间先后
+              budget -= take
+            }
+          } finally {
+            await fh.close()
+          }
+        } catch {
+          /* 跳过单个文件 */
         }
-      } catch {
-        return []
       }
-      return parseLogText(text, formatLogTs(mtime))
+      const text = chunks.join('')
+      if (text.trim() === '') return []
+      return parseLogText(text, formatLogTs(new Date(files[0].mtimeMs)))
     },
 
     async writeHeader(scope, text) {

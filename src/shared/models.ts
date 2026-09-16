@@ -19,11 +19,16 @@ export interface Agent {
   isBrew?: boolean
   /** launchctl print-disabled 显示为 disabled(开源 isDisabledByOverride:橙点 + enable 修复) */
   isDisabledByOverride?: boolean
-}
-
-export interface InvalidPlist {
-  path: string
-  reason: string
+  /**
+   * 文件存在但不是可操作的 launchd 任务(plist 未定义 Label,如 Google keystone 的空 <dict/> 占位)。
+   * 列表内置灰、不可启停/克隆,但可编辑(补上 Label 即成为真正的任务)与删除。
+   * 这类行的 label 为空,身份与展示名都用 fileName。
+   */
+  isNotTask?: boolean
+  /** plist 无法解析(损坏/不可读)的原因;有此值时同样置灰,编辑走 XML 修复 */
+  parseError?: string
+  /** 非任务文件的原文件名(仅 isNotTask 时填充;label 为空时作展示名与身份) */
+  fileName?: string
 }
 
 export type CronScope = 'user' | 'system'
@@ -41,6 +46,10 @@ export interface CronJob {
   special?: boolean
   /** log=true 时的日志文件绝对路径(后端填充;解析时由包裹行推导) */
   logPath?: string
+  /** 该任务在 crontab 中的命令含**未转义的 %**(cron 会截断命令 → 静默失败);后端解析时填充,供 UI 告警/一键修复 */
+  percentUnescaped?: boolean
+  /** 日志重定向为「日期模板」形式(每小时一段):实际文件需按 id 扫目录解析,故 logPath 由后端填充 */
+  logTemplate?: boolean
 }
 
 /** 单个 crontab 作用域的元信息 */

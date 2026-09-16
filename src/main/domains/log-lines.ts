@@ -21,10 +21,13 @@ export function parseLogText(text: string, fallbackTs: string, maxLines = 2000):
   const lines = text.split('\n').filter((l) => l.trim() !== '')
   return lines.slice(-maxLines).map((raw) => {
     const m = raw.match(TS_RE)
+    const rest = m === null ? '' : raw.slice(m[0].length).trim()
+    // 行首时间戳进 ts 列;**正文为空时退回整行**,避免把「整行就是时间戳」的输出(如 date)吞成空正文
+    // —— 否则正文列全空,看起来就像"日志没有内容"。
     return {
-      ts: m ? `${m[1]} ${m[2]}` : fallbackTs,
+      ts: m === null ? fallbackTs : `${m[1]} ${m[2]}`,
       type: classifyLogLine(raw),
-      text: m ? raw.slice(m[0].length).trim() : raw
+      text: rest === '' ? raw : rest
     }
   })
 }

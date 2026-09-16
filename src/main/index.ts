@@ -41,12 +41,7 @@ if (!gotLock) {
   app.quit()
 }
 
-app.on('second-instance', () => {
-  if (mainWindow) {
-    mainWindow.show()
-    mainWindow.focus()
-  }
-})
+app.on('second-instance', () => showMainWindow())
 
 function logoDir(): string {
   // dev：项目根 resources/；打包后：extraResources 释放到 Contents/Resources/logo
@@ -138,6 +133,22 @@ function createWindow(): void {
   }
 }
 
+/**
+ * 唤起主窗口(Dock 图标点击 / 重复启动 / 托盘共用的入口)。
+ * ⚠ menubarOnly(默认开)下关窗只是 hide —— 窗口对象仍在,`getAllWindows().length` 仍为 1,
+ * 用「有没有窗口」判断会漏掉「窗口存在但被隐藏」这一态(Electron 脚手架的 activate 写法即如此,
+ * 会让 Dock 点击静默无效)。这里只判窗口对象是否可用,已销毁才重建。
+ */
+function showMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore() // macOS 上 show() 不会取消最小化
+    mainWindow.show()
+    mainWindow.focus()
+    return
+  }
+  if (app.isReady()) createWindow() // ready 前 store 尚未初始化,建窗会抛
+}
+
 app.whenReady().then(() => {
   // 启动序:设置加载 → applier 注册表副作用(themeSource/Tray/Dock/登录项/目录监听) → 建窗 → IPC
   store = createSettingsStore(defaultConfigPath(app.getPath('home')))
@@ -205,9 +216,8 @@ app.whenReady().then(() => {
 
   createWindow()
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
+  // Dock 图标点击 / 重新打开应用 → 唤起(Dock 点击由 macOS 的 applicationShouldHandleReopen 触发,必发此事件)
+  app.on('activate', () => showMainWindow())
 })
 
 app.on('window-all-closed', () => {

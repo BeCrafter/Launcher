@@ -41,7 +41,6 @@ const api: LauncherApi = {
   checkForUpdate: () => ipcRenderer.invoke(IPC.appCheckUpdates),
   agents: {
     list: () => ipcRenderer.invoke(IPC.agList),
-    toggle: (id) => ipcRenderer.invoke(IPC.agToggle, id),
     brewAction: (kind, id) => ipcRenderer.invoke(IPC.agBrewAction, kind, id),
     createDraft: (scope, label) => ipcRenderer.invoke(IPC.agCreateDraft, scope, label),
     save: (id, patch) => ipcRenderer.invoke(IPC.agSave, id, patch),
@@ -55,7 +54,6 @@ const api: LauncherApi = {
     readLogs: (id, source) => ipcRenderer.invoke(IPC.agReadLogs, id, source),
     clearLogs: (id) => ipcRenderer.invoke(IPC.agClearLogs, id),
     validateXml: (xml) => ipcRenderer.invoke(IPC.agValidateXml, xml),
-    removeInvalid: (path) => ipcRenderer.invoke(IPC.agRemoveInvalid, path),
     checkMissing: (candidates) => ipcRenderer.invoke(IPC.agCheckMissing, candidates),
     revealLog: (id) => ipcRenderer.invoke(IPC.shellRevealLog, id)
   },

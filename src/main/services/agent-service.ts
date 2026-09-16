@@ -1,11 +1,12 @@
 // Agents 门面服务(阶段 1):plist 扫描 + launchctl 状态 → Agent 列表与操作
 // 机制对齐开源 AgentStore/PlistService/LaunchctlService;isBrew 纯启发式判定(见 brew-heuristic),
 // brew 数据只在 brewAction(用户显式启停)时按需拉取;BrewManagedSupport 合并规则见 brew-agent-service
-// id 约定:`<scope>:<label>`(label 跨作用域可重名,id 唯一);草稿 id 同构,落盘发生在 save
+// id 约定:任务是 `<scope>:<label>`;非任务文件(占位/损坏)是 `<scope>:file:<fileName>`(label 为空,身份只能来自文件名);
+// 草稿 id 同构 label 形态,落盘发生在 save
 
 import { existsSync } from 'node:fs'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
-import type { Agent, AgentForm, AgentScope, DrawerStatusModel, InvalidPlist, LogLine, OpsState } from '../../shared/models'
+import type { Agent, AgentForm, AgentScope, DrawerStatusModel, LogLine, OpsState } from '../../shared/models'
 import type { MissingAgent } from '../../shared/ipc'
 import { formFromPlist, plistFromForm } from '../domains/agent-form'
 import { isBrewManaged } from '../domains/brew-heuristic'
@@ -16,7 +17,8 @@ import type { LaunchctlService } from './launchctl-service'
 import type { PlistFile, PlistService } from './plist-service'
 import type { ShellRunner } from './shell-runner'
 
-export type OpAction = 'load' | 'unload' | 'enable' | 'disable' | 'kickstart'
+/** 意图动作(用户语义):启动 / 停止 / 重启 / 开机自启开停 / 立即执行一次 —— 顺序逻辑在 main 内部完成 */
+export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
 
 export interface AgentXmlInfo {
   xml: string
@@ -25,8 +27,7 @@ export interface AgentXmlInfo {
 }
 
 export interface AgentService {
-  list(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }>
-  toggle(id: string): Promise<Agent>
+  list(): Promise<{ agents: Agent[] }>
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
   createDraft(scope: AgentScope, label: string): Promise<Agent>
   save(id: string, patch: Partial<AgentForm> & { label: string; desc: string }): Promise<Agent>
@@ -40,8 +41,6 @@ export interface AgentService {
   readLogs(id: string, source: 'file' | 'system'): Promise<LogLine[]>
   clearLogs(id: string): Promise<void>
   validateXml(xml: string): Promise<{ ok: boolean; error: string | null }>
-  /** 删除无效 plist 文件(demo 横幅删除按钮真实化;作用域按路径判定) */
-  removeInvalid(path: string): Promise<void>
   /** 定向复核:候选条目是否「仍被 launchctl 加载、但管理目录内 plist 已不存在」 */
   checkMissing(candidates: { scope: AgentScope; label: string }[]): Promise<MissingAgent[]>
   /** 该 agent 的日志文件路径(stdout 优先,其次 stderr;均无 → null) */
@@ -49,16 +48,34 @@ export interface AgentService {
 }
 
 export const agentId = (scope: AgentScope, label: string): string => `${scope}:${label}`
+
+/** 非任务文件(占位/损坏)的 id 前缀:`:` 是 launchd 自己的域/job 分隔符,含 `:` 的 Label 无法 bootstrap,不会撞名 */
+const FILE_ID_PREFIX = 'file:'
+export const fileAgentId = (scope: AgentScope, fileName: string): string => `${scope}:${FILE_ID_PREFIX}${fileName}`
+
+/** 文件记录 → 列表 id:任务取 label,非任务取文件名(其 label 为空,同作用域多个占位不能共用 id) */
+const idFor = (pf: PlistFile): string => (pf.isTask ? agentId(pf.scope, pf.label) : fileAgentId(pf.scope, pf.fileName))
+
 export function parseAgentId(id: string): { scope: AgentScope; label: string } | null {
   const idx = id.indexOf(':')
   if (idx <= 0) return null
   const scope = id.slice(0, idx) as AgentScope
   if (scope !== 'user' && scope !== 'system' && scope !== 'daemon') return null
-  return { scope, label: id.slice(idx + 1) }
+  const label = id.slice(idx + 1)
+  // 非任务文件不是「label 形态」的 id;此处一并挡住,防止草稿占用 file: 命名空间
+  if (label === '' || label.startsWith(FILE_ID_PREFIX)) return null
+  return { scope, label }
 }
 
 const LOG_TAIL_BYTES = 512 * 1024
 const SYSTEM_LOG_MAX_LINES = 2000
+
+/** `launchctl.list()` 的返回形状(域表 + per-domain 覆盖位) */
+interface LaunchctlTables {
+  gui: Map<string, { label: string; pid: number | null; lastExitCode: number | null }>
+  system: Map<string, { label: string; pid: number | null; lastExitCode: number | null }>
+  disabled: { gui: Set<string>; system: Set<string> }
+}
 
 export function createAgentService(deps: {
   runner: ShellRunner
@@ -71,10 +88,12 @@ export function createAgentService(deps: {
   const drafts = new Map<string, Agent>() // 未落盘草稿(createDraft → save)
 
   /** gui 域(用户态 list)与 system 域(`print system` 服务表)按作用域取用 */
-  const tableFor = (
-    tables: { gui: Map<string, { label: string; pid: number | null; lastExitCode: number | null }>; system: Map<string, { label: string; pid: number | null; lastExitCode: number | null }> },
-    scope: AgentScope
-  ): Map<string, { label: string; pid: number | null; lastExitCode: number | null }> => (scope === 'daemon' ? tables.system : tables.gui)
+  const tableFor = (tables: LaunchctlTables, scope: AgentScope): LaunchctlTables['gui'] =>
+    scope === 'daemon' ? tables.system : tables.gui
+
+  /** print-disabled 覆盖位按作用域取用(域映射与 tableFor/domainOf 一致:system 作用域也属 gui 域) */
+  const disabledFor = (tables: { disabled: { gui: Set<string>; system: Set<string> } }, scope: AgentScope): Set<string> =>
+    scope === 'daemon' ? tables.disabled.system : tables.disabled.gui
 
   async function brewList(): Promise<BrewServiceInfo[]> {
     return brew.list().catch(() => [])
@@ -103,7 +122,27 @@ export function createAgentService(deps: {
     return etime
   }
 
-  function buildAgent(pf: PlistFile, entries: Map<string, { pid: number | null; lastExitCode: number | null }>, disabled: Set<string>, uptimes: Map<number, string>): Agent {
+  function buildAgent(pf: PlistFile, entries: Map<string, { pid: number | null; lastExitCode: number | null }>, tables: LaunchctlTables, uptimes: Map<number, string>): Agent {
+    // 非任务文件(占位/损坏):没有 launchctl 身份,不查表、不判 brew/覆盖位 —— 显式早退,
+    // 顺带避开 entries.get('') / disabledFor().has('') 这类空串 key 隐患
+    if (!pf.isTask) {
+      return {
+        id: idFor(pf),
+        label: '',
+        fileName: pf.fileName,
+        desc: pf.desc,
+        status: 'stopped',
+        pid: null,
+        uptime: null,
+        scope: pf.scope,
+        tags: [],
+        program: '',
+        exitCode: null,
+        restarts: 0,
+        isNotTask: true,
+        parseError: pf.parseError
+      }
+    }
     const entry = entries.get(pf.label)
     const program = typeof pf.value.Program === 'string' ? pf.value.Program : Array.isArray(pf.value.ProgramArguments) ? String(pf.value.ProgramArguments[0] ?? '') : ''
     return {
@@ -119,29 +158,36 @@ export function createAgentService(deps: {
       exitCode: entry?.lastExitCode ?? null,
       restarts: 0,
       isBrew: isBrewManaged(pf.label, program),
-      isDisabledByOverride: disabled.has(pf.label)
+      isDisabledByOverride: disabledFor(tables, pf.scope).has(pf.label)
     }
   }
 
   async function findAgent(id: string): Promise<{ scope: AgentScope; label: string; pf: PlistFile } | null> {
-    const parsed = parseAgentId(id)
-    if (!parsed) return null
-    const { valid } = await plists.scanAll()
-    const pf = valid.find((p) => p.scope === parsed.scope && p.label === parsed.label)
-    return pf ? { ...parsed, pf } : null
+    const files = await plists.scanAll()
+    const pf = files.find((p) => idFor(p) === id)
+    if (!pf) return null
+    // 作用域/label 取自记录而非 id 反解:非任务文件没有 label,只能靠记录本身
+    return { scope: pf.scope, label: pf.label, pf }
   }
 
-  async function listImpl(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }> {
+  /** 非任务文件原地重写时没有「目标路径已存在」这层天然防重名,必须显式查:否则会出现两文件声称同一 Label */
+  async function assertLabelFree(scope: AgentScope, label: string, selfPath: string): Promise<void> {
+    const files = await plists.scanAll()
+    const clash = files.find((p) => p.isTask && p.label === label && p.path !== selfPath)
+    if (clash) throw new Error(`已存在同名任务「${label}」: ${clash.path}`)
+  }
+
+  async function listImpl(): Promise<{ agents: Agent[] }> {
     // brew 不在关键路径(brew services list 实测 11-13s):isBrew 用纯启发式判定,机制同源开源 AgentStore
-    const [{ valid, invalid }, tables] = await Promise.all([plists.scanAll(), launchctl.list()])
-    const { disabled } = tables
-    const runningPids = valid
-      .map((p) => tableFor(tables, p.scope).get(p.label)?.pid ?? null)
+    const [files, tables] = await Promise.all([plists.scanAll(), launchctl.list()])
+    const runningPids = files
+      .map((p) => (p.isTask ? (tableFor(tables, p.scope).get(p.label)?.pid ?? null) : null))
       .filter((p): p is number => p !== null)
     const uptimes = await uptimesFor(runningPids)
-    const agents = valid.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), disabled, uptimes))
+    // 每个 .plist 一行(含占位/损坏):文件在磁盘上存在就必须可见,置灰由渲染层负责
+    const agents = files.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), tables, uptimes))
     // 草稿(未落盘)不占列表行:保存后经 reload 出现
-    return { agents, invalidPlists: invalid }
+    return { agents }
   }
 
   async function currentAgent(id: string): Promise<Agent> {
@@ -153,34 +199,53 @@ export function createAgentService(deps: {
 
   async function opsStateFor(pf: PlistFile, label: string): Promise<OpsState> {
     const tables = await launchctl.list()
-    const { disabled } = tables
     const entry = tableFor(tables, pf.scope).get(label)
     return {
       loaded: entry !== undefined,
-      enabled: !disabled.has(label),
+      enabled: !disabledFor(tables, pf.scope).has(label),
       running: entry?.pid !== null && entry?.pid !== undefined
     }
   }
 
+  /**
+   * 意图动作:顺序逻辑集中在此层,UI 不再拼命令序列,也不需要因顺序问题置灰按钮。
+   * 三个 launchd 维度(bootstrap/bootout · enable/disable · kickstart/kill)对用户不可见。
+   */
+
+  /** 启动:确保「已启用 → 已载入 → 运行中」——按需跳过已满足的步骤,结果确定为"正在运行" */
+  async function intentStart(pf: PlistFile, tables: LaunchctlTables): Promise<void> {
+    if (disabledFor(tables, pf.scope).has(pf.label)) {
+      // launchd 硬约束:disable 阻塞 bootstrap,不启用无法载入 → 连带开启开机自启(UI 会可见地翻开关)
+      await launchctl.enable(pf.label, pf.scope)
+    }
+    let entry = tableFor(tables, pf.scope).get(pf.label)
+    if (entry === undefined) {
+      await launchctl.bootstrap(pf.path, pf.scope)
+      entry = tableFor(await launchctl.list(), pf.scope).get(pf.label)
+    }
+    // 载入后仍未运行(任务无 RunAtLoad/等触发条件)→ kickstart,让「启动」名副其实
+    if (entry === undefined || entry.pid === null) {
+      await launchctl.kickstart(pf.label, pf.scope)
+    }
+  }
+
+  /** 停止:移出 launchd(进程随之终止,且不会被 KeepAlive 拉起);不改动「开机自启」 */
+  async function intentStop(pf: PlistFile): Promise<void> {
+    await launchctl.bootout(pf.path, pf.scope)
+  }
+
+  /** 重启:运行中 → kickstart -k(先杀再起);未载入 → 走启动序列 */
+  async function intentRestart(pf: PlistFile, tables: LaunchctlTables): Promise<void> {
+    const entry = tableFor(tables, pf.scope).get(pf.label)
+    if (entry !== undefined && entry.pid !== null) {
+      await launchctl.kickstart(pf.label, pf.scope, { kill: true })
+      return
+    }
+    await intentStart(pf, tables)
+  }
+
   return {
     list: listImpl,
-
-    async toggle(id) {
-      const found = await findAgent(id)
-      if (!found) throw new Error(`agent not found: ${id}`)
-      const entry = tableFor(await launchctl.list(), found.scope).get(found.label)
-      if (entry && entry.pid !== null) {
-        // running → 停止:SIGTERM 轮询 + bootout(KeepAlive 兜底),达成 demo 的 stopped 语义
-        await launchctl.stop(found.label, found.scope, entry.pid)
-        await launchctl.bootout(found.pf.path, found.scope)
-      } else if (entry) {
-        // 已加载未运行(如一次性任务已退出)→ kickstart 启动(对已加载服务 bootstrap 会报 I/O error)
-        await launchctl.kickstart(found.label, found.scope)
-      } else {
-        await launchctl.bootstrap(found.pf.path, found.scope)
-      }
-      return currentAgent(id)
-    },
 
     async brewAction(kind, id) {
       const found = await findAgent(id)
@@ -219,10 +284,11 @@ export function createAgentService(deps: {
 
     async save(id, patch) {
       const found = await findAgent(id)
+      // 非任务文件的 id 不是 label 形态,parseAgentId 会返回 null —— 此时以 found 为唯一依据
       const parsed = parseAgentId(id)
-      if (!parsed) throw new Error(`invalid agent id: ${id}`)
-      const scope = found?.scope ?? parsed.scope
-      const prevLabel = found?.label ?? parsed.label
+      if (!found && !parsed) throw new Error(`invalid agent id: ${id}`)
+      const scope = found?.scope ?? parsed!.scope
+      const prevLabel = found?.pf.label ?? parsed!.label
       const baseValue: PlistDict = found ? found.pf.value : { Label: patch.label }
       const baseDesc = found?.pf.desc ?? ''
       const mapping = formFromPlist(baseValue, baseDesc)
@@ -236,8 +302,20 @@ export function createAgentService(deps: {
       }
       const value = plistFromForm(merged)
       const xml = toPlistXml(value, { indent: deps.getXmlIndent(), desc: patch.desc })
-      const newPath = plists.pathFor(scope, patch.label)
 
+      // 非任务文件(占位/损坏)的编辑:原地重写、保留原文件名。
+      // ⚠ 绝不能落到下面的改名分支 —— 那会另写一份新文件再 remove 原文件,而原文件是第三方文件(非本应用创建),
+      //    用户说的是「编辑这个文件」,不是「删除它并新建一个」
+      if (found && !found.pf.isTask) {
+        const label = patch.label.trim()
+        if (label === '') throw new Error('该文件未定义任务:请填写 Label 后再保存')
+        await assertLabelFree(scope, label, found.pf.path)
+        await plists.writeAt(scope, found.pf.path, xml)
+        drafts.delete(id)
+        return currentAgent(agentId(scope, label))
+      }
+
+      const newPath = plists.pathFor(scope, patch.label)
       if (found && newPath !== found.pf.path) {
         await plists.write(scope, newPath, xml)
         if (tableFor(await launchctl.list(), found.scope).has(prevLabel)) {
@@ -270,8 +348,9 @@ export function createAgentService(deps: {
     async clone(id) {
       const found = await findAgent(id)
       if (!found) throw new Error(`agent not found: ${id}`)
-      const { valid } = await plists.scanAll()
-      const existing = new Set(valid.map((p) => p.label))
+      if (!found.pf.isTask) throw new Error('该文件未定义 launchd 任务,无法克隆')
+      const files = await plists.scanAll()
+      const existing = new Set(files.filter((p) => p.isTask).map((p) => p.label))
       let newLabel = `${found.label}.copy`
       let n = 1
       while (existing.has(newLabel)) {
@@ -287,11 +366,14 @@ export function createAgentService(deps: {
     async ops(id, action) {
       const found = await findAgent(id)
       if (!found) throw new Error(`agent not found: ${id}`)
-      if (action === 'load') await launchctl.bootstrap(found.pf.path, found.scope)
-      else if (action === 'unload') await launchctl.bootout(found.pf.path, found.scope)
-      else if (action === 'enable') await launchctl.enable(found.label, found.scope)
-      else if (action === 'disable') await launchctl.disable(found.label, found.scope)
-      else await launchctl.kickstart(found.label, found.scope)
+      // 非任务文件不是 launchd 任务:bootstrap 必失败(launchd 会报 error 5)。UI 已置灰,这里是兜底
+      if (!found.pf.isTask) throw new Error('该文件未定义 launchd 任务,无法执行启停操作')
+      const tables = await launchctl.list()
+      if (action === 'start') await intentStart(found.pf, tables)
+      else if (action === 'stop') await intentStop(found.pf)
+      else if (action === 'restart') await intentRestart(found.pf, tables)
+      else if (action === 'enable') await launchctl.enable(found.label, found.scope) // 开机自启:开
+      else await launchctl.disable(found.label, found.scope) // 开机自启:关
       return opsStateFor(found.pf, found.label)
     },
 
@@ -322,10 +404,13 @@ export function createAgentService(deps: {
       if (!lint.ok) throw new Error(`plist 校验失败: ${lint.error}`)
       const found = await findAgent(id)
       const parsed = parseAgentId(id)
-      if (!parsed) throw new Error(`invalid agent id: ${id}`)
-      const scope = found?.scope ?? parsed.scope
-      const target = found?.pf.path ?? plists.pathFor(scope, parsed.label)
-      await plists.write(scope, target, xml)
+      if (!found && !parsed) throw new Error(`invalid agent id: ${id}`)
+      const scope = found?.scope ?? parsed!.scope
+      const target = found?.pf.path ?? plists.pathFor(scope, parsed!.label)
+      // 非任务文件(占位/损坏)的 XML 修复:用户已在抽屉里显式指向该文件 → 跳过覆盖守卫。
+      // 守卫的用途是防止新建/改名静默清掉别人的任务;而 write() 对损坏目标一律拒绝,修复就无从进行
+      if (found && !found.pf.isTask) await plists.writeAt(scope, target, xml)
+      else await plists.write(scope, target, xml)
     },
 
     async readStatus(id) {
@@ -475,12 +560,6 @@ export function createAgentService(deps: {
         out.push({ label: c.label, scope: c.scope, path, pid: info.pid })
       }
       return out
-    },
-
-    async removeInvalid(path) {
-      // 作用域按「目录前缀」判定(注意:用户路径也含 /Library/LaunchAgents/,不能只做 includes)
-      const dir = plists.dirs().find((d) => path.startsWith(`${d.dir}/`))
-      await plists.remove(dir?.scope ?? 'user', path)
     }
   }
 }
