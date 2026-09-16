@@ -69,7 +69,7 @@ src/
 └── shared/            # settings.ts(schema+normalize)/models.ts(领域类型)/ipc.ts(通道契约+事件)/url-guard(外链 scheme 白名单)/constants/api
 ```
 
-约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed`/`agents:dirChanged` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；新增设置 = `shared/settings.ts` 加键 + `main/settings/appliers/` 对应域模块 + 渲染层消费点（配置单文件不散落）；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 i18n 字典/`mock-data.ts` 勿手改（生成脚本见 scripts/）**。
+约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed`/`agents:dirChanged` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；新增设置 = `shared/settings.ts` 加键 + `main/settings/appliers/` 对应域模块 + 渲染层消费点（配置单文件不散落）；**主进程窗口生命周期：`menubarOnly`（默认开）下关窗是 `hide()` 不是销毁 —— 窗口对象仍在、`getAllWindows().length` 仍为 1，故任何唤起窗口的路径（Dock `activate` / `second-instance` / Tray）一律走 `showMainWindow()`（show/restore/focus），不要用「窗口数为 0」判断**（Electron 脚手架的 `activate` 写法即如此 → 打包后点 Dock 图标静默无反应，2026-09-13 修）；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 i18n 字典/`mock-data.ts` 勿手改（生成脚本见 scripts/）**。
 
 ## 页面架构（docs/demo/，冻结基线——以下为 demo 自身约定，仅作对照阅读）
 
