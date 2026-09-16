@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { makeT } from '../i18n'
-import { parseCronExpr } from './cron'
+import { parseCronExpr, segmentRangeLabel } from './cron'
 
 const zh = makeT('zh-CN')
 const en = makeT('en-US')
@@ -58,5 +58,20 @@ describe('parseCronExpr(en)', () => {
     expect(parseCronExpr('0 0 1 2 *', 'en-US', en)).toBe(
       en('cron.parse.monthly').replace('{M}', m).replace('{D}', '1').replace('{T}', '0:00')
     )
+  })
+})
+
+describe('segmentRangeLabel(日志分段的文件名 → 小时区间)', () => {
+  it('10 位时间戳 → 紧凑的 月-日 时:00–时:00(左栏窄,年份只在行 title 的文件名里)', () => {
+    expect(segmentRangeLabel('2026091622')).toBe('09-16 22:00–23:00')
+    expect(segmentRangeLabel('2026091300')).toBe('09-13 00:00–01:00')
+  })
+  it('23 点 → 跨到次日 00:00(只表达所属小时,不引入日期推算)', () => {
+    expect(segmentRangeLabel('2026091623')).toBe('09-16 23:00–00:00')
+  })
+  it('非 10 位(旧式单文件等)→ null,由调用方改用「历史单文件」文案', () => {
+    expect(segmentRangeLabel('20260913')).toBeNull()
+    expect(segmentRangeLabel('')).toBeNull()
+    expect(segmentRangeLabel('not-a-stamp')).toBeNull()
   })
 })

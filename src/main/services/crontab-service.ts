@@ -5,9 +5,9 @@
 // - 不新增存储:状态即 crontab 文件;日志文件是日志功能自身产物
 
 import { promises as fs } from 'node:fs'
-import { cronLogDir, cronLogTemplate, matchCronLogFile } from '../../shared/cron-log'
+import { cronLogDir, cronLogSegmentOf, cronLogTemplate, matchCronLogFile } from '../../shared/cron-log'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED, type CronUpdateResult } from '../../shared/ipc'
-import type { CronJob, CronListPayload, CronScope, LogLine } from '../../shared/models'
+import type { CronJob, CronListPayload, CronLogFileInfo, CronScope, LogLine } from '../../shared/models'
 import {
   hashJobId,
   headerRawOf,
@@ -44,9 +44,15 @@ export interface CrontabService {
   create(input: Omit<CronJob, 'id'>): Promise<CronJob>
   update(job: CronJob, patch: Partial<CronJob>): Promise<CronUpdateResult>
   remove(job: CronJob): Promise<void>
-  readLog(id: string): Promise<LogLine[]>
+  /** 该任务已有的日志文件(新 → 旧;含迁移前的历史单文件),供日志抽屉的文件列表 */
+  listLogs(id: string): Promise<CronLogFileInfo[]>
+  /** 读取**单个**日志文件(name 省略 → 最新非空段);跨小时段不再拼接,由调用方按段切换 */
+  readLog(id: string, name?: string): Promise<LogLine[]>
+  /** 删除单个日志文件(文件名必须属于该任务;文件已不存在按成功处理) */
+  deleteLog(id: string, name: string): Promise<void>
   writeHeader(scope: CronScope, text: string): Promise<void>
-  cleanupLogs(): Promise<void>
+  /** 清理超过保留期的日志文件,返回删除数量(定时触发 + 抽屉「清理过期段」按钮共用) */
+  cleanupLogs(): Promise<number>
 }
 
 function isEnoent(err: unknown): boolean {
@@ -117,19 +123,19 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
  * 某任务的日志文件(新式 `<id>-YYYYMMDDHH.log` 与旧式 `<id>.log` 并存),按 mtime 降序。
  * 按 mtime 排序对两种形态都成立:每段只在它所属的小时内被写入。
  */
-async function listLogFiles(id: string): Promise<{ path: string; size: number; mtimeMs: number }[]> {
+async function listLogFiles(id: string): Promise<{ name: string; path: string; size: number; mtimeMs: number }[]> {
   let names: string[]
   try {
     names = await fs.readdir(cronLogDir(deps.home))
   } catch {
     return []
   }
-  const out: { path: string; size: number; mtimeMs: number }[] = []
+  const out: { name: string; path: string; size: number; mtimeMs: number }[] = []
   for (const n of names.filter((f) => matchCronLogFile(id, f))) {
     const p = `${cronLogDir(deps.home)}/${n}`
     try {
       const st = await fs.stat(p)
-      if (st.isFile()) out.push({ path: p, size: st.size, mtimeMs: st.mtimeMs })
+      if (st.isFile()) out.push({ name: n, path: p, size: st.size, mtimeMs: st.mtimeMs })
     } catch {
       /* 单个文件失败不影响其余 */
     }
@@ -138,38 +144,50 @@ async function listLogFiles(id: string): Promise<{ path: string; size: number; m
 }
 
 /**
- * 模板态任务(`logTemplate`)的 logPath 解析为该任务**最新的非空**文件(供抽屉显示/复制/访达揭示)。
- * 一次 readdir 后按 id 归组,不做逐任务的目录扫描。
+ * 模板态任务(`logTemplate`)的派生信息:`logPath` 解析为该任务**当前该看的那份文件**、`segmentCount` 为分段数。
+ * 优先指向最新的**分段文件** —— 刚迁移完时分段文件还没产生,此时才回落到历史整份;
+ * 否则卡片会一直显示老的整份路径,看起来像"迁移没生效"。一次 readdir 后按 id 归组。
  */
 async function resolveLogPaths(jobs: CronJob[]): Promise<CronJob[]> {
   if (!jobs.some((j) => j.logTemplate)) return jobs
-  const resolved = new Map<string, string>()
+  const resolved = new Map<string, { path?: string; count: number }>()
   for (const j of jobs) {
     if (!j.logTemplate) continue
-    const files = (await listLogFiles(j.id)).find((f) => f.size > 0)
-    if (files) resolved.set(j.id, files.path)
+    const files = await listLogFiles(j.id)
+    const segments = files.filter((f) => cronLogSegmentOf(j.id, f.name)?.kind === 'hour')
+    const current = segments.find((f) => f.size > 0) ?? files.find((f) => f.size > 0)
+    resolved.set(j.id, { path: current?.path, count: segments.length })
   }
-  return jobs.map((j) => (j.logTemplate && resolved.has(j.id) ? { ...j, logPath: resolved.get(j.id) } : j))
+  return jobs.map((j) => {
+    const r = j.logTemplate ? resolved.get(j.id) : undefined
+    if (!r) return j
+    return { ...j, segmentCount: r.count, ...(r.path ? { logPath: r.path } : {}) }
+  })
 }
 
-  async function cleanupLogsInternal(): Promise<void> {
+  async function cleanupLogsInternal(): Promise<number> {
     const dir = cronLogDir(deps.home)
     const cutoff = Date.now() - deps.getRetainDays() * 86400_000
     let files: string[]
     try {
       files = await fs.readdir(dir)
     } catch {
-      return
+      return 0
     }
+    let removed = 0
     for (const f of files) {
       const p = `${dir}/${f}`
       try {
         const st = await fs.stat(p)
-        if (st.isFile() && st.mtimeMs < cutoff) await fs.unlink(p)
+        if (st.isFile() && st.mtimeMs < cutoff) {
+          await fs.unlink(p)
+          removed += 1
+        }
       } catch {
         /* 单个文件失败不影响其余 */
       }
     }
+    return removed
   }
 
   return {
@@ -272,40 +290,56 @@ async function resolveLogPaths(jobs: CronJob[]): Promise<CronJob[]> {
       await writeScope(scope, lines.join('\n'))
     },
 
-    async readLog(id) {
+    async listLogs(id) {
+      const files = await listLogFiles(id)
+      return files.map((f) => {
+        const seg = cronLogSegmentOf(id, f.name)
+        return {
+          name: f.name,
+          size: f.size,
+          mtimeMs: f.mtimeMs,
+          legacy: seg?.kind === 'legacy',
+          stamp: seg?.kind === 'hour' ? seg.stamp : undefined
+        }
+      })
+    },
+
+    async readLog(id, name) {
       const [user, system] = await Promise.all([parseScope('user'), parseScope('system')])
       const job = [...user.doc.jobs, ...system.doc.jobs].map((e) => e.job).find((j) => j.id === id)
       if (!job?.log) return [] // 模板态无 logPath(实际文件按 id 归组),判 log 而非 logPath
       const files = await listLogFiles(id)
-      if (files.length === 0) return []
-      // 从新到旧累积,受 LOG_TAIL_BYTES 预算约束 —— 得到的是「最近的日志尾部」,跨小时段不丢连续性
-      const chunks: string[] = []
-      let budget = LOG_TAIL_BYTES
-      for (const f of files) {
-        if (budget <= 0 || f.size === 0) continue
+      // name 省略 → 最新非空段;显式 name 只在**已扫描到的列表**里查找(从不拼接调用方给的字符串 → 无目录穿越面)
+      const target = name === undefined ? files.find((f) => f.size > 0) : files.find((f) => f.name === name)
+      if (!target) return []
+      // 单文件尾读(256KB 预算);fallback 时间戳取**该文件自己的 mtime** —— 跨小时才不会把 18:00 的行标成 22:56
+      try {
+        const take = Math.min(LOG_TAIL_BYTES, target.size)
+        const start = target.size - take
+        const fh = await fs.open(target.path, 'r')
         try {
-          const take = Math.min(budget, f.size)
-          const start = f.size - take
-          const fh = await fs.open(f.path, 'r')
-          try {
-            const buf = Buffer.alloc(take)
-            await fh.read(buf, 0, take, start)
-            let part = buf.toString('utf8')
-            if (start > 0) part = part.slice(part.indexOf('\n') + 1) // 丢弃截断的半行
-            if (part !== '') {
-              chunks.unshift(part) // 保持时间先后
-              budget -= take
-            }
-          } finally {
-            await fh.close()
-          }
-        } catch {
-          /* 跳过单个文件 */
+          const buf = Buffer.alloc(take)
+          await fh.read(buf, 0, take, start)
+          let text = buf.toString('utf8')
+          if (start > 0) text = text.slice(text.indexOf('\n') + 1) // 丢弃截断的半行
+          if (text.trim() === '') return []
+          return parseLogText(text, formatLogTs(new Date(target.mtimeMs)))
+        } finally {
+          await fh.close()
         }
+      } catch {
+        return []
       }
-      const text = chunks.join('')
-      if (text.trim() === '') return []
-      return parseLogText(text, formatLogTs(new Date(files[0].mtimeMs)))
+    },
+
+    async deleteLog(id, name) {
+      // 只接受「属于该任务」的文件名(10 位时间戳段或旧式单文件);该正则不含 `/` → 天然无目录穿越
+      if (cronLogSegmentOf(id, name) === null) throw new Error(`不是该任务的日志文件: ${name}`)
+      try {
+        await fs.unlink(`${cronLogDir(deps.home)}/${name}`)
+      } catch (err) {
+        if (!isEnoent(err)) throw err // 已不存在(保留期清理/外部删过)按成功处理,保证幂等
+      }
     },
 
     async writeHeader(scope, text) {

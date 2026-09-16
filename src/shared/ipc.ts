@@ -1,7 +1,7 @@
 // IPC 通道常量与负载类型(main ↔ preload ↔ renderer 契约,防字符串漂移)
 
 import type { AgentScope, CronJob } from './models'
-import type { CronScope, DockerContainer, PortService } from './models'
+import type { CronScope, DockerContainer, DockerUnavailableReason, PortService } from './models'
 import type { LauncherSettings } from './settings'
 
 // ── invoke 通道 ──
@@ -38,6 +38,9 @@ export const IPC = {
   cronUpdate: 'cron:update',
   cronRemove: 'cron:remove',
   cronReadLog: 'cron:readLog',
+  cronListLogs: 'cron:listLogs',
+  cronDeleteLog: 'cron:deleteLog',
+  cronCleanupLogs: 'cron:cleanupLogs',
   cronWriteHeader: 'cron:writeHeader',
   // ── 端口服务(阶段 3) ──
   svcList: 'services:list',
@@ -119,6 +122,8 @@ export interface ServicesListPayload {
   brewServices: string[]
   containers: DockerContainer[]
   dockerAvailable: boolean
+  /** dockerAvailable 为 false 时的原因(UI 据此区分「未装 CLI」/「daemon 未运行」/「超时」) */
+  dockerReason: DockerUnavailableReason | null
   polling: boolean
   scannedAt: number
 }

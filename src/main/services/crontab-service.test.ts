@@ -308,32 +308,114 @@ describe('crontab-service(system scope 提权路径)', () => {
 })
 
 describe('crontab-service(日志按小时分段)', () => {
-  it('readLog 跨段累积(按时间先后);list 把 logPath 解析为该任务最新的非空段', async () => {
-    const h = makeHarness()
+  /** 建好一个已启用日志的任务并返回其 id(日志目录按 `cronLogDir(home)` 铺设) */
+  async function setupLoggedJob(h: Harness): Promise<string> {
     h.setUserCrontab('0 9 * * * /usr/bin/run --flag\n')
     const payload = await h.service.list()
     const id = payload.jobs[0].id
-
     // 启用日志 → 写回应为日期模板形态
     const { job } = await h.service.update(payload.jobs[0], { log: true })
     expect(job.logTemplate).toBe(true)
+    return id
+  }
 
+  /** 在日志目录里写一个段文件 */
+  function writeSegment(h: Harness, name: string, text: string): string {
     const dir = cronLogDir(h.home)
     mkdirSync(dir, { recursive: true })
-    const older = join(dir, `${id}-2026091310.log`)
-    const newer = join(dir, `${id}-2026091311.log`)
-    writeFileSync(older, 'older line\n')
-    writeFileSync(newer, 'newer line\n')
+    const p = join(dir, name)
+    writeFileSync(p, text)
+    return p
+  }
+
+  it('readLog 只读单个段:name 省略 → 最新非空段;显式 name → 该段', async () => {
+    const h = makeHarness()
+    const id = await setupLoggedJob(h)
+    const older = writeSegment(h, `${id}-2026091310.log`, 'older line\n')
+    const newer = writeSegment(h, `${id}-2026091311.log`, 'newer line\n')
     const past = Date.now() / 1000 - 3600
-    utimesSync(older, past, past) // 明确拉开 mtime,保证排序确定
+    utimesSync(older, past, past) // 拉开 mtime,保证"最新"确定
 
-    // 跨段累积:旧段在前、新段在后
-    const lines = await h.service.readLog(id)
-    expect(lines.map((l) => l.text)).toEqual(['older line', 'newer line'])
+    // 默认 = 最新非空段(不再跨段累积:跨小时由抽屉按段切换)
+    expect((await h.service.readLog(id)).map((l) => l.text)).toEqual(['newer line'])
+    // 显式指定旧段
+    expect((await h.service.readLog(id, `${id}-2026091310.log`)).map((l) => l.text)).toEqual(['older line'])
+    // 不属于该任务的 name → 空(在已扫描列表中查找,不拼接调用方字符串)
+    expect(await h.service.readLog(id, 'nope.log')).toEqual([])
+    expect(existsSync(newer)).toBe(true)
+  })
 
-    // list 解析出的 logPath = 最新非空段(供抽屉显示/复制/访达揭示)
+  it('listLogs 列出该任务的段(新 → 旧)并标出历史单文件', async () => {
+    const h = makeHarness()
+    const id = await setupLoggedJob(h)
+    const now = Date.now() / 1000
+    const newer = writeSegment(h, `${id}-2026091311.log`, 'newer\n')
+    const legacy = writeSegment(h, `${id}.log`, 'legacy whole file\n')
+    const older = writeSegment(h, `${id}-2026091310.log`, 'older\n')
+    // 显式给定 mtime,断言才不依赖写入先后
+    utimesSync(older, now - 7200, now - 7200)
+    utimesSync(legacy, now - 3600, now - 3600)
+
+    const files = await h.service.listLogs(id)
+    expect(files.map((f) => f.name)).toEqual([`${id}-2026091311.log`, `${id}.log`, `${id}-2026091310.log`])
+    expect(files.find((f) => f.name === `${id}.log`)).toMatchObject({ legacy: true, stamp: undefined })
+    expect(files.find((f) => f.name === `${id}-2026091311.log`)).toMatchObject({ legacy: false, stamp: '2026091311' })
+    expect(existsSync(newer)).toBe(true)
+    // 别的任务的文件不串进来
+    writeSegment(h, 'other-2026091311.log', 'x\n')
+    expect((await h.service.listLogs(id)).some((f) => f.name.startsWith('other'))).toBe(false)
+  })
+
+  it('deleteLog 只删目标段;重复删与非法 name 的行为确定', async () => {
+    const h = makeHarness()
+    const id = await setupLoggedJob(h)
+    const victim = writeSegment(h, `${id}-2026091310.log`, 'a\n')
+    const keeper = writeSegment(h, `${id}-2026091311.log`, 'b\n')
+
+    await h.service.deleteLog(id, `${id}-2026091310.log`)
+    expect(existsSync(victim)).toBe(false)
+    expect(existsSync(keeper)).toBe(true) // 其它段不受影响
+    await h.service.deleteLog(id, `${id}-2026091310.log`) // 幂等:已不存在按成功处理
+    // 非法 name(不属于该任务 / 目录穿越形态)一律拒绝
+    await expect(h.service.deleteLog(id, '../evil.log')).rejects.toThrow(/不是该任务的日志文件/)
+    await expect(h.service.deleteLog(id, 'other.log')).rejects.toThrow(/不是该任务的日志文件/)
+  })
+
+  it('cleanupLogs 按保留期清理并返回删除数量', async () => {
+    const h = makeHarness() // 保留期固定 3 天
+    const id = await setupLoggedJob(h)
+    const stale = writeSegment(h, `${id}-2026091310.log`, 'stale\n')
+    const fresh = writeSegment(h, `${id}-2026091311.log`, 'fresh\n')
+    const old = Date.now() / 1000 - 5 * 86400
+    utimesSync(stale, old, old)
+
+    expect(await h.service.cleanupLogs()).toBe(1)
+    expect(existsSync(stale)).toBe(false)
+    expect(existsSync(fresh)).toBe(true)
+  })
+
+  it('list:logPath 优先指向最新分段、segmentCount 不含历史单文件', async () => {
+    const h = makeHarness()
+    const id = await setupLoggedJob(h)
+    const older = writeSegment(h, `${id}-2026091310.log`, 'older\n')
+    writeSegment(h, `${id}-2026091311.log`, 'newer\n')
+    const past = Date.now() / 1000 - 3600
+    utimesSync(older, past, past)
+    // 历史整份 mtime 最新(刚迁移完的场景):logPath 仍应指向分段文件,否则像"迁移没生效"
+    writeSegment(h, `${id}.log`, 'legacy\n')
+
     const after = await h.service.list()
     expect(after.jobs[0].logTemplate).toBe(true)
-    expect(after.jobs[0].logPath).toBe(newer)
+    expect(after.jobs[0].logPath).toBe(join(cronLogDir(h.home), `${id}-2026091311.log`))
+    expect(after.jobs[0].segmentCount).toBe(2)
+  })
+
+  it('list:仅剩历史单文件时回落到它(刚迁移、新段还没产生)', async () => {
+    const h = makeHarness()
+    const id = await setupLoggedJob(h)
+    writeSegment(h, `${id}.log`, 'legacy\n')
+    const after = await h.service.list()
+    expect(after.jobs[0].logPath).toBe(cronLogLegacyPath(h.home, id))
+    expect(after.jobs[0].segmentCount).toBe(0)
   })
 })

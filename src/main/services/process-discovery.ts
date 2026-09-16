@@ -6,18 +6,34 @@
 import { classifyService } from '../domains/service-classify'
 import { dedupeRows, etimeToUptime, parseLsofListen } from '../domains/lsof-parse'
 import { portsRawToPort } from '../domains/docker-parse'
-import type { DockerContainer, PortService } from '../../shared/models'
+import type { DockerContainer, DockerUnavailableReason, PortService } from '../../shared/models'
+import type { ServicesListPayload } from '../../shared/ipc'
 import { resolveBrewPath } from './brew-path'
-import type { DockerService } from './docker-service'
+import type { DockerRefreshResult, DockerService } from './docker-service'
 import type { ShellRunner } from './shell-runner'
 
 export interface ScanResult {
   services: PortService[]
   containers: DockerContainer[]
   dockerAvailable: boolean
+  /** dockerAvailable 为 false 时的原因(供 UI 区分「未装 CLI」/「daemon 未运行」/「超时」) */
+  dockerReason: DockerUnavailableReason | null
   brewServices: string[]
   scannedAt: number
   error: string | null
+}
+
+/** 唯一的 IPC 负载构造器:拉取(ipc.ts)与推送(index.ts)共用,避免新增字段时两处不一致 */
+export function toServicesPayload(r: ScanResult, polling: boolean): ServicesListPayload {
+  return {
+    services: r.services,
+    brewServices: r.brewServices,
+    containers: r.containers,
+    dockerAvailable: r.dockerAvailable,
+    dockerReason: r.dockerReason,
+    polling,
+    scannedAt: r.scannedAt
+  }
 }
 
 export interface ProcessDiscovery {
@@ -36,6 +52,7 @@ const emptyResult = (): ScanResult => ({
   services: [],
   containers: [],
   dockerAvailable: false,
+  dockerReason: null,
   brewServices: [],
   scannedAt: 0,
   error: null
@@ -64,7 +81,7 @@ export function createProcessDiscovery(deps: {
   let lastJson = ''
   let brewServices: string[] = []
   let lastBrewAt = 0
-  let docker: { available: boolean; containers: DockerContainer[] } = { available: false, containers: [] }
+  let docker: DockerRefreshResult = { available: false, containers: [], reason: 'unknown' }
   let lastDockerAt = 0
   let timer: ReturnType<typeof setInterval> | null = null
   let running = false
@@ -93,7 +110,7 @@ export function createProcessDiscovery(deps: {
       docker = await deps.docker.refresh()
       if (!docker.available) log('docker unavailable, degraded')
     } catch (err) {
-      docker = { available: false, containers: [] }
+      docker = { available: false, containers: [], reason: 'unknown' }
       log(`docker refresh failed: ${String(err)}`)
     }
   }
@@ -169,6 +186,7 @@ export function createProcessDiscovery(deps: {
       services,
       containers: docker.available ? docker.containers : [],
       dockerAvailable: docker.available,
+      dockerReason: docker.reason,
       brewServices,
       scannedAt: Date.now(),
       error
@@ -178,6 +196,7 @@ export function createProcessDiscovery(deps: {
       s: result.services,
       c: result.containers,
       d: result.dockerAvailable,
+      dr: result.dockerReason,
       b: result.brewServices
     })
     const changed = json !== lastJson

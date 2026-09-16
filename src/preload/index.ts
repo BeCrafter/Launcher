@@ -62,7 +62,10 @@ const api: LauncherApi = {
     create: (job) => ipcRenderer.invoke(IPC.cronCreate, job),
     update: (job, patch) => ipcRenderer.invoke(IPC.cronUpdate, job, patch),
     remove: (job) => ipcRenderer.invoke(IPC.cronRemove, job),
-    readLog: (id) => ipcRenderer.invoke(IPC.cronReadLog, id),
+    readLog: (id, name) => ipcRenderer.invoke(IPC.cronReadLog, id, name),
+    listLogs: (id) => ipcRenderer.invoke(IPC.cronListLogs, id),
+    deleteLog: (id, name) => ipcRenderer.invoke(IPC.cronDeleteLog, id, name),
+    cleanupLogs: () => ipcRenderer.invoke(IPC.cronCleanupLogs),
     writeHeader: (scope, text) => ipcRenderer.invoke(IPC.cronWriteHeader, scope, text)
   },
   services: {

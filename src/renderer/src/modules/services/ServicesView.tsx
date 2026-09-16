@@ -3,6 +3,8 @@
 import { useEffect, useMemo } from 'react'
 import { useT, useFmt } from '../../hooks/useT'
 import { useServicesStore } from '../../state/services-store'
+import { useSettingsStore } from '../../state/settings-store'
+import { useSvcConfigStore } from '../../state/svc-config-store'
 import { useUiStore } from '../../state/ui-store'
 import { FilterBar, FilterCounts } from '../../components/FilterBar'
 import { Chip } from '../../components/ui/Chip'
@@ -10,12 +12,24 @@ import { GroupBlock } from '../../components/GroupBlock'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { SvcCard } from '../../components/cards/SvcCard'
-import { containerToService, effectiveType, filterServices, SVC_GROUP_META, SVC_GROUP_ORDER } from '../../lib/classify'
+import { containerToService, dockerNotice, effectiveType, filterServices, SVC_GROUP_META, SVC_GROUP_ORDER } from '../../lib/classify'
 import { ELEVATION, confirmDangerous } from '../../lib/elevation'
 import { showToast, copyText, openExternal } from '../../lib/utils'
+import {
+  displayName,
+  isOpenableUrl,
+  matchesServiceQuery,
+  serviceIdentityKey,
+  serviceUrl
+} from '../../lib/svc-override'
+import { saveServiceOverride } from '../../lib/svc-override-actions'
 import { dataSource } from '../../data'
 import type { SvcFilter } from '../../data/ports'
 import type { PortService } from '@shared/models'
+import type { ServiceOverride } from '@shared/settings'
+
+// 模块级冻结空表:settings 未就绪时保持引用稳定,否则每次渲染都新建 {} 会让下游 memo 失效
+const EMPTY_OVERRIDES: Record<string, ServiceOverride> = Object.freeze({})
 
 const FILTERS: { id: SvcFilter; icon: string; label?: string; labelKey?: string }[] = [
   { id: 'all', icon: 'fa-solid fa-list', labelKey: 'filter.all' },
@@ -31,10 +45,14 @@ export function ServicesView(): React.JSX.Element {
   const services = useServicesStore((s) => s.services)
   const containers = useServicesStore((s) => s.containers)
   const brewServices = useServicesStore((s) => s.brewServices)
+  const dockerAvailable = useServicesStore((s) => s.dockerAvailable)
+  const dockerReason = useServicesStore((s) => s.dockerReason)
   const loaded = useServicesStore((s) => s.loaded)
   const filter = useServicesStore((s) => s.filter)
   const setFilter = useServicesStore((s) => s.setFilter)
   const searchQuery = useUiStore((s) => s.searchQuery)
+  const overrides = useSettingsStore((s) => s.settings?.serviceOverrides ?? EMPTY_OVERRIDES)
+  const openSvcConfig = useSvcConfigStore((s) => s.open)
   // 首屏加载中(!loaded 且仓库为空):渲染骨架,避免「加载中」被误呈现为「没有数据」
   const loading = !loaded && services.length === 0 && containers.length === 0
 
@@ -53,18 +71,11 @@ export function ServicesView(): React.JSX.Element {
   const list = useMemo(() => {
     let l = filterServices(all, filter, brewManaged)
     if (searchQuery) {
-      const q = searchQuery.toLowerCase()
-      l = l.filter(
-        (s) =>
-          s.name.toLowerCase().includes(q) ||
-          s.cmd.toLowerCase().includes(q) ||
-          s.command.toLowerCase().includes(q) ||
-          String(s.port).includes(q) ||
-          s.addr.toLowerCase().includes(q)
-      )
+      // 别名 / 可连接 host / 原名 / 命令行 / 端口 全部参与匹配(见 lib/svc-override)
+      l = l.filter((s) => matchesServiceQuery(s, overrides[serviceIdentityKey(s)], searchQuery))
     }
     return l
-  }, [all, filter, brewManaged, searchQuery])
+  }, [all, filter, brewManaged, searchQuery, overrides])
 
   // 按分类分桶(demo renderServices 分组顺序 node → brew → process;docker 容器组置末)
   const groups = useMemo(() => {
@@ -73,8 +84,17 @@ export function ServicesView(): React.JSX.Element {
     return buckets
   }, [list, brewManaged])
 
+  // Docker 不可用提示:仅在「全部」或已筛到 Docker 时展示(筛 Node/Homebrew 时不该冒出 Docker 组)。
+  // 同时在此时抑制通用空状态,否则「提示条 + 无数据」会同时出现
+  const dockerDown = !dockerAvailable && (filter === 'all' || filter === 'docker')
+
+  // 覆写解析:展示名 / 完整 URL(键为跨重启稳定的 identityKey,见 lib/svc-override)
+  const keyOf = (svc: PortService): string => serviceIdentityKey(svc)
+  const nameOf = (svc: PortService): string => displayName(svc, overrides[keyOf(svc)])
+  const urlOf = (svc: PortService): string => serviceUrl(svc, overrides[keyOf(svc)])
+
   const onKill = async (svc: PortService): Promise<void> => {
-    const ok = await confirmDangerous.request(fmt(t('svc.killConfirm'), { N: svc.name, P: svc.pid ?? 0 }))
+    const ok = await confirmDangerous.request(fmt(t('svc.killConfirm'), { N: nameOf(svc), P: svc.pid ?? 0 }))
     if (!ok) return
     try {
       await doKill(svc, false)
@@ -83,9 +103,11 @@ export function ServicesView(): React.JSX.Element {
     }
   }
 
+  // 复制完整 URL(含推导/覆写的 host 与已配置路径)—— 此前只复制了端口号
   const onCopy = (svc: PortService): void => {
-    void copyText(String(svc.port))
-    showToast(fmt(t('toast.copiedPort'), { P: svc.port }), '#22d3ee', 'fa-copy')
+    const url = urlOf(svc)
+    void copyText(url)
+    showToast(fmt(t('toast.svcUrlCopied'), { U: url }), '#22d3ee', 'fa-copy')
   }
 
   // 服务操作错误 → 提示(提权取消/失败用稳定错误码;kill denied 引导提权)
@@ -99,23 +121,23 @@ export function ServicesView(): React.JSX.Element {
   const doKill = async (svc: PortService, privileged: boolean): Promise<void> => {
     const outcome = await dataSource().services.kill(svc.id, { privileged })
     if (outcome === 'denied') {
-      const ok = await ELEVATION.request({ detail: fmt(t('svc.killConfirm'), { N: svc.name, P: svc.pid ?? 0 }), command: `kill -TERM ${svc.pid ?? 0}` })
+      const ok = await ELEVATION.request({ detail: fmt(t('svc.killConfirm'), { N: nameOf(svc), P: svc.pid ?? 0 }), command: `kill -TERM ${svc.pid ?? 0}` })
       if (!ok) return
       const second = await dataSource().services.kill(svc.id, { privileged: true })
       if (second !== 'ok') showToast(t('toast.svcKillDenied'), '#f87171', 'fa-ban')
-      else showToast(fmt(t('toast.svcKilled'), { N: svc.name }), '#f87171', 'fa-stop')
+      else showToast(fmt(t('toast.svcKilled'), { N: nameOf(svc) }), '#f87171', 'fa-stop')
       return
     }
-    showToast(fmt(t('toast.svcKilled'), { N: svc.name }), '#f87171', 'fa-stop')
+    showToast(fmt(t('toast.svcKilled'), { N: nameOf(svc) }), '#f87171', 'fa-stop')
   }
 
   const onRestart = async (svc: PortService): Promise<void> => {
-    const ok = await confirmDangerous.request(fmt(t('svc.killConfirm'), { N: svc.name, P: svc.pid ?? 0 }))
+    const ok = await confirmDangerous.request(fmt(t('svc.killConfirm'), { N: nameOf(svc), P: svc.pid ?? 0 }))
     if (!ok) return
     try {
       const r = await dataSource().services.restart(svc.id)
-      if (r.ok) showToast(fmt(t('toast.svcRestarted'), { N: svc.name, P: r.newPid ?? 0 }), '#4ade80', 'fa-rotate-right')
-      else showToast(fmt(t('toast.svcRestartFailed'), { N: svc.name }), '#f87171', 'fa-circle-exclamation')
+      if (r.ok) showToast(fmt(t('toast.svcRestarted'), { N: nameOf(svc), P: r.newPid ?? 0 }), '#4ade80', 'fa-rotate-right')
+      else showToast(fmt(t('toast.svcRestartFailed'), { N: nameOf(svc) }), '#f87171', 'fa-circle-exclamation')
     } catch (err) {
       svcError(err)
     }
@@ -129,8 +151,23 @@ export function ServicesView(): React.JSX.Element {
 
   const onOpen = (svc: PortService): void => {
     if (svc.port <= 0) return // 无端口映射的容器:不可打开
-    showToast(fmt(t('toast.openingPort'), { P: svc.port }), '#60a5fa', 'fa-arrow-up-right-from-square')
-    openExternal(`http://127.0.0.1:${svc.port}`)
+    const url = urlOf(svc)
+    // 非法 host/端口会被 main 的 url-guard 拒绝并静默吞掉,这里先拦下给出可见反馈
+    if (!isOpenableUrl(url)) {
+      showToast(t('toast.svcUrlInvalid'), '#f87171', 'fa-circle-exclamation')
+      return
+    }
+    showToast(fmt(t('toast.svcUrlOpening'), { U: url }), '#60a5fa', 'fa-arrow-up-right-from-square')
+    openExternal(url)
+  }
+
+  // 双击名称就地改名:空串 = 清除别名(回退进程原名)
+  const onRename = (svc: PortService, alias: string): void => {
+    saveServiceOverride(keyOf(svc), { alias: alias === '' ? undefined : alias })
+  }
+
+  const onConfigure = (svc: PortService, anchor: { x: number; y: number }): void => {
+    openSvcConfig(svc, anchor.x, anchor.y)
   }
 
   return (
@@ -146,8 +183,11 @@ export function ServicesView(): React.JSX.Element {
       <div className="list-container" id="svcList">
         {SVC_GROUP_ORDER.map((k) => {
           const items = groups[k]
-          if (!items?.length) return null
+          // docker 不可用时也渲染该组:否则整组消失,「没有容器」与「Docker 不可用」无从区分
+          const showNotice = k === 'docker' && dockerDown
+          if (!items?.length && !showNotice) return null
           const meta = SVC_GROUP_META[k]
+          const notice = dockerNotice(dockerReason)
           return (
             <GroupBlock
               key={k}
@@ -158,23 +198,33 @@ export function ServicesView(): React.JSX.Element {
               count={items.length}
               labelTitle={t(meta.clsKey + '.group')}
             >
+              {showNotice && (
+                <div className="svc-docker-notice">
+                  <i className={notice.icon} />
+                  <span>{t(notice.key)}</span>
+                  <span className="svc-docker-notice-hint">{t('svc.docker.hint')}</span>
+                </div>
+              )}
               {items.map((s) => (
                 <SvcCard
                   key={s.id}
                   svc={s}
                   brewManaged={brewManaged}
+                  overrides={overrides}
                   t={t}
                   onRestart={() => void onRestart(s)}
                   onContainerAction={(a) => onContainerAction(s, a)}
                   onOpen={() => onOpen(s)}
                   onCopy={() => onCopy(s)}
                   onKill={() => void onKill(s)}
+                  onRename={(alias) => onRename(s, alias)}
+                  onConfigure={(anchor) => onConfigure(s, anchor)}
                 />
               ))}
             </GroupBlock>
           )
         })}
-        {!list.length && (loading ? <Skeleton rows={5} /> : <EmptyState icon="fa-solid fa-network-wired" text={t('svc.empty')} />)}
+        {!list.length && !dockerDown && (loading ? <Skeleton rows={5} /> : <EmptyState icon="fa-solid fa-network-wired" text={t('svc.empty')} />)}
       </div>
     </div>
   )
