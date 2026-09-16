@@ -17,7 +17,7 @@ import { createPlistService } from './services/plist-service'
 import { createBrewAgentService } from './services/brew-agent-service'
 import { createAgentService } from './services/agent-service'
 import { createDockerService } from './services/docker-service'
-import { createProcessDiscovery } from './services/process-discovery'
+import { createProcessDiscovery, toServicesPayload } from './services/process-discovery'
 import { createTermination } from './services/termination'
 import type { ApplyCtx } from './settings/types'
 import { registerIpc } from './ipc'
@@ -200,15 +200,7 @@ app.whenReady().then(() => {
     runner,
     docker,
     log: (m) => console.log(`[svc] ${m}`),
-    onChange: (r) =>
-      broadcast(IPC_EVENTS.servicesUpdated, {
-        services: r.services,
-        brewServices: r.brewServices,
-        containers: r.containers,
-        dockerAvailable: r.dockerAvailable,
-        polling: discovery.polling,
-        scannedAt: r.scannedAt
-      })
+    onChange: (r) => broadcast(IPC_EVENTS.servicesUpdated, toServicesPayload(r, discovery.polling))
   })
   discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
 

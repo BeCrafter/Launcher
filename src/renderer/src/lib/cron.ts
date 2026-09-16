@@ -76,6 +76,20 @@ export function formatNextRun(expr: string, t: (k: string) => string, now: Date 
   return fmt(t('cron.next.date'), { D: `${p(next.getMonth() + 1)}-${p(next.getDate())}`, T: hhmm })
 }
 
+// ── 日志分段展示(日志抽屉的文件列表)──
+
+/**
+ * 段文件名里的 10 位时间戳(`YYYYMMDDHH`)→ 列表里用的小时区间标签,如 `09-16 22:00–23:00`。
+ * 刻意紧凑(不写年份、区间用短横):左栏只有 ~240px,「当前段」徽标还要占位;完整信息在行 title(文件名)里。
+ * 非 10 位(如旧式单文件)返回 null —— 调用方据此改用「历史单文件」文案。
+ */
+export function segmentRangeLabel(stamp: string): string | null {
+  if (!/^\d{10}$/.test(stamp)) return null
+  const [mo, d, h] = [stamp.slice(4, 6), stamp.slice(6, 8), stamp.slice(8, 10)]
+  const end = String((Number(h) + 1) % 24).padStart(2, '0')
+  return `${mo}-${d} ${h}:00–${end}:00`
+}
+
 // IPC 错误 → 用户提示(提权取消/失败用稳定错误码判定;其余归为通用失败)
 export function cronErrorToast(err: unknown, tr: (k: string) => string): void {
   const msg = err instanceof Error ? err.message : String(err)

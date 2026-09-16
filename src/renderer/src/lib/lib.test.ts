@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { classifySvc } from './classify'
+import { classifySvc, dockerNotice, filterServices } from './classify'
 import { parsePlistXml } from './plist'
 import { deriveOpsBar } from './ops-bar'
+import type { PortService } from '@shared/models'
+
+function svc(patch: Partial<PortService>): PortService {
+  return {
+    id: '1:1',
+    port: 1,
+    name: 'x',
+    command: 'x',
+    user: 'u',
+    cmd: 'x',
+    status: 'running',
+    addr: '*',
+    proto: 'TCP',
+    uptime: '1m',
+    ...patch
+  }
+}
 
 describe('classifySvc', () => {
   const brew = new Set(['nginx', 'postgres', 'redis-server'])
@@ -15,6 +32,43 @@ describe('classifySvc', () => {
   it('③ 兜底 generic process', () => {
     expect(classifySvc({ command: 'ngrok' }, brew)).toBe('process')
     expect(classifySvc({ command: 'postgres' }, new Set())).toBe('process')
+  })
+})
+
+describe('filterServices', () => {
+  const brew = new Set(['redis-server'])
+  const list = [
+    svc({ port: 5173, command: 'node', type: 'node' }),
+    svc({ port: 6379, command: 'redis-server', type: 'brew' }),
+    svc({ port: 8088, command: 'sail', type: 'process' }),
+    svc({ port: 5432, name: 'pg', command: 'postgres:16', type: 'docker', containerId: 'abc' })
+  ]
+
+  it('docker chip 真的按容器类型过滤(此前无分支 = 不过滤)', () => {
+    expect(filterServices(list, 'docker', brew).map((s) => s.port)).toEqual([5432])
+  })
+
+  it('其余分支与 all 保持原有语义', () => {
+    expect(filterServices(list, 'node', brew).map((s) => s.port)).toEqual([5173])
+    expect(filterServices(list, 'brew', brew).map((s) => s.port)).toEqual([6379])
+    expect(filterServices(list, 'process', brew).map((s) => s.port)).toEqual([8088])
+    expect(filterServices(list, 'all', brew)).toHaveLength(4)
+  })
+})
+
+describe('dockerNotice', () => {
+  it('每种原因映射到独立文案键', () => {
+    expect(dockerNotice('daemon-down').key).toBe('svc.dockerUnavailable')
+    expect(dockerNotice('cli-missing').key).toBe('svc.docker.cliMissing')
+    expect(dockerNotice('timeout').key).toBe('svc.docker.timeout')
+    expect(dockerNotice('unknown').key).toBe('svc.docker.unknown')
+    expect(dockerNotice(null).key).toBe('svc.docker.unknown')
+  })
+
+  it('图标非空且形如 fa-solid fa-*', () => {
+    for (const r of ['daemon-down', 'cli-missing', 'timeout', 'unknown', null] as const) {
+      expect(dockerNotice(r).icon).toMatch(/^fa-solid fa-/)
+    }
   })
 })
 

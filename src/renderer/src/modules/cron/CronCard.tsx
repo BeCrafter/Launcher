@@ -28,6 +28,7 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
   const setEditingId = useCronStore((s) => s.setEditingId)
   const setEnabled = useCronStore((s) => s.setEnabled)
   const repairEscaping = useCronStore((s) => s.repairEscaping)
+  const migrateLog = useCronStore((s) => s.migrateLog)
   const setLog = useCronStore((s) => s.setLog)
   const save = useCronStore((s) => s.save)
   const remove = useCronStore((s) => s.remove)
@@ -132,6 +133,22 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
               <i className="fa-solid fa-triangle-exclamation" style={{ fontSize: 9 }} /> {t('cron.percentWarn')}
             </button>
           )}
+          {/* 旧式日志(迁移前的整份单文件):每次执行追加、mtime 永远新鲜 → 永远不会被保留期清理。
+              未启用时不提示(文件不增长,且启用本身就会重写该行)。 */}
+          {job.log && !job.logTemplate && job.enabled && (
+            <button
+              className="d-btn"
+              type="button"
+              style={{ padding: '2px 7px', fontSize: 10, flexShrink: 0, color: 'var(--yellow)', borderColor: 'rgba(250,204,21,.45)' }}
+              title={t('cron.log.notSegmented.title')}
+              onClick={(e) => {
+                e.stopPropagation()
+                void migrateLog(job).catch((err) => cronErrorToast(err, t))
+              }}
+            >
+              <i className="fa-solid fa-layer-group" style={{ fontSize: 9 }} /> {t('cron.log.notSegmented')}
+            </button>
+          )}
           <label className="toggle" title={job.enabled ? t('cron.disable') : t('cron.enable')}>
             <input
               type="checkbox"
@@ -170,10 +187,23 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
       <div className="row-expand" id={`exp_cron_${job.id}`}>
         <div className="cron-log-block">
           <div className="expand-field" style={{ marginBottom: 8 }}>
-            <div className="expand-key">{t('cron.log.path')}</div>
+            <div className="expand-key">
+              {t('cron.log.path')}
+              {job.log && job.logTemplate && (
+                <span style={{ marginLeft: 6, fontWeight: 400, color: 'var(--dim)' }}>{t('cron.log.segment.current')}</span>
+              )}
+            </div>
             <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} className="expand-val">
               {job.log && job.logPath ? job.logPath : t('cron.log.no')}
             </div>
+            {/* 分段状态:让"按小时分段"在列表层就能被看见(旧式任务则提示可一键迁移) */}
+            {job.log && (
+              <div style={{ fontSize: 10, marginTop: 4, color: job.logTemplate ? 'var(--muted)' : 'var(--yellow)' }}>
+                {job.logTemplate
+                  ? `${t('cron.log.segmented')} · ${fmt(t('cron.log.segmentedCount'), { N: job.segmentCount ?? 0 })}`
+                  : t('cron.log.segment.legacy')}
+              </div>
+            )}
           </div>
           <div className="cron-log-row" style={{ display: job.log ? 'flex' : 'none', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 10, color: 'var(--dim)' }}>{fmt(t('cron.log.retainHintDyn'), { D: retainDays })}</span>

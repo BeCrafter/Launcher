@@ -3,6 +3,7 @@ import { bootstrap } from './state/bootstrap'
 import { AppShell } from './layout/AppShell'
 import { AgentDrawer } from './modules/drawer/AgentDrawer'
 import { AgentCardMenu } from './components/overlays/AgentCardMenu'
+import { SvcConfigMenu } from './components/overlays/SvcConfigMenu'
 import { ChoiceModal } from './components/overlays/ChoiceModal'
 import { ElevationModal, DangerModal } from './components/overlays/ElevationModal'
 import { ImportModal } from './components/overlays/ImportModal'
@@ -24,6 +25,7 @@ export default function App(): React.JSX.Element {
       <AppShell />
       <AgentDrawer />
       <AgentCardMenu />
+      <SvcConfigMenu />
       <ChoiceModal />
       <ImportModal />
       <ElevationModal />

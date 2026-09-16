@@ -1,7 +1,7 @@
 // 端口服务数据 store:demo services.js 状态部分(activeSvcFilter + svcData + BREW_MANAGED)
 import { create } from 'zustand'
 import type { ServicesListPayload } from '@shared/ipc'
-import type { DockerContainer, PortService } from '@shared/models'
+import type { DockerContainer, DockerUnavailableReason, PortService } from '@shared/models'
 import type { SvcFilter } from '../data/ports'
 import { dataSource } from '../data'
 
@@ -10,6 +10,8 @@ interface ServicesState {
   containers: DockerContainer[]
   brewServices: string[]
   dockerAvailable: boolean
+  /** dockerAvailable 为 false 时的原因(UI 据此区分提示文案) */
+  dockerReason: DockerUnavailableReason | null
   polling: boolean
   error: string | null
   filter: SvcFilter
@@ -26,6 +28,7 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
   containers: [],
   brewServices: [],
   dockerAvailable: false,
+  dockerReason: null,
   polling: true,
   error: null,
   filter: 'all',
