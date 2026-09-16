@@ -7,7 +7,7 @@
 //   - user scope 5 字段;system scope(/etc/crontab)6 字段(第 6 字段 user)
 //   - 无法解析的行原样保留(不展示、不丢弃)
 
-import { isLauncherCronLogPath } from '../../shared/cron-log'
+import { isCronLogTemplate, isLauncherCronLogPath } from '../../shared/cron-log'
 import type { CronJob, CronScope } from '../../shared/models'
 
 export interface CrontabEnvVar {
@@ -61,9 +61,35 @@ function takeTokens(s: string, n: number): { tokens: string[]; rest: string } | 
   return { tokens, rest: s.slice(i).trim() }
 }
 
+/**
+ * crontab 的「命令字段」里 `%` 是特殊字符:`man 5 crontab` —— 未转义的 `%` 会被 cron
+ * 变成换行,其后所有内容作为命令的 stdin。若命令含 `date +"%Y"` 这类写法却未转义,
+ * cron 会把命令腰斩成 `date +"`,整条任务语法错误、静默失败(日志文件永远不创建)。
+ * 故写回时必须转义为 `\%`;解析时逆向还原,保证「读入 → 编辑 → 写回」往返稳定。
+ */
+const escapePercent = (s: string): string => s.replace(/%/g, '\\%')
+const unescapePercent = (s: string): string => s.replace(/\\%/g, '%')
+
+/**
+ * 命令字段里是否存在**未转义的** `%`(cron 会据此截断命令 → 任务静默失败)。
+ * 词法判定:看 `%` 前连续反斜杠的个数,**偶数即未转义**(`\%` 已转义;`\\%` 仍是未转义)。
+ * 用于把「写回前就已存在于 crontab 的坏行」暴露给用户(写回路径已自动转义,不会产生新的坏行)。
+ */
+export function hasUnescapedPercent(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] !== '%') continue
+    let backslashes = 0
+    for (let j = i - 1; j >= 0 && s[j] === '\\'; j--) backslashes++
+    if (backslashes % 2 === 0) return true
+  }
+  return false
+}
+
 /** 剥掉应用日志包裹;返回 null 表示非应用包裹(用户自有重定向原样保留) */
 export function unwrapLogCmd(cmdRaw: string, home: string): { cmd: string; logPath: string } | null {
-  const m = cmdRaw.match(/^(.*\S)\s+>>\s*(\S+)\s+2>&1$/)
+  // 路径用 `.+?` 而非 `\S+`:日志模板里含 `$(date +%Y%m%d%H)`(date 与 +之间**有空格**),
+  // `\S+` 会抓不全。放宽后由 isLauncherCronLogPath(必须落在本应用日志目录内)兜底,不会误判用户自有重定向。
+  const m = cmdRaw.match(/^(.*\S)\s+>>\s*(.+?)\s+2>&1$/)
   if (!m) return null
   const path = m[2]
   if (!isLauncherCronLogPath(home, path)) return null
@@ -99,8 +125,13 @@ function parseJobLine(
   if (scope === 'system' && user === '' && !special) return null
 
   const unwrapped = unwrapLogCmd(rest, home)
-  const cmd = unwrapped ? unwrapped.cmd : rest
+  const cmd = unescapePercent(unwrapped ? unwrapped.cmd : rest) // 还原写回时转义的 `\%`
   if (cmd === '') return null
+  // 日期模板形态(新写):实际文件按 id 扫目录解析,故此处不填 logPath
+  const unwrappedPath = unwrapped === null ? null : unescapePercent(unwrapped.logPath)
+  const template = unwrappedPath !== null && isCronLogTemplate(unwrappedPath)
+  // 仅「会真正执行」的任务才可能静默失败;停用任务在启用时会经 renderJobLine 自动修正
+  const percentUnescaped = enabled && hasUnescapedPercent(rest)
 
   return {
     user,
@@ -108,9 +139,11 @@ function parseJobLine(
     cmd,
     enabled,
     log: unwrapped !== null,
-    logPath: unwrapped?.logPath,
+    logPath: template || unwrappedPath === null ? undefined : unwrappedPath,
+    ...(template ? { logTemplate: true as const } : {}),
     special: special !== null,
-    system: scope === 'system' ? true : undefined
+    system: scope === 'system' ? true : undefined,
+    ...(percentUnescaped ? { percentUnescaped: true as const } : {})
   }
 }
 
@@ -190,10 +223,15 @@ export function serializeCrontab(doc: ParsedCrontab): string {
   return doc.lines.join('\n')
 }
 
-/** 渲染任务行(编辑写回用;canonical 单空格格式);logPath 由调用方按 id 解析 */
-export function renderJobLine(job: CronJob, logPath: string): string {
+/**
+ * 渲染任务行(编辑写回用;canonical 单空格格式)。
+ * logTarget 由调用方按 id 构造 —— 新式传 `cronLogTemplate()`(含 `$(date +%Y%m%d%H)`,
+ * 由 shell 展开为每小时一段的文件名),历史条目仍可传具体路径。
+ */
+export function renderJobLine(job: CronJob, logTarget: string): string {
   const withUser = job.system ? `${job.expr} ${job.user}` : job.expr
-  const body = job.log ? `( ${job.cmd} ) >> ${logPath} 2>&1` : job.cmd
+  // 命令字段整体转义 %(含日志重定向),否则 cron 会截断命令 —— 模板里的日期 % 也正由此安全表达
+  const body = job.log ? `( ${escapePercent(job.cmd)} ) >> ${escapePercent(logTarget)} 2>&1` : escapePercent(job.cmd)
   const line = `${withUser} ${body}`
   return job.enabled ? line : `${DISABLED_PREFIX}${line}`
 }

@@ -19,12 +19,20 @@ import type { ShellRunner } from './shell-runner'
 
 export interface LaunchctlService {
   domainOf(scope: AgentScope): string
-  /** gui = 用户态 `launchctl list`(不含 system 域);system = `launchctl print system` 服务表;按作用域取用 */
-  list(): Promise<{ gui: Map<string, LaunchctlEntry>; system: Map<string, LaunchctlEntry>; disabled: Set<string> }>
+  /**
+   * gui = 用户态 `launchctl list`(不含 system 域);system = `launchctl print system` 服务表;按作用域取用
+   * disabled 按域分列(print-disabled 输出是 per-domain 的):同名 label 在两域可有不同覆盖位,
+   * 不得合并(合并会让 system 域的停用误染用户级同名 agent)
+   */
+  list(): Promise<{
+    gui: Map<string, LaunchctlEntry>
+    system: Map<string, LaunchctlEntry>
+    disabled: { gui: Set<string>; system: Set<string> }
+  }>
   print(label: string, scope: AgentScope): Promise<LaunchctlPrintInfo>
   bootstrap(plistPath: string, scope: AgentScope): Promise<void>
   bootout(plistPath: string, scope: AgentScope): Promise<void>
-  kickstart(label: string, scope: AgentScope): Promise<void>
+  kickstart(label: string, scope: AgentScope, opts?: { kill?: boolean }): Promise<void>
   enable(label: string, scope: AgentScope): Promise<void>
   disable(label: string, scope: AgentScope): Promise<void>
   /** 停止(SIGTERM → 轮询 → SIGKILL);进程已不在 → alreadyStopped */
@@ -88,7 +96,10 @@ export function createLaunchctlService(deps: {
       ])
       const gui = parseLaunchctlList(all.stdout)
       const system = parseDomainServices(sysDomain.stdout)
-      const disabled = new Set([...parsePrintDisabled(guiDisabled.stdout), ...parsePrintDisabled(sysDisabled.stdout)])
+      const disabled = {
+        gui: parsePrintDisabled(guiDisabled.stdout),
+        system: parsePrintDisabled(sysDisabled.stdout)
+      }
       return { gui, system, disabled }
     },
 
@@ -117,8 +128,10 @@ export function createLaunchctlService(deps: {
       }
     },
 
-    async kickstart(label, scope) {
-      await runElevatedOrLocal(`launchctl kickstart ${domainOf(scope)}/${label}`, scope)
+    async kickstart(label, scope, opts) {
+      // -k:先杀掉正在运行的实例再重启(「重启」意图);目标须在 flag 之后(`kickstart [-kp] service-target`)
+      const flag = opts?.kill ? '-k ' : ''
+      await runElevatedOrLocal(`launchctl kickstart ${flag}${domainOf(scope)}/${label}`, scope)
     },
 
     async enable(label, scope) {

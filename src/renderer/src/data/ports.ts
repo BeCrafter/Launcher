@@ -8,7 +8,6 @@ import type {
   CronListPayload,
   CronScope,
   DrawerStatusModel,
-  InvalidPlist,
   LogLine,
   OpsState,
   PortService
@@ -22,23 +21,22 @@ import type {
   ServicesListPayload
 } from '@shared/ipc'
 
-export type OpAction = 'load' | 'unload' | 'enable' | 'disable' | 'kickstart'
+/** 意图动作(用户语义):顺序逻辑在 main 内部完成 */
+export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
 export type AgentScope = 'user' | 'system' | 'daemon'
 export type AgentFilter = 'all' | 'brew' | 'user' | 'system' | 'daemon'
 export type CronFilter = 'all' | 'user' | 'system'
 export type SvcFilter = 'all' | 'brew' | 'node' | 'process' | 'docker'
 
 export interface AgentRepository {
-  list(): Promise<{ agents: Agent[]; invalidPlists: InvalidPlist[] }>
-  // demo toggleAgent:running → bootout 停止;否则 bootstrap 启动(返回新状态)
-  toggle(id: string): Promise<Agent>
+  list(): Promise<{ agents: Agent[] }>
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
   // 草稿:以给定 label 新建未加载条目并插入列表顶(demo openAgentDraft;label 去重在调用方完成)
   createDraft(scope: AgentScope, label: string): Promise<Agent>
   save(id: string, patch: Partial<AgentForm> & { label: string; desc: string }): Promise<Agent>
   remove(id: string): Promise<void>
   clone(id: string): Promise<Agent>
-  // 抽屉 ops 模拟状态机(demo drawerOpsAction)
+  // 意图动作(启动/停止/重启/开机自启/立即执行一次)
   ops(id: string, action: OpAction): Promise<OpsState>
   // 阶段 1 起:per-agent plist/launchctl 真实数据
   readForm(id: string): Promise<AgentForm>
@@ -48,8 +46,6 @@ export interface AgentRepository {
   readLogs(id: string, source: 'file' | 'system'): Promise<LogLine[]>
   clearLogs(id: string): Promise<void>
   validateXml(xml: string): Promise<{ ok: boolean; error: string | null }>
-  /** 删除无效 plist 文件(横幅删除按钮) */
-  removeInvalid(path: string): Promise<void>
   /** 定向复核:候选条目是否「仍被加载但 plist 已不存在」 */
   checkMissing(candidates: { scope: AgentScope; label: string }[]): Promise<MissingAgent[]>
 }

@@ -24,6 +24,8 @@ interface CronState {
   setEnabled(job: CronJob, enabled: boolean): Promise<void>
   setLog(job: CronJob, log: boolean): Promise<void>
   save(job: CronJob, patch: Partial<CronJob>): Promise<void>
+  /** 一键修复:重写该任务行(crontab 中的命令含未转义 % → cron 会截断它) */
+  repairEscaping(job: CronJob): Promise<void>
   remove(job: CronJob): Promise<void>
   create(input: Omit<CronJob, 'id'>): Promise<void>
   writeHeader(scope: CronScope, text: string): Promise<void>
@@ -74,6 +76,15 @@ export const useCronStore = create<CronState>((set, get) => ({
     await get().load()
     set({ editingId: null })
     showToast(t()(stale ? 'toast.cronStale' : 'toast.cronSaved'), '#4ade80', 'fa-check')
+  },
+
+  // 修复命令里未转义的 %:空补丁触发重写 → service 侧 renderJobLine 会转义
+  // (内容身份 (expr,cmd) 未变 → id 稳定,不产生其他 churn)
+  async repairEscaping(job) {
+    await dataSource().crons.update(job, {})
+    if (job.system) ELEVATION.noteSuccess()
+    await get().load()
+    showToast(t()('toast.cronPercentFixed'), '#facc15', 'fa-wrench')
   },
 
   // demo deleteCronJob(危险确认在调用方)

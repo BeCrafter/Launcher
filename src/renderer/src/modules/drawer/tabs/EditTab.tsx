@@ -85,7 +85,27 @@ export function EditTab(): React.JSX.Element {
   const save = useDrawerStore((s) => s.save)
   const xml = useDrawerStore((s) => s.xml)
   const setXml = useDrawerStore((s) => s.setXml)
-  if (!form) return <div />
+  const isNotTask = useDrawerStore((s) => s.isNotTask)
+  // 损坏文件:没有可解析的字典,表单无从填起 → 给出去处(XML 修复)并保留唯一的动作(删除)
+  if (!form) {
+    return (
+      <div className="drawer-section active" id="dft-edit" style={{ display: 'flex' }}>
+        <div className="section-scroll-area">
+          <div className="nontask-notice broken" title={t('agent.broken.title')}>
+            <i className="fa-solid fa-triangle-exclamation" />
+            <span>{t('agent.broken.title')}</span>
+          </div>
+        </div>
+        <div className="section-footer">
+          <div className="section-footer-left">
+            <button className="d-btn red" type="button" onClick={() => void remove()}>
+              <i className="fa-solid fa-trash-can" /> <span>{t('btn.delete')}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   const trig = form.triggers
   const setTrig = (patch: Partial<typeof trig>): void => updateForm({ triggers: { ...trig, ...patch } })
@@ -93,6 +113,13 @@ export function EditTab(): React.JSX.Element {
   return (
     <div className="drawer-section active" id="dft-edit" style={{ display: 'flex' }}>
       <div className="section-scroll-area">
+        {/* 非任务文件:填上 Label 并保存即成为真正的任务(原地重写,保留原文件名) */}
+        {isNotTask && (
+          <div className="nontask-notice" title={t('agent.notTask.title')}>
+            <i className="fa-solid fa-file-circle-question" />
+            <span>{t('agents.notTask.labelRequired')}</span>
+          </div>
+        )}
         {/* § 标识 */}
         <CfgGroup icon="fa-solid fa-fingerprint" title={t('cfg.group.ident')} subtitle="Identification">
           <div className="f-row center">
@@ -323,7 +350,13 @@ export function EditTab(): React.JSX.Element {
           <button className="d-btn red" type="button" onClick={() => void remove()}>
             <i className="fa-solid fa-trash-can" /> <span>{t('btn.delete')}</span>
           </button>
-          <button className="d-btn" type="button" onClick={() => void clone()}>
+          <button
+            className="d-btn"
+            type="button"
+            disabled={isNotTask}
+            title={isNotTask ? t('agent.notTask.title') : undefined}
+            onClick={() => void clone()}
+          >
             <i className="fa-solid fa-copy" /> <span>{t('btn.clone')}</span>
           </button>
         </div>

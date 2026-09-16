@@ -1,4 +1,6 @@
 // 文件头面板(阶段 2 增强项):查看/编辑 crontab 首个任务之前的注释与环境变量块
+// ⚠ 当前未挂载(2026-09-13 用户反馈:列表上方暂不需要该区域)——组件与 main 侧 writeHeader 能力保留,
+//   需要时在 CronView 重新渲染 <CronHeaderPanel /> 即可恢复。
 // 数据 = store.headers[scope].headerRaw(main 解析产物);保存只替换头部区块,任务区原样
 import { useState } from 'react'
 import { useT } from '../../hooks/useT'
