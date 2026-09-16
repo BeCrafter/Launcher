@@ -113,6 +113,9 @@ export interface DockerContainer {
   portsRaw: string
 }
 
+/** docker 不可用的原因(main 判定 → 经 ServicesListPayload 供 UI 区分「未装 CLI」与「daemon 未运行」) */
+export type DockerUnavailableReason = 'cli-missing' | 'daemon-down' | 'timeout' | 'unknown'
+
 export type SvcType = 'brew' | 'node' | 'process' | 'docker'
 
 export type SvcKind = 'brew' | 'node' | 'python' | 'php' | 'jvm' | 'ruby' | 'docker' | 'dev' | 'process'

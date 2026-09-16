@@ -34,6 +34,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - **UI 层迁移**（demo → React，mock 驱动）：Agents / 定时任务 / 端口服务 / 设置页六 pane / Agent 抽屉(4 tab)/ 全部浮层 ✅——逐项映射见 `docs/design/demo-react-migration-map.md`
 - **设置后端完善**（2026-09-10）：15 键全部「落盘 + 生效」；appliers 按域模块化；menubarBadge→Tray 角标 / fseventsActive→fs.watch 链路 / cmdTimeout→ShellRunner 地基 / xmlIndent→编辑器+格式化 全部真实接线（cronLogRetainDays 待阶段 2）；关于页/登录页 mock 真实化（app:info 版本 / GitHub Releases 检查更新 / 系统设置跳转）✅
 - **阶段 2/3 真实后端**（2026-09-11）：定时任务（真实 crontab 读写/提权/日志/文件头面板/下次执行预测）+ 端口服务（lsof 发现/分类管线/kill/重启/Docker 降级/按需轮询）✅——差异见 `docs/design/demo-react-migration-map.md`「阶段 2/3 落地差异」
+- **端口服务覆写**（2026-09-17）：服务别名 / Host / 路径（双击改名 + 「配置」浮层）+ Open/Copy 改用完整 URL（修复 Copy 只复制端口号的 bug）+ 地址标签改可连接 host（恒量 `proto` 不再渲染）+ Docker 四处修复（裸命令 ENOENT 路径解析 / `docker ps` 显式超时 / docker chip 补过滤分支 / 不可用带原因提示）✅——差异见 migration-map 差异 21/22；存储为 `shared/settings.ts` 的 `serviceOverrides`（renderer 解析，**main 无需 applier**）
 - **阶段 1 真实后端**（2026-09-11）：Launch Agents（launchctl 域映射/bootstrap-bootout-kickstart-enable/plist 三目录扫描与提权写/表单⇄XML 双向/真实状态与日志/brew 合并与路由）✅——差异见 migration-map「阶段 1 落地差异」；**三域（agents/cron/services）至此全部真实**
 - **打开慢修复**（2026-09-11）：brew 移出 agents 列表关键路径（isBrew 改 `domains/brew-heuristic` 纯启发式，机制同源开源 BrewManagedSupport；brew services list 实测 11-13s 且被 cmdTimeout 杀掉）、scanAll 记忆+单飞、首屏骨架态（`components/ui/Skeleton`）、log show / brew 全调用点显式 45s 超时——差异见 migration-map「打开慢修复」；首屏 ~10s → ~0.9s
 - 阶段 4 AI+MCP / 阶段 5 双形态与设置收尾（待办）
@@ -49,7 +50,7 @@ src/
 │   │   ├── types.ts   # ApplyCtx/SettingsApplier/TrayController(域间唯一契约)
 │   │   └── appliers/  # 按域副作用模块(appearance/dock/tray/login/fsevents)+ index.ts 注册表调度
 │   ├── ipc.ts         # settings:get/set/reset、app:info、agents:badgeCount、app:checkUpdates、shell:openExternal(url-guard 白名单)、settings:changed 广播
-│   ├── services/      # 执行层:shell-runner/dir-watcher/update-check/elevation(提权)/launchctl-service+plist-service+brew-agent-service+agent-service(阶段1)/crontab-service/process-discovery/termination/docker-service
+│   ├── services/      # 执行层:shell-runner/dir-watcher/update-check/elevation(提权)/launchctl-service+plist-service+brew-agent-service+agent-service(阶段1)/crontab-service/process-discovery/termination/docker-service/docker-path(与 brew-path 同款绝对路径探测)
 │   ├── domains/       # 纯函数领域层:launchctl-parse/plist-xml/agent-form(阶段1)+crontab/cron-next-run→shared/lsof-parse/service-classify/docker-parse/log-lines
 │   ├── stores/        # AgentStore/CronStore/ServiceStore（阶段 1 起）
 │   ├── ai/            # registry/llm/agent/skills/prompts（阶段 4）
@@ -59,17 +60,17 @@ src/
 │   ├── components/    # 分层组件:ui/(L0 原语 TagChip/StatusDot/ActBtn/Toggle/Chip/Toast…)、Modal/GroupBlock/FilterBar/StatusBar(L1)、cards/(L2 Agent/Svc 卡)、overlays/(提权/危险/导入)、XmlEditor(CodeMirror 6)
 │   ├── modules/       # 视图:agents/cron(卡片+内联编辑+日志抽屉+新建模态)/services/drawer(壳+4 tab+SciBuilder+MultiValueList)/settings(6 pane)
 │   ├── layout/        # AppShell/Sidebar/Topbar/ViewHost
-│   ├── state/         # zustand:settings(乐观+IPC)/ui(路由/浮层/toast)/agents/cron/services/drawer(抽屉状态机)/bootstrap
+│   ├── state/         # zustand:settings(乐观+IPC)/ui(路由/浮层/toast)/agents/cron/services/drawer(抽屉状态机)/card-menu+svc-config(根级浮层锚点)/bootstrap
 │   ├── data/          # 数据接缝:ports(仓储接口)/index(三域全 IPC)/ipc/(真实后端映射)/mock/(mock-data 仅剩静态 urls)
 │   ├── i18n/          # dict.*.ts 由 scripts/port-demo-i18n.mjs 生成(勿手改)+ t/fmt/useT
-│   ├── lib/           # 纯函数:cron/sci/plist/classify/ops-bar(5 态表)/elevation(Promise API)/utils/modules(注册表)/statusbars
+│   ├── lib/           # 纯函数:cron/sci/plist/classify/ops-bar(5 态表)/svc-override(别名·host·URL 解析)/elevation(Promise API)/utils/modules(注册表)/statusbars
 │   ├── hooks/         # useT/useFmt/useSidebarLayout(ResizeObserver+折叠三重同步)/useAppInfo(app:info 模块级缓存)
 │   ├── assets/        # rocketOrbit2Theme.ts(生成的双主题 dataURL)
 │   └── styles/        # base/layout/views/settings/drawer.css(逐字节移植自 demo,勿就地修改)
 └── shared/            # settings.ts(schema+normalize)/models.ts(领域类型)/ipc.ts(通道契约+事件)/url-guard(外链 scheme 白名单)/constants/api
 ```
 
-约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed`/`agents:dirChanged` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；新增设置 = `shared/settings.ts` 加键 + `main/settings/appliers/` 对应域模块 + 渲染层消费点（配置单文件不散落）；**主进程窗口生命周期：`menubarOnly`（默认开）下关窗是 `hide()` 不是销毁 —— 窗口对象仍在、`getAllWindows().length` 仍为 1，故任何唤起窗口的路径（Dock `activate` / `second-instance` / Tray）一律走 `showMainWindow()`（show/restore/focus），不要用「窗口数为 0」判断**（Electron 脚手架的 `activate` 写法即如此 → 打包后点 Dock 图标静默无反应，2026-09-13 修）；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 i18n 字典/`mock-data.ts` 勿手改（生成脚本见 scripts/）**。
+约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed`/`agents:dirChanged` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；新增设置 = `shared/settings.ts` 加键 + **有副作用才**加 `main/settings/appliers/` 域模块 + 渲染层消费点（配置单文件不散落；纯数据键走 `settings:set` 即可 —— `SettingsPatch = Partial<LauncherSettings>` 且 `store.save()` 自带浅合并+normalize+原子写+广播，无需新 IPC / preload / 仓储方法）；**主进程窗口生命周期：`menubarOnly`（默认开）下关窗是 `hide()` 不是销毁 —— 窗口对象仍在、`getAllWindows().length` 仍为 1，故任何唤起窗口的路径（Dock `activate` / `second-instance` / Tray）一律走 `showMainWindow()`（show/restore/focus），不要用「窗口数为 0」判断**（Electron 脚手架的 `activate` 写法即如此 → 打包后点 Dock 图标静默无反应，2026-09-13 修）；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 `mock-data.ts` 勿手改；⚠ i18n 字典**勿**用 `node scripts/port-demo-i18n.mjs` 全量重跑** —— demo 侧 `ai.*` 已改、renderer 字典尚未跟上，重跑会注入约 98 个无关键；正确做法：新键写进该脚本的 `EXTRA`，再按同序**定点插入**两份字典，并用「生成到临时目录再 diff」验证（先例见 migration-map 差异 37 与 22）**。
 
 ## 页面架构（docs/demo/，冻结基线——以下为 demo 自身约定，仅作对照阅读）
 

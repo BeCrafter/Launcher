@@ -86,8 +86,9 @@
   white-space: nowrap;
 }
 
-/* Agent 卡片「更多」菜单(根级浮层,应用新增):启用/停用快捷入口 */
-.agent-card-menu {
+/* 卡片级根浮层的公共外壳(Agent「更多」菜单 / 服务「配置」):固定定位 + 面板观感 */
+.agent-card-menu,
+.svc-config-menu {
   position: fixed;
   z-index: 90;
   background: var(--surface2);
@@ -436,12 +437,125 @@
 }
 
 /* 非任务/损坏行:启停与「更多」禁用(base.css 的 .act-btn.green/.blue:hover 特异性同为 3 类,
-   靠本文件后置导入取胜 —— 不禁用 hover 态的话禁用按钮看起来还是能点) */
+   靠本文件后置导入取胜 —— 不禁用 hover 态的话禁用按钮看起来还是能点)
+   端口服务无端口映射的容器同样禁用「打开/复制」 */
 .agent-col-card .act-btn:disabled,
-.agent-col-card .act-btn:disabled:hover {
+.svc-col-card .act-btn:disabled,
+.agent-col-card .act-btn:disabled:hover,
+.svc-col-card .act-btn:disabled:hover {
   opacity: 0.3;
   border-color: var(--border);
   background: var(--panel);
   color: var(--muted);
   cursor: default;
+}
+
+/* ── 端口服务「配置」浮层(应用新增;外壳复用上面的 .agent-card-menu 公共规则) ── */
+.svc-config-menu {
+  gap: 8px;
+  padding: 10px;
+}
+
+.svc-config-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.svc-config-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+.svc-config-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 5px 7px;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.svc-config-input:focus {
+  outline: none;
+  border-color: var(--accent2);
+}
+
+.svc-config-hint {
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+.svc-config-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.svc-config-btn {
+  padding: 5px 10px;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.svc-config-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.svc-config-btn.primary {
+  border-color: var(--accent2);
+  color: var(--accent2);
+}
+
+/* 卡片内就地改名(双击名称触发);.svc-name 在冻结的 views.css 内,故输入框样式落在此处 */
+.svc-name-edit {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 5px;
+  border: 1px solid var(--accent2);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-family: inherit;
+}
+
+.svc-name-edit:focus {
+  outline: none;
+}
+
+/* Docker 不可用提示条(占满 .group-card-grid 整行) */
+.svc-docker-notice {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border2);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.svc-docker-notice i {
+  color: var(--dim);
+}
+
+.svc-docker-notice-hint {
+  font-size: 10px;
+  color: var(--dim);
 }

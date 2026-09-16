@@ -1,7 +1,7 @@
 // ported-from: docs/demo/js/services.js classifySvc/SVC_GROUP_META @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 端口服务分类管线(逐行为移植 services.js:① Brew Resolver ② COMMAND 映射 ③ 兜底 process)
 import type { SvcFilter } from '../data/ports'
-import type { DockerContainer, PortService, SvcType } from '@shared/models'
+import type { DockerContainer, DockerUnavailableReason, PortService, SvcType } from '@shared/models'
 export type { SvcType }
 
 /** 容器条目 → 卡片模型(端口取首个映射;无映射为 0,卡片隐藏端口标签) */
@@ -56,8 +56,23 @@ export function filterServices(
     if (filter === 'brew') return type === 'brew'
     if (filter === 'node') return type === 'node'
     if (filter === 'process') return type === 'process'
+    if (filter === 'docker') return type === 'docker'
     return true
   })
+}
+
+/** docker 不可用提示(图标 + 文案键);daemon-down 复用既有的 svc.dockerUnavailable */
+export function dockerNotice(reason: DockerUnavailableReason | null): { icon: string; key: string } {
+  switch (reason) {
+    case 'cli-missing':
+      return { icon: 'fa-solid fa-download', key: 'svc.docker.cliMissing' }
+    case 'timeout':
+      return { icon: 'fa-solid fa-hourglass-half', key: 'svc.docker.timeout' }
+    case 'daemon-down':
+      return { icon: 'fa-solid fa-power-off', key: 'svc.dockerUnavailable' }
+    default:
+      return { icon: 'fa-solid fa-circle-info', key: 'svc.docker.unknown' }
+  }
 }
 
 // demo renderServices 分组顺序固定:node → brew → process;docker 容器组置末(阶段 3)

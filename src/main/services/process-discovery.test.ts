@@ -60,7 +60,10 @@ function harness(opts?: { lsofFail?: boolean; dockerAvailable?: boolean }) {
     }
   }
   const docker: DockerService = {
-    refresh: async () => ({ available: opts?.dockerAvailable ?? false, containers: opts?.dockerAvailable ? [container()] : [] }),
+    refresh: async () =>
+      opts?.dockerAvailable
+        ? { available: true, containers: [container()], reason: null }
+        : { available: false, containers: [], reason: 'daemon-down' as const },
     action: async () => {}
   }
   const onChange = vi.fn<(r: ScanResult) => void>()

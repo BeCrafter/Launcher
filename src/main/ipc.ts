@@ -19,6 +19,7 @@ import type { AgentService } from './services/agent-service'
 import { checkForUpdate } from './services/update-check'
 import type { CrontabService } from './services/crontab-service'
 import type { DockerService } from './services/docker-service'
+import { toServicesPayload as buildServicesPayload } from './services/process-discovery'
 import type { ProcessDiscovery, ScanResult } from './services/process-discovery'
 import type { TerminationService } from './services/termination'
 import type { SettingsStore } from './settings/store'
@@ -37,14 +38,9 @@ export interface IpcDeps {
 export function registerIpc(deps: IpcDeps): void {
   const { store } = deps
 
-  const toServicesPayload = (r: ScanResult): ServicesListPayload => ({
-    services: r.services,
-    brewServices: r.brewServices,
-    containers: r.containers,
-    dockerAvailable: r.dockerAvailable,
-    polling: deps.discovery.polling,
-    scannedAt: r.scannedAt
-  })
+  // 负载构造单一来源在 process-discovery(推送侧 index.ts 共用同一条,避免字段漂移)
+  const toServicesPayload = (r: ScanResult): ServicesListPayload =>
+    buildServicesPayload(r, deps.discovery.polling)
   const findService = (id: string): { pid?: number; cmd: string } | undefined =>
     deps.discovery.getLast().services.find((s) => s.id === id)
   ipcMain.handle(IPC.settingsGet, () => store.get())

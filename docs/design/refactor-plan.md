@@ -42,7 +42,7 @@ BeCrafter/Launcher 是基于开源项目 [Sean10000/LaunchManager](https://githu
 | 导入 plist / 粘贴 XML | ImportPlistSheet | importModal | 直迁 |
 | 克隆 agent | CloneAgentSheet（.copy 后缀、重名守卫） | drawer footer Delete/Clone 按钮（**dpAction 未定义，死代码**） | 实现并修复 demo 缺陷 |
 | 登录项指南 | LoginItemsGuideView | view-login | 直迁 |
-| 服务自定义重命名 | ServiceNameStore（UserDefaults） | — | 迁移 |
+| 服务自定义重命名 | ServiceNameStore（UserDefaults） | `shared/settings.ts` 的 `serviceOverrides` + `lib/svc-override.ts` + `overlays/SvcConfigMenu.tsx` | ✅ 2026-09-17（**偏离**：存储改 settings.json 而非 UserDefaults；并扩展出 Host / 路径 两项开源没有的覆写 —— 见 migration-map 差异 22） |
 | Unicode 路径规范 | FilePathNormalizer（octal-escape 解码、mojibake 修复） | — | 迁移（必需） |
 | launchctl 错误友好化 | LaunchctlErrorFormatter | — | 迁移 |
 
@@ -114,8 +114,8 @@ domains（launchctl list/print/print-disabled、plist CRUD/validate/解析）→
 ### 阶段 2 — Cron 模块 ✅(2026-09-11 落地;差异见 migration-map「阶段 2/3 落地差异」)
 CrontabParser round-trip（注释/env 保真、引号感知切分）→ 行内编辑 + 预设 + 人读翻译 + **下次执行时间预测** + 文件头面板 + /etc/crontab 提权 + 侧边栏 badge。验收：文件往返一致（vitest + 手工），对齐开源 10 个 cron 用例。
 
-### 阶段 3 — 端口服务 ✅(2026-09-11 落地;「重命名/生成 LA 草稿」经用户确认跳过)
-lsof 发现（Unicode 规范化）→ 8 Resolver 分类管线 + Docker → kill 确认/终止 + **本地服务启停/重启**（SIGTERM→SIGKILL 复用终止管线；docker 容器 start/stop）→ 重命名 → 生成 LA 草稿 → dev filter + 侧边栏 badge。验收：docker/colima 场景手工验证，对齐开源服务分类 30+ 用例。
+### 阶段 3 — 端口服务 ✅(2026-09-11 落地;「重命名」2026-09-17 解禁落地,「生成 LA 草稿」仍跳过)
+lsof 发现（Unicode 规范化）→ 8 Resolver 分类管线 + Docker → kill 确认/终止 + **本地服务启停/重启**（SIGTERM→SIGKILL 复用终止管线；docker 容器 start/stop）→ 重命名（**2026-09-17**：别名 / Host / 路径覆写 + Open/Copy 改用完整 URL + Docker 四处修复，见 migration-map 差异 21/22）→ 生成 LA 草稿（**仍跳过**：需杀进程后再 bootstrap，且环境不可复现 —— macOS 读不到别的进程的环境变量）→ dev filter + 侧边栏 badge。验收：docker/colima 场景手工验证，对齐开源服务分类 30+ 用例。
 
 ### 阶段 4 — AI + MCP（按 docs/design/ai-capability.md 步骤 1-7）
 domains 复用 → ToolRegistry（只读 9 工具）→ MCP stdio 挂载实测 → pi-ai LlmClient + 专家提示词 → pi-agent-core + skill-plist 校验闭环/skill-diag → 聊天 UI → 写操作确认与安全。验收：plutil 闭环、3 故障案例、Claude Code 挂载、范围约束。
