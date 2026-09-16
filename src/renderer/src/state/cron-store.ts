@@ -26,6 +26,8 @@ interface CronState {
   save(job: CronJob, patch: Partial<CronJob>): Promise<void>
   /** 一键修复:重写该任务行(crontab 中的命令含未转义 % → cron 会截断它) */
   repairEscaping(job: CronJob): Promise<void>
+  /** 一键迁移:把「历史单文件」日志改为按小时分段(同为空补丁重写该行) */
+  migrateLog(job: CronJob): Promise<void>
   remove(job: CronJob): Promise<void>
   create(input: Omit<CronJob, 'id'>): Promise<void>
   writeHeader(scope: CronScope, text: string): Promise<void>
@@ -85,6 +87,15 @@ export const useCronStore = create<CronState>((set, get) => ({
     if (job.system) ELEVATION.noteSuccess()
     await get().load()
     showToast(t()('toast.cronPercentFixed'), '#facc15', 'fa-wrench')
+  },
+
+  // 一键迁移:把「历史单文件」日志改为按小时分段(同为空补丁重写该行 → renderJobLine 用日期模板)。
+  // ⚠ 迁移瞬间显示的文件仍是旧的整份(当前小时的新段要等下次执行才产生)→ 必须有 toast 明示,否则像没反应。
+  async migrateLog(job) {
+    await dataSource().crons.update(job, {})
+    if (job.system) ELEVATION.noteSuccess()
+    await get().load()
+    showToast(t()('toast.cronLogMigrated'), '#facc15', 'fa-layer-group')
   },
 
   // demo deleteCronJob(危险确认在调用方)

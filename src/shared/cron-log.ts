@@ -33,15 +33,24 @@ export function cronLogLegacyPath(home: string, id: string): string {
 }
 
 /**
- * 该文件名是否属于任务 id 的日志。
- * 精确匹配 `<id>-<YYYYMMDDHH>.log`(10 位)与旧式 `<id>.log` —— 不能用 `<id>-*` 前缀匹配,
+ * 文件名 → 段语义:按小时的段(10 位时间戳)/ 迁移前的历史单文件 / 不属于该任务(null)。
+ * 精确匹配 `<id>-<YYYYMMDDHH>.log` 与旧式 `<id>.log` —— 不能用 `<id>-*` 前缀匹配,
  * 因为重复任务 id 会带 `-N` 后缀(如 `abc` 与 `abc-1`),前缀匹配会互相串。
  * ⚠ 位宽必须与 cronLogTemplate 的 `%Y%m%d%H` 一致(年月日时 = 10 位,不是 8)。
  */
-export function matchCronLogFile(id: string, fileName: string): boolean {
-  if (fileName === `${id}.log`) return true
+export function cronLogSegmentOf(
+  id: string,
+  fileName: string
+): { kind: 'hour'; stamp: string } | { kind: 'legacy' } | null {
+  if (fileName === `${id}.log`) return { kind: 'legacy' }
   const escaped = id.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&')
-  return new RegExp(`^${escaped}-\\d{10}\\.log$`).test(fileName)
+  const m = fileName.match(new RegExp(`^${escaped}-(\\d{10})\\.log$`))
+  return m === null ? null : { kind: 'hour', stamp: m[1] }
+}
+
+/** 该文件名是否属于任务 id 的日志(按小时段 + 旧式单文件)—— cronLogSegmentOf 的布尔投影 */
+export function matchCronLogFile(id: string, fileName: string): boolean {
+  return cronLogSegmentOf(id, fileName) !== null
 }
 
 /** 判断路径是否位于本应用 cron 日志目录(解析日志包裹行时用于识别应用自有重定向) */

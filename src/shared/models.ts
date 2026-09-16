@@ -50,6 +50,20 @@ export interface CronJob {
   percentUnescaped?: boolean
   /** 日志重定向为「日期模板」形式(每小时一段):实际文件需按 id 扫目录解析,故 logPath 由后端填充 */
   logTemplate?: boolean
+  /** 已产生的**按小时分段**文件数(不含迁移前的历史单文件);由后端 list() 扫描填充,供 UI 显示「共 N 段」 */
+  segmentCount?: number
+}
+
+/** 一个日志文件(分段或迁移前的历史单文件);供日志抽屉的文件列表 */
+export interface CronLogFileInfo {
+  /** 文件名(如 5ca5a5f7-2026091622.log) */
+  name: string
+  size: number
+  mtimeMs: number
+  /** 迁移前的整份单文件(非按小时分段) */
+  legacy: boolean
+  /** 小时段的 10 位时间戳 `YYYYMMDDHH`(legacy 文件无此值);UI 据此显示小时区间 */
+  stamp?: string
 }
 
 /** 单个 crontab 作用域的元信息 */

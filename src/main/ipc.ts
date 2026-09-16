@@ -147,7 +147,10 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.cronCreate, (_e, job: Omit<CronJob, 'id'>) => deps.cron.create(job))
   ipcMain.handle(IPC.cronUpdate, (_e, job: CronJob, patch: Partial<CronJob>) => deps.cron.update(job, patch))
   ipcMain.handle(IPC.cronRemove, (_e, job: CronJob) => deps.cron.remove(job))
-  ipcMain.handle(IPC.cronReadLog, (_e, id: string) => deps.cron.readLog(id))
+  ipcMain.handle(IPC.cronReadLog, (_e, id: string, name?: string) => deps.cron.readLog(id, name))
+  ipcMain.handle(IPC.cronListLogs, (_e, id: string) => deps.cron.listLogs(id))
+  ipcMain.handle(IPC.cronDeleteLog, (_e, id: string, name: string) => deps.cron.deleteLog(id, name))
+  ipcMain.handle(IPC.cronCleanupLogs, () => deps.cron.cleanupLogs())
   ipcMain.handle(IPC.cronWriteHeader, (_e, scope: CronScope, text: string) => deps.cron.writeHeader(scope, text))
 
   // ── 端口服务(阶段 3) ──

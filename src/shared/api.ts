@@ -20,6 +20,7 @@ import type {
   AgentScope,
   CronJob,
   CronListPayload,
+  CronLogFileInfo,
   CronScope,
   DrawerStatusModel,
   LogLine,
@@ -75,7 +76,13 @@ export interface LauncherApi {
     create: (job: Omit<CronJob, 'id'>) => Promise<CronJob>
     update: (job: CronJob, patch: Partial<CronJob>) => Promise<CronUpdateResult>
     remove: (job: CronJob) => Promise<void>
-    readLog: (id: string) => Promise<LogLine[]>
+    readLog: (id: string, name?: string) => Promise<LogLine[]>
+    /** 该任务已有的日志文件(新 → 旧),供日志抽屉的文件列表 */
+    listLogs: (id: string) => Promise<CronLogFileInfo[]>
+    /** 删除单个日志文件(文件名须属于该任务;已不存在按成功处理) */
+    deleteLog: (id: string, name: string) => Promise<void>
+    /** 清理超过保留期的日志文件,返回删除数量 */
+    cleanupLogs: () => Promise<number>
     writeHeader: (scope: CronScope, text: string) => Promise<void>
   }
   // 端口服务(阶段 3:真实进程发现/终止)

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   cronLogDir,
   cronLogLegacyPath,
+  cronLogSegmentOf,
   cronLogTemplate,
   isCronLogTemplate,
   isLauncherCronLogPath,
@@ -34,5 +35,16 @@ describe('cron-log 路径契约', () => {
   it('日志目录判定(应用自有重定向识别用)', () => {
     expect(isLauncherCronLogPath(HOME, `${cronLogDir(HOME)}/x.log`)).toBe(true)
     expect(isLauncherCronLogPath(HOME, '/var/log/x.log')).toBe(false)
+  })
+
+  it('cronLogSegmentOf:小时段带 10 位时间戳 / 旧式单文件 / 其余为 null', () => {
+    expect(cronLogSegmentOf(ID, `${ID}-2026091310.log`)).toEqual({ kind: 'hour', stamp: '2026091310' })
+    expect(cronLogSegmentOf(ID, `${ID}.log`)).toEqual({ kind: 'legacy' })
+    expect(cronLogSegmentOf(ID, `${ID}-20260913.log`)).toBeNull() // 8 位不是本模板
+    expect(cronLogSegmentOf(ID, 'other-2026091310.log')).toBeNull()
+    expect(cronLogSegmentOf(ID, 'notes.txt')).toBeNull()
+    // 重复任务 id 不互串(与 matchCronLogFile 同源)
+    expect(cronLogSegmentOf('abc', 'abc-1-2026091310.log')).toBeNull()
+    expect(cronLogSegmentOf('abc-1', 'abc-1-2026091310.log')).toEqual({ kind: 'hour', stamp: '2026091310' })
   })
 })

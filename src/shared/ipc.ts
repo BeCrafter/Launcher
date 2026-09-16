@@ -38,6 +38,9 @@ export const IPC = {
   cronUpdate: 'cron:update',
   cronRemove: 'cron:remove',
   cronReadLog: 'cron:readLog',
+  cronListLogs: 'cron:listLogs',
+  cronDeleteLog: 'cron:deleteLog',
+  cronCleanupLogs: 'cron:cleanupLogs',
   cronWriteHeader: 'cron:writeHeader',
   // ── 端口服务(阶段 3) ──
   svcList: 'services:list',

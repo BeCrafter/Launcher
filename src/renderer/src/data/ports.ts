@@ -6,6 +6,7 @@ import type {
   AgentForm,
   CronJob,
   CronListPayload,
+  CronLogFileInfo,
   CronScope,
   DrawerStatusModel,
   LogLine,
@@ -57,8 +58,14 @@ export interface CronRepository {
   /** stale=true 表示原 id 失配、按命令降级匹配成功(外部改动过文件) */
   update(job: CronJob, patch: Partial<CronJob>): Promise<CronUpdateResult>
   remove(job: CronJob): Promise<void>
-  /** 读取任务日志文件尾(上限 2000 行 / 256KB) */
-  readLog(id: string): Promise<LogLine[]>
+  /** 读取**单个**日志文件的尾部(上限 2000 行 / 256KB);name 省略 → 最新非空段 */
+  readLog(id: string, name?: string): Promise<LogLine[]>
+  /** 该任务已有的日志文件(新 → 旧),供日志抽屉的文件列表 */
+  listLogs(id: string): Promise<CronLogFileInfo[]>
+  /** 删除单个日志文件(文件名须属于该任务;已不存在按成功处理) */
+  deleteLog(id: string, name: string): Promise<void>
+  /** 清理超过保留期的日志文件,返回删除数量 */
+  cleanupLogs(): Promise<number>
   /** 覆写指定作用域 crontab 的文件头(首个任务前的注释/env 块原文) */
   writeHeader(scope: CronScope, text: string): Promise<void>
 }

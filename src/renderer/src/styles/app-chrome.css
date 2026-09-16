@@ -228,6 +228,181 @@
   opacity: 0.4;
 }
 
+/* ── 定时任务日志抽屉:分段文件列表(应用新增,非 demo 移植)──
+   按小时分段后,一个任务的日志是 N 个文件;左侧列出它们(可切换、可单独删),右侧只渲染选中段。
+   只在这里新增样式:drawer.css/views.css 是 demo 逐字节移植,不得就地改。 */
+.cron-log-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.cron-log-list {
+  width: 244px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  padding: 8px 0;
+}
+
+/* 折叠态:整栏隐藏(demo 会话栏同款),内容区左上角出现小展开钮 —— 折叠后尽量简洁 */
+.cron-log-list.collapsed {
+  display: none;
+}
+
+.cron-log-list-hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px 8px 12px;
+}
+
+.cron-log-list-collapse {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--dim);
+  font-size: 9px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cron-log-list-collapse:hover {
+  color: var(--accent2);
+  border-color: rgba(124, 106, 244, 0.4);
+}
+
+/* 折叠后的窄栏:左缘留一条 36px 的栏(承袭列表的底色与右边线),展开钮贴其**顶部、栏内左右居中** */
+.cron-log-rail {
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 12px;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.cron-log-expand {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--dim);
+  font-size: 9px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.cron-log-expand:hover {
+  color: var(--accent2);
+  border-color: rgba(124, 106, 244, 0.4);
+}
+
+.cron-log-list-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dim);
+  letter-spacing: 0.04em;
+}
+
+.cron-log-list-empty {
+  font-size: 10.5px;
+  color: var(--dim);
+  padding: 2px 12px;
+}
+
+.cron-log-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 6px 12px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.cron-log-item:hover {
+  background: var(--hover);
+}
+
+.cron-log-item.active {
+  background: rgba(124, 106, 244, 0.1);
+  border-left-color: var(--accent);
+}
+
+.cron-log-item-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+.cron-log-item-cur {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--wash-green);
+  color: var(--green);
+  font-size: 9px;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+
+.cron-log-item-size {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  color: var(--dim);
+}
+
+.cron-log-item-del {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--dim);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.cron-log-item-del:hover {
+  color: var(--red);
+  border-color: var(--wash-red);
+  background: var(--wash-red);
+}
+
+.cron-log-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 页脚:左说明 + 右按钮(drawer.css 的 .xml-section-bottom 是 flex-end,这里要两端对齐) */
+.cron-log-footer {
+  justify-content: space-between;
+}
+
 /* 抽屉内的非任务/损坏说明条(应用新增,非 demo 移植):
    它替代了表单 —— 非任务文件靠「填 Label」变任务,损坏文件靠 XML 修复,两者都得先说清处境 */
 .nontask-notice {
