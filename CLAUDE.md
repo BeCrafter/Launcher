@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab / 端口服务），基于开源 [LaunchManager](https://github.com/Sean10000/LaunchManager)（Swift）重构为 **TS + Electron** 实现（`src/`），核心目标是解决编辑体验问题并新增 AI 能力。
 
 - **demo 是 UI/UX 设计基准（冻结）**：`docs/demo/` 的视觉/交互作为验收对照基线，**自 2026-09 起冻结不再改动**（**冻结例外 2026-09-13：AI 助手页整体重设计为对话式 Agent 页**，其余页面继续冻结，逐项说明见 migration-map 文末「AI 对话页重设计」）；demo → React 的逐项映射与已知差异见 `docs/design/demo-react-migration-map.md`（改任一侧时按表核对）
-- **长期方向文档**：`docs/design/refactor-plan.md`（迁移矩阵 + 分阶段计划 + 已确认决策）、`docs/design/ai-capability.md`（AI 引擎/MCP/专家提示词方案，阶段 4 按此落地）
+- **长期方向文档**：`docs/design/refactor-plan.md`（迁移矩阵 + 分阶段计划 + 已确认决策）、`docs/design/ai-capability.md`（AI 引擎/MCP/专家提示词方案，阶段 4 按此落地）、`docs/design/distribution.md`（分发与安装：包体积精简 + 零成本双通道 + CI 发布，2026-09-17 已实施）
 - README 为占位内容
 
 ## 运行方式
@@ -16,8 +16,12 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - 开发：`npm run dev`（electron-vite，热更新；重复启动由单实例锁捕获；`LAUNCHER_DEV_DEBUG_PORT=9223 npm run dev` 可开 CDP 调试端口供自动化验证）
 - 测试：`npm test`（vitest，src/**/*.test.ts）；类型检查：`npm run typecheck`
 - 应用编译（构建 + 端到端架构验证）：`npm run build:app`（默认本机架构）/ `build:app:arm64` / `build:app:x64` / `build:app:universal` / `build:app:all`（arm64+x64 依次）
-  - `scripts/build-app.mjs`：electron-vite build → electron-builder 打包（dist/，dir 目标）→ 验证：lipo 架构断言（主 bin + Electron Framework）+ 实际启动产物按进程二进制架构断言；主机无法原生运行的架构（如 Intel 机上 arm64）自动 SKIP 运行验证并注明
+  - `scripts/build-app.mjs`：electron-vite build → **字体瘦身**（按构建产物 CSS 实测引用，删 woff2 之后的 woff/ttf 兜底，省 ~13MB）→ electron-builder 打包（dist/，dir 目标）→ 验证：lipo 架构断言（主 bin + Electron Framework）+ 实际启动产物按进程二进制架构断言 + **asar 不含 node_modules 断言**；主机无法原生运行的架构（如 Intel 机上 arm64）自动 SKIP 运行验证并注明
   - **打包图标固定 rocketOrbit2 浅色版**（icon-light.png → 现场生成 build/icon.icns）；electron-builder extraResources 仅打包 rocketOrbit2（v1 仅作仓库备份不进包）；electron 二进制走 ELECTRON_MIRROR（env > .npmrc > npmmirror 兜底）；未配置开发者证书时 electron-builder 跳过代码签名（ad-hoc 行为，正式分发需补签名）
+  - **包体积（2026-09-17 精简，与原值对照）**：arm64 **270MB**（原 499）/ x64 **259MB**（原 522）。三条勿破坏：① `package.json` 的 `dependencies` **保持为空**——纯 JS 依赖一律放 `devDependencies`，否则 electron-builder 会把整份 node_modules 打进 asar（+190MB，构建脚本的 asar 断言会 FAIL）② `electronLanguages` 只留 en/zh_CN/zh_TW（省 47MB）③ legacy 字体由构建脚本自动删，勿手工往 `out/renderer/assets/` 补文件
+- **发布与安装**（详见 `docs/design/distribution.md`）：
+  - 出发布产物：`npm run build:app:release`（= `--arch all --release`，产 dmg+zip，命名 `Launcher-<版本>-<架构>.{zip,dmg}`）；CI 同款在 `.github/workflows/release.yml`，打 tag `v*` 触发并自动把各产物 sha256 写进 Release 正文
+  - 用户安装：`curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/main/scripts/install.sh | bash`——**curl 不设 quarantine，这是绕过 Gatekeeper 的关键**；或 Homebrew `brew install --cask becrafter/tap/becrafter-launcher`——⚠ **Homebrew 会主动打 quarantine**（`cask/download.rb` 无条件调用 `Quarantine.cask!`，且已移除 `--no-quarantine`），故 cask 必须靠 `postflight` 调 `xattr -dr` 清标记，模板与维护手册在 `packaging/homebrew/`
 - 品牌图标（2026-09 定稿：**rocketOrbit2 v2 紫调双主题 = 项目唯一图标**，v1 rocketOrbit 仅磁盘备份、应用内无切换入口）：`npm run icon`（`scripts/gen-custom-icon.mjs` 插画通用生成器，`--name <变体名>` / `--src <源图>` 参数化，源图仓库 `resources/app-logo-src/`）；`npm run icon:theme`（`scripts/gen-demo-logos.mjs`，python3+PIL+numpy → ① demo logo 图 ② rocketOrbit2 深浅图 ③ icns ④ `rocketOrbit2Theme.ts` 双主题 dataURL。**会写 docs/demo/（冻结目录），本轮禁止执行**）。**尺寸基准：贴纸 80.5% 画布、四角透明**
 - **设置持久化**：`${HOME}/.config/launcher/config.json`（`src/main/settings/store.ts` 原子写 + 损坏回 .bak；schema 单一来源 `src/shared/settings.ts`；main 唯一写者，renderer 经 `settings:*` IPC 乐观读写，首帧经 additionalArguments 注入免闪烁）
 
@@ -37,6 +41,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 - **端口服务覆写**（2026-09-17）：服务别名 / Host / 路径（双击改名 + 「配置」浮层）+ Open/Copy 改用完整 URL（修复 Copy 只复制端口号的 bug）+ 地址标签改可连接 host（恒量 `proto` 不再渲染）+ Docker 四处修复（裸命令 ENOENT 路径解析 / `docker ps` 显式超时 / docker chip 补过滤分支 / 不可用带原因提示）✅——差异见 migration-map 差异 21/22；存储为 `shared/settings.ts` 的 `serviceOverrides`（renderer 解析，**main 无需 applier**）
 - **阶段 1 真实后端**（2026-09-11）：Launch Agents（launchctl 域映射/bootstrap-bootout-kickstart-enable/plist 三目录扫描与提权写/表单⇄XML 双向/真实状态与日志/brew 合并与路由）✅——差异见 migration-map「阶段 1 落地差异」；**三域（agents/cron/services）至此全部真实**
 - **打开慢修复**（2026-09-11）：brew 移出 agents 列表关键路径（isBrew 改 `domains/brew-heuristic` 纯启发式，机制同源开源 BrewManagedSupport；brew services list 实测 11-13s 且被 cmdTimeout 杀掉）、scanAll 记忆+单飞、首屏骨架态（`components/ui/Skeleton`）、log show / brew 全调用点显式 45s 超时——差异见 migration-map「打开慢修复」；首屏 ~10s → ~0.9s
+- **包体积精简 + 分发方案**（2026-09-17）：arm64 499→**270MB**、x64 522→**259MB**（根因 = electron-builder 把整份 node_modules 打进 asar，209MB→12.9MB；另裁 Electron 语言包 47MB、删 legacy 字体 13MB）；新增发布产物（dmg+zip）、`scripts/install.sh`（curl 通道）、`packaging/homebrew/`（Tap 模板 + `postflight` 清隔离标记）、`.github/workflows/release.yml`（打 tag 自动发布 + 输出 sha256）✅——完整原理与边界见 `docs/design/distribution.md`；CDP 实测打包产物 414 个 @font-face 零加载失败、界面渲染正常
 - 阶段 4 AI+MCP / 阶段 5 双形态与设置收尾（待办）
 
 ## src/ 文件地图（Electron 应用，UI 迁移后）
@@ -70,7 +75,7 @@ src/
 └── shared/            # settings.ts(schema+normalize)/models.ts(领域类型)/ipc.ts(通道契约+事件)/url-guard(外链 scheme 白名单)/constants/api
 ```
 
-约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed`/`agents:dirChanged` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；新增设置 = `shared/settings.ts` 加键 + **有副作用才**加 `main/settings/appliers/` 域模块 + 渲染层消费点（配置单文件不散落；纯数据键走 `settings:set` 即可 —— `SettingsPatch = Partial<LauncherSettings>` 且 `store.save()` 自带浅合并+normalize+原子写+广播，无需新 IPC / preload / 仓储方法）；**主进程窗口生命周期：`menubarOnly`（默认开）下关窗是 `hide()` 不是销毁 —— 窗口对象仍在、`getAllWindows().length` 仍为 1，故任何唤起窗口的路径（Dock `activate` / `second-instance` / Tray）一律走 `showMainWindow()`（show/restore/focus），不要用「窗口数为 0」判断**（Electron 脚手架的 `activate` 写法即如此 → 打包后点 Dock 图标静默无反应，2026-09-13 修）；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 `mock-data.ts` 勿手改；⚠ i18n 字典**勿**用 `node scripts/port-demo-i18n.mjs` 全量重跑** —— demo 侧 `ai.*` 已改、renderer 字典尚未跟上，重跑会注入约 98 个无关键；正确做法：新键写进该脚本的 `EXTRA`，再按同序**定点插入**两份字典，并用「生成到临时目录再 diff」验证（先例见 migration-map 差异 37 与 22）**。
+约定：主进程为唯一事实来源；renderer 经 preload 白名单 API 读取 + `settings:changed`/`agents:dirChanged` 订阅；mock 驱动的视图走 `data/` 接缝（后端阶段换 ipcDataSource 零改动）；纯函数配 vitest；**`dependencies` 保持为空 —— 纯 JS 依赖（react/zustand/codemirror/字体等）一律放 `devDependencies`，它们由 Vite 在构建期打进 `out/`，留 `dependencies` 会让 electron-builder 把整份 node_modules 塞进 asar（+190MB）。唯一例外是原生模块（含 `.node`、无法被 bundle 的包，如 `node-pty`）：它必须放 `dependencies`，electron-vite v5 默认据此 externalize 到 main/preload 并打进包**；新增设置 = `shared/settings.ts` 加键 + **有副作用才**加 `main/settings/appliers/` 域模块 + 渲染层消费点（配置单文件不散落；纯数据键走 `settings:set` 即可 —— `SettingsPatch = Partial<LauncherSettings>` 且 `store.save()` 自带浅合并+normalize+原子写+广播，无需新 IPC / preload / 仓储方法）；**主进程窗口生命周期：`menubarOnly`（默认开）下关窗是 `hide()` 不是销毁 —— 窗口对象仍在、`getAllWindows().length` 仍为 1，故任何唤起窗口的路径（Dock `activate` / `second-instance` / Tray）一律走 `showMainWindow()`（show/restore/focus），不要用「窗口数为 0」判断**（Electron 脚手架的 `activate` 写法即如此 → 打包后点 Dock 图标静默无反应，2026-09-13 修）；**移植文件头注释 `ported-from: docs/demo/...`；styles/ 与 `mock-data.ts` 勿手改；⚠ i18n 字典**勿**用 `node scripts/port-demo-i18n.mjs` 全量重跑** —— demo 侧 `ai.*` 已改、renderer 字典尚未跟上，重跑会注入约 98 个无关键；正确做法：新键写进该脚本的 `EXTRA`，再按同序**定点插入**两份字典，并用「生成到临时目录再 diff」验证（先例见 migration-map 差异 37 与 22）**。
 
 ## 页面架构（docs/demo/，冻结基线——以下为 demo 自身约定，仅作对照阅读）
 

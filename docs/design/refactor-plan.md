@@ -1,7 +1,7 @@
 # BeCrafter Launcher 重构方案：基于 LaunchManager 的 TS+Electron 重写
 
 > 状态：已批准（2026-09-04）｜范围：全量功能迁移 + 编辑体验重构 + AI 能力 + 双形态
-> 关联：`docs/design/ai-capability.md`（AI 方案，本方案的阶段 4 按此落地）、`docs/design/refactor-gap-analysis.md`（覆盖度复核：10 项缺失、13 项开源残缺点、9 项不确定项及决策，2026-09-04）、`docs/demo/`（设计基准，非终态持续演进）
+> 关联：`docs/design/ai-capability.md`（AI 方案，本方案的阶段 4 按此落地）、`docs/design/refactor-gap-analysis.md`（覆盖度复核：10 项缺失、13 项开源残缺点、9 项不确定项及决策，2026-09-04）、`docs/design/distribution.md`（分发与安装方案：包体积精简 + 零成本双通道，2026-09-17 已实施）、`docs/demo/`（设计基准，非终态持续演进）
 
 **覆盖度复核结论（2026-09-04）**：与开源逐项比对后确认——主体已覆盖，追加以下修订（详见 refactor-gap-analysis.md）：
 
@@ -19,7 +19,7 @@ BeCrafter/Launcher 是基于开源项目 [Sean10000/LaunchManager](https://githu
 
 当前仓库状态：`docs/demo/` 高保真原型（含模块注册表 config.js、UI 原语 components.js、自检 check.mjs）+ `docs/design/ai-capability.md`（已批准的 AI 方案）。demo 非终态，后续会继续演进，实现时以 demo 当前版为视觉/交互基准。
 
-**已确认决策**：① 提权沿用 osascript（非沙盒）② 单应用双形态（Dock+Tray，「菜单栏常驻」开关）③ 分阶段逐项迁移验证 ④ 暂不管分发/签名 ⑤ 渲染层 React 19 ⑥ 阶段 1 就上 CodeMirror 6（XML 高亮/行号，编辑体验卖点）。
+**已确认决策**：① 提权沿用 osascript（非沙盒）② 单应用双形态（Dock+Tray，「菜单栏常驻」开关）③ 分阶段逐项迁移验证 ④ ~~暂不管分发/签名~~ → **已由 `distribution.md` 取代（2026-09-17）：不购证书路线，curl 脚本 + Homebrew Tap 双通道** ⑤ 渲染层 React 19 ⑥ 阶段 1 就上 CodeMirror 6（XML 高亮/行号，编辑体验卖点）。
 
 **提权模态（demo ↔ 真机映射，2026-09 确认，勿遗忘）**：真实实现走 **macOS 系统原生授权框**——`osascript -e 'do shell script "<cmd>" with administrator privileges'`，由 SecurityAgent 弹密码框，**应用进程永不接触密码**（不进内存/日志/shell 历史，对齐开源 PrivilegeService）。demo 的 `elevationModal`（elevation.js）只是系统密码框的**前端模拟**（标题/命令展示/取消-128/缓存窗口语义一一对应）；落地时**去掉密码输入框**（系统框接管密码），应用层保留「执行前说明 + 待执行命令透明展示 + 危险确认」，osascript 返回 -128 → 主进程捕获 → 与 demo 一致反馈「已取消授权」；凭证缓存窗口（authCacheMin）为应用层逻辑，照常保留。阶段 1 手测以「AppleScript 密码框」为准（见「验证」节）。
 
@@ -94,7 +94,7 @@ Launcher/（electron-vite + TS + React 19）
 - **主进程 = 唯一事实来源**（对齐开源 Store 模式与 ai-capability.md 架构），renderer 通过 preload 白名单 IPC 读取 + 订阅变更
 - **单测覆盖解析器**（launchctl list 解析、plist round-trip、crontab parser、lsof 解析——对齐开源 TDD 用例）
 - **CodeMirror 6**：XML tab 编辑（高亮/行号/格式化），与表单双向同步
-- 分发/签名暂不做；打包基建（electron-builder）留空，阶段 5 只预留
+- 分发/签名：**2026-09-17 已实施**（不购证书路线：curl 安装脚本 + Homebrew Tap + CI 发布，见 `distribution.md`）；同批完成包体积精简 499MB → 270MB
 
 ## 分阶段计划（每阶段交付可运行版本，逐项比对验收）
 
@@ -121,7 +121,7 @@ lsof 发现（Unicode 规范化）→ 8 Resolver 分类管线 + Docker → kill 
 domains 复用 → ToolRegistry（只读 9 工具）→ MCP stdio 挂载实测 → pi-ai LlmClient + 专家提示词 → pi-agent-core + skill-plist 校验闭环/skill-diag → 聊天 UI → 写操作确认与安全。验收：plutil 闭环、3 故障案例、Claude Code 挂载、范围约束。
 
 ### 阶段 5 — 双形态/设置/主题/收尾
-菜单栏双形态（Tray badge、常驻开关、关窗隐藏）→ 9 设置 pane 落地 → 主题/语言切换 → 登录项指南/onboarding/更新检查（低优）→ 模块开关并入设置 → 打包配置预留。**注（2026-09-10）**：Tray badge（setTitle 计数）、真实版本号（app:info）、检查更新（GitHub Releases 四态）、打开系统设置跳转已在设置后端完善中提前接线；本阶段保留其扩展项（角标异常数、i18n 化 Tray 菜单等）。
+菜单栏双形态（Tray badge、常驻开关、关窗隐藏）→ 9 设置 pane 落地 → 主题/语言切换 → 登录项指南/onboarding/更新检查（低优）→ 模块开关并入设置 → ~~打包配置预留~~（**2026-09-17 已完成**，见 `distribution.md`）。**注（2026-09-10）**：Tray badge（setTitle 计数）、真实版本号（app:info）、检查更新（GitHub Releases 四态）、打开系统设置跳转已在设置后端完善中提前接线；本阶段保留其扩展项（角标异常数、i18n 化 Tray 菜单等）。
 
 ## 交付物
 

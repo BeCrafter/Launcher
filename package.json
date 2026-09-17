@@ -18,9 +18,10 @@
     "build:app:arm64": "node scripts/build-app.mjs --arch arm64",
     "build:app:x64": "node scripts/build-app.mjs --arch x64",
     "build:app:universal": "node scripts/build-app.mjs --arch universal",
-    "build:app:all": "node scripts/build-app.mjs --arch all"
+    "build:app:all": "node scripts/build-app.mjs --arch all",
+    "build:app:release": "node scripts/build-app.mjs --arch all --release"
   },
-  "dependencies": {
+  "devDependencies": {
     "@codemirror/commands": "^6.11.0",
     "@codemirror/lang-xml": "^6.1.0",
     "@codemirror/language": "^6.12.4",
@@ -30,11 +31,6 @@
     "@fontsource/noto-serif-sc": "^5.3.0",
     "@fortawesome/fontawesome-free": "^6.7.2",
     "@lezer/highlight": "^1.2.3",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "zustand": "^5.0.15"
-  },
-  "devDependencies": {
     "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
@@ -42,8 +38,11 @@
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "typescript": "^7.0.2",
     "vite": "^7.3.6",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.0",
+    "zustand": "^5.0.15"
   }
 }
