@@ -161,10 +161,10 @@ export function registerIpc(deps: IpcDeps): void {
     void deps.discovery.scanOnce() // 立即反映(不等下一轮轮询)
     return outcome
   })
-  ipcMain.handle(IPC.svcRestart, async (_e, id: string) => {
+  ipcMain.handle(IPC.svcRestart, async (_e, id: string, opts?: { privileged?: boolean }) => {
     const job = findService(id)
     if (!job) return { ok: false, newPid: null, error: 'notFound' }
-    const r = await deps.termination.restart(job.pid ?? 0, job.cmd)
+    const r = await deps.termination.restart(job.pid ?? 0, job.cmd, opts)
     void deps.discovery.scanOnce()
     return r
   })

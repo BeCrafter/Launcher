@@ -135,7 +135,16 @@ export function ServicesView(): React.JSX.Element {
     const ok = await confirmDangerous.request(fmt(t('svc.killConfirm'), { N: nameOf(svc), P: svc.pid ?? 0 }))
     if (!ok) return
     try {
-      const r = await dataSource().services.restart(svc.id)
+      let r = await dataSource().services.restart(svc.id)
+      // 他人进程:终止被拒 → 引导授权后重试(此前只报一句泛化的「重启失败」,与 kill 的待遇不一致)
+      if (!r.ok && r.error === 'denied') {
+        const granted = await ELEVATION.request({
+          detail: fmt(t('svc.restartElevate'), { N: nameOf(svc) }),
+          command: `kill -TERM ${svc.pid ?? 0}`
+        })
+        if (!granted) return
+        r = await dataSource().services.restart(svc.id, { privileged: true })
+      }
       if (r.ok) showToast(fmt(t('toast.svcRestarted'), { N: nameOf(svc), P: r.newPid ?? 0 }), '#4ade80', 'fa-rotate-right')
       else showToast(fmt(t('toast.svcRestartFailed'), { N: nameOf(svc) }), '#f87171', 'fa-circle-exclamation')
     } catch (err) {

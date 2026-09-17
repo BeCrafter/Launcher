@@ -5,7 +5,7 @@ export function createIpcServicesRepo(): ServiceRepository {
   return {
     list: () => window.launcher.services.list(),
     kill: (id, opts) => window.launcher.services.kill(id, opts),
-    restart: (id) => window.launcher.services.restart(id),
+    restart: (id, opts) => window.launcher.services.restart(id, opts),
     containerAction: (id, action) => window.launcher.services.containerAction(id, action),
     setPolling: (enabled) => window.launcher.services.setPolling(enabled),
     setActive: (active) => window.launcher.services.setActive(active)

@@ -1,0 +1,90 @@
+name: Release
+
+# 打 tag（形如 v0.1.0）触发发布；也可手动指定 tag 补发
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（形如 v0.1.0，需已存在）'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macos-14 是 arm64 主机；--arch all 会交叉构建 x64，故两种产物由同一 job 产出
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # 注意：构建期依赖（React / Vite / 字体等）全在 devDependencies，不能加 --omit=dev
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          PKG="$(node -p "require('./package.json').version")"
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "package.json=$PKG  tag=$TAG"
+          if [ "$PKG" != "$TAG" ]; then
+            echo "::error::tag v$TAG 与 package.json version $PKG 不一致"
+            exit 1
+          fi
+
+      - name: 类型检查与测试
+        run: |
+          npm run typecheck
+          npm test
+
+      # --no-run 跳过运行验证：runner 无法原生执行另一种架构的产物，静态架构校验仍会执行
+      - name: 构建 arm64 + x64 发布产物
+        run: node scripts/build-app.mjs --arch all --release --no-run
+
+      - name: 计算产物 sha256
+        run: |
+          cd dist
+          shasum -a 256 ./*.zip ./*.dmg | tee /tmp/sha256.txt
+
+      - name: 生成 Release 正文
+        run: |
+          {
+            echo "## 安装"
+            echo
+            echo '```bash'
+            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash"
+            echo '```'
+            echo
+            echo "或使用 Homebrew（需先搭建 tap，见 packaging/homebrew/README.md）："
+            echo
+            echo '```bash'
+            echo "brew install --cask becrafter/tap/becrafter-launcher"
+            echo '```'
+            echo
+            echo "## 产物 sha256"
+            echo
+            echo "更新 Homebrew cask 时，把 \`*-arm64.zip\` 与 \`*-x64.zip\` 两行复制过去即可。"
+            echo
+            echo '```'
+            cat /tmp/sha256.txt
+            echo '```'
+          } > /tmp/release-body.md
+
+      - name: 发布
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          body_path: /tmp/release-body.md
+          files: |
+            dist/*.zip
+            dist/*.dmg
+          fail_on_unmatched_files: true
