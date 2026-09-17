@@ -91,7 +91,9 @@ async function dispatch(agent: Agent, action: AgentIntent): Promise<OpsState | n
 }
 
 async function elevate(agent: Agent, actionName: string): Promise<boolean> {
-  if (agent.scope === 'user') return true
+  // 只有 daemon(system 域)必然提权;user/system 都落在用户自己的 gui 域,main 侧会先试无提权执行,
+  // 仅当系统拒绝才升级 —— 那种情况由系统密码框直接接管,不再多弹一层应用说明框(见 launchctl-service)
+  if (agent.scope !== 'daemon') return true
   const tr = makeT(getCurrentLang())
   return ELEVATION.request({
     detail: tr('elev.ops.detail').replace('{A}', actionName).replace('{L}', agent.label),

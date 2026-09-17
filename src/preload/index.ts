@@ -71,7 +71,7 @@ const api: LauncherApi = {
   services: {
     list: () => ipcRenderer.invoke(IPC.svcList),
     kill: (id, opts) => ipcRenderer.invoke(IPC.svcKill, id, opts ?? {}),
-    restart: (id) => ipcRenderer.invoke(IPC.svcRestart, id),
+    restart: (id, opts) => ipcRenderer.invoke(IPC.svcRestart, id, opts ?? {}),
     containerAction: (id, action) => ipcRenderer.invoke(IPC.svcContainerAction, id, action),
     setPolling: (enabled) => ipcRenderer.invoke(IPC.svcSetPolling, enabled),
     setActive: (active) => ipcRenderer.invoke(IPC.svcSetActive, active)

@@ -661,6 +661,7 @@ export const zhCN: Record<string, string> = {
   "svc.configure.path": "路径",
   "svc.configure.hint": "留空 = 使用自动值(名称取进程名,Host 由监听地址推导,路径无)",
   "svc.configure.reset": "恢复默认",
+  "svc.restartElevate": "「{N}」属于其他用户,需要管理员授权才能终止;终止后将以此应用当前用户身份重新启动,可能与其原运行身份不一致",
   "svc.overrideLimit": "覆写条目已达上限,请先清理不再使用的服务",
   "svc.renameHint": "双击可自定义名称",
   "svc.aliasedFrom": "已自定义名称(自动识别: {N})",
