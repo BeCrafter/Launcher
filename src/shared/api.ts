@@ -89,7 +89,7 @@ export interface LauncherApi {
   services: {
     list: () => Promise<ServicesListPayload>
     kill: (id: string, opts?: { privileged?: boolean }) => Promise<KillOutcome>
-    restart: (id: string) => Promise<RestartOutcome>
+    restart: (id: string, opts?: { privileged?: boolean }) => Promise<RestartOutcome>
     containerAction: (id: string, action: ContainerAction) => Promise<void>
     setPolling: (enabled: boolean) => Promise<ServicesListPayload>
     setActive: (active: boolean) => Promise<void>

@@ -201,7 +201,10 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
     }
     const label = typed || s.agentLabel
     try {
-      if (!s.isDraft && (s.scope === 'system' || s.scope === 'daemon')) {
+      // 草稿同样要过这道闸口:新建一个落在 /Library/LaunchDaemons 或 /Library/LaunchAgents 的 agent
+      // 正是最该解释的高危操作,此前被 !s.isDraft 排除在外 → 只弹一个没有任何上下文的系统密码框,
+      // 连待执行命令都不展示(条件写反了)
+      if (s.scope === 'system' || s.scope === 'daemon') {
         // 非任务文件是原地重写、保留原文件名(不会产生 <Label>.plist),说明句必须照实说
         const fileName = s.isNotTask ? s.agentFile : `${label}.plist`
         const ok = await ELEVATION.request({
@@ -233,6 +236,8 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
       })
       get().close()
       showToast(tr('toast.configSavedReload'), '#4ade80', 'fa-check')
+      // 提权成功 → 置热窗口,接下来的同类保存不再弹应用说明框(与 cron-store 同款)
+      if (s.scope === 'system' || s.scope === 'daemon') ELEVATION.noteSuccess()
     } catch (err) {
       cronErrorToast(err, tr)
     }

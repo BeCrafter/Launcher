@@ -2,7 +2,7 @@
 // - 域映射(开源同款):user/system agent → `gui/<uid>`;daemon → `system`
 // - bootstrap/bootout 走「域 + plist 路径」;kickstart/enable/disable 走 `域/label`
 // - 停止:kill SIGTERM → 20×150ms 轮询 pid → 仍存活则 SIGKILL → 10×150ms(开源同款兜底)
-// - system 域操作经 osascript 提权(elevation;密码不进应用,(-128)=取消)
+// - 提权:daemon(system 域)必须提权;其余先在用户域试跑,系统拒绝才升级(见 domainPrivileged)
 
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
 import type { AgentScope } from '../../shared/models'
@@ -43,6 +43,11 @@ const POLL_MS = 150
 const TERM_TRIES = 20
 const KILL_TRIES = 10
 
+/** 系统明确拒绝(权限不足)的特征:据此决定是否升级为提权重试 */
+const PERMISSION_RE = /Operation not permitted|not privileged|permission denied|EPERM/i
+/** 任务本就不在/未运行 → 视为成功(开源 try? 语义) */
+const NOT_LOADED_RE = /No such process|not find|not loaded|No such file|not running/i
+
 export function createLaunchctlService(deps: {
   runner: ShellRunner
   elevate: ElevationExecutor
@@ -51,7 +56,12 @@ export function createLaunchctlService(deps: {
   // 域映射(开源同款):user 与 system(/Library/LaunchAgents 全用户 agent)都在用户 gui 域;
   // 仅 daemon(/Library/LaunchDaemons)属 system 域
   const domainOf = (scope: AgentScope): string => (scope === 'daemon' ? 'system' : `gui/${deps.uid}`)
-  const privileged = (scope: AgentScope): boolean => scope !== 'user'
+  // 提权判定(2026-09-17 本机实测):daemon 走 system 域,**必须**提权;user 与 system 都落在
+  // 用户自己的 gui/<uid> 域 —— 实测 enable / kickstart / bootout 无提权即通过(对照实验:同样的
+  // 命令打到 system 域返回 "Operation not permitted")。唯一无法用静态判据确定的是 bootstrap:
+  // 它对非 root 调用者一律返回不透明的 errno 5(不区分「权限不足」与「不是合法 plist」,system 域
+  // 也是同样的 5)。故不逐动词猜,统一「先在用户域试跑 → 被拒绝再提权」,由系统裁决。
+  const domainPrivileged = (scope: AgentScope): boolean => scope === 'daemon'
 
   function alive(pid: number): boolean {
     try {
@@ -70,18 +80,24 @@ export function createLaunchctlService(deps: {
     return !alive(pid)
   }
 
-  /** 普通/提权执行统一入口:提权失败按错误码抛出,普通命令非 0 抛错并带 stderr */
-  async function runElevatedOrLocal(sh: string, scope: AgentScope): Promise<void> {
-    if (privileged(scope)) {
-      const r = await deps.elevate.run(sh)
-      if (!r.ok) {
-        throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
+  /**
+   * 域动词统一执行入口:daemon 直接提权;其余先在用户 gui 域试跑,**仅当系统明确拒绝**(权限不足)
+   * 才升级为提权重试 —— 业务错误(未载入/找不到)不重试,避免把真实失败包装成一次授权弹窗。
+   * @param tolerate 命中该模式的错误视为成功(如 bootout 一个本就未载入的任务)
+   */
+  async function runElevatedOrLocal(sh: string, scope: AgentScope, tolerate?: RegExp): Promise<void> {
+    if (!domainPrivileged(scope)) {
+      const [cmd, ...args] = sh.split(' ')
+      const r = await deps.runner.run(cmd, args)
+      if (r.code === 0 || tolerate?.test(r.stderr ?? '')) return
+      if (!PERMISSION_RE.test(r.stderr ?? '')) {
+        throw new Error(`${cmd} failed: ${r.stderr || r.stdout || r.code}`)
       }
-      return
+      // 权限不足 → 落到下面提权重试
     }
-    const [cmd, ...args] = sh.split(' ')
-    const r = await deps.runner.run(cmd, args)
-    if (r.code !== 0) throw new Error(`${cmd} failed: ${r.stderr || r.stdout || r.code}`)
+    const r = await deps.elevate.run(sh)
+    if (r.ok || tolerate?.test(r.stderr ?? '')) return
+    throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
   }
 
   return {
@@ -114,18 +130,7 @@ export function createLaunchctlService(deps: {
 
     async bootout(plistPath, scope) {
       // 已卸载的 bootout 返回非 0;容忍(开源 try? 语义)
-      if (privileged(scope)) {
-        const r = await deps.elevate.run(`launchctl bootout ${domainOf(scope)} ${plistPath}`)
-        if (!r.ok && !r.cancelled && /No such process|not find|not loaded|No such file/.test(r.stderr ?? '')) return
-        if (!r.ok) {
-          throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
-        }
-        return
-      }
-      const r = await deps.runner.run('launchctl', ['bootout', domainOf(scope), plistPath])
-      if (r.code !== 0 && !/No such process|not find|not loaded|No such file/.test(r.stderr ?? '')) {
-        throw new Error(`launchctl bootout failed: ${r.stderr || r.code}`)
-      }
+      await runElevatedOrLocal(`launchctl bootout ${domainOf(scope)} ${plistPath}`, scope, NOT_LOADED_RE)
     },
 
     async kickstart(label, scope, opts) {
@@ -144,23 +149,20 @@ export function createLaunchctlService(deps: {
 
     async stop(label, scope, pid) {
       if (pid === null || !alive(pid)) return 'alreadyStopped'
-      if (privileged(scope)) {
-        const r = await deps.elevate.run(`launchctl kill SIGTERM ${domainOf(scope)}/${label}`)
-        if (!r.ok && r.cancelled) throw new Error(ELEVATION_CANCELLED)
-        if (!r.ok && !/No such process|not running/.test(r.stderr ?? '')) {
-          throw new Error(`${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
+      // kill 失败(进程已不在)视为成功;是否真停掉由下面的 waitGone(pid) 裁决。
+      // 但授权类错误必须如实上报,否则用户看到的是「停止超时」而非「授权失败/已取消」。
+      const killOnce = async (sig: string): Promise<void> => {
+        try {
+          await runElevatedOrLocal(`launchctl kill ${sig} ${domainOf(scope)}/${label}`, scope, NOT_LOADED_RE)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : ''
+          if (msg.includes(ELEVATION_CANCELLED) || msg.includes(ELEVATION_FAILED)) throw err
         }
-      } else {
-        // 开源语义:kill 失败(进程不在)视为成功
-        await deps.runner.run('launchctl', ['kill', 'SIGTERM', `${domainOf(scope)}/${label}`])
       }
+      await killOnce('SIGTERM')
       if (await waitGone(pid, TERM_TRIES)) return 'ok'
       // 兜底 SIGKILL
-      if (privileged(scope)) {
-        await deps.elevate.run(`launchctl kill SIGKILL ${domainOf(scope)}/${label}`)
-      } else {
-        await deps.runner.run('launchctl', ['kill', 'SIGKILL', `${domainOf(scope)}/${label}`])
-      }
+      await killOnce('SIGKILL')
       return (await waitGone(pid, KILL_TRIES)) ? 'ok' : 'timeout'
     }
   }

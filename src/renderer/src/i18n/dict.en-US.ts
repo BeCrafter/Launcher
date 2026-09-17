@@ -661,6 +661,7 @@ export const enUS: Record<string, string> = {
   "svc.configure.path": "Path",
   "svc.configure.hint": "Blank = automatic (name from process, host derived from bind address, no path)",
   "svc.configure.reset": "Reset to default",
+  "svc.restartElevate": "{N} belongs to another user - administrator authorization is required to terminate it; it will then be relaunched as the current user, which may differ from its original identity",
   "svc.overrideLimit": "Override limit reached; clean up unused services first",
   "svc.renameHint": "Double-click to rename",
   "svc.aliasedFrom": "Custom name (auto-detected: {N})",

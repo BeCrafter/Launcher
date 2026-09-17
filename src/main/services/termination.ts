@@ -10,7 +10,8 @@ import type { ShellRunner } from './shell-runner'
 
 export interface TerminationService {
   kill(pid: number, opts?: { privileged?: boolean }): Promise<KillOutcome>
-  restart(pid: number, cmd: string): Promise<RestartOutcome>
+  /** privileged:终止他人进程需管理员授权;注意重新拉起仍以**当前用户**身份(detached spawn) */
+  restart(pid: number, cmd: string, opts?: { privileged?: boolean }): Promise<RestartOutcome>
 }
 
 const POLL_MS = 250
@@ -84,14 +85,15 @@ export function createTermination(deps: {
     return (await waitGone(pid)) ? 'ok' : 'timeout'
   }
 
-  async function restart(pid: number, cmd: string): Promise<RestartOutcome> {
+  async function restart(pid: number, cmd: string, opts?: { privileged?: boolean }): Promise<RestartOutcome> {
     // cwd 尽力还原(lsof -d cwd);失败则以应用 cwd 启动并在失败时提示
+    // (他人进程的 lsof 读不到 cwd,会静默走应用 cwd —— 授权也只能解决终止,解决不了还原)
     let cwd: string | undefined
     const cwdRes = await deps.runner.run('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'])
     const m = cwdRes.stdout.match(/^n(.+)$/m)
     if (m) cwd = m[1]
 
-    const killed = await kill(pid)
+    const killed = await kill(pid, opts)
     if (killed === 'denied') return { ok: false, newPid: null, error: 'denied' }
     if (killed !== 'ok' && killed !== 'alreadyGone') {
       return { ok: false, newPid: null, error: killed }

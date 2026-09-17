@@ -74,7 +74,8 @@ export interface ServiceRepository {
   list(): Promise<ServicesListPayload>
   /** privileged=true 时经 osascript 管理员提权(他人进程) */
   kill(id: string, opts?: { privileged?: boolean }): Promise<KillOutcome>
-  restart(id: string): Promise<RestartOutcome>
+  /** privileged=true 时经 osascript 提权终止他人进程(重新拉起仍以当前用户身份) */
+  restart(id: string, opts?: { privileged?: boolean }): Promise<RestartOutcome>
   containerAction(id: string, action: ContainerAction): Promise<void>
   /** 监听状态开关(会话语义,不落配置) */
   setPolling(enabled: boolean): Promise<ServicesListPayload>
