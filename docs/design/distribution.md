@@ -103,12 +103,14 @@ brew install --cask becrafter/tap/becrafter-launcher
 
 `.github/workflows/release.yml`：push tag `v*`（或手动 dispatch）→ 校验 tag 与 `package.json` 版本一致 → typecheck + test → 构建 → 发布。
 
-产物（`electron-builder.yml` 的 `artifactName` 约定命名，**install.sh 与 cask 依赖此格式**）：
+产物（`electron-builder.yml` 的 `artifactName` 约定命名）：
 
-```
-Launcher-<version>-arm64.zip / .dmg
-Launcher-<version>-x64.zip   / .dmg
-```
+| 产物 | 角色 |
+|---|---|
+| `Launcher-<version>-arm64.zip`、`Launcher-<version>-x64.zip` | **两条安装通道的产物** —— install.sh 与 cask 都只下载 zip |
+| `Launcher-<version>-arm64.dmg`、`Launcher-<version>-x64.dmg` | 额外产物，供手动安装；**两个通道都不使用，不作为本方案的推荐路径** |
+
+> install.sh 按 `-arm64.zip` / `-x64.zip` 后缀匹配，cask 用 `arch arm:/intel:` 分支拼出同一命名——**改产物名会同时打断两条通道**。
 
 - `--arch all` 逐架构出包（体积优先；universal 会让下载量翻倍）
 - CI 把各产物 sha256 **写进 Release 正文**——更新 cask 时直接复制，无需手算
@@ -144,5 +146,5 @@ Launcher-<version>-x64.zip   / .dmg
 2. 构建日志出现 `asar 内容：… 不含 node_modules → PASS`、`字体瘦身：删除 ~396 个…释放 ~13MB`
 3. `npm run typecheck` + `npm test` 全绿
 4. 启动打包产物，确认**中文正文（Noto Sans SC）、中文标题衬线体（Noto Serif SC）、FontAwesome 图标**三处渲染正常——这是删 legacy 字体后唯一需要肉眼确认的回归点
-5. `node scripts/build-app.mjs --arch all --release --no-run` → `dist/` 出 4 个产物
+5. `node scripts/build-app.mjs --arch all --release --no-run` → `dist/` 出 4 个产物（2 个 **zip 供两条通道**、2 个 dmg 为额外产物）
 6. `brew install --cask …` 后 `xattr /Applications/Launcher.app` **无 quarantine 输出**，双击能开

@@ -97,15 +97,15 @@ export function createBrewAgentService(deps: { runner: ShellRunner; elevate: Ele
 
     async action(kind, info) {
       // brew 单条命令实测 11-13s,默认 cmdTimeout(10s)必杀 → 显式放宽(用户显式操作,可接受等待)
-      const safeName = info.name.replace(/[^A-Za-z0-9@._+-]/g, '')
       if (isBrewRootService(info)) {
-        const r = await deps.elevate.run(`${resolveBrew()} services ${kind} ${safeName}`)
+        // 提权走 command+argv:服务名不再需要手工清洗(执行器做 POSIX 引号编码)
+        const r = await deps.elevate.run({ steps: [{ command: resolveBrew(), args: ['services', kind, info.name] }] })
         if (!r.ok) {
           throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
         }
         return
       }
-      const r = await deps.runner.run(resolveBrew(), ['services', kind, safeName], { timeoutMs: 45_000 })
+      const r = await deps.runner.run(resolveBrew(), ['services', kind, info.name], { timeoutMs: 45_000 })
       if (r.code !== 0) throw new Error(`brew services ${kind} failed: ${r.stderr || r.code}`)
     }
   }

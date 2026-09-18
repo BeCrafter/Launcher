@@ -1,7 +1,7 @@
 # BeCrafter Launcher 重构方案：基于 LaunchManager 的 TS+Electron 重写
 
 > 状态：已批准（2026-09-04）｜范围：全量功能迁移 + 编辑体验重构 + AI 能力 + 双形态
-> 关联：`docs/design/ai-capability.md`（AI 方案，本方案的阶段 4 按此落地）、`docs/design/refactor-gap-analysis.md`（覆盖度复核：10 项缺失、13 项开源残缺点、9 项不确定项及决策，2026-09-04）、`docs/design/distribution.md`（分发与安装方案：包体积精简 + 零成本双通道，2026-09-17 已实施）、`docs/demo/`（设计基准，非终态持续演进）
+> 关联：`docs/design/agent-editor-remediation.md`（Agent 编辑器 P0/P1 整改规范，待实施，优先于阶段 1 的旧完成表述）、`docs/design/ai-capability.md`（AI 方案，本方案的阶段 4 按此落地）、`docs/design/refactor-gap-analysis.md`（覆盖度复核：10 项缺失、13 项开源残缺点、9 项不确定项及决策，2026-09-04）、`docs/design/distribution.md`（分发与安装方案：包体积精简 + 零成本双通道，2026-09-17 已实施）、`docs/demo/`（设计基准，非终态持续演进）
 
 **覆盖度复核结论（2026-09-04）**：与开源逐项比对后确认——主体已覆盖，追加以下修订（详见 refactor-gap-analysis.md）：
 
@@ -22,7 +22,6 @@ BeCrafter/Launcher 是基于开源项目 [Sean10000/LaunchManager](https://githu
 **已确认决策**：① 提权沿用 osascript（非沙盒）② 单应用双形态（Dock+Tray，「菜单栏常驻」开关）③ 分阶段逐项迁移验证 ④ ~~暂不管分发/签名~~ → **已由 `distribution.md` 取代（2026-09-17）：不购证书路线，curl 脚本 + Homebrew Tap 双通道** ⑤ 渲染层 React 19 ⑥ 阶段 1 就上 CodeMirror 6（XML 高亮/行号，编辑体验卖点）。
 
 **提权模态（demo ↔ 真机映射，2026-09 确认，勿遗忘）**：真实实现走 **macOS 系统原生授权框**——`osascript -e 'do shell script "<cmd>" with administrator privileges'`，由 SecurityAgent 弹密码框，**应用进程永不接触密码**（不进内存/日志/shell 历史，对齐开源 PrivilegeService）。demo 的 `elevationModal`（elevation.js）只是系统密码框的**前端模拟**（标题/命令展示/取消-128/缓存窗口语义一一对应）；落地时**去掉密码输入框**（系统框接管密码），应用层保留「执行前说明 + 待执行命令透明展示 + 危险确认」，osascript 返回 -128 → 主进程捕获 → 与 demo 一致反馈「已取消授权」；凭证缓存窗口（authCacheMin）为应用层逻辑，照常保留。阶段 1 手测以「AppleScript 密码框」为准（见「验证」节）。
-**特权 helper 为何不做（2026-09-17 论证，勿重开）**：①**签名硬阻塞** —— SMAppService(13+)/SMJobBless 强制应用与 helper 同一 Developer ID Team ID，而本项目按 `distribution.md` 的决定不买证书、产物是 ad-hoc，注册不上；②即便签了名，**默认形态也更危险** —— osascript 提权是「通用 root shell 但每次有用户可见确认框」，而能跑任意命令的 helper 是「通用 root shell 且永久静默」，做对必须暴露窄接口并把 11 个提权点全部降解为受校验的具名操作（一次重写）；③本项目分发**刻意绕过 Gatekeeper**（curl 不设 quarantine / cask postflight 清标记），应用包无 OS 级完整性校验，「无签名校验 + 静默 root」正是 Apple 安全模型要防的组合。**`/etc/sudoers.d/` 免密条目更差**：那不是给这个 app 权限，而是给该用户开永久免密 root 后门。将来若因别的理由买了证书，亦应拆开——helper 只接高频低变异操作（launchctl 动词），**破坏性操作（写/删 plist、写 `/etc/crontab`）继续逐次提示**。另注：`authCacheMin` **不是权限缓存**，只抑制应用自己的说明框，系统密码框弹不弹由 macOS 决定（详见 migration-map 差异 31 与差异 23）。
 
 ## 双源对比结论（迁移矩阵）
 

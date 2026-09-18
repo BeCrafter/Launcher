@@ -3,7 +3,8 @@
 
 import type {
   Agent,
-  AgentForm,
+  AgentDocument,
+  CloneInput,
   CronJob,
   CronListPayload,
   CronLogFileInfo,
@@ -11,7 +12,11 @@ import type {
   DrawerStatusModel,
   LogLine,
   OpsState,
-  PortService
+  PortService,
+  RenameInput,
+  SaveFormInput,
+  SaveOutcome,
+  SaveXmlInput
 } from '@shared/models'
 import type { MissingAgent } from '@shared/ipc'
 import type {
@@ -34,18 +39,19 @@ export interface AgentRepository {
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
   // 草稿:以给定 label 新建未加载条目并插入列表顶(demo openAgentDraft;label 去重在调用方完成)
   createDraft(scope: AgentScope, label: string): Promise<Agent>
-  save(id: string, patch: Partial<AgentForm> & { label: string; desc: string }): Promise<Agent>
-  remove(id: string): Promise<void>
-  clone(id: string): Promise<Agent>
+  /** 文档读取(表单 + 原文 + 兼容报告 + revision) */
+  readDocument(id: string): Promise<AgentDocument>
+  saveForm(input: SaveFormInput): Promise<SaveOutcome>
+  saveXml(input: SaveXmlInput): Promise<SaveOutcome>
+  renameAgent(input: RenameInput): Promise<SaveOutcome>
+  remove(id: string, expectedRevision: string): Promise<SaveOutcome>
+  clone(input: CloneInput): Promise<SaveOutcome>
   // 意图动作(启动/停止/重启/开机自启/立即执行一次)
   ops(id: string, action: OpAction): Promise<OpsState>
-  // 阶段 1 起:per-agent plist/launchctl 真实数据
-  readForm(id: string): Promise<AgentForm>
+  // 阶段 1 起:per-agent launchctl 真实数据
   readStatus(id: string): Promise<DrawerStatusModel>
-  readXml(id: string): Promise<{ xml: string; formMode: boolean; unsupportedKeys: string[] }>
-  saveXml(id: string, xml: string): Promise<void>
   readLogs(id: string, source: 'file' | 'system'): Promise<LogLine[]>
-  clearLogs(id: string): Promise<void>
+  clearLogs(id: string): Promise<{ cleared: string[]; failed: { path: string; error: string }[] }>
   validateXml(xml: string): Promise<{ ok: boolean; error: string | null }>
   /** 定向复核:候选条目是否「仍被加载但 plist 已不存在」 */
   checkMissing(candidates: { scope: AgentScope; label: string }[]): Promise<MissingAgent[]>

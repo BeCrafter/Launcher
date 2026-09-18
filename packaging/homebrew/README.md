@@ -29,7 +29,7 @@ brew install --cask becrafter/tap/becrafter-launcher
 
 ## 每次发版
 
-1. 本仓库打 tag 并推送（`v0.2.0` 形式）→ `.github/workflows/release.yml` 自动构建、上传 dmg/zip，并把各产物的 **sha256 写进 Release 正文**
+1. 本仓库打 tag 并推送（`v0.2.0` 形式）→ `.github/workflows/release.yml` 自动构建并上传产物（**本 cask 用的是 `*-<架构>.zip`**，另附 dmg 供手动安装），并把各产物的 **sha256 写进 Release 正文**
 2. 打开该 Release，复制 `Launcher-<版本>-arm64.zip` 与 `Launcher-<版本>-x64.zip` 的 sha256
 3. 更新 tap 仓库里的 cask：
    - `version` → 新版本号（不带 `v`）

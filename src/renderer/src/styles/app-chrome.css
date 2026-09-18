@@ -450,6 +450,14 @@
   cursor: default;
 }
 
+/* 抽屉编辑页:表单守卫拦截时「保存并重载」禁用(base.css 无 .d-btn:disabled 规则,
+   不禁用 hover 态的话禁用按钮看起来还是能点) */
+.drawer-section .d-btn:disabled,
+.drawer-section .d-btn:disabled:hover {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ── 端口服务「配置」浮层(应用新增;外壳复用上面的 .agent-card-menu 公共规则) ── */
 .svc-config-menu {
   gap: 8px;

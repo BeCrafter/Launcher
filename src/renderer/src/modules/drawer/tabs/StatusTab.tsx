@@ -1,7 +1,10 @@
 // ported-from: docs/demo/index.html #dft-status + populateDrawerDefaults @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 状态 tab(demo #dft-status:stat 卡片 + CPU/内存条 + 元信息 chips + 路径信息组;数据 = readStatus)
+// 2026-09-18:路径信息组改用共享 CfgGroup(原手写折叠头无 onClick,是假折叠);
+//            删除与顶栏副标题重复的 Scope 行、恒量的「管理方式」行
 import { useT } from '../../../hooks/useT'
 import { useDrawerStore } from '../../../state/drawer-store'
+import { CfgGroup } from '../../../components/ui/CfgGroup'
 
 export function StatusTab(): React.JSX.Element {
   const t = useT()
@@ -71,33 +74,18 @@ export function StatusTab(): React.JSX.Element {
             <span style={{ color: 'var(--text)', fontWeight: 600, fontFamily: 'monospace' }}>{st.startTime}</span>
           </div>
         </div>
-        <div className="cfg-group">
-          <div className="cfg-group-hdr">
-            <i className="fa-solid fa-folder" />
-            <span className="cfg-group-title">{t('status.pathInfo')}</span>
-            <i className="fa-solid fa-chevron-down cfg-chevron open" />
-          </div>
-          <div className="cfg-group-body">
-            <div className="expand-grid">
-              <div className="expand-field">
-                <div className="expand-key">{t('status.plistPath')}</div>
-                <div className="expand-val">{st.plistPath}</div>
-              </div>
-              <div className="expand-field">
-                <div className="expand-key">{t('status.workDir')}</div>
-                <div className="expand-val">{st.workDir}</div>
-              </div>
-              <div className="expand-field">
-                <div className="expand-key">Scope</div>
-                <div className="expand-val" style={{ color: 'var(--blue)' }}>{st.scope}</div>
-              </div>
-              <div className="expand-field">
-                <div className="expand-key">{t('status.manageMethod')}</div>
-                <div className="expand-val">{t('status.launchdNative')}</div>
-              </div>
+        <CfgGroup icon="fa-solid fa-folder" title={t('status.pathInfo')}>
+          <div className="expand-grid">
+            <div className="expand-field">
+              <div className="expand-key">{t('status.plistPath')}</div>
+              <div className="expand-val">{st.plistPath}</div>
+            </div>
+            <div className="expand-field">
+              <div className="expand-key">{t('status.workDir')}</div>
+              <div className="expand-val">{st.workDir}</div>
             </div>
           </div>
-        </div>
+        </CfgGroup>
       </div>
     </div>
   )

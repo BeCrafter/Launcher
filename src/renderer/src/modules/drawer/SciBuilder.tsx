@@ -57,25 +57,15 @@ export function SciBuilder({
     Month: e.Month ?? null
   })
 
+  // 不可变更新:旧实现 `delete next[i][key]` 会原地改到撤销栈里的同一对象
   const patch = (i: number, key: keyof SciEntry, raw: string): void => {
-    const next = [...entries]
-    const v = raw === '' ? undefined : Number(raw)
-    if (v === undefined) delete next[i][key]
-    else next[i] = { ...next[i], [key]: v }
-    onChange(next)
-  }
-
-  const updateWeekday = (i: number, raw: string): void => {
-    const next = [...entries]
-    if (raw === '') delete next[i].Weekday
-    else next[i] = { ...next[i], Weekday: Number(raw) }
-    onChange(next)
-  }
-
-  const updateMonth = (i: number, raw: string): void => {
-    const next = [...entries]
-    if (raw === '') delete next[i].Month
-    else next[i] = { ...next[i], Month: Number(raw) }
+    const next = entries.map((e, j) => {
+      if (j !== i) return e
+      const copy = { ...e }
+      if (raw === '') delete copy[key]
+      else copy[key] = Number(raw)
+      return copy
+    })
     onChange(next)
   }
 
@@ -138,7 +128,7 @@ export function SciBuilder({
             ['sci.col.minute', '0–59'],
             ['sci.col.hour', '0–23'],
             ['sci.col.day', '1–31'],
-            ['sci.col.weekday', '0=日'],
+            ['sci.col.weekday', '0/7=日'],
             ['sci.col.month', '1–12']
           ] as const
         ).map(([key, range]) => (
@@ -200,8 +190,9 @@ export function SciBuilder({
                     className="f-input"
                     style={SELECT_STYLE}
                     title="Weekday (0=Sunday)"
-                    value={e.Weekday ?? ''}
-                    onChange={(ev) => updateWeekday(i, ev.target.value)}
+                    // 7 与 0 同为周日(man):归一显示为「周日」;未触碰时 entries 里仍是原值 7,保存不改写
+                    value={e.Weekday === 7 ? '0' : (e.Weekday ?? '')}
+                    onChange={(ev) => patch(i, 'Weekday', ev.target.value)}
                   >
                     <option value="">*</option>
                     {Array.from({ length: 7 }, (_, wd) => (
@@ -217,7 +208,7 @@ export function SciBuilder({
                     style={SELECT_STYLE}
                     title="Month (1-12)"
                     value={e.Month ?? ''}
-                    onChange={(ev) => updateMonth(i, ev.target.value)}
+                    onChange={(ev) => patch(i, 'Month', ev.target.value)}
                   >
                     <option value="">*</option>
                     {Array.from({ length: 12 }, (_, m) => (

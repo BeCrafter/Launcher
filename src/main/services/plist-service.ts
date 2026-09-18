@@ -12,7 +12,7 @@
 
 import { promises as fs } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, isAbsolute, join, relative } from 'node:path'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
 import type { AgentScope } from '../../shared/models'
 import { extractPlistDesc, parsePlistXml, type PlistDict } from '../domains/plist-xml'
@@ -42,14 +42,23 @@ export interface PlistService {
   /** 失效 scanAll 记忆(launchd 目录被应用外修改时由 fsevents applier 调用) */
   invalidate(): void
   read(scope: AgentScope, path: string): Promise<PlistFile>
+  /** 直接读目标文件(**绕过 memo/pending**):写事务里做 revision 比对必须用它 —— scanAll 会复用进行中的 pending 扫描 */
+  readFresh(scope: AgentScope, path: string): Promise<PlistFile>
+  /** 立即重扫(**绕过 memo/pending**):写事务里做 Label 唯一性等目录级判据必须用它 */
+  scanNow(): Promise<PlistFile[]>
   write(scope: AgentScope, path: string, xml: string): Promise<void>
   /** 写入指定文件、跳过覆盖守卫:仅用于调用方已显式指向该文件的原地编辑(占位/损坏文件修复) */
   writeAt(scope: AgentScope, path: string, xml: string): Promise<void>
   remove(scope: AgentScope, path: string): Promise<void>
   lint(xml: string): Promise<{ ok: boolean; error: string | null }>
   pathFor(scope: AgentScope, label: string): string
-  /** 提权作用域删除:bootout + rm 合并为一条授权命令(开源同款,避免二次授权) */
-  removeWithBootout(scope: AgentScope, path: string, loaded: boolean, domain: string): Promise<void>
+  /** 提权作用域删除:bootout + 条件化 rm 合并为一条授权命令;返回分阶段结果供调用方决定是否恢复运行态 */
+  removeWithBootout(
+    scope: AgentScope,
+    path: string,
+    loaded: boolean,
+    domain: string
+  ): Promise<{ bootoutDone: boolean; fileDeleted: boolean; cancelled: boolean; stderr: string | null }>
 }
 
 const BPLIST_MAGIC = 'bplist'
@@ -169,21 +178,63 @@ export function createPlistService(deps: {
     return pending
   }
 
+  /**
+   * 目录逃逸防线(P0-1.2):目标必须落在该作用域的管理目录内 —— 不依赖 join() 的语义,
+   * 任何写/删路径都要过这一关(Label 由 validateAgentLabel 校验,readdir 来的文件名靠这里兜底)。
+   */
+  function assertInsideScope(scope: AgentScope, path: string): void {
+    const dir = dirs().find((d) => d.scope === scope)?.dir
+    if (!dir) throw new Error(`未知作用域: ${scope}`)
+    const rel = relative(dir, path)
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`目标路径不在 ${scope} 管理目录内,已拒绝: ${path}`)
+    }
+  }
+
+  /** 独占创建的临时文件名(随机后缀,flag 'wx' 不跟随已存在的 symlink) */
+  const tmpName = (path: string): string => `.launcher-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}-${basename(path)}`
+
+  /**
+   * 特权写入的私有暂存目录(**P0**):`mkdtemp` 随机名 + 0700,文件固定名、独占创建。
+   * 旧实现用可预测的 `.launcher-<ts>-<name>` 放在全局 tmpdir —— 同用户进程可在提权脚本执行前
+   * 预创建同名文件或 symlink,root 的 chown/chmod/mv 就会作用到攻击者控制的对象上。
+   */
+  async function withPrivateStaging<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+    const dir = await fs.mkdtemp(join(tmpdir(), 'launcher-elev-'))
+    try {
+      return await fn(dir)
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
   /** 原子写本体(无覆盖守卫)。调用方必须已明确指向该文件:占位/损坏文件的原地编辑,或 write() 守卫通过后的写入 */
   async function writeAt(scope: AgentScope, path: string, xml: string): Promise<void> {
+    assertInsideScope(scope, path)
     const privileged = scope !== 'user'
-    const tmp = join(privileged ? tmpdir() : join(path, '..'), `.launcher-${Date.now()}-${basename(path)}`)
-    await fs.writeFile(tmp, xml, 'utf8')
     if (!privileged) {
+      const tmp = join(join(path, '..'), tmpName(path))
+      await fs.writeFile(tmp, xml, { encoding: 'utf8', flag: 'wx' })
       await fs.rename(tmp, path)
       invalidate()
       return
     }
-    const r = await deps.elevate.run(`mv ${tmp} ${path} && chown root:wheel ${path} && chmod 644 ${path}`)
-    if (!r.ok) {
-      await fs.unlink(tmp).catch(() => {})
-      throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
-    }
+    // 顺序:P1 —— 先在**临时文件**上 chown/chmod,最后才 mv 覆盖目标(权限步骤失败时原目标保持完整)
+    await withPrivateStaging(async (dir) => {
+      const staging = join(dir, basename(path))
+      // 'wx' 独占创建:目录是 0700 私有且随机,名字再固定也不会撞上预置文件/ symlink
+      await fs.writeFile(staging, xml, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+      const st = await fs.lstat(staging)
+      if (!st.isFile()) throw new Error(`提权暂存文件异常(非普通文件): ${staging}`)
+      const r = await deps.elevate.run({
+        steps: [
+          { command: 'chown', args: ['root:wheel', staging] },
+          { command: 'chmod', args: ['644', staging] },
+          { command: 'mv', args: [staging, path] }
+        ]
+      })
+      if (!r.ok) throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
+    })
     invalidate()
   }
 
@@ -193,6 +244,16 @@ export function createPlistService(deps: {
     scanAll,
 
     invalidate,
+
+    async scanNow() {
+      return scanAllImpl()
+    },
+
+    // 写事务专用:不碰 memo/pending,直读目标文件(文件消失/损坏 → 返回带 parseError 的记录,便于 CAS 判冲突)
+    async readFresh(scope, path) {
+      assertInsideScope(scope, path)
+      return readFile(scope, path)
+    },
 
     // 公开入口按「必须是一个任务」语义:非任务文件视为不可读(scanAll 才把它们交给列表)
     async read(scope, path) {
@@ -212,12 +273,13 @@ export function createPlistService(deps: {
     writeAt,
 
     async remove(scope, path) {
+      assertInsideScope(scope, path)
       if (scope === 'user') {
         await fs.unlink(path)
         invalidate()
         return
       }
-      const r = await deps.elevate.run(`rm ${path}`)
+      const r = await deps.elevate.run({ steps: [{ command: 'rm', args: [path] }] })
       if (!r.ok) {
         throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
       }
@@ -231,19 +293,46 @@ export function createPlistService(deps: {
     },
 
     async removeWithBootout(scope, path, loaded, domain) {
-      const sh = loaded ? `launchctl bootout ${domain} ${path}; rm -f ${path}` : `rm -f ${path}`
-      const r = await deps.elevate.run(sh)
-      if (!r.ok) {
-        const tolerated = /No such process|not find|not loaded|No such file/.test(r.stderr ?? '')
-        if (r.cancelled) throw new Error(ELEVATION_CANCELLED)
-        if (!tolerated) throw new Error(`${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
+      assertInsideScope(scope, path)
+      // P1:不再无条件用 ';' —— 只有「未载入」这类可容忍的 bootout 失败才继续删除;
+      // 其他 bootout 错误(权限/域问题)必须中止,否则会出现「仍在 launchd 域里、plist 却被删掉」的半状态。
+      // 不再把用户可控路径拼进 raw script；每个参数都由提权执行器单独编码。
+      // bootout 竞态失败时宁可不删文件，由调用方尝试恢复运行态。
+      const r = await deps.elevate.run({
+        steps: loaded
+          ? [
+              { command: 'launchctl', args: ['bootout', domain, path] },
+              { command: 'rm', args: ['-f', path] }
+            ]
+          : [{ command: 'rm', args: ['-f', path] }]
+      })
+      if (r.ok) {
+        invalidate()
+        return { bootoutDone: loaded, fileDeleted: true, cancelled: false, stderr: null }
       }
-      invalidate()
+      if (r.cancelled) {
+        return { bootoutDone: false, fileDeleted: false, cancelled: true, stderr: r.stderr }
+      }
+      // 失败可能停在两个阶段:脚本里 bootout 成功但 rm 失败 → 由调用方决定是否恢复运行态
+      const stderr = r.stderr ?? ''
+      const bootoutLikelyDone = !loaded || !/bootout/.test(stderr)
+      if (bootoutLikelyDone) {
+        // 文件是否还在?fresh 判定(不看缓存)
+        const still = await readFile(scope, path).then(
+          (pf) => pf.parseError === undefined || !/ENOENT|no such file/i.test(pf.parseError),
+          () => true
+        )
+        if (still) return { bootoutDone: loaded, fileDeleted: false, cancelled: false, stderr }
+      }
+      throw new Error(`${ELEVATION_FAILED}: ${stderr}`)
     },
 
     pathFor(scope, label) {
       const dir = dirs().find((d) => d.scope === scope)?.dir ?? ''
-      return join(dir, `${label}.plist`)
+      const target = join(dir, `${label}.plist`)
+      // Label 已由调用方经 validateAgentLabel 校验;这里再兜一道(不依赖 join 的语义)
+      assertInsideScope(scope, target)
+      return target
     }
   }
 }

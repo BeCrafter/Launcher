@@ -71,7 +71,8 @@ jobs:
             echo
             echo "## 产物 sha256"
             echo
-            echo "更新 Homebrew cask 时，把 \`*-arm64.zip\` 与 \`*-x64.zip\` 两行复制过去即可。"
+            echo "\`*-arm64.zip\` / \`*-x64.zip\` 是两条安装通道（curl 脚本 / Homebrew cask）所用的产物，"
+            echo "更新 cask 时把这两行复制过去即可；\`*.dmg\` 为额外产物，供手动安装，通道不使用。"
             echo
             echo '```'
             cat /tmp/sha256.txt

@@ -6,3 +6,6 @@ resources/logo-custom/
 *.tsbuildinfo
 .DS_Store
 *.local
+
+# 本机编辑器工具配置(不随仓库分发)
+.kiro/
