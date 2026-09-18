@@ -50,14 +50,14 @@ export function createTermination(deps: {
 
   async function kill(pid: number, opts?: { privileged?: boolean }): Promise<KillOutcome> {
     if (opts?.privileged) {
-      const term = await deps.elevate.run(`kill -TERM ${pid}`)
+      const term = await deps.elevate.run({ steps: [{ command: 'kill', args: ['-TERM', String(pid)] }] })
       if (!term.ok) {
         if (term.cancelled) throw new Error(ELEVATION_CANCELLED)
         if (/No such process|not found/i.test(term.stderr ?? '')) return 'alreadyGone'
         throw new Error(`${ELEVATION_FAILED}: ${term.stderr ?? ''}`)
       }
       if (await waitGone(pid)) return 'ok'
-      const kill9 = await deps.elevate.run(`kill -9 ${pid}`)
+      const kill9 = await deps.elevate.run({ steps: [{ command: 'kill', args: ['-9', String(pid)] }] })
       if (!kill9.ok) {
         if (kill9.cancelled) throw new Error(ELEVATION_CANCELLED)
         throw new Error(`${ELEVATION_FAILED}: ${kill9.stderr ?? ''}`)

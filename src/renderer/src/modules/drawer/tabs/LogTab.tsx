@@ -81,10 +81,6 @@ export function LogTab(): React.JSX.Element {
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               {t('log.title')}
             </span>
-            <div className="live-badge">
-              <div className="live-dot" />
-              LIVE
-            </div>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <select
@@ -129,9 +125,19 @@ export function LogTab(): React.JSX.Element {
           <LogLines lines={visible} />
         </div>
         <div className="log-section-bottom">
+          {/* 只有文件源会自动跟随(5s 轮询);系统源是手动刷新 —— 别让「实时」在这里说谎 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', animation: 'pulse-g 1.2s infinite' }} />
-            <span style={{ fontSize: 10, color: 'var(--dim)' }}>{t('log.trackLive')}</span>
+            {logSource === 'file' ? (
+              <>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)', animation: 'pulse-g 1.2s infinite' }} />
+                <span style={{ fontSize: 10, color: 'var(--dim)' }}>{t('log.trackLive')}</span>
+              </>
+            ) : (
+              <>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--dim)' }} />
+                <span style={{ fontSize: 10, color: 'var(--dim)' }}>{t('log.manualRefresh')}</span>
+              </>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <button className="d-btn" type="button" style={{ padding: '4px 9px', fontSize: 10.5 }} onClick={() => void refreshLogs()}>

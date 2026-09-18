@@ -85,9 +85,9 @@ export function createLaunchctlService(deps: {
    * 才升级为提权重试 —— 业务错误(未载入/找不到)不重试,避免把真实失败包装成一次授权弹窗。
    * @param tolerate 命中该模式的错误视为成功(如 bootout 一个本就未载入的任务)
    */
-  async function runElevatedOrLocal(sh: string, scope: AgentScope, tolerate?: RegExp): Promise<void> {
+  async function runElevatedOrLocal(argv: string[], scope: AgentScope, tolerate?: RegExp): Promise<void> {
+    const [cmd, ...args] = argv
     if (!domainPrivileged(scope)) {
-      const [cmd, ...args] = sh.split(' ')
       const r = await deps.runner.run(cmd, args)
       if (r.code === 0 || tolerate?.test(r.stderr ?? '')) return
       if (!PERMISSION_RE.test(r.stderr ?? '')) {
@@ -95,7 +95,7 @@ export function createLaunchctlService(deps: {
       }
       // 权限不足 → 落到下面提权重试
     }
-    const r = await deps.elevate.run(sh)
+    const r = await deps.elevate.run({ steps: [{ command: cmd, args }] })
     if (r.ok || tolerate?.test(r.stderr ?? '')) return
     throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
   }
@@ -125,26 +125,26 @@ export function createLaunchctlService(deps: {
     },
 
     async bootstrap(plistPath, scope) {
-      await runElevatedOrLocal(`launchctl bootstrap ${domainOf(scope)} ${plistPath}`, scope)
+      await runElevatedOrLocal(['launchctl', 'bootstrap', domainOf(scope), plistPath], scope)
     },
 
     async bootout(plistPath, scope) {
       // 已卸载的 bootout 返回非 0;容忍(开源 try? 语义)
-      await runElevatedOrLocal(`launchctl bootout ${domainOf(scope)} ${plistPath}`, scope, NOT_LOADED_RE)
+      await runElevatedOrLocal(['launchctl', 'bootout', domainOf(scope), plistPath], scope, NOT_LOADED_RE)
     },
 
     async kickstart(label, scope, opts) {
       // -k:先杀掉正在运行的实例再重启(「重启」意图);目标须在 flag 之后(`kickstart [-kp] service-target`)
-      const flag = opts?.kill ? '-k ' : ''
-      await runElevatedOrLocal(`launchctl kickstart ${flag}${domainOf(scope)}/${label}`, scope)
+      const args = ['launchctl', 'kickstart', ...(opts?.kill ? ['-k'] : []), `${domainOf(scope)}/${label}`]
+      await runElevatedOrLocal(args, scope)
     },
 
     async enable(label, scope) {
-      await runElevatedOrLocal(`launchctl enable ${domainOf(scope)}/${label}`, scope)
+      await runElevatedOrLocal(['launchctl', 'enable', `${domainOf(scope)}/${label}`], scope)
     },
 
     async disable(label, scope) {
-      await runElevatedOrLocal(`launchctl disable ${domainOf(scope)}/${label}`, scope)
+      await runElevatedOrLocal(['launchctl', 'disable', `${domainOf(scope)}/${label}`], scope)
     },
 
     async stop(label, scope, pid) {
@@ -153,7 +153,7 @@ export function createLaunchctlService(deps: {
       // 但授权类错误必须如实上报,否则用户看到的是「停止超时」而非「授权失败/已取消」。
       const killOnce = async (sig: string): Promise<void> => {
         try {
-          await runElevatedOrLocal(`launchctl kill ${sig} ${domainOf(scope)}/${label}`, scope, NOT_LOADED_RE)
+          await runElevatedOrLocal(['launchctl', 'kill', sig, `${domainOf(scope)}/${label}`], scope, NOT_LOADED_RE)
         } catch (err) {
           const msg = err instanceof Error ? err.message : ''
           if (msg.includes(ELEVATION_CANCELLED) || msg.includes(ELEVATION_FAILED)) throw err

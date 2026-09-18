@@ -141,15 +141,18 @@ export interface DrawerTriggers {
   keepAlive: boolean
   watchPaths: boolean
   startCalendarInterval: boolean
-  startInterval: number
+  /** null = plist 里没有 StartInterval(未设置);正整数 = 固定间隔秒数 */
+  startInterval: number | null
 }
 
 export type KeepAliveMode = 'bool' | 'dict'
 
+// 三态:null = 未设置(不写该子键)。launchd 把字典内各条件 OR 起来,且 false 是合法反向条件
+// (SuccessfulExit:false = 失败时重启;Crashed:false = 未崩溃时保持),故不能用 false 表示「未设置」。
+// 用 null 而非 undefined:JSON 会丢 undefined 键,false/null 都保真。
 export interface KeepAliveDict {
-  crashed: boolean
-  afterInitialDemand: boolean
-  successfulExit: boolean
+  crashed: boolean | null
+  successfulExit: boolean | null
 }
 
 export type SciEntry = Partial<Record<'Minute' | 'Hour' | 'Day' | 'Weekday' | 'Month', number>>
@@ -161,8 +164,11 @@ export interface AgentForm {
   program: string
   args: string[]
   workingDir: string
+  /** 仅 daemon 域生效(launchd 对 agent 忽略该键);空串 = 不写 */
+  userName: string
   nice: number
-  throttleInterval: number
+  /** null = 未设置(launchd 默认 10 秒);0 是合法值,不能与「未设置」混同 */
+  throttleInterval: number | null
   env: Record<string, string>
   triggers: DrawerTriggers
   keepAliveMode: KeepAliveMode
@@ -171,6 +177,123 @@ export interface AgentForm {
   sciEntries: SciEntry[]
   stdout: string
   stderr: string
+  /** StandardInPath;空串 = 不写 */
+  stdin: string
+}
+
+/** Program 与 ProgramArguments 的原始形态(argv 语义不同,表单不能无损表达 "both") */
+export type ProgramShape = 'program' | 'arguments' | 'both' | 'none'
+
+/**
+ * B 类/保留项的可读说明(复审 item 5):页面要能回答「这个键是什么、值是什么、为什么这样处理、
+ * 保存后保证到哪一档」——只给键名不够。
+ */
+export interface CompatibilityEntry {
+  path: string
+  type: string
+  summary: string
+  reason: string
+  /** renderer 翻译键；reason 保留作非 renderer 调用方的后备文本 */
+  reasonKey?: string
+  /** value = 表单不碰该键,保存时按值保留(格式可能重排);unsupported = 表单拥有该键,保存会改写 → 已锁表单 */
+  preservation: 'value' | 'unsupported'
+}
+
+/** 兼容性报告(P1-2 全键 schema):B 类锁定 + 保留清单 + 提示 + 源形态 */
+export interface FormCompatibility {
+  /** B/C 类:表单拥有该键(或父键)却无法无损表达 → 锁表单走 XML */
+  unsupportedPaths: string[]
+  /** 表单不展示、保存时按值保留的顶层键 */
+  preservedTopLevelKeys: string[]
+  /** 不锁表单、但需要在页面上说明的运行效果提示 */
+  warnings: string[]
+  /** 与 warnings 同序的 renderer 翻译键 */
+  warningKeys?: string[]
+  /** 逐键说明(preservedTopLevelKeys + unsupportedPaths 的可读展开) */
+  entries: CompatibilityEntry[]
+  sourceShape: { program: ProgramShape }
+}
+
+/** 保存意图(P0-2):save 只写文件;saveAndApply 额外把「保存前已载入」的任务重新载入(不 kickstart) */
+export type ApplyMode = 'save' | 'saveAndApply'
+
+/** 分阶段结果(P0-2):失败时也要说清「文件写了没 / 回滚了没 / 运行态现在如何」 */
+export interface ApplyReport {
+  fileWritten: boolean
+  fileRolledBack: boolean
+  /** null = 未检查(applyMode='save' 不触碰运行态,零 launchctl 调用) */
+  wasLoaded: boolean | null
+  nowLoaded: boolean | null
+  /** null = 未检查(applyMode='save' 不触碰运行态) */
+  wasEnabled: boolean | null
+  nowEnabled: boolean | null
+  applied: boolean
+  notes: string[]
+}
+
+/**
+ * Agent 文档(P0-3/P1-1):一次读取给出表单 + 原文 + 兼容报告 + revision。
+ * revision = sourceXml 的 sha1(内容 hash):任何写操作都带 expectedRevision 做 CAS,挡住静默并发覆盖。
+ */
+export interface AgentDocument {
+  id: string
+  scope: AgentScope
+  path: string
+  revision: string
+  sourceXml: string
+  /** null = 损坏文件(无字典可映射,走 XML 修复) */
+  form: AgentForm | null
+  compatibility: Omit<FormCompatibility, 'sourceShape'>
+  sourceShape: { program: ProgramShape }
+}
+
+export type SaveFailureKind =
+  | 'not-found'
+  | 'conflict'
+  | 'invalid'
+  | 'unsupported'
+  | 'rename-required'
+  | 'elevation-cancelled'
+  | 'elevation-failed'
+  | 'write-failed'
+
+/** 写操作的统一结果:成功带最新文档;失败带 kind(message 仅供展示,kind 供 UI 分支) */
+export type SaveOutcome =
+  | { ok: true; document: AgentDocument; report: ApplyReport }
+  /** 删除成功没有可回写的文档；renderer 必须刷新列表并关闭抽屉，而非解引用空 document。 */
+  | { ok: true; removed: true; report: ApplyReport }
+  | { ok: false; kind: SaveFailureKind; message: string; latest?: AgentDocument; report?: ApplyReport }
+
+export interface SaveFormInput {
+  id: string
+  expectedRevision: string
+  /** 用户触碰过的字段(P1-1 可选优化):服务端只覆盖这些字段,其余取保存时的磁盘最新值 */
+  dirtyFields: string[]
+  patch: Partial<AgentForm> & { label?: string; desc?: string }
+  applyMode: ApplyMode
+}
+
+export interface SaveXmlInput {
+  id: string
+  expectedRevision: string
+  xml: string
+  applyMode: ApplyMode
+}
+
+/** 克隆:与其它写路径一致带 expectedRevision(源文件被外部改过就拒绝,不克隆旧快照) */
+export interface CloneInput {
+  id: string
+  expectedRevision: string
+}
+
+export interface RenameInput {
+  id: string
+  expectedRevision: string
+  newLabel: string
+  applyMode: ApplyMode
+  /** 表单改名时可附带同一事务中用户明确修改的字段 */
+  dirtyFields?: string[]
+  patch?: Partial<AgentForm> & { desc?: string }
 }
 
 export interface OpsState {

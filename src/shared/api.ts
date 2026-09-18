@@ -16,15 +16,20 @@ import type {
 } from './ipc'
 import type {
   Agent,
-  AgentForm,
+  AgentDocument,
   AgentScope,
+  CloneInput,
   CronJob,
   CronListPayload,
   CronLogFileInfo,
   CronScope,
   DrawerStatusModel,
   LogLine,
-  OpsState
+  OpsState,
+  RenameInput,
+  SaveFormInput,
+  SaveOutcome,
+  SaveXmlInput
 } from './models'
 import type { LauncherSettings } from './settings'
 
@@ -54,16 +59,17 @@ export interface LauncherApi {
     list: () => Promise<{ agents: Agent[] }>
     brewAction: (kind: 'start' | 'stop', id: string) => Promise<Agent>
     createDraft: (scope: AgentScope, label: string) => Promise<Agent>
-    save: (id: string, patch: Partial<AgentForm> & { label: string; desc: string }) => Promise<Agent>
-    remove: (id: string) => Promise<void>
-    clone: (id: string) => Promise<Agent>
+    /** 文档读取(表单 + 原文 + 兼容报告 + revision) */
+    readDocument: (id: string) => Promise<AgentDocument>
+    saveForm: (input: SaveFormInput) => Promise<SaveOutcome>
+    saveXml: (input: SaveXmlInput) => Promise<SaveOutcome>
+    renameAgent: (input: RenameInput) => Promise<SaveOutcome>
+    remove: (id: string, expectedRevision: string) => Promise<SaveOutcome>
+    clone: (input: CloneInput) => Promise<SaveOutcome>
     ops: (id: string, action: 'start' | 'stop' | 'restart' | 'enable' | 'disable') => Promise<OpsState>
-    readForm: (id: string) => Promise<AgentForm>
-    readXml: (id: string) => Promise<{ xml: string; formMode: boolean; unsupportedKeys: string[] }>
-    saveXml: (id: string, xml: string) => Promise<void>
     readStatus: (id: string) => Promise<DrawerStatusModel>
     readLogs: (id: string, source: 'file' | 'system') => Promise<LogLine[]>
-    clearLogs: (id: string) => Promise<void>
+    clearLogs: (id: string) => Promise<{ cleared: string[]; failed: { path: string; error: string }[] }>
     validateXml: (xml: string) => Promise<{ ok: boolean; error: string | null }>
     /** 定向复核:这些(scope,label)对是否「仍被加载但 plist 已不存在」 */
     checkMissing: (candidates: { scope: AgentScope; label: string }[]) => Promise<MissingAgent[]>

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
-import type { ElevationExecutor } from './elevation'
+import type { ElevationExecutor, ElevationRequest } from './elevation'
 import { createLaunchctlService } from './launchctl-service'
 import type { ShellRunner, ShellRunResult } from './shell-runner'
 
@@ -28,8 +28,8 @@ function harness(opts: {
     }
   }
   const elevate: ElevationExecutor & { run: ReturnType<typeof vi.fn> } = {
-    run: vi.fn(async (sh: string) => {
-      elevatedCalls.push(sh)
+    run: vi.fn(async (req: ElevationRequest) => {
+      elevatedCalls.push(renderElevation(req))
       const e = opts.elevated ?? { ok: true }
       return { ok: e.ok, cancelled: e.cancelled ?? false, code: e.ok ? 0 : 1, stderr: e.stderr ?? null }
     })
@@ -41,6 +41,12 @@ function harness(opts: {
 // 域映射:user 与 system 都在用户 gui 域;仅 daemon 落到 system 域。
 // 提权策略(2026-09-17 实测后改为「先试无提权,被系统拒绝才升级」):这组用例锁住该决策边界,
 // 尤其是「业务错误不得被包装成一次授权弹窗」——那会让真实失败看起来像权限问题。
+/** 断言用:把提权请求渲染成一行(argv 步骤按空格连接,逃生舱原样) */
+const renderElevation = (req: ElevationRequest): string =>
+  req.steps
+    .map((s) => ('script' in s ? s.script : [s.command, ...(s.args ?? [])].join(' ')))
+    .join(' && ')
+
 describe('launchctl-service 提权判定', () => {
   it('daemon(system 域)直接提权,不先在本地试跑', async () => {
     const h = harness({ local: res(0) })

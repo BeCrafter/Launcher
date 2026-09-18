@@ -1,42 +1,15 @@
 // ported-from: docs/demo/index.html #dft-edit + drawer.js 表单逻辑 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 编辑 tab(demo #dft-edit:标识/执行/调度触发/I/O 四组 + 底部操作栏;内联样式逐字保留)
+// 2026-09-18:表单兼容守卫横幅 + KeepAlive 三态(移除 AfterInitialDemand)+ ThrottleInterval 未设置态
+//            + UserName(仅 daemon)/ StandardInPath 接线 + 删除未接线的 Disabled/EnableTransactions/Debug 与「存草稿」
 import { useState } from 'react'
-import { useT } from '../../../hooks/useT'
+import { useT, useFmt } from '../../../hooks/useT'
 import { useDrawerStore } from '../../../state/drawer-store'
 import { Toggle } from '../../../components/ui/Toggle'
+import { CfgGroup } from '../../../components/ui/CfgGroup'
 import { ArgsList, EnvList, WatchList } from '../MultiValueList'
 import { SciBuilder } from '../SciBuilder'
 import { showToast } from '../../../lib/utils'
-
-// 折叠组(demo toggleCfg:body display 切换 + chevron open 类)
-function CfgGroup({
-  icon,
-  title,
-  subtitle,
-  children,
-  defaultOpen = true
-}: {
-  icon: string
-  title: string
-  subtitle: string
-  children: React.ReactNode
-  defaultOpen?: boolean
-}): React.JSX.Element {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className="cfg-group">
-      <div className="cfg-group-hdr" onClick={() => setOpen(!open)}>
-        <i className={icon} />
-        <span className="cfg-group-title">{title}</span>
-        <span className="cfg-group-subtitle">{subtitle}</span>
-        <i className={`fa-solid fa-chevron-down cfg-chevron${open ? ' open' : ''}`} />
-      </div>
-      <div className="cfg-group-body" style={{ display: open ? 'flex' : 'none' }}>
-        {children}
-      </div>
-    </div>
-  )
-}
 
 // 触发卡(demo trigger-card;on 态由 checked 驱动)
 function TriggerCard({
@@ -46,7 +19,8 @@ function TriggerCard({
   sub,
   checked,
   onToggle,
-  trailing
+  trailing,
+  hint
 }: {
   id: string
   icon: string
@@ -55,9 +29,10 @@ function TriggerCard({
   checked: boolean
   onToggle?: (v: boolean) => void
   trailing?: React.ReactNode
+  hint?: string
 }): React.JSX.Element {
   return (
-    <div className={`trigger-card${checked ? ' on' : ''}`} id={id}>
+    <div className={`trigger-card${checked ? ' on' : ''}`} id={id} title={hint}>
       <div className="trig-icon">
         <i className={icon} />
       </div>
@@ -74,8 +49,31 @@ function TriggerCard({
   )
 }
 
+// 风险/引导提示行(应用新增;官方文档明确不建议但仍保留可操作性时使用)
+function HintLine({ text }: { text: string }): React.JSX.Element {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 6,
+        alignItems: 'flex-start',
+        fontSize: 10.5,
+        color: 'var(--muted)',
+        background: 'rgba(251,191,36,0.06)',
+        border: '1px solid rgba(251,191,36,0.18)',
+        borderRadius: 6,
+        padding: '6px 9px'
+      }}
+    >
+      <i className="fa-solid fa-triangle-exclamation" style={{ color: '#fbbf24', marginTop: 2 }} />
+      <span>{text}</span>
+    </div>
+  )
+}
+
 export function EditTab(): React.JSX.Element {
   const t = useT()
+  const fmt = useFmt()
   const form = useDrawerStore((s) => s.form)
   const updateForm = useDrawerStore((s) => s.updateForm)
   const formHistory = useDrawerStore((s) => s.formHistory)
@@ -83,9 +81,15 @@ export function EditTab(): React.JSX.Element {
   const remove = useDrawerStore((s) => s.remove)
   const clone = useDrawerStore((s) => s.clone)
   const save = useDrawerStore((s) => s.save)
-  const xml = useDrawerStore((s) => s.xml)
-  const setXml = useDrawerStore((s) => s.setXml)
   const isNotTask = useDrawerStore((s) => s.isNotTask)
+  const document = useDrawerStore((s) => s.document)
+  const unsupportedKeys = document?.compatibility.unsupportedPaths ?? []
+  const preservedKeys = document?.compatibility.preservedTopLevelKeys ?? []
+  const warnings = document?.compatibility.warnings ?? []
+  const warningKeys = document?.compatibility.warningKeys ?? []
+  const entries = document?.compatibility.entries ?? []
+  const setTab = useDrawerStore((s) => s.setTab)
+  const scope = useDrawerStore((s) => s.scope)
   // 损坏文件:没有可解析的字典,表单无从填起 → 给出去处(XML 修复)并保留唯一的动作(删除)
   if (!form) {
     return (
@@ -109,10 +113,56 @@ export function EditTab(): React.JSX.Element {
 
   const trig = form.triggers
   const setTrig = (patch: Partial<typeof trig>): void => updateForm({ triggers: { ...trig, ...patch } })
+  const blocked = unsupportedKeys.length > 0
+  const intervalSet = typeof trig.startInterval === 'number' && trig.startInterval > 0
+  const keepAliveConflicts = trig.keepAlive && (intervalSet || trig.startCalendarInterval || trig.watchPaths)
 
   return (
     <div className="drawer-section active" id="dft-edit" style={{ display: 'flex' }}>
       <div className="section-scroll-area">
+        {/* 表单兼容守卫:含表单表达不了的键 → 禁止表单保存(与 main 侧保存守卫同判据),引导去 XML */}
+        {blocked && (
+          <div className="nontask-notice" title={t('cfg.unsupported.hint')}>
+            <i className="fa-solid fa-triangle-exclamation" />
+            <span>{fmt(t('cfg.unsupported.title'), { K: unsupportedKeys.join(', ') })}</span>
+            <button
+              className="d-btn"
+              type="button"
+              style={{ marginLeft: 'auto', padding: '3px 9px', fontSize: 10.5, flexShrink: 0 }}
+              onClick={() => setTab('xml')}
+            >
+              <i className="fa-solid fa-code" /> <span>{t('cfg.unsupported.jump')}</span>
+            </button>
+          </div>
+        )}
+        {/* 表单不展示但原样保留的第三方键(如 MachServices):只提示,不拦保存 */}
+        {!blocked && preservedKeys.length > 0 && (
+          <div className="nontask-notice">
+            <i className="fa-solid fa-circle-info" />
+            <span>{fmt(t('cfg.preserved.title'), { N: preservedKeys.length, K: preservedKeys.join(', ') })}</span>
+          </div>
+        )}
+        {/* B 类/保留项的可读说明(复审 item 5):键名 + 类型 + 值摘要 + 原因 + 保真等级 */}
+        {entries.length > 0 && (
+          <div className="nontask-notice" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+            <span style={{ fontWeight: 600, fontSize: 11 }}>{fmt(t('cfg.compat.title'), { N: entries.length })}</span>
+            {entries.map((e) => (
+              <div key={e.path} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 10.5, color: 'var(--dim)' }}>
+                <code style={{ color: 'var(--muted)', flexShrink: 0 }}>{e.path}</code>
+                <span style={{ flexShrink: 0 }}>{e.type}</span>
+                {e.summary !== '' && <span style={{ color: 'var(--muted)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>= {e.summary}</span>}
+                <span style={{ opacity: 0.85 }}>{e.reasonKey ? t(e.reasonKey) : e.reason}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {/* 运行效果说明(P1-4 分层提示:既有配置只说明,不做判断);KeepAlive 那条由下面的实时提示承担,避免重复 */}
+        {warnings.map((w, i) => ({ w, i })).filter(({ w }) => !(keepAliveConflicts && w.startsWith('KeepAlive'))).map(({ w, i }) => (
+          <div className="nontask-notice" key={w}>
+            <i className="fa-solid fa-circle-info" />
+            <span>{warningKeys[i] ? t(warningKeys[i]) : w}</span>
+          </div>
+        ))}
         {/* 非任务文件:填上 Label 并保存即成为真正的任务(原地重写,保留原文件名) */}
         {isNotTask && (
           <div className="nontask-notice" title={t('agent.notTask.title')}>
@@ -133,35 +183,12 @@ export function EditTab(): React.JSX.Element {
           <div className="f-row center">
             <span className="f-lbl">ProcessType</span>
             <select className="f-input" value={form.processType} onChange={(e) => updateForm({ processType: e.target.value })}>
+              <option value="">{t('cfg.option.default')}</option>
               <option>Background</option>
               <option>Standard</option>
               <option>Adaptive</option>
               <option>Interactive</option>
             </select>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 9px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 7 }}>
-              <label className="toggle" style={{ flexShrink: 0 }}>
-                <input type="checkbox" />
-                <div className="toggle-track" />
-                <div className="toggle-thumb" />
-              </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>Disabled</span>
-                <span style={{ fontSize: 9.5, color: 'var(--dim)', whiteSpace: 'nowrap' }}>{t('cfg.disabled.hint')}</span>
-              </div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '5px 9px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 7 }}>
-              <label className="toggle" style={{ flexShrink: 0 }}>
-                <input type="checkbox" />
-                <div className="toggle-track" />
-                <div className="toggle-thumb" />
-              </label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 }}>
-                <span style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--muted)', whiteSpace: 'nowrap' }}>EnableTransactions</span>
-                <span style={{ fontSize: 9.5, color: 'var(--dim)', whiteSpace: 'nowrap' }}>{t('cfg.transactions.hint')}</span>
-              </div>
-            </div>
           </div>
         </CfgGroup>
 
@@ -194,10 +221,27 @@ export function EditTab(): React.JSX.Element {
             <span className="f-lbl">WorkingDir</span>
             <input className="f-input mono" type="text" value={form.workingDir} onChange={(e) => updateForm({ workingDir: e.target.value })} />
           </div>
-          <div className="f-row center">
-            <span className="f-lbl">UserName</span>
-            <input className="f-input mono" type="text" placeholder="_www（daemon 专用）" />
-          </div>
+          {/* 非 daemon 域:文件里若已有 UserName,如实展示为只读(launchd 会忽略;保存原值保留) */}
+          {scope !== 'daemon' && form.userName !== '' && (
+            <div className="f-row center" title={t('cfg.userName.ignored')}>
+              <span className="f-lbl">UserName</span>
+              <input className="f-input mono" type="text" value={form.userName} readOnly disabled />
+              <span style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 5, flexShrink: 0 }}>{t('cfg.userName.ignored')}</span>
+            </div>
+          )}
+          {/* UserName 仅特权 system 域(daemon)生效,launchd 对 agent 会忽略该键 → 只在 daemon 域暴露(demo 页脚设计原意) */}
+          {scope === 'daemon' && (
+            <div className="f-row center">
+              <span className="f-lbl">UserName</span>
+              <input
+                className="f-input mono"
+                type="text"
+                value={form.userName}
+                placeholder={t('cfg.userName.placeholder')}
+                onChange={(e) => updateForm({ userName: e.target.value })}
+              />
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div className="f-row center">
               <span className="f-lbl">Nice</span>
@@ -211,6 +255,7 @@ export function EditTab(): React.JSX.Element {
                 onChange={(e) => updateForm({ nice: Number(e.target.value) })}
               />
               <span style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 5 }}>{t('cfg.nice.range')}</span>
+              <i className="fa-solid fa-circle-info" title={t('cfg.nice.prefer')} style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 4, flexShrink: 0 }} />
             </div>
             <div className="f-row center">
               <span className="f-lbl">ThrottleInt</span>
@@ -218,11 +263,13 @@ export function EditTab(): React.JSX.Element {
                 className="f-input"
                 type="number"
                 min={0}
-                value={form.throttleInterval}
+                value={form.throttleInterval ?? ''}
+                placeholder="10"
                 style={{ maxWidth: 70 }}
-                onChange={(e) => updateForm({ throttleInterval: Number(e.target.value) })}
+                onChange={(e) => updateForm({ throttleInterval: e.target.value === '' ? null : Number(e.target.value) })}
               />
               <span style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 5 }}>{t('unit.second')}</span>
+              <i className="fa-solid fa-circle-info" title={t('cfg.throttle.hint')} style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 4, flexShrink: 0 }} />
             </div>
           </div>
           <div className="f-row">
@@ -236,9 +283,10 @@ export function EditTab(): React.JSX.Element {
           <div className="trigger-grid">
             <TriggerCard id="ef_trig_run" icon="fa-solid fa-arrow-right-to-bracket" name={t('trig.runAtLoad')} sub="RunAtLoad" checked={trig.runAtLoad} onToggle={(v) => setTrig({ runAtLoad: v })} />
             <TriggerCard id="ef_trig_keep" icon="fa-solid fa-heart-pulse" name={t('trig.keepAlive')} sub="KeepAlive" checked={trig.keepAlive} onToggle={(v) => setTrig({ keepAlive: v })} />
-            <TriggerCard id="ef_trig_watch" icon="fa-solid fa-eye" name={t('trig.watchPaths')} sub="WatchPaths" checked={trig.watchPaths} onToggle={(v) => setTrig({ watchPaths: v })} />
+            <TriggerCard id="ef_trig_watch" icon="fa-solid fa-eye" name={t('trig.watchPaths')} sub="WatchPaths" checked={trig.watchPaths} onToggle={(v) => setTrig({ watchPaths: v })} hint={t('cfg.watch.risk')} />
             <TriggerCard id="ef_trig_cron" icon="fa-regular fa-clock" name={t('trig.startCalendarInterval')} sub="StartCalendarInterval" checked={trig.startCalendarInterval} onToggle={(v) => setTrig({ startCalendarInterval: v })} />
-            <div className="trigger-card on" id="ef_trig_interval" style={{ gridColumn: '1/-1' }}>
+            {/* 固定间隔:未设置(plist 无该键)与「显式 0」是两回事 —— 开关表达 presence,留空即不写该键 */}
+            <div className={`trigger-card${intervalSet ? ' on' : ''}`} id="ef_trig_interval" style={{ gridColumn: '1/-1' }} title={t('trig.interval.hint')}>
               <div className="trig-icon"><i className="fa-solid fa-stopwatch" /></div>
               <div className="trig-text">
                 <div className="trig-name">{t('trig.startInterval')}</div>
@@ -249,14 +297,20 @@ export function EditTab(): React.JSX.Element {
                   type="number"
                   className="f-input"
                   min={1}
-                  value={trig.startInterval}
+                  value={trig.startInterval ?? ''}
+                  placeholder="—"
+                  disabled={trig.startInterval === null}
                   style={{ maxWidth: 65, fontSize: 11, padding: '4px 7px' }}
-                  onChange={(e) => setTrig({ startInterval: Number(e.target.value) })}
+                  onChange={(e) => setTrig({ startInterval: e.target.value === '' ? null : Number(e.target.value) })}
                 />
                 <span style={{ fontSize: 10, color: 'var(--dim)' }}>{t('unit.second')}</span>
+                <Toggle checked={trig.startInterval !== null} onChange={(v) => setTrig({ startInterval: v ? 60 : null })} />
               </div>
             </div>
           </div>
+
+          {/* KeepAlive 会持续拉起任务(且隐含 RunAtLoad),同时开的定时/监视触发实际轮不到 → 只提示不阻止 */}
+          {keepAliveConflicts && <HintLine text={t('cfg.keepAlive.conflict')} />}
 
           {trig.keepAlive && (
             <div id="ef_keepAliveArea">
@@ -274,7 +328,6 @@ export function EditTab(): React.JSX.Element {
                   {(
                     [
                       ['crashed', 'Crashed', 'ka.crashed'],
-                      ['afterInitialDemand', 'AfterInitialDemand', 'ka.afterInitialDemand'],
                       ['successfulExit', 'SuccessfulExit', 'ka.successfulExit']
                     ] as const
                   ).map(([key, name, descKey]) => (
@@ -283,12 +336,31 @@ export function EditTab(): React.JSX.Element {
                         <div className="trig-name">{name}</div>
                         <div className="ka-desc">{t(descKey)}</div>
                       </div>
-                      <Toggle
-                        checked={form.keepAliveDict[key]}
-                        onChange={(v) => updateForm({ keepAliveDict: { ...form.keepAliveDict, [key]: v } })}
-                      />
+                      {/* 三态:未设置 = 不写该子键;是/否 = true/false(launchd 把条件 OR 起来,false 是反向条件) */}
+                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        {(
+                          [
+                            ['unset', null],
+                            ['yes', true],
+                            ['no', false]
+                          ] as const
+                        ).map(([stateKey, v]) => (
+                          <button
+                            key={stateKey}
+                            type="button"
+                            className={`chip${form.keepAliveDict[key] === v ? ' active' : ''}`}
+                            style={{ padding: '3px 10px' }}
+                            onClick={() => updateForm({ keepAliveDict: { ...form.keepAliveDict, [key]: v } })}
+                          >
+                            {t(`ka.state.${stateKey}`)}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   ))}
+                  {form.keepAliveDict.crashed === null && form.keepAliveDict.successfulExit === null && (
+                    <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 4 }}>{t('ka.empty.hint')}</div>
+                  )}
                 </div>
               )}
             </div>
@@ -296,12 +368,13 @@ export function EditTab(): React.JSX.Element {
 
           {trig.watchPaths && (
             <div id="ef_watchArea">
-              <div style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px' }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)', marginBottom: 7 }}>
+              <div style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>
                   <i className="fa-solid fa-eye" style={{ marginRight: 5 }} />
                   WatchPaths
                 </div>
                 <WatchList paths={form.watchPaths} onChange={(watchPaths) => updateForm({ watchPaths })} />
+                <HintLine text={t('cfg.watch.risk')} />
               </div>
             </div>
           )}
@@ -325,12 +398,13 @@ export function EditTab(): React.JSX.Element {
           </div>
           <div className="f-row center">
             <span className="f-lbl">Stdin</span>
-            <input className="f-input mono" type="text" placeholder="StandardInputPath（可选）" />
-          </div>
-          <div className="f-row center">
-            <span className="f-lbl">Debug</span>
-            <Toggle checked={false} onChange={() => {}} />
-            <span style={{ fontSize: 10.5, color: 'var(--dim)', marginLeft: 7 }}>{t('cfg.debug.hint')}</span>
+            <input
+              className="f-input mono"
+              type="text"
+              value={form.stdin}
+              placeholder={t('cfg.stdin.placeholder')}
+              onChange={(e) => updateForm({ stdin: e.target.value })}
+            />
           </div>
         </CfgGroup>
       </div>
@@ -362,21 +436,27 @@ export function EditTab(): React.JSX.Element {
         </div>
         <div style={{ display: 'flex', gap: 7 }}>
           <button
-            className="d-btn blue"
+            className="d-btn"
             type="button"
-            onClick={() => {
-              setXml(xml)
-              showToast(t('toast.draftSaved'), '#60a5fa', 'fa-floppy-disk')
-            }}
+            style={{ padding: '7px 16px' }}
+            disabled={blocked}
+            title={blocked ? t('cfg.unsupported.hint') : t('btn.save.hint')}
+            onClick={() => void save('save')}
           >
-            <i className="fa-solid fa-floppy-disk" /> <span>{t('btn.draft')}</span>
+            <i className="fa-solid fa-floppy-disk" /> <span>{t('btn.save')}</span>
           </button>
-          <button className="d-btn accent" type="button" style={{ padding: '7px 20px' }} onClick={() => void save()}>
-            <i className="fa-solid fa-check" /> <span>{t('btn.saveReload')}</span>
+          <button
+            className="d-btn accent"
+            type="button"
+            style={{ padding: '7px 18px' }}
+            disabled={blocked}
+            title={blocked ? t('cfg.unsupported.hint') : t('btn.saveApply.hint')}
+            onClick={() => void save('saveAndApply')}
+          >
+            <i className="fa-solid fa-check" /> <span>{t('btn.saveApply')}</span>
           </button>
         </div>
       </div>
     </div>
   )
 }
-

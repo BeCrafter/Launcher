@@ -66,8 +66,21 @@ async function dispatch(agent: Agent, action: AgentIntent): Promise<OpsState | n
       showToast(tr('ops.toast.stopped').replace('{L}', label), '#60a5fa', 'fa-stop')
       return next
     }
-    if (!(await elevate(agent, tr(LABEL_KEY[action])))) return null
     const wasEnabled = !agent.isDisabledByOverride
+    if (action === 'start' && !wasEnabled) {
+      // launchd 硬约束:disable 阻塞 bootstrap → macOS 上不存在「仅本次启动」。
+      // 不把这个副作用藏在 start 内部:先让用户明确选择(取消则不动作)。
+      const pick = await CHOICE.request({
+        header: tr('ops.startDisabled.header'),
+        title: tr('ops.startDisabled.title'),
+        options: [
+          { label: tr('ops.startDisabled.enableAndStart'), value: 'go' },
+          { label: tr('ops.startDisabled.cancel'), value: 'cancel' }
+        ]
+      })
+      if (pick !== 'go') return null
+    }
+    if (!(await elevate(agent, tr(LABEL_KEY[action])))) return null
     if (action === 'start') {
       const next = await dataSource().agents.ops(agent.id, 'start')
       showToast(tr('ops.toast.started').replace('{L}', label), '#4ade80', 'fa-play')

@@ -14,7 +14,7 @@ import {
   type SettingsPatch
 } from '../shared/ipc'
 import { isAllowedExternalUrl } from '../shared/url-guard'
-import type { AgentForm, AgentScope, CronJob, CronScope } from '../shared/models'
+import type { AgentScope, CloneInput, CronJob, CronScope, RenameInput, SaveFormInput, SaveXmlInput } from '../shared/models'
 import type { AgentService } from './services/agent-service'
 import { checkForUpdate } from './services/update-check'
 import type { CrontabService } from './services/crontab-service'
@@ -114,15 +114,13 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.agList, () => deps.agents.list())
   ipcMain.handle(IPC.agBrewAction, (_e, kind: 'start' | 'stop', id: string) => deps.agents.brewAction(kind, id))
   ipcMain.handle(IPC.agCreateDraft, (_e, scope: AgentScope, label: string) => deps.agents.createDraft(scope, label))
-  ipcMain.handle(IPC.agSave, (_e, id: string, patch: Partial<AgentForm> & { label: string; desc: string }) =>
-    deps.agents.save(id, patch)
-  )
-  ipcMain.handle(IPC.agRemove, (_e, id: string) => deps.agents.remove(id))
-  ipcMain.handle(IPC.agClone, (_e, id: string) => deps.agents.clone(id))
+  ipcMain.handle(IPC.agSaveForm, (_e, input: SaveFormInput) => deps.agents.saveForm(input))
+  ipcMain.handle(IPC.agRename, (_e, input: RenameInput) => deps.agents.renameAgent(input))
+  ipcMain.handle(IPC.agRemove, (_e, id: string, expectedRevision: string) => deps.agents.remove(id, expectedRevision))
+  ipcMain.handle(IPC.agClone, (_e, input: CloneInput) => deps.agents.clone(input))
   ipcMain.handle(IPC.agOps, (_e, id: string, action: 'start' | 'stop' | 'restart' | 'enable' | 'disable') => deps.agents.ops(id, action))
-  ipcMain.handle(IPC.agReadForm, (_e, id: string) => deps.agents.readForm(id))
-  ipcMain.handle(IPC.agReadXml, (_e, id: string) => deps.agents.readXml(id))
-  ipcMain.handle(IPC.agSaveXml, (_e, id: string, xml: string) => deps.agents.saveXml(id, xml))
+  ipcMain.handle(IPC.agReadDocument, (_e, id: string) => deps.agents.readDocument(id))
+  ipcMain.handle(IPC.agSaveXml, (_e, input: SaveXmlInput) => deps.agents.saveXml(input))
   ipcMain.handle(IPC.agReadStatus, (_e, id: string) => deps.agents.readStatus(id))
   ipcMain.handle(IPC.agReadLogs, (_e, id: string, source: 'file' | 'system') => deps.agents.readLogs(id, source))
   ipcMain.handle(IPC.agClearLogs, (_e, id: string) => deps.agents.clearLogs(id))

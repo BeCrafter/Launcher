@@ -62,6 +62,13 @@ describe('toPlistXml', () => {
     expect(again.ok && again.value).toEqual(r.value)
   })
 
+  it('extractPlistDesc:只认 DOCTYPE 与 <plist> 之间那条;字典内部注释不算描述', () => {
+    const inner = '<plist version="1.0"><dict><!-- 内部注释 --><key>Label</key><string>a</string></dict></plist>'
+    expect(extractPlistDesc(inner)).toBe('')
+    const withDesc = '<?xml version="1.0"?>\n<!-- 我的描述 -->\n<plist version="1.0"><dict><key>Label</key><string>a</string></dict></plist>'
+    expect(extractPlistDesc(withDesc)).toBe('我的描述')
+  })
+
   it('desc 注释:写出 → extractPlistDesc 读回;不影响解析', () => {
     const xml = toPlistXml({ Label: 'a' }, { desc: '我的服务 & 说明' })
     expect(extractPlistDesc(xml)).toBe('我的服务 & 说明')
