@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cronLogDir, cronLogLegacyPath, cronLogTemplate } from '../../shared/cron-log'
 import { ELEVATION_CANCELLED } from '../../shared/ipc'
 import type { CronJob } from '../../shared/models'
-import type { ElevationExecutor } from './elevation'
+import type { ElevationExecutor, ElevationRequest } from './elevation'
 import { createCrontabService, type CrontabService, type CrontabServiceDeps } from './crontab-service'
 import type { ShellRunner, ShellRunResult } from './shell-runner'
 
@@ -71,8 +71,8 @@ function makeHarness(opts?: { elevateResult?: { ok: boolean; cancelled?: boolean
   }
 
   const elevateResult = opts?.elevateResult ?? { ok: true }
-  const elevateRun = vi.fn(async (sh: string) => {
-    void sh
+  const elevateRun = vi.fn(async (req: ElevationRequest) => {
+    void req
     return {
       ok: elevateResult.ok,
       cancelled: elevateResult.cancelled ?? false,
@@ -281,12 +281,15 @@ describe('crontab-service(system scope 提权路径)', () => {
       system: true
     })
     expect(h.elevateRun).toHaveBeenCalledTimes(1)
-    const sh = h.elevateRun.mock.calls[0][0] as string
-    expect(sh).toContain(`cp ${h.systemPath} ${h.systemPath}.bak 2>/dev/null`)
-    expect(sh).toContain('chown root:wheel')
-    expect(sh).toContain('chmod 644')
+    const req = h.elevateRun.mock.calls[0][0] as ElevationRequest
+    const script = req.steps
+      .map((s) => ('script' in s ? s.script : [s.command, ...(s.args ?? [])].join(' ')))
+      .join(' && ')
+    expect(script).toContain(`cp '${h.systemPath}' '${h.systemPath}.bak' 2>/dev/null`)
+    expect(script).toContain('chown root:wheel')
+    expect(script).toContain('chmod 644')
     // base64 载荷可解回写入内容
-    const b64 = sh.match(/'([A-Za-z0-9+/=]+)'/)?.[1] ?? ''
+    const b64 = script.match(/'([A-Za-z0-9+/=]+)'/)?.[1] ?? ''
     expect(Buffer.from(b64, 'base64').toString('utf8')).toBe('0 3 * * * root /usr/bin/clean\n')
     // 不写用户 crontab
     expect(h.runnerCalls.some((c) => c.args[0] === '-')).toBe(false)

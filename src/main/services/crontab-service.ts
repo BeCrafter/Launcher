@@ -19,7 +19,7 @@ import {
   type ParsedCrontab
 } from '../domains/crontab'
 import { formatLogTs, parseLogText } from '../domains/log-lines'
-import type { ElevationExecutor } from './elevation'
+import { shQuote, type ElevationExecutor } from './elevation'
 import type { ShellRunner } from './shell-runner'
 
 // 系统级 crontab 路径。实测(SIP 开启的 macOS):/etc 下"新建"文件即使 root 也被拒(EPERM),
@@ -82,13 +82,20 @@ export function createCrontabService(deps: CrontabServiceDeps): CrontabService {
   async function writeScope(scope: CronScope, text: string): Promise<void> {
     const normalized = text !== '' && !text.endsWith('\n') ? `${text}\n` : text
     if (scope === 'system') {
-      // 固定模板 + base64 载荷:无引号/反斜杠/换行,经 elevate 安全校验;先备份再写,重建属主权限
+      // 先备份再写,重建属主权限。逃生舱(P0-1):管道 + 重定向无法用 argv 表达 ——
+      // 载荷是 base64(shell 元字符集之外),两个路径经 shQuote 编码,脚本里没有任何裸用户数据
       const b64 = Buffer.from(normalized, 'utf8').toString('base64')
-      const sh =
-        `cp ${systemPath} ${systemBak} 2>/dev/null; ` +
-        `printf '%s' '${b64}' | /usr/bin/openssl base64 -d -A > ${systemPath}` +
-        ` && chown root:wheel ${systemPath} && chmod 644 ${systemPath}`
-      const r = await deps.elevate.run(sh)
+      const sp = shQuote(systemPath)
+      const r = await deps.elevate.run({
+        steps: [
+          {
+            script:
+              `cp ${sp} ${shQuote(systemBak)} 2>/dev/null; ` +
+              `printf '%s' '${b64}' | /usr/bin/openssl base64 -d -A > ${sp}` +
+              ` && chown root:wheel ${sp} && chmod 644 ${sp}`
+          }
+        ]
+      })
       if (!r.ok) {
         throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
       }

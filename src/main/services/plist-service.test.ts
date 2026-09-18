@@ -1,7 +1,7 @@
 // plist-service scanAll 记忆/单飞/失效(打开慢修复:抽屉 4 路并发 IPC 共享一次扫描)
 // + 非任务/异常 plist 的可见性:每个 .plist 恰好一条记录,解析失败与缺 Label 都不再被丢弃
 // 注:system/daemon 作用域是硬编码系统目录,单测仅断言 user 作用域(由 home 注入临时目录隔离)
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -233,6 +233,110 @@ describe('非任务/异常 plist(文件在磁盘上存在 → 必须在列表里
       writeFileSync(target, BROKEN_XML)
       await h.svc.writeAt('user', target, PLIST_XML) // 不抛错
       expect(h.userLabels(await h.svc.scanAll())).toEqual(['com.test.memo'])
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+// ── P0-1.2:目录逃逸防线(不依赖 join 的语义;Label 由 agent-label 校验,readdir 来的文件名靠这里兜底) ──
+describe('plist-service 路径围栏', () => {
+  it('pathFor:含路径分隔符的 label 逃不出管理目录', () => {
+    const h = harness(1000)
+    try {
+      expect(() => h.svc.pathFor('user', '../../etc/evil')).toThrow(/不在 user 管理目录内/)
+      // 'a/b' 经 join 归入子目录(不构成逃逸)—— 这类输入由 Label 校验层拒绝(见 agent-label.test.ts)
+      expect(h.svc.pathFor('user', 'a/b')).toBe(join(h.userDir, 'a', 'b.plist'))
+      expect(h.svc.pathFor('user', 'com.ok')).toBe(join(h.userDir, 'com.ok.plist'))
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('writeAt / remove:目标在管理目录之外一律拒绝且零写盘', async () => {
+    const h = harness(1000)
+    try {
+      await expect(h.svc.writeAt('user', '/etc/evil.plist', PLIST_XML)).rejects.toThrow(/不在 user 管理目录内/)
+      await expect(h.svc.writeAt('user', join(h.userDir, '../escape.plist'), PLIST_XML)).rejects.toThrow(
+        /不在 user 管理目录内/
+      )
+      await expect(h.svc.remove('user', '/etc/evil.plist')).rejects.toThrow(/不在 user 管理目录内/)
+      expect(existsSync(join(h.home, 'Library/escape.plist'))).toBe(false)
+    } finally {
+      h.cleanup()
+    }
+  })
+})
+
+// ── P1 复审:提权写入/删除的事务顺序与中止条件 ──
+describe('plist-service 提权事务', () => {
+  function elevHarness(result: { ok: boolean; stderr?: string }) {
+    const home = mkdtempSync(join(tmpdir(), 'plist-elev-'))
+    const requests: { steps: { command?: string; args?: string[]; script?: string }[] }[] = []
+    const elevate: ElevationExecutor = {
+      run: async (req) => {
+        requests.push(req as never)
+        return { ok: result.ok, cancelled: false, code: result.ok ? 0 : 1, stderr: result.stderr ?? null }
+      }
+    }
+    const runner: ShellRunner = {
+      run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null })
+    }
+    const svc = createPlistService({ runner, elevate, home, memoTtlMs: 1000 })
+    return { svc, requests, cleanup: () => rmSync(home, { recursive: true, force: true }) }
+  }
+
+  it('特权写入:先 chown/chmod **临时文件**,最后才 mv(权限步骤失败时目标保持完整)', async () => {
+    const h = elevHarness({ ok: true })
+    try {
+      await h.svc.writeAt('daemon', '/Library/LaunchDaemons/com.t.plist', PLIST_XML)
+      const steps = h.requests[0].steps as { command: string; args: string[] }[]
+      expect(steps.map((s) => s.command)).toEqual(['chown', 'chmod', 'mv'])
+      const tmp = steps[0].args[1]
+      expect(steps[1].args[1]).toBe(tmp) // chmod 同一个临时文件
+      expect(steps[2].args).toEqual([tmp, '/Library/LaunchDaemons/com.t.plist']) // 最后才覆盖目标
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('特权删除:bootout 与 rm 通过 command+argv 串行执行,不把路径拼进 raw script', async () => {
+    const h = elevHarness({ ok: true })
+    try {
+      await h.svc.removeWithBootout('daemon', '/Library/LaunchDaemons/com.t.plist', true, 'system')
+      const steps = h.requests[0].steps as { command: string; args: string[] }[]
+      expect(steps).toEqual([
+        { command: 'launchctl', args: ['bootout', 'system', '/Library/LaunchDaemons/com.t.plist'] },
+        { command: 'rm', args: ['-f', '/Library/LaunchDaemons/com.t.plist'] }
+      ])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('特权写入:暂存文件在 0700 随机私有目录内,且提权后被清理(P0)', async () => {
+    const h = elevHarness({ ok: true })
+    try {
+      await h.svc.writeAt('daemon', '/Library/LaunchDaemons/com.t.plist', PLIST_XML)
+      const steps = h.requests[0].steps as { command: string; args: string[] }[]
+      const staging = steps[0].args[1]
+      // 位于 mkdtemp 生成的 launcher-elev-XXXX 私有目录,而不是可预测的全局 tmpdir 文件名
+      expect(staging).toMatch(/\/launcher-elev-[^/]+\//)
+      expect(staging.endsWith('/com.t.plist')).toBe(true)
+      // 提权结束后整目录被清理(不留 root 拥有的暂存文件)
+      const dir = staging.slice(0, staging.lastIndexOf('/'))
+      expect(existsSync(dir)).toBe(false)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('特权删除:提权失败 → 抛出(不静默当成功)', async () => {
+    const h = elevHarness({ ok: false, stderr: 'Operation not permitted' })
+    try {
+      await expect(
+        h.svc.removeWithBootout('daemon', '/Library/LaunchDaemons/com.t.plist', true, 'system')
+      ).rejects.toThrow(/Operation not permitted/)
     } finally {
       h.cleanup()
     }

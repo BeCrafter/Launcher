@@ -17,7 +17,8 @@ export type SciData = {
 export function sciDescribe(d: SciData, lang: Language, t: T): string {
   const isEn = lang === 'en-US'
   const pad = (v: number): string => String(v).padStart(2, '0')
-  const wk = (): string | null => (d.Weekday !== null ? t('cron.wd.' + d.Weekday) : null)
+  // Weekday 0 和 7 都是周日(man launchd.plist)—— 7 归一为 0 取文案,否则会露出裸键名 cron.wd.7
+  const wk = (): string | null => (d.Weekday !== null ? t('cron.wd.' + (d.Weekday % 7)) : null)
   const mo = (): string | null => (d.Month !== null ? t('cron.mo.' + d.Month) : null)
   const dy = (): string | null => (d.Day !== null ? (isEn ? String(d.Day) : d.Day + '日') : null)
   const hm = (): string =>

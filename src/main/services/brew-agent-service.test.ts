@@ -48,7 +48,10 @@ describe('brew-agent-service.action 路由', () => {
       elevate: { run: elevateRun } as unknown as ElevationExecutor
     })
     await brew.action('start', { name: 'mysql', status: 'stopped', user: 'root', file: '/Library/LaunchDaemons/homebrew.mxcl.mysql.plist', exitCode: null })
-    expect(elevateRun).toHaveBeenCalledWith(expect.stringMatching(/brew services start mysql/))
+    // P0-1:提权走 command+argv(不再拼 shell 串),服务名原样传递、不经手工清洗
+    expect(elevateRun).toHaveBeenCalledWith({
+      steps: [{ command: expect.stringMatching(/brew$/), args: ['services', 'start', 'mysql'] }]
+    })
     expect(run).not.toHaveBeenCalled()
   })
 

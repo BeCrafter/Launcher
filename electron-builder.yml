@@ -16,11 +16,14 @@ electronLanguages:
   - en
   - zh_CN
   - zh_TW
-# 发布产物命名：Launcher-0.1.0-arm64.zip / .dmg —— install.sh 与 Homebrew cask 依赖此格式
+# 产物命名：Launcher-<版本>-<架构>.{zip,dmg}
+# 两条安装通道（curl 脚本 scripts/install.sh、Homebrew cask packaging/homebrew/）都只消费 .zip；
+# .dmg 是额外产物，不作为推荐安装路径
 artifactName: ${productName}-${version}-${arch}.${ext}
 mac:
   category: public.app-category.developer-tools
-  # 发布产物；build-app.mjs 的 --dir 会整体替换此列表（builder.js:51），故 build:app 仍只出解包目录
+  # build-app.mjs 的 --dir 会整体替换此列表（builder.js:51），故 build:app 仍只出解包目录
+  # zip = 两条安装通道的产物；dmg = 额外产物（手动安装用，非推荐路径）
   target:
     - dmg
     - zip

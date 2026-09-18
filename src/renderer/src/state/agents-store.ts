@@ -12,6 +12,7 @@ interface AgentsState {
   filter: AgentFilter
   selectedId: string | null
   loaded: boolean
+  loadVersion: number
   load(): Promise<void>
   setFilter(f: AgentFilter): void
   select(id: string): void
@@ -26,10 +27,14 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   filter: 'all',
   selectedId: null,
   loaded: false,
+  loadVersion: 0,
 
   async load() {
+    const loadVersion = get().loadVersion + 1
+    set({ loadVersion })
     const prev = get().agents
     const { agents } = await dataSource().agents.list()
+    if (get().loadVersion !== loadVersion) return
     set({
       agents,
       loaded: true,
@@ -51,7 +56,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         return
       }
       const missing = await dataSource().agents.checkMissing([...candidates.values()])
-      set({ missingPlists: missing })
+      if (get().loadVersion === loadVersion) set({ missingPlists: missing })
     } catch {
       /* 复核失败不阻断列表 */
     }

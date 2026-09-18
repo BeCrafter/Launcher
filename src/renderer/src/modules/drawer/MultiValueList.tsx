@@ -1,7 +1,53 @@
 // ported-from: docs/demo/js/drawer.js addArgTo/addEnvTo/addWatchTo @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 多值行编辑(收口 demo addArgTo/addEnvTo/addWatchTo/delMvRow 三处同构)
 // 行 markup 与内联样式逐字保留(demo 中这些行由 JS createElement 生成)
+// 2026-09-18:Arguments 与 WatchPaths 曾各写一份逐行同构的实现 → 收口为 StringList(仅 idx 符号/占位/按钮文案不同)
 import { useT } from '../../hooks/useT'
+
+// Arguments / WatchPaths 共用的字符串行列表
+function StringList({
+  values,
+  onChange,
+  idx,
+  placeholder,
+  addLabelKey
+}: {
+  values: string[]
+  onChange: (next: string[]) => void
+  idx: (i: number) => React.ReactNode
+  placeholder?: string
+  addLabelKey: string
+}): React.JSX.Element {
+  const t = useT()
+  const update = (i: number, v: string): void => {
+    const next = [...values]
+    next[i] = v
+    onChange(next)
+  }
+  const remove = (i: number): void => onChange(values.filter((_, j) => j !== i))
+  return (
+    <div className="multi-val">
+      {values.map((v, i) => (
+        <div className="mv-row" key={i}>
+          <span className="mv-idx">{idx(i)}</span>
+          <input
+            className="f-input mono"
+            type="text"
+            value={v}
+            placeholder={placeholder}
+            onChange={(e) => update(i, e.target.value)}
+          />
+          <button className="mv-del" type="button" onClick={() => remove(i)}>
+            <i className="fa-solid fa-xmark" />
+          </button>
+        </div>
+      ))}
+      <button className="add-row-btn" type="button" onClick={() => onChange([...values, ''])}>
+        <i className="fa-solid fa-plus" style={{ fontSize: 9 }} /> <span>{t(addLabelKey)}</span>
+      </button>
+    </div>
+  )
+}
 
 // Arguments:[i] 序号行(demo mv-row + mv-idx)
 export function ArgsList({
@@ -11,34 +57,7 @@ export function ArgsList({
   args: string[]
   onChange: (next: string[]) => void
 }): React.JSX.Element {
-  const t = useT()
-  const update = (i: number, v: string): void => {
-    const next = [...args]
-    next[i] = v
-    onChange(next)
-  }
-  const remove = (i: number): void => onChange(args.filter((_, j) => j !== i))
-  return (
-    <div className="multi-val">
-      {args.map((v, i) => (
-        <div className="mv-row" key={i}>
-          <span className="mv-idx">[{i}]</span>
-          <input
-            className="f-input mono"
-            type="text"
-            value={v}
-            onChange={(e) => update(i, e.target.value)}
-          />
-          <button className="mv-del" type="button" onClick={() => remove(i)}>
-            <i className="fa-solid fa-xmark" />
-          </button>
-        </div>
-      ))}
-      <button className="add-row-btn" type="button" onClick={() => onChange([...args, ''])}>
-        <i className="fa-solid fa-plus" style={{ fontSize: 9 }} /> <span>{t('cfg.addArg')}</span>
-      </button>
-    </div>
-  )
+  return <StringList values={args} onChange={onChange} idx={(i) => `[${i}]`} addLabelKey="cfg.addArg" />
 }
 
 // EnvVars:KEY=VALUE 行(demo kv-row,内联样式逐字)
@@ -103,32 +122,13 @@ export function WatchList({
   paths: string[]
   onChange: (next: string[]) => void
 }): React.JSX.Element {
-  const t = useT()
-  const update = (i: number, v: string): void => {
-    const next = [...paths]
-    next[i] = v
-    onChange(next)
-  }
   return (
-    <div className="multi-val">
-      {paths.map((v, i) => (
-        <div className="mv-row" key={i}>
-          <span className="mv-idx">•</span>
-          <input
-            className="f-input mono"
-            type="text"
-            value={v}
-            placeholder="/path/to/watch"
-            onChange={(e) => update(i, e.target.value)}
-          />
-          <button className="mv-del" type="button" onClick={() => onChange(paths.filter((_, j) => j !== i))}>
-            <i className="fa-solid fa-xmark" />
-          </button>
-        </div>
-      ))}
-      <button className="add-row-btn" type="button" onClick={() => onChange([...paths, ''])}>
-        <i className="fa-solid fa-plus" style={{ fontSize: 9 }} /> <span>{t('cfg.addPath')}</span>
-      </button>
-    </div>
+    <StringList
+      values={paths}
+      onChange={onChange}
+      idx={() => '•'}
+      placeholder="/path/to/watch"
+      addLabelKey="cfg.addPath"
+    />
   )
 }
