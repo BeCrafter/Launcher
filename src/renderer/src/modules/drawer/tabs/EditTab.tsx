@@ -1,7 +1,8 @@
 // ported-from: docs/demo/index.html #dft-edit + drawer.js 表单逻辑 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 编辑 tab(demo #dft-edit:标识/执行/调度触发/I/O 四组 + 底部操作栏;内联样式逐字保留)
 // 2026-09-18:表单兼容守卫横幅 + KeepAlive 三态(移除 AfterInitialDemand)+ ThrottleInterval 未设置态
-//            + UserName(仅 daemon)/ StandardInPath 接线 + 删除未接线的 Disabled/EnableTransactions/Debug 与「存草稿」
+//            + UserName(仅 daemon)接线 + 删除未接线的 Disabled/EnableTransactions/Debug 与「存草稿」
+// 2026-09-19:Stdin(StandardInPath)移出表单 → 无 UI 往返白名单(launchd 任务非交互,正常场景用不到;XML tab 兜底)
 import { useState } from 'react'
 import { useT, useFmt } from '../../../hooks/useT'
 import { useDrawerStore } from '../../../state/drawer-store'
@@ -10,6 +11,8 @@ import { CfgGroup } from '../../../components/ui/CfgGroup'
 import { ArgsList, EnvList, WatchList } from '../MultiValueList'
 import { SciBuilder } from '../SciBuilder'
 import { showToast } from '../../../lib/utils'
+import { keepAlivePreset, keepAlivePresetState, type KeepAlivePreset } from '../../../lib/keep-alive'
+import { CHOICE } from '../../../lib/choice'
 
 // 触发卡(demo trigger-card;on 态由 checked 驱动)
 function TriggerCard({
@@ -90,6 +93,8 @@ export function EditTab(): React.JSX.Element {
   const entries = document?.compatibility.entries ?? []
   const setTab = useDrawerStore((s) => s.setTab)
   const scope = useDrawerStore((s) => s.scope)
+  const kaCustom = useDrawerStore((s) => s.kaCustom)
+  const setKaCustom = useDrawerStore((s) => s.setKaCustom)
   // 损坏文件:没有可解析的字典,表单无从填起 → 给出去处(XML 修复)并保留唯一的动作(删除)
   if (!form) {
     return (
@@ -115,7 +120,119 @@ export function EditTab(): React.JSX.Element {
   const setTrig = (patch: Partial<typeof trig>): void => updateForm({ triggers: { ...trig, ...patch } })
   const blocked = unsupportedKeys.length > 0
   const intervalSet = typeof trig.startInterval === 'number' && trig.startInterval > 0
+  const calendarSet = trig.startCalendarInterval
+  const timeScheduleSet = intervalSet || calendarSet
+  const timeScheduleOverlap = intervalSet && calendarSet
   const keepAliveConflicts = trig.keepAlive && (intervalSet || trig.startCalendarInterval || trig.watchPaths)
+
+  const confirmScheduleSwitch = async (target: 'calendar' | 'interval'): Promise<boolean> => {
+    const picked = await CHOICE.request({
+      header: t('cfg.schedule.replace.header'),
+      title: target === 'calendar' ? t('cfg.schedule.replace.calendar.title') : t('cfg.schedule.replace.interval.title'),
+      options: [
+        { label: target === 'calendar' ? t('cfg.schedule.replace.calendar.ok') : t('cfg.schedule.replace.interval.ok'), value: 'replace' },
+        { label: t('cfg.schedule.replace.cancel'), value: 'cancel' }
+      ]
+    })
+    return picked === 'replace'
+  }
+
+  const setCalendarSchedule = async (enabled: boolean): Promise<void> => {
+    if (!enabled) {
+      setTrig({ startCalendarInterval: false })
+      return
+    }
+    if (intervalSet && !(await confirmScheduleSwitch('calendar'))) return
+    if (trig.keepAlive) {
+      const picked = await CHOICE.request({
+        header: t('cfg.keepAlive.replace.header'),
+        title: t('cfg.keepAlive.replace.schedule.title'),
+        options: [
+          { label: t('cfg.keepAlive.replace.schedule.ok'), value: 'replace' },
+          { label: t('cfg.schedule.replace.cancel'), value: 'cancel' }
+        ]
+      })
+      if (picked !== 'replace') return
+      updateForm({
+        triggers: { ...trig, keepAlive: false, startCalendarInterval: true, startInterval: null },
+        keepAliveMode: 'bool',
+        keepAliveDict: { crashed: null, successfulExit: null }
+      })
+      return
+    }
+    updateForm({ triggers: { ...trig, startCalendarInterval: true, startInterval: null } })
+  }
+
+  const setIntervalSchedule = async (enabled: boolean): Promise<void> => {
+    if (!enabled) {
+      setTrig({ startInterval: null })
+      return
+    }
+    if (calendarSet && !(await confirmScheduleSwitch('interval'))) return
+    if (trig.keepAlive) {
+      const picked = await CHOICE.request({
+        header: t('cfg.keepAlive.replace.header'),
+        title: t('cfg.keepAlive.replace.schedule.title'),
+        options: [
+          { label: t('cfg.keepAlive.replace.schedule.ok'), value: 'replace' },
+          { label: t('cfg.schedule.replace.cancel'), value: 'cancel' }
+        ]
+      })
+      if (picked !== 'replace') return
+      updateForm({
+        triggers: { ...trig, keepAlive: false, startCalendarInterval: false, startInterval: 60 },
+        keepAliveMode: 'bool',
+        keepAliveDict: { crashed: null, successfulExit: null },
+        sciEntries: []
+      })
+      return
+    }
+    updateForm({ triggers: { ...trig, startInterval: 60, startCalendarInterval: false }, sciEntries: [] })
+  }
+
+  const setKeepAlive = async (enabled: boolean): Promise<void> => {
+    if (!enabled) {
+      const next = keepAlivePresetState('off')
+      setKaCustom(false)
+      updateForm({ triggers: { ...trig, keepAlive: false }, keepAliveMode: next.mode, keepAliveDict: next.dict })
+      return
+    }
+    if (timeScheduleSet) {
+      const picked = await CHOICE.request({
+        header: t('cfg.keepAlive.replace.header'),
+        title: t('cfg.keepAlive.replace.keepAlive.title'),
+        options: [
+          { label: t('cfg.keepAlive.replace.keepAlive.ok'), value: 'replace' },
+          { label: t('cfg.schedule.replace.cancel'), value: 'cancel' }
+        ]
+      })
+      if (picked !== 'replace') return
+      const next = keepAlivePresetState('always')
+      setKaCustom(false)
+      updateForm({
+        triggers: { ...trig, keepAlive: true, startCalendarInterval: false, startInterval: null },
+        keepAliveMode: next.mode,
+        keepAliveDict: next.dict,
+        sciEntries: []
+      })
+      return
+    }
+    const next = keepAlivePresetState('always')
+    setKaCustom(false)
+    updateForm({ triggers: { ...trig, keepAlive: true }, keepAliveMode: next.mode, keepAliveDict: next.dict })
+  }
+  const currentKeepAlivePreset = keepAlivePreset(form)
+  // 下拉框显示的是「模式」:显式选过自定义就一直是自定义,不因形态恰好等于某个预设而被改回具名。
+  // 仍以 `keepAliveMode === 'dict'` 收口 —— XML 保存可能把形态换回 bool,此时模式位必须让位给实际形态。
+  const kaCustomMode = kaCustom && form.keepAliveMode === 'dict'
+  const shownPreset = kaCustomMode ? 'custom' : currentKeepAlivePreset
+  const setKeepAlivePreset = (nextPreset: KeepAlivePreset): void => {
+    setKaCustom(nextPreset === 'custom')
+    const next = nextPreset === 'custom'
+      ? { keepAlive: true, mode: 'dict' as const, dict: { ...form.keepAliveDict } }
+      : keepAlivePresetState(nextPreset)
+    updateForm({ triggers: { ...trig, keepAlive: next.keepAlive }, keepAliveMode: next.mode, keepAliveDict: next.dict })
+  }
 
   return (
     <div className="drawer-section active" id="dft-edit" style={{ display: 'flex' }}>
@@ -180,16 +297,6 @@ export function EditTab(): React.JSX.Element {
             <span className="f-lbl">{t('cfg.desc')}</span>
             <textarea className="f-input" rows={2} value={form.desc} onChange={(e) => updateForm({ desc: e.target.value })} />
           </div>
-          <div className="f-row center">
-            <span className="f-lbl">ProcessType</span>
-            <select className="f-input" value={form.processType} onChange={(e) => updateForm({ processType: e.target.value })}>
-              <option value="">{t('cfg.option.default')}</option>
-              <option>Background</option>
-              <option>Standard</option>
-              <option>Adaptive</option>
-              <option>Interactive</option>
-            </select>
-          </div>
         </CfgGroup>
 
         {/* § 执行 */}
@@ -242,51 +349,20 @@ export function EditTab(): React.JSX.Element {
               />
             </div>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div className="f-row center">
-              <span className="f-lbl">Nice</span>
-              <input
-                className="f-input"
-                type="number"
-                min={-20}
-                max={20}
-                value={form.nice}
-                style={{ maxWidth: 70 }}
-                onChange={(e) => updateForm({ nice: Number(e.target.value) })}
-              />
-              <span style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 5 }}>{t('cfg.nice.range')}</span>
-              <i className="fa-solid fa-circle-info" title={t('cfg.nice.prefer')} style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 4, flexShrink: 0 }} />
-            </div>
-            <div className="f-row center">
-              <span className="f-lbl">ThrottleInt</span>
-              <input
-                className="f-input"
-                type="number"
-                min={0}
-                value={form.throttleInterval ?? ''}
-                placeholder="10"
-                style={{ maxWidth: 70 }}
-                onChange={(e) => updateForm({ throttleInterval: e.target.value === '' ? null : Number(e.target.value) })}
-              />
-              <span style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 5 }}>{t('unit.second')}</span>
-              <i className="fa-solid fa-circle-info" title={t('cfg.throttle.hint')} style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 4, flexShrink: 0 }} />
-            </div>
-          </div>
           <div className="f-row">
             <span className="f-lbl" style={{ paddingTop: 6 }}>EnvVars</span>
             <EnvList env={form.env} onChange={(env) => updateForm({ env })} />
           </div>
         </CfgGroup>
 
-        {/* § 调度 / 触发 */}
-        <CfgGroup icon="fa-solid fa-sliders" title={t('cfg.group.schedule')} subtitle="Scheduling">
+        {/* § 启动时机 */}
+        <CfgGroup icon="fa-solid fa-clock" title={t('cfg.group.schedule')} subtitle="Startup timing">
           <div className="trigger-grid">
-            <TriggerCard id="ef_trig_run" icon="fa-solid fa-arrow-right-to-bracket" name={t('trig.runAtLoad')} sub="RunAtLoad" checked={trig.runAtLoad} onToggle={(v) => setTrig({ runAtLoad: v })} />
-            <TriggerCard id="ef_trig_keep" icon="fa-solid fa-heart-pulse" name={t('trig.keepAlive')} sub="KeepAlive" checked={trig.keepAlive} onToggle={(v) => setTrig({ keepAlive: v })} />
+            <TriggerCard id="ef_trig_run" icon="fa-solid fa-arrow-right-to-bracket" name={t('trig.runAtLoad')} sub="RunAtLoad" checked={trig.runAtLoad} onToggle={(v) => setTrig({ runAtLoad: v })} hint={t('trig.runAtLoad.hint')} />
             <TriggerCard id="ef_trig_watch" icon="fa-solid fa-eye" name={t('trig.watchPaths')} sub="WatchPaths" checked={trig.watchPaths} onToggle={(v) => setTrig({ watchPaths: v })} hint={t('cfg.watch.risk')} />
-            <TriggerCard id="ef_trig_cron" icon="fa-regular fa-clock" name={t('trig.startCalendarInterval')} sub="StartCalendarInterval" checked={trig.startCalendarInterval} onToggle={(v) => setTrig({ startCalendarInterval: v })} />
+            <TriggerCard id="ef_trig_cron" icon="fa-regular fa-clock" name={t('trig.startCalendarInterval')} sub="StartCalendarInterval" checked={trig.startCalendarInterval} onToggle={(v) => void setCalendarSchedule(v)} />
             {/* 固定间隔:未设置(plist 无该键)与「显式 0」是两回事 —— 开关表达 presence,留空即不写该键 */}
-            <div className={`trigger-card${intervalSet ? ' on' : ''}`} id="ef_trig_interval" style={{ gridColumn: '1/-1' }} title={t('trig.interval.hint')}>
+            <div className={`trigger-card${intervalSet ? ' on' : ''}`} id="ef_trig_interval" title={t('trig.interval.hint')}>
               <div className="trig-icon"><i className="fa-solid fa-stopwatch" /></div>
               <div className="trig-text">
                 <div className="trig-name">{t('trig.startInterval')}</div>
@@ -304,67 +380,13 @@ export function EditTab(): React.JSX.Element {
                   onChange={(e) => setTrig({ startInterval: e.target.value === '' ? null : Number(e.target.value) })}
                 />
                 <span style={{ fontSize: 10, color: 'var(--dim)' }}>{t('unit.second')}</span>
-                <Toggle checked={trig.startInterval !== null} onChange={(v) => setTrig({ startInterval: v ? 60 : null })} />
+                <Toggle checked={trig.startInterval !== null} onChange={(v) => void setIntervalSchedule(v)} />
               </div>
             </div>
           </div>
 
-          {/* KeepAlive 会持续拉起任务(且隐含 RunAtLoad),同时开的定时/监视触发实际轮不到 → 只提示不阻止 */}
-          {keepAliveConflicts && <HintLine text={t('cfg.keepAlive.conflict')} />}
-
-          {trig.keepAlive && (
-            <div id="ef_keepAliveArea">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 500 }}>{t('ka.mode')}</span>
-                <button className={`chip${form.keepAliveMode === 'bool' ? ' active' : ''}`} type="button" style={{ padding: '3px 10px' }} onClick={() => updateForm({ keepAliveMode: 'bool' })}>
-                  Bool
-                </button>
-                <button className={`chip${form.keepAliveMode === 'dict' ? ' active' : ''}`} type="button" style={{ padding: '3px 10px' }} onClick={() => updateForm({ keepAliveMode: 'dict' })}>
-                  {t('ka.dict')}
-                </button>
-              </div>
-              {form.keepAliveMode === 'dict' && (
-                <div className="ka-dict" id="ef_kaDictArea">
-                  {(
-                    [
-                      ['crashed', 'Crashed', 'ka.crashed'],
-                      ['successfulExit', 'SuccessfulExit', 'ka.successfulExit']
-                    ] as const
-                  ).map(([key, name, descKey]) => (
-                    <div className="ka-row" key={key}>
-                      <div>
-                        <div className="trig-name">{name}</div>
-                        <div className="ka-desc">{t(descKey)}</div>
-                      </div>
-                      {/* 三态:未设置 = 不写该子键;是/否 = true/false(launchd 把条件 OR 起来,false 是反向条件) */}
-                      <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                        {(
-                          [
-                            ['unset', null],
-                            ['yes', true],
-                            ['no', false]
-                          ] as const
-                        ).map(([stateKey, v]) => (
-                          <button
-                            key={stateKey}
-                            type="button"
-                            className={`chip${form.keepAliveDict[key] === v ? ' active' : ''}`}
-                            style={{ padding: '3px 10px' }}
-                            onClick={() => updateForm({ keepAliveDict: { ...form.keepAliveDict, [key]: v } })}
-                          >
-                            {t(`ka.state.${stateKey}`)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {form.keepAliveDict.crashed === null && form.keepAliveDict.successfulExit === null && (
-                    <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 4 }}>{t('ka.empty.hint')}</div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+          <HintLine text={t('trig.runAtLoad.hint')} />
+          {timeScheduleOverlap && <HintLine text={t('cfg.schedule.overlap')} />}
 
           {trig.watchPaths && (
             <div id="ef_watchArea">
@@ -386,6 +408,82 @@ export function EditTab(): React.JSX.Element {
           )}
         </CfgGroup>
 
+        {/* § 进程生命周期 */}
+        <CfgGroup icon="fa-solid fa-heart-pulse" title={t('cfg.group.lifetime')} subtitle="Process lifetime">
+          <div className={`keep-alive-layout${trig.keepAlive ? '' : ' solo'}`}>
+            <TriggerCard id="ef_trig_keep" icon="fa-solid fa-heart-pulse" name={t('trig.keepAlive')} sub="KeepAlive" checked={trig.keepAlive} onToggle={(v) => void setKeepAlive(v)} />
+
+            {trig.keepAlive && (
+              /* 与左侧「保持存活」同款卡片(图标 + 标题 + 英文小字 + 右侧控件);策略说明走 title 提示,不再占一行 */
+              <TriggerCard
+                id="ef_keepAliveArea"
+                icon="fa-solid fa-sliders"
+                name={t('ka.policy')}
+                sub="KeepAlive policy"
+                checked
+                hint={t(`ka.preset.${shownPreset}.hint`)}
+                trailing={
+                  <select
+                    className="f-input"
+                    style={{ flex: '0 0 auto', width: 152, fontSize: 11, padding: '4px 7px' }}
+                    value={shownPreset}
+                    onChange={(e) => setKeepAlivePreset(e.target.value as KeepAlivePreset)}
+                  >
+                    <option value="always">{t('ka.preset.always')}</option>
+                    <option value="crashed">{t('ka.preset.crashed')}</option>
+                    <option value="successfulExit">{t('ka.preset.successfulExit')}</option>
+                    <option value="failedExit">{t('ka.preset.failedExit')}</option>
+                    <option value="custom">{t('ka.preset.custom')}</option>
+                  </select>
+                }
+              />
+            )}
+          </div>
+
+          {keepAliveConflicts && <HintLine text={t('cfg.keepAlive.conflict')} />}
+
+          {/* 条件编辑器只在「自定义」模式下出现,并由模式位(而非派生值)决定留存:
+              否则形态一旦恰好等于某个具名预设,用户点第一个 chip 时编辑器会整块消失 */}
+          {trig.keepAlive && kaCustomMode && (
+            <div className="ka-dict" id="ef_kaDictArea" style={{ marginTop: 8 }}>
+              {(
+                [
+                  ['crashed', 'Crashed', 'ka.crashed'],
+                  ['successfulExit', 'SuccessfulExit', 'ka.successfulExit']
+                ] as const
+              ).map(([key, name, descKey]) => (
+                <div className="ka-row ka-item" key={key}>
+                  <div>
+                    <div className="trig-name">{name}</div>
+                    <div className="ka-desc">{t(descKey)}</div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                    {(
+                      [
+                        ['unset', null],
+                        ['yes', true],
+                        ['no', false]
+                      ] as const
+                    ).map(([stateKey, value]) => (
+                      <button
+                        key={stateKey}
+                        type="button"
+                        className={`chip${form.keepAliveDict[key] === value ? ' active' : ''}`}
+                        style={{ padding: '3px 10px' }}
+                        onClick={() => updateForm({ keepAliveDict: { ...form.keepAliveDict, [key]: value } })}
+                      >
+                        {t(`ka.state.${stateKey}`)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {/* 说明行走自己的一行:.ka-dict 是两列 grid,不跨列会缩在第 1 列里 */}
+              <div style={{ fontSize: 10, color: 'var(--dim)', marginTop: 4, gridColumn: '1 / -1' }}>{t('ka.custom.hint')}</div>
+            </div>
+          )}
+        </CfgGroup>
+
         {/* § I/O */}
         <CfgGroup icon="fa-solid fa-file-lines" title={t('cfg.group.io')} subtitle="Stdio">
           <div className="f-row center">
@@ -395,16 +493,6 @@ export function EditTab(): React.JSX.Element {
           <div className="f-row center">
             <span className="f-lbl">Stderr</span>
             <input className="f-input mono" type="text" value={form.stderr} onChange={(e) => updateForm({ stderr: e.target.value })} />
-          </div>
-          <div className="f-row center">
-            <span className="f-lbl">Stdin</span>
-            <input
-              className="f-input mono"
-              type="text"
-              value={form.stdin}
-              placeholder={t('cfg.stdin.placeholder')}
-              onChange={(e) => updateForm({ stdin: e.target.value })}
-            />
           </div>
         </CfgGroup>
       </div>

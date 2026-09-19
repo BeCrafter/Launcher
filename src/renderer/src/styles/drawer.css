@@ -515,6 +515,18 @@ body.light-theme .drawer-title-icon {
 }
 
 /* KeepAlive dict */
+.keep-alive-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  align-items: stretch;
+}
+
+/* 未开启 KeepAlive 时策略面板不渲染,单卡通栏(否则右半留空洞) */
+.keep-alive-layout.solo {
+  grid-template-columns: 1fr;
+}
+
 .ka-dict {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -523,6 +535,14 @@ body.light-theme .drawer-title-icon {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 7px;
+}
+
+/* 每个条件独立成卡:两列 grid 里裸排会让「Crashed 的三态 chip」紧贴下一列标题,读成一行 */
+.ka-item {
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border2);
 }
 
 .ka-row {
@@ -698,6 +718,10 @@ body.light-theme .drawer-title-icon {
   }
 
   .trigger-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .keep-alive-layout {
     grid-template-columns: 1fr;
   }
 }

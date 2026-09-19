@@ -14,6 +14,7 @@ import { runAgentIntent } from '../lib/agent-ops'
 import { cronErrorToast } from '../lib/cron'
 import { agentErrorToast } from '../lib/ipc-error'
 import { useAgentsStore } from './agents-store'
+import { keepAlivePreset } from '../lib/keep-alive'
 import { fmt, makeT, getCurrentLang } from '../i18n'
 
 export type DrawerTab = 'edit' | 'status' | 'log' | 'xml'
@@ -48,6 +49,12 @@ interface DrawerState {
   statusModel: DrawerStatusModel | null
   logLines: LogLine[]
   logSource: LogSource
+  /**
+   * KeepAlive 条件编辑器模式位(纯 UI,不进表单/plist):选过「自定义条件」后保持,直到再选具名预设。
+   * 不能只靠 keepAlivePreset() 派生 —— 自定义形态一旦恰好等于某个具名预设(如只勾 Crashed=是),
+   * 派生值立刻变回该预设名,编辑器会在用户点第一个 chip 时整块消失。
+   */
+  kaCustom: boolean
   xml: string
   openFor(agent: Agent): Promise<void>
   openDraft(agent: Agent): Promise<void>
@@ -56,6 +63,7 @@ interface DrawerState {
   updateForm(patch: Partial<AgentForm>): void
   undoForm(): void
   setXml(xml: string): void
+  setKaCustom(v: boolean): void
   /** 写入成功 / 冲突裁决「重新加载」后:用 main 返回的文档整体替换状态(P0-3) */
   applyDocumentImpl(doc: AgentDocument): void
   setOps(next: Partial<OpsState>): void
@@ -95,6 +103,7 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
   statusModel: null,
   logLines: [],
   logSource: 'file',
+  kaCustom: false,
   xml: '',
 
   /** 文档 → 状态整体替换(P0-3):表单快照/原文/兼容报告/revision/身份一起换,撤销栈清空 */
@@ -146,6 +155,8 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
       document: doc,
       // 损坏文件 main 侧就返回 form:null(空字典映射出的空表单既不是文件内容、保存也只会写坏文件)
       form: doc?.form ?? null,
+      // 打开时按磁盘形态取初值:形态不落在任何具名预设上 → 直接进自定义模式
+      kaCustom: doc?.form ? keepAlivePreset(doc.form) === 'custom' : false,
       formHistory: [],
       dirtyFields: [],
       statusModel,
@@ -213,6 +224,10 @@ export const useDrawerStore = create<DrawerState>((set, get) => ({
 
   setXml(xml) {
     set({ xml })
+  },
+
+  setKaCustom(v) {
+    set({ kaCustom: v })
   },
 
   setOps(next) {

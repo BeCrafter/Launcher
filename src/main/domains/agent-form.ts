@@ -8,9 +8,13 @@ import { scanTopLevelDict } from './plist-xml'
 import type { PlistDict, PlistValue } from './plist-xml'
 
 // 托管键 = 表单读写的键。分两类:
-// - 可编辑字段:有 UI 与模型字段(UserName / StandardInPath / Nice / ThrottleInterval / ProcessType)
+// - 可编辑字段:有 UI 与模型字段(UserName / Nice / ThrottleInterval / ProcessType)
 // - 往返白名单(无 UI,见 ROUND_TRIP_KEYS):读到不解析,保存时由 plistFromForm(form, base)
 //   从磁盘原值原样搬回,只为「不触发守卫、不丢键」而存在
+//   · Disabled / EnableTransactions:launchd 状态由 launchctl 覆盖位管理,表单不该改文件值
+//   · StandardInPath:launchd 任务非交互,stdin 默认 /dev/null,正常场景用不到(本机 32 个
+//     真实 plist 0 例;对照 StandardOutPath 有 7 例)→ 收成无 UI 字段以降低认知负担,
+//     确有需要时走 XML tab
 export const MANAGED_KEYS = [
   'Label',
   'Program',
@@ -34,7 +38,9 @@ export const MANAGED_KEYS = [
 ] as const
 
 /** 无 UI 的往返白名单(见上方说明):保存时从磁盘字典原样搬回 */
-export const ROUND_TRIP_KEYS = ['Disabled', 'EnableTransactions'] as const
+export const ROUND_TRIP_KEYS = ['Disabled', 'EnableTransactions', 'StandardInPath'] as const
+/** 往返白名单里类型必须为 boolean 的键(StandardInPath 是字符串,类型检查归 STRING_KEYS) */
+const BOOL_ROUND_TRIP_KEYS = ['Disabled', 'EnableTransactions'] as const
 
 const SCI_KEYS: (keyof SciEntry)[] = ['Minute', 'Hour', 'Day', 'Weekday', 'Month']
 // KeepAlive 字典里表单能表达的条件;其余子键(AfterInitialDemand / NetworkState / PathState / …)
@@ -174,7 +180,7 @@ export function scanCompatibility(value: PlistDict, sourceXml = ''): FormCompati
   }
 
   // ── Disabled / EnableTransactions:仅往返保留,类型必须为 boolean ──
-  for (const k of ROUND_TRIP_KEYS) {
+  for (const k of BOOL_ROUND_TRIP_KEYS) {
     if (value[k] !== undefined && typeof value[k] !== 'boolean') out.push(k)
   }
 
@@ -321,8 +327,7 @@ export function validateNewAgentInput(form: AgentForm, opts: FormValidationOptio
     for (const [name, p] of [
       ['WorkingDirectory', form.workingDir],
       ['StandardOutPath', form.stdout],
-      ['StandardErrorPath', form.stderr],
-      ['StandardInPath', form.stdin]
+      ['StandardErrorPath', form.stderr]
     ] as const) {
       if (p !== '' && !p.startsWith('/')) problems.push(`${name} 必须是绝对路径`)
     }
@@ -395,8 +400,7 @@ export function formFromPlist(value: PlistDict, desc: string): FormFromPlist {
     watchPaths: watch,
     sciEntries: sci,
     stdout: str(value.StandardOutPath),
-    stderr: str(value.StandardErrorPath),
-    stdin: str(value.StandardInPath)
+    stderr: str(value.StandardErrorPath)
   }
   return { form, unsupportedKeys }
 }
@@ -433,7 +437,6 @@ export function plistFromForm(form: AgentForm, base?: PlistDict, dirtyFields?: r
   if (envEntries.length > 0) out.EnvironmentVariables = Object.fromEntries(envEntries)
   if (form.stdout !== '') out.StandardOutPath = form.stdout
   if (form.stderr !== '') out.StandardErrorPath = form.stderr
-  if (form.stdin !== '') out.StandardInPath = form.stdin
   if (form.nice !== 0) out.Nice = form.nice
   // 0 是合法值(launchd 默认 10 秒),只有 null/未设置才不写
   if (typeof form.throttleInterval === 'number') out.ThrottleInterval = form.throttleInterval
@@ -461,7 +464,6 @@ export function plistFromForm(form: AgentForm, base?: PlistDict, dirtyFields?: r
         EnvironmentVariables: 'env',
         StandardOutPath: 'stdout',
         StandardErrorPath: 'stderr',
-        StandardInPath: 'stdin',
         ProcessType: 'processType'
       }
       return fields[key] ? touched(fields[key]) : false
