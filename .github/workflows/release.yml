@@ -18,8 +18,28 @@ jobs:
   release:
     # macos-14 是 arm64 主机；--arch all 会交叉构建 x64，故两种产物由同一 job 产出
     runs-on: macos-14
+    # R2 的密钥挂在 r2-publish 环境上（详见 docs/design/distribution.md）
+    environment: r2-publish
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_REPO_BUCKET_NAME }}
+      R2_PUBLIC_DOMAIN: ${{ secrets.R2_REPO_PUBLIC_DOMAIN }}
+      # R2 对象前缀与 tap 目标；改前缀必须同步改 scripts/install.sh 的默认下载地址
+      R2_PREFIX: launcher
+      TAP_REPO: BeCrafter/homebrew-brew
+      CASK_PATH: Casks/launcher.rb
     steps:
       - uses: actions/checkout@v4
+
+      # 放在构建前：secrets 没配好时立刻失败，不必白等一次 macOS 构建
+      - name: 校验发布配置
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          for k in R2_ACCOUNT_ID R2_BUCKET R2_PUBLIC_DOMAIN TAP_TOKEN; do
+            [ -n "${!k}" ] ||
+              { echo "::error::$k 为空——检查 r2-publish 环境上的 secrets 与 TAP_GITHUB_TOKEN"; exit 1; }
+          done
 
       - uses: actions/setup-node@v4
         with:
@@ -30,15 +50,21 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
-      - name: 校验 tag 与 package.json 版本一致
+      - name: 校验版本号并判定是否为预发布
         run: |
+          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          VERSION="${TAG#v}"
           PKG="$(node -p "require('./package.json').version")"
-          TAG="${GITHUB_REF_NAME#v}"
           echo "package.json=$PKG  tag=$TAG"
-          if [ "$PKG" != "$TAG" ]; then
-            echo "::error::tag v$TAG 与 package.json version $PKG 不一致"
+          if [ "$PKG" != "$VERSION" ]; then
+            echo "::error::tag $TAG 与 package.json version $PKG 不一致"
             exit 1
           fi
+          # 版本号格式 + 预发布词合法性（只放行 Homebrew 认的 alpha/beta/pre/rc），
+          # 并把 IS_PRERELEASE 写进 $GITHUB_ENV 供后续步骤使用。
+          # 判定逻辑与本地 `npm run release:check` 共用 release-version.mjs，不在 YAML 里另抄一份。
+          node scripts/release-check.mjs --version "$VERSION" --emit
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: 类型检查与测试
         run: |
@@ -53,26 +79,125 @@ jobs:
         run: |
           cd dist
           shasum -a 256 ./*.zip ./*.dmg | tee /tmp/sha256.txt
+          {
+            echo "ARM64_SHA=$(shasum -a 256 "Launcher-${VERSION}-arm64.zip" | awk '{print $1}')"
+            echo "X64_SHA=$(shasum -a 256 "Launcher-${VERSION}-x64.zip" | awk '{print $1}')"
+          } >> "$GITHUB_ENV"
+
+      - name: 配置 AWS 凭据（R2 走 S3 兼容接口）
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          aws-region: auto
+
+      - name: 上传 zip 到 Cloudflare R2
+        run: |
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          for arch in arm64 x64; do
+            SRC="dist/Launcher-${VERSION}-${arch}.zip"
+            # 带版本号的文件名 = 永久缓存不失效（cdn 缓存按文件名，见分发文档）
+            aws s3 cp "$SRC" \
+              "s3://${R2_BUCKET}/${R2_PREFIX}/Launcher-${VERSION}-${arch}.zip" \
+              --endpoint-url "$ENDPOINT"
+            # install.sh 不带 --version 时用的固定别名；文件名恒定，必须绕开 cdn 缓存。
+            # ⚠ 预发布不得覆盖它——否则所有用默认命令安装的用户会被静默换成预发布构建。
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              echo "[预发布] 跳过 Launcher-latest-${arch}.zip 别名（仍指向最近一个正式版）"
+            else
+              aws s3 cp "$SRC" \
+                "s3://${R2_BUCKET}/${R2_PREFIX}/Launcher-latest-${arch}.zip" \
+                --endpoint-url "$ENDPOINT" --cache-control "no-store"
+            fi
+          done
+
+      - name: 验证 R2 公网可达
+        run: |
+          for arch in arm64 x64; do
+            URL="${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/Launcher-${VERSION}-${arch}.zip"
+            curl -fsSI --max-time 60 "$URL" > /dev/null ||
+              { echo "::error::$URL 不可公开访问——检查自定义域名与「公开访问」开关"; exit 1; }
+          done
+
+      # cask 模板在本仓库 packaging/homebrew/，此处只替换 version / url / 两个 sha256；
+      # postflight 等其余配置以模板为准，勿在 tap 仓库手改（会被下次发版覆盖）
+      # ⚠ 预发布不更新 cask：Homebrew 是**稳定通道**。版本比较只保证老用户不会被
+      #   "升级"到 rc，但新用户 `brew install` 会直接装到 rc —— 故 rc 只发 zip + Release。
+      - name: 更新 Tap 仓库的 cask
+        if: env.IS_PRERELEASE != 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          git clone --depth 1 \
+            "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" tap
+          mkdir -p "tap/$(dirname "$CASK_PATH")"
+          cp packaging/homebrew/launcher.rb "tap/$CASK_PATH"
+          sed -i '' \
+            -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
+            -e "s|^  url \".*\"|  url \"${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/Launcher-#{version}-#{arch}.zip\"|" \
+            -e "s|^  sha256 arm:.*|  sha256 arm:   \"${ARM64_SHA}\",|" \
+            -e "s|^ *intel:.*|         intel: \"${X64_SHA}\"|" \
+            "tap/$CASK_PATH"
+          if grep -q "REPLACE_WITH" "tap/$CASK_PATH"; then
+            echo "::error::cask 占位符未被完整替换（模板结构变了？）"
+            cat "tap/$CASK_PATH"
+            exit 1
+          fi
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$CASK_PATH"
+          # 护栏:tap 仓库里会并存多个包(每包一份 cask)。这里只允许改动本包那一个文件——
+          # 将来若有人把上面这行写成 `git add -A` / `git add .`，会在提交前就失败，
+          # 而不是静默把别人的 cask 一起提交掉。
+          STAGED="$(git diff --cached --name-only)"
+          if [ -n "$STAGED" ] && [ "$STAGED" != "$CASK_PATH" ]; then
+            echo "::error::暂存区包含预期外的文件（应只有 $CASK_PATH）:"
+            echo "$STAGED"
+            exit 1
+          fi
+          if [ -z "$STAGED" ]; then
+            echo "cask 已是 ${VERSION}，无需提交"
+          else
+            git commit -m "launcher ${VERSION}"
+            # 若 clone 之后 tap 又被人推过，push 会被拒（非快进）——这是**期望**行为:
+            # 宁可让本次发版红掉重跑，也不要覆盖别人刚推的内容
+            git push
+          fi
 
       - name: 生成 Release 正文
         run: |
+          R2_BASE="${R2_PUBLIC_DOMAIN}/${R2_PREFIX}"
           {
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              echo "> ⚠ **预发布版本**：不覆盖 latest 别名、不更新 Homebrew cask，应用内「检查更新」也不会推送它。"
+              echo "> 安装须显式指定版本（见下）。"
+              echo
+            fi
             echo "## 安装"
             echo
             echo '```bash'
-            echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash"
+            if [ "$IS_PRERELEASE" = "true" ]; then
+              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash -s -- --version ${VERSION}"
+            else
+              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash"
+              echo
+              echo "brew install --cask becrafter/brew/launcher"
+            fi
             echo '```'
             echo
-            echo "或使用 Homebrew（需先搭建 tap，见 packaging/homebrew/README.md）："
+            echo "## 产物"
             echo
-            echo '```bash'
-            echo "brew install --cask becrafter/tap/becrafter-launcher"
-            echo '```'
+            echo "两条安装通道都只消费 \`*.zip\`，产物托管在 Cloudflare R2："
+            echo
+            echo "| 产物 | 下载地址 |"
+            echo "|---|---|"
+            echo "| arm64 zip | <${R2_BASE}/Launcher-${VERSION}-arm64.zip> |"
+            echo "| x64 zip | <${R2_BASE}/Launcher-${VERSION}-x64.zip> |"
+            echo
+            echo "\`*.dmg\` 为额外产物，供手动安装，两条通道都不使用。"
             echo
             echo "## 产物 sha256"
-            echo
-            echo "\`*-arm64.zip\` / \`*-x64.zip\` 是两条安装通道（curl 脚本 / Homebrew cask）所用的产物，"
-            echo "更新 cask 时把这两行复制过去即可；\`*.dmg\` 为额外产物，供手动安装，通道不使用。"
             echo
             echo '```'
             cat /tmp/sha256.txt
@@ -84,6 +209,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          # 预发布必须标记：应用内「检查更新」打的是 /releases/latest，
+          # 该 API 只返回最新的非 pre-release、非 draft —— 标记后自然不会推给用户
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
           body_path: /tmp/release-body.md
           files: |
             dist/*.zip

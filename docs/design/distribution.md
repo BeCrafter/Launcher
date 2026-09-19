@@ -1,6 +1,6 @@
 # BeCrafter Launcher 分发与安装方案
 
-> 状态：已实施（2026-09-17）｜范围：包体积精简 + 零成本签名方案下的两条安装通道 + CI 发布流程
+> 状态：已实施（2026-09-17，2026-09-19 补 R2 托管与 cask 自动更新）｜范围：包体积精简 + 零成本签名方案下的两条安装通道 + CI 发布流程
 > 关联：`docs/design/refactor-plan.md`（本方案取代其「④ 暂不管分发/签名」决策与「打包基建留空」条目）、`packaging/homebrew/README.md`（Tap 维护手册）
 
 ## Context
@@ -70,6 +70,15 @@ macOS 15 起，「已损坏」这一档的绕过入口被移除——**只对有
 
 共同原理：**`com.apple.quarantine` 由下载方应用程序设置，不由网络层设置**。浏览器会设，`curl` 不设。
 
+两条通道的 zip 产物都托管在 **Cloudflare R2**（自定义域名 `https://repo.iskill.site`，路径前缀 `launcher/`），GitHub Release 作为备用下载源同步保留。R2 侧要点：
+
+| 要点 | 做法 |
+|---|---|
+| 缓存失效 | 文件名带版本号（`Launcher-<版本>-<架构>.zip`），换版本即换 URL，cdn 缓存天然不冲突 |
+| 公网访问 | 用**自定义域名**，不用 `r2.dev`（后者有限流，不适合给 cask 用） |
+| 上传方式 | R2 兼容 S3 API，CI 用 `aws-actions/configure-aws-credentials` + `aws s3 cp --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com`。**不传 `--acl`**——R2 不支持 ACL，公开访问靠 bucket 的自定义域名开关 |
+| latest 别名 | `Launcher-latest-<架构>.zip` 供 install.sh 默认路径使用；文件名恒定故上传时带 `--cache-control no-store`，否则会长期发旧版本 |
+
 ### 通道 A：curl 安装脚本（`scripts/install.sh`）
 
 ```bash
@@ -78,7 +87,7 @@ curl -fsSL .../install.sh | bash -s -- --version 0.1.0    # 指定版本
 ```
 
 - 探测 `uname -m` 选择 arm64 / x64 产物；支持 `--version` / `--dir`
-- 纯 shell 解析 GitHub Releases API（不依赖 jq / python3）
+- 直接从 R2 拉取（`LAUNCHER_R2_BASE` 可换镜像），不依赖 GitHub API
 - **用 `ditto -x -k` 解压而非 `unzip`**——`unzip` 不保留符号链接与扩展属性，会破坏 `.app` 的代码签名
 - 安装到 `/Applications`，不可写时回退 `~/Applications`
 - curl 本就不打隔离标记，末尾的 `xattr -dr` 仅作防御
@@ -86,7 +95,7 @@ curl -fsSL .../install.sh | bash -s -- --version 0.1.0    # 指定版本
 ### 通道 B：Homebrew Tap（`packaging/homebrew/`）
 
 ```bash
-brew install --cask becrafter/tap/becrafter-launcher
+brew install --cask becrafter/brew/launcher
 ```
 
 > **关键更正**：常见说法「Homebrew 走 curl 下载所以不带隔离标记」是**错的**。实测本机 `brew install --cask` 安装的 BlueBubbles / Upscayl 都带 `com.apple.quarantine`；源码 `cask/download.rb:254` 无条件调用 `Quarantine.cask!`，macOS 实现（`extend/os/mac/cask/quarantine.rb:57`）通过 LaunchServices SPI 主动打标记，agent 名为 "Homebrew Cask"；Homebrew 7 已**移除** `--no-quarantine` 选项。
@@ -94,28 +103,79 @@ brew install --cask becrafter/tap/becrafter-launcher
 因此 cask 必须自己清除标记——用 `postflight` 调 `xattr -dr`。这是通道 B 能成立的**必需补丁**，不是可选优化。
 
 - 用**非 bang 的 `system_command`**：macOS 14+ 的 App Management 保护可能让 `xattr` 失败，此时只告警不中断安装，由 `caveats` 提示用户手动执行
-- token 用 `becrafter-launcher` 而非 `launcher`，避免与官方 homebrew-cask 潜在同名冲突
+- token 用 `launcher`。曾用 `becrafter-launcher` 规避与官方 homebrew-cask 的同名冲突，但官方库当前无此 cask（`brew info --cask launcher` → 不存在），且改名发生在首次发布之前（tap 仓库里从无 `Casks/`），迁移成本为零。⚠ 代价：cask 裸名解析跨所有 tap，日后任一 tap 定义 `launcher` 会让 `brew install --cask launcher` 歧义 —— **故所有文档一律给全限定名 `becrafter/brew/launcher`**
+- cask 托管在 `BeCrafter/homebrew-brew`（tap 名 `becrafter/brew`）。本仓库 `packaging/homebrew/launcher.rb` 是唯一事实来源，**发版时 CI 复制过去并替换 version / url / sha256**，tap 仓库那份不要手改
 - 维护手册见 `packaging/homebrew/README.md`
 
 ---
 
 ## 四、发布流程
 
-`.github/workflows/release.yml`：push tag `v*`（或手动 dispatch）→ 校验 tag 与 `package.json` 版本一致 → typecheck + test → 构建 → 发布。
+`.github/workflows/release.yml`：push tag `v*`（或手动 dispatch）→ 校验 tag 与 `package.json` 版本一致 → typecheck + test → 构建 → 算 sha256 → 传 R2 → 验证公网可达 → 更新 tap 的 cask → 发 GitHub Release。
+
+任何一步失败即中断，且整个流程可重跑（重跑同一 tag 会覆盖同一批对象并重算 sha256）。
 
 产物（`electron-builder.yml` 的 `artifactName` 约定命名）：
 
 | 产物 | 角色 |
 |---|---|
-| `Launcher-<version>-arm64.zip`、`Launcher-<version>-x64.zip` | **两条安装通道的产物** —— install.sh 与 cask 都只下载 zip |
-| `Launcher-<version>-arm64.dmg`、`Launcher-<version>-x64.dmg` | 额外产物，供手动安装；**两个通道都不使用，不作为本方案的推荐路径** |
+| `Launcher-<version>-arm64.zip`、`Launcher-<version>-x64.zip` | **两条安装通道的产物** —— install.sh 与 cask 都只下载 zip；传 R2 + 挂 Release |
+| `Launcher-latest-<arch>.zip` | install.sh 不带 `--version` 时用的固定别名，**只存在于 R2** |
+| `Launcher-<version>-arm64.dmg`、`Launcher-<version>-x64.dmg` | 额外产物，供手动安装；**两个通道都不使用，不作为本方案的推荐路径**，只挂 Release |
 
-> install.sh 按 `-arm64.zip` / `-x64.zip` 后缀匹配，cask 用 `arch arm:/intel:` 分支拼出同一命名——**改产物名会同时打断两条通道**。
+> install.sh 按 `Launcher-[latest|<版本>]-<架构>.zip` 拼名，cask 用 `arch arm:/intel:` 拼出同名——**改产物名、或改 workflow 里的 `R2_PREFIX`（必须与 install.sh 的 `R2_BASE` 路径一致）会同时打断两条通道**。
+
+### CI 依赖的 secrets（挂在 `r2-publish` 环境上）
+
+| Secret | 用途 |
+|---|---|
+| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 的 S3 兼容凭据（endpoint = `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`） |
+| `R2_REPO_BUCKET_NAME` / `R2_REPO_PUBLIC_DOMAIN` | bucket 名与自定义域名（**不带末尾斜杠**，如 `https://repo.iskill.site`） |
+| `TAP_GITHUB_TOKEN` | 对本仓库外的 `BeCrafter/homebrew-brew` 有 `contents: write` 的 PAT——`GITHUB_TOKEN` 只能作用于本仓库，跨仓推送必须用 PAT |
+
+R2 侧只需要 bucket + 绑好自定义域名并开启公开访问；`r2.dev` 域名有限流，不要用。
+
+### 预发布版本（`-rc` / `-beta`）
+
+版本号支持后缀，但**只有 `alpha` / `beta` / `pre` / `rc` 四个词可用**——Homebrew 只把这四个识别为预发布：
+
+```ruby
+# Homebrew version.rb
+PRERELEASE_SUFFIX = /(?:[._-]?(?i:alpha|beta|pre|rc)\.?\d{,2})/
+```
+
+实测 `Version.new('0.2.0-dev') > Version.new('0.2.0')` 为 **true** —— 其余后缀（`dev`/`next`/`canary`/`nightly`/…）会被判为**比正式版更新**，已装正式版的用户会被 `brew upgrade` 推到该构建上。故 `scripts/release-version.mjs` 对白名单外的后缀**直接拒绝发布**（fail，不是警告）。
+
+**预发布不触碰任何稳定通道**，三项都由 CI 里的 `IS_PRERELEASE` 控制：
+
+| 动作 | 正式版 | 预发布 |
+|---|---|---|
+| 上传 `Launcher-<版本>-<架构>.zip` | ✅ | ✅ |
+| 覆盖 `Launcher-latest-<架构>.zip` 别名 | ✅ | ❌ **跳过** —— 否则所有用默认命令安装的人会被静默换成预发布 |
+| 更新 Homebrew cask | ✅ | ❌ **跳过** —— 版本比较只保证老用户不被"升级"到 rc，但**新用户 `brew install` 会直接装到 rc**；Homebrew 应保持纯稳定通道 |
+| GitHub Release 标 `pre-release` | ❌ | ✅ —— 应用内「检查更新」打的是 `/releases/latest`，该 API 只返回最新的**非** pre-release、**非** draft，标记后自然不推给用户 |
+
+预发布因此只发 **zip + GitHub Release（pre-release）**；Release 正文的安装命令会自动带上 `--version`。
+
+### 发版前预检
+
+```bash
+npm run release:check                  # 自检 package.json 的版本号
+npm run release:check -- --tag v0.2.0  # 额外校验:tag 与版本一致、本地与远端都未被占用
+```
+
+打 tag 是**先推后验**——CI 的一致性校验发生在 tag 已推上去之后，一旦对不上只能删 tag 重打。这个脚本把同样的判断提前到本地。CI 里也调它（`--version <v> --emit`），**版本判定逻辑只有 `scripts/release-version.mjs` 一份实现**，不在 YAML 里另抄一遍。
+
+工作区不干净只给**警告**不阻断：CI 构建的是 tag 指向的那个 commit，本地未提交的改动不影响产物；提示是为了拦住「改了版本号却没提交就打算打 tag」。
+
+### 其它约定
 
 - `--arch all` 逐架构出包（体积优先；universal 会让下载量翻倍）
-- CI 把各产物 sha256 **写进 Release 正文**——更新 cask 时直接复制，无需手算
+- CI 把各产物 sha256 写进 Release 正文——**cask 已自动更新，这里只是留档与人工核对用**
 - `npm ci` **不能加 `--omit=dev`**：构建期依赖现在全在 `devDependencies`
 - `--no-run` 跳过运行验证（runner 无法原生执行另一架构产物），静态架构校验仍执行
+- **推 cask 时只允许改动本包那一个文件**：tap 仓库 `BeCrafter/homebrew-brew` 会并存多个包的 cask，CI 只 `git add "$CASK_PATH"`，并在提交前断言暂存区**有且只有** `Casks/launcher.rb`——将来若有人把 `git add` 写成 `-A`/`.`，会在提交前失败而不是静默带上别人的 cask。若 clone 之后 tap 被他人推过，`git push` 会被拒（非快进），这是**期望**行为：宁可本次发版红掉重跑，也不覆盖别人刚推的内容
+- 推 cask 的步骤对**预发布跳过**（见上），所以 tap 里那份 cask 始终指向最近一个正式版
 
 本地等价命令：`npm run build:app:release`（不带 `--no-run`，含完整运行验证）。
 
@@ -147,4 +207,5 @@ brew install --cask becrafter/tap/becrafter-launcher
 3. `npm run typecheck` + `npm test` 全绿
 4. 启动打包产物，确认**中文正文（Noto Sans SC）、中文标题衬线体（Noto Serif SC）、FontAwesome 图标**三处渲染正常——这是删 legacy 字体后唯一需要肉眼确认的回归点
 5. `node scripts/build-app.mjs --arch all --release --no-run` → `dist/` 出 4 个产物（2 个 **zip 供两条通道**、2 个 dmg 为额外产物）
-6. `brew install --cask …` 后 `xattr /Applications/Launcher.app` **无 quarantine 输出**，双击能开
+6. 发版后 `curl -fsSI https://repo.iskill.site/launcher/Launcher-latest-arm64.zip` 返回 200（R2 公开访问 + latest 别名都活着）
+7. `brew install --cask becrafter/brew/launcher` 后 `xattr /Applications/Launcher.app` **无 quarantine 输出**，双击能开
