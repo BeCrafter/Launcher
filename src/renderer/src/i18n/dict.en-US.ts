@@ -768,6 +768,7 @@ export const enUS: Record<string, string> = {
   "cfg.userName.ignored": "Not applicable in this scope: launchd ignores it; the value is preserved on save",
   "cfg.compat.title": "Per-key details ({N})",
   "cfg.compat.reason": "This is an XML-only B-class setting; the form cannot express it losslessly. Edit it in XML.",
+  "cfg.compat.preservedReason": "Not shown in the form; preserved verbatim from disk on save (only the nodes you change are rewritten)",
   "cfg.compat.disabledWarning": "The plist has Disabled = true; runtime enablement follows the launchctl override and the file value is preserved.",
   "cfg.compat.emptySciWarning": "StartCalendarInterval contains an empty rule = runs every minute",
   "toast.agentInvalid": "The task configuration or identity is invalid; nothing was written.",

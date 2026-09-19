@@ -88,9 +88,10 @@ describe('formFromPlist', () => {
     expect(r.form).not.toHaveProperty('stdin') // 无 UI:只按原值往返,不给表单字段
   })
 
-  it('顶层非托管键属于 B 类:进入不兼容清单并保留键名', () => {
+  it('顶层非托管键不再锁表单(只提示保留);键名仍可从 unmanagedKeys 得到', () => {
     const r = formFromPlist({ Label: 'a', SessionCreate: true, LimitLoadToSessionType: 'Aqua' }, '')
-    expect(r.unsupportedKeys).toEqual(['LimitLoadToSessionType', 'SessionCreate'])
+    // 表单既不展示也不触碰它们 → 保存时按磁盘原值搬回,不再进不兼容清单(锁死会让 21/32 个真实 plist 不可编辑)
+    expect(r.unsupportedKeys).toEqual([])
     expect(unmanagedKeys({ Label: 'a', SessionCreate: true, LimitLoadToSessionType: 'Aqua' })).toEqual([
       'LimitLoadToSessionType',
       'SessionCreate'
@@ -99,14 +100,16 @@ describe('formFromPlist', () => {
 })
 
 describe('formIncompatibilities', () => {
-  it('顶层非托管键与表单无法表达的父键都进入不兼容清单', () => {
+  it('只有「表单拥有该键/父键」类进不兼容清单,未建模顶层键不进', () => {
     expect(
       formIncompatibilities({
         Label: 'a',
         Sockets: { x: 1 },
         KeepAlive: { PathState: { '/x': true }, Crashed: true }
       })
-    ).toEqual(['KeepAlive.PathState', 'Sockets'])
+    ).toEqual(['KeepAlive.PathState'])
+    // 而扫描结果里它作为「保留键」出现(页面据此显示一行提示)
+    expect(scanCompatibility({ Label: 'a', Sockets: { x: 1 } }).preservedTopLevelKeys).toEqual(['Sockets'])
   })
 
   it('EnvironmentVariables 非字符串值 → 带键名前缀(规范是 dictionary of strings)', () => {
@@ -365,11 +368,17 @@ describe('scanCompatibility(P1-2 全键 schema / P1-3 保真边界)', () => {
     expect(combo.warnings.join()).toMatch(/不会创建额外实例/)
   })
 
-  it('空 SCI 规则 → warning(每分钟);顶层非托管键 → XML-only 不兼容项', () => {
+  it('空 SCI 规则 → warning(每分钟);未建模顶层键 → 保留清单而非不兼容项', () => {
     const r = scanCompatibility({ Label: 'a', StartCalendarInterval: {}, MachServices: { x: true } })
     expect(r.warnings.join()).toMatch(/每分钟/)
-    expect(r.preservedTopLevelKeys).toEqual([])
-    expect(r.unsupportedPaths).toEqual(['MachServices'])
+    expect(r.preservedTopLevelKeys).toEqual(['MachServices'])
+    expect(r.unsupportedPaths).toEqual([])
+    // 逐键说明里标记为「按值保留」,原因文案走 cfg.compat.preservedReason
+    expect(r.entries.find((e) => e.path === 'MachServices')).toMatchObject({
+      type: 'dict',
+      preservation: 'value',
+      reasonKey: 'cfg.compat.preservedReason'
+    })
   })
 
   it('嵌套 B 类路径显示真实类型与摘要', () => {

@@ -150,10 +150,14 @@ export function createProcessDiscovery(deps: {
       const pids = [...new Set(rows.map((r) => r.pid))]
       const psMap = new Map<number, { user: string; etime: string; command: string }>()
       if (pids.length > 0) {
-        const ps = await deps.runner.run('ps', ['-p', pids.join(','), '-o', 'pid=,user=,etime=,command='])
+        // 同 agent-service:macOS 的 `ps -p <pid,...>` 恒定 ~2.5s(`ps -eo` 全量仅 ~0.5s)→ 全量列举后过滤
+        const want = new Set(pids)
+        const ps = await deps.runner.run('ps', ['-eo', 'pid=,user=,etime=,command='])
         for (const line of ps.stdout.split('\n')) {
           const m = line.match(/^\s*(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/)
-          if (m) psMap.set(Number.parseInt(m[1], 10), { user: m[2], etime: m[3], command: m[4] })
+          if (!m) continue
+          const pid = Number.parseInt(m[1], 10)
+          if (want.has(pid)) psMap.set(pid, { user: m[2], etime: m[3], command: m[4] })
         }
       }
       const brewSet = new Set(brewServices)

@@ -22,9 +22,10 @@ const LABEL_KEY: Record<AgentIntent, string> = {
 /** 返回动作后的 OpsState;用户取消(提权/询问被否)返回 null */
 export async function runAgentIntent(agent: Agent, action: AgentIntent): Promise<OpsState | null> {
   const next = await dispatch(agent, action)
-  // main 侧的动作返回后刷新一次;重启另起非阻塞轮询(见 refreshUntilRunning)
+  // 列表刷新不阻塞调用方:动作结果(OpsState)由 main 直接返回,UI 据此立即翻面。
+  // 整表刷新要重扫目录 + launchctl 表 + ps(约 0.5-1s),等它会让按钮看起来「点了没反应」。
   if (next) {
-    await useAgentsStore.getState().load()
+    void useAgentsStore.getState().load()
     if (action === 'restart') void refreshUntilRunning(agent.id)
   }
   return next

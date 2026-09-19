@@ -91,6 +91,9 @@ export function EditTab(): React.JSX.Element {
   const warnings = document?.compatibility.warnings ?? []
   const warningKeys = document?.compatibility.warningKeys ?? []
   const entries = document?.compatibility.entries ?? []
+  // unsupported = 表单拥有该键/父键、保存会改写它(锁表单,逐键说明);value = 表单不展示、按原值保留(一行横幅)
+  const blockedEntries = entries.filter((e) => e.preservation === 'unsupported')
+  const preservedEntries = entries.filter((e) => e.preservation === 'value')
   const setTab = useDrawerStore((s) => s.setTab)
   const scope = useDrawerStore((s) => s.scope)
   const kaCustom = useDrawerStore((s) => s.kaCustom)
@@ -252,18 +255,22 @@ export function EditTab(): React.JSX.Element {
             </button>
           </div>
         )}
-        {/* 表单不展示但原样保留的第三方键(如 MachServices):只提示,不拦保存 */}
-        {!blocked && preservedKeys.length > 0 && (
-          <div className="nontask-notice">
+        {/* 未建模的顶层键:MachServices / LimitLoadToSessionType 这类表单从不触碰的键 —— 只提示不拦,
+            保存由 main 从磁盘原值搬回 + 节点级补丁逐字节保留(本机 21/32 个真实 plist 含此类键) */}
+        {preservedKeys.length > 0 && (
+          <div
+            className="nontask-notice"
+            title={preservedEntries.map((e) => `${e.path} = ${e.summary}`).join('\n')}
+          >
             <i className="fa-solid fa-circle-info" />
             <span>{fmt(t('cfg.preserved.title'), { N: preservedKeys.length, K: preservedKeys.join(', ') })}</span>
           </div>
         )}
-        {/* B 类/保留项的可读说明(复审 item 5):键名 + 类型 + 值摘要 + 原因 + 保真等级 */}
-        {entries.length > 0 && (
+        {/* 表单表达不了的键(表单拥有该键或父键,保存会改写它)→ 逐键说明;保留类由上一条横幅承担,不重复列 */}
+        {blockedEntries.length > 0 && (
           <div className="nontask-notice" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
-            <span style={{ fontWeight: 600, fontSize: 11 }}>{fmt(t('cfg.compat.title'), { N: entries.length })}</span>
-            {entries.map((e) => (
+            <span style={{ fontWeight: 600, fontSize: 11 }}>{fmt(t('cfg.compat.title'), { N: blockedEntries.length })}</span>
+            {blockedEntries.map((e) => (
               <div key={e.path} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 10.5, color: 'var(--dim)' }}>
                 <code style={{ color: 'var(--muted)', flexShrink: 0 }}>{e.path}</code>
                 <span style={{ flexShrink: 0 }}>{e.type}</span>

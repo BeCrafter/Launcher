@@ -212,10 +212,12 @@ export function scanCompatibility(value: PlistDict, sourceXml = ''): FormCompati
     warningKeys.push('cfg.compat.emptySciWarning')
   }
 
-  // 未建模的顶层键属于 B 类：XML 通道保留原文，表单保存必须锁定。
-  out.push(...unmanagedKeys(value))
+  // 未建模的顶层键(表单既不展示也不触碰):**不锁表单** —— 保存时由 plistFromForm 从磁盘原值
+  // 原样搬回、节点级补丁逐字节保留,表单只改写它拥有的键。锁死它们会让本机 21/32 个真实 plist
+  // 无法用表单编辑(MachServices / LimitLoadToSessionType / Umask 这类键几乎人人都有)。
+  // 只有「表单拥有该键(或父键)却表达不了」才进 unsupportedPaths(见上面各分支)。
+  const preservedTopLevelKeys = [...unmanagedKeys(value)].sort()
   const unsupportedPaths = [...new Set(out)].sort()
-  const preservedTopLevelKeys: string[] = []
   const entries: CompatibilityEntry[] = [
     ...unsupportedPaths.map((pathKey) => ({
       path: pathKey,
@@ -224,6 +226,14 @@ export function scanCompatibility(value: PlistDict, sourceXml = ''): FormCompati
       reason: '该配置属于 XML-only B 类:表单无法无损表达,请用 XML 编辑',
       reasonKey: 'cfg.compat.reason',
       preservation: 'unsupported' as const
+    })),
+    ...preservedTopLevelKeys.map((key) => ({
+      path: key,
+      type: plistTypeOf(value[key]),
+      summary: summarizeValue(value[key]),
+      reason: '表单不展示该键;保存时按磁盘原值原样保留(只改写你改动的节点)',
+      reasonKey: 'cfg.compat.preservedReason',
+      preservation: 'value' as const
     }))
   ]
 

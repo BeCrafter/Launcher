@@ -768,6 +768,7 @@ export const zhCN: Record<string, string> = {
   "cfg.userName.ignored": "当前作用域不适用:launchd 会忽略此字段;保存时保持原值",
   "cfg.compat.title": "逐键说明({N} 项)",
   "cfg.compat.reason": "该配置属于 XML-only B 类:表单无法无损表达,请用 XML 编辑",
+  "cfg.compat.preservedReason": "表单不展示该键;保存时按磁盘原值原样保留(只改写你改动的节点)",
   "cfg.compat.disabledWarning": "plist 中 Disabled = true(文件默认不加载);实际启停以 launchctl 覆盖位为准,保存时原值保留",
   "cfg.compat.emptySciWarning": "StartCalendarInterval 含空规则 = 每分钟触发",
   "toast.agentInvalid": "任务配置或身份不合法,未写入文件",

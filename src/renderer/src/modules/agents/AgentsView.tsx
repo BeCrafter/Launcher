@@ -95,10 +95,8 @@ export function AgentsView(): React.JSX.Element {
   const runningCount = agents.filter((a) => a.status === 'running').length
 
   const onToggle = (a: Agent): void => {
-    // 意图层:未运行→启动 / 运行中→停止(提权/询问/toast 由 lib/agent-ops 统一处理)
-    void runAgentIntent(a, a.status === 'running' ? 'stop' : 'start').then((next) => {
-      if (next) void useAgentsStore.getState().load()
-    })
+    // 意图层:未运行→启动 / 运行中→停止(提权/询问/toast/列表刷新由 lib/agent-ops 统一处理)
+    void runAgentIntent(a, a.status === 'running' ? 'stop' : 'start')
   }
 
   const onBrew = (kind: 'start' | 'stop', a: Agent): void => {
