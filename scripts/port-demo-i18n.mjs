@@ -259,7 +259,9 @@ const EXTRA = {
     'settings.login.sectionTitle': '系统登录项',
     'settings.login.itemLabel': '登录项',
     'nav.helpOpen': '打开在线帮助文档',
-    'settings.about.openRepo': '打开 GitHub 仓库'
+    'settings.about.openRepo': '打开 GitHub 仓库',
+    // 运行状态筛选(demo 只有类型筛选):状态 chip 复用 status.* 文案,这里只加「不限」那颗
+    'filter.allStatus': '全部状态'
   },
   'en-US': {
     'toast.update.upToDate': 'Already up to date ({V})',
@@ -493,7 +495,8 @@ const EXTRA = {
     'settings.login.sectionTitle': 'Login Items',
     'settings.login.itemLabel': 'Login Item',
     'nav.helpOpen': 'Open the online help',
-    'settings.about.openRepo': 'Open the GitHub repository'
+    'settings.about.openRepo': 'Open the GitHub repository',
+    'filter.allStatus': 'All statuses'
   }
 }
 

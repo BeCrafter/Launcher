@@ -40,6 +40,7 @@
 | 项 | 演示行为 | React 落点 | 状态 |
 |---|---|---|---|
 | 过滤 chips | all/brew/user/system/daemon;brew=!!isBrew;user=scope&&​!isBrew | AgentsView useMemo | ✅ |
+| **运行状态筛选**(2026-09-19 应用新增) | demo 无(只有类型筛选) | 过滤栏第二组:全部状态 / 运行中 / 已载入 / 已停止(文案复用卡片状态标签的 `status.*` 键),状态存于 `agents-store.statusFilter`,与类型筛选是「与」关系(如「用户级 + 运行中」);竖线分隔两组;**次级视觉**(`Chip variant='sub'` → `.chip-sub`):不用胶囊形态,改成**方括号包住的纯文本**(`::before`/`::after` 出 `[` `]`,与文字之间吃 `.chip` 的 5px gap),无描边、无底色,选中**只把文字与括号变成 `--accent`**、不变底色 —— 与主 chips 的「描边 + 图标 + 彩底彩字」拉开主次;「已加载但 plist 已不存在」孤儿横幅不属于任何状态分组,仅在状态不限时展示 | 🔶 |
 | 搜索 | label/tags/desc includes(小写;tags 分支未小写为 demo 原样) | 同上 | ✅ |
 | 分组 | user(蓝 fa-user)/system(黄 fa-building)/daemon(红 fa-server) | GROUP_META | ✅ |
 | invalid 横幅 | filter∈{all,user} 时展示;删除仅 toast | AgentsView | ✅ |
@@ -283,6 +284,7 @@
 9. 窗口 `backgroundColor #0e0e17` + boot-splash 配色由 `#14141f` 调整为 `--bg`(无主题闪烁;差异轻微)。
 10. **菜单栏角标以 `tray.setTitle(数字)` 呈现**(菜单栏图钉右侧文本,与 template icon 独立渲染层、明暗自适应不受影响);未采用图标内嵌绘制,Dock badge 语义不符 `app.dock.setBadge` 未用。
 11. **打开系统设置真实跳转**(`x-apple.systempreferences:`,main 侧 url-guard 只放行 `com.apple.*` 面板);检查更新文案为应用新增 i18n EXTRA 键(demo 冻结不可改;`toast.upToDate` 旧键保留为冻结镜像不再消费)。
+12. **Agent 列表运行状态筛选**(2026-09-19 用户要求,应用新增):demo 的过滤栏只有类型筛选,缺少「一眼看到正在运行的任务」的入口。应用在类型组之后加第二组(全部状态 / 运行中 / 已载入 / 已停止,竖线分隔两组,文案复用卡片状态标签的 `status.*` 键),状态存 `agents-store.statusFilter`,与类型筛选是「与」关系;**视觉上作次级处理**:`Chip variant='sub'` / `.chip-sub` 不用胶囊,改成方括号包住的纯文本(无描边、无图标、无底色),选中只换文字与括号颜色(`--accent`),与主 chips 形成主次;孤儿横幅(已加载但 plist 已不存在)不属于任何状态分组,仅在状态不限时展示。
 
 ## Demo 缺陷与死代码记录(不移植/如实移植)
 

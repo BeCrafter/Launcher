@@ -807,5 +807,6 @@ export const enUS: Record<string, string> = {
   "settings.login.sectionTitle": "Login Items",
   "settings.login.itemLabel": "Login Item",
   "nav.helpOpen": "Open the online help",
-  "settings.about.openRepo": "Open the GitHub repository"
+  "settings.about.openRepo": "Open the GitHub repository",
+  "filter.allStatus": "All statuses"
 }

@@ -17,7 +17,7 @@ import { showToast } from '../../lib/utils'
 import { runAgentIntent } from '../../lib/agent-ops'
 import { useCardMenuStore } from '../../state/card-menu-store'
 import type { Agent, AgentScope } from '@shared/models'
-import type { AgentFilter } from '../../data/ports'
+import type { AgentFilter, AgentStatusFilter } from '../../data/ports'
 
 // demo agents.js 分组元数据(icon/color/labelKey 逐字对应)
 const GROUP_META: Record<AgentScope, { icon: string; color: string; labelKey: string }> = {
@@ -34,6 +34,15 @@ const FILTERS: { id: AgentFilter; icon: string; label?: string; labelKey?: strin
   { id: 'daemon', icon: 'fa-solid fa-server', label: 'Daemon' }
 ]
 
+// 运行状态筛选(demo 只有类型筛选;文案复用卡片状态标签的 status.* 键,键名与抽屉状态页一致)
+// 次级维度:不带图标、走 .chip-sub 轻样式,与类型筛选拉开主次
+const STATUS_FILTERS: { id: AgentStatusFilter; labelKey: string }[] = [
+  { id: 'all', labelKey: 'filter.allStatus' },
+  { id: 'running', labelKey: 'status.running' },
+  { id: 'loaded', labelKey: 'status.loaded' },
+  { id: 'stopped', labelKey: 'status.stopped' }
+]
+
 export function AgentsView(): React.JSX.Element {
   const t = useT()
   const agents = useAgentsStore((s) => s.agents)
@@ -41,6 +50,8 @@ export function AgentsView(): React.JSX.Element {
   const loaded = useAgentsStore((s) => s.loaded)
   const filter = useAgentsStore((s) => s.filter)
   const setFilter = useAgentsStore((s) => s.setFilter)
+  const statusFilter = useAgentsStore((s) => s.statusFilter)
+  const setStatusFilter = useAgentsStore((s) => s.setStatusFilter)
   const selectedId = useAgentsStore((s) => s.selectedId)
   const select = useAgentsStore((s) => s.select)
   const brewAction = useAgentsStore((s) => s.brewAction)
@@ -57,6 +68,8 @@ export function AgentsView(): React.JSX.Element {
       if (filter === 'daemon') return a.scope === 'daemon'
       return true
     })
+    // 运行状态与类型是「与」关系(可叠加,如「用户级 + 运行中」)
+    if (statusFilter !== 'all') l = l.filter((a) => a.status === statusFilter)
     if (searchQuery) {
       const q = searchQuery.toLowerCase()
       l = l.filter(
@@ -68,7 +81,7 @@ export function AgentsView(): React.JSX.Element {
       )
     }
     return l
-  }, [agents, filter, searchQuery])
+  }, [agents, filter, statusFilter, searchQuery])
 
   // 分桶(demo groups 顺序 user → system → daemon)
   const groups = useMemo(() => {
@@ -114,9 +127,14 @@ export function AgentsView(): React.JSX.Element {
             onClick={() => setFilter(f.id)}
           />
         ))}
+        <span style={{ width: 1, height: 16, background: 'var(--border2)', margin: '0 5px', flexShrink: 0 }} />
+        {STATUS_FILTERS.map((f) => (
+          <Chip key={f.id} variant="sub" active={statusFilter === f.id} label={t(f.labelKey)} onClick={() => setStatusFilter(f.id)} />
+        ))}
       </FilterBar>
       <div className="list-container" id="agentList" style={{ gap: 16 }}>
-        {missingPlists.length > 0 && (
+        {/* 孤儿横幅(已加载但 plist 已不存在)不属于任何状态分组,只在状态不限时展示 */}
+        {missingPlists.length > 0 && statusFilter === 'all' && (
           <div id="missingPlistsBanner" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--yellow)' }}>
               <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: 6 }} />

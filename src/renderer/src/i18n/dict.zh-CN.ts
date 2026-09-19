@@ -807,5 +807,6 @@ export const zhCN: Record<string, string> = {
   "settings.login.sectionTitle": "系统登录项",
   "settings.login.itemLabel": "登录项",
   "nav.helpOpen": "打开在线帮助文档",
-  "settings.about.openRepo": "打开 GitHub 仓库"
+  "settings.about.openRepo": "打开 GitHub 仓库",
+  "filter.allStatus": "全部状态"
 }
