@@ -72,7 +72,7 @@ describe('formFromPlist', () => {
     expect(formFromPlist({ Label: 'a' }, '').form.throttleInterval).toBeNull()
   })
 
-  it('往返白名单键不触发守卫;UserName / StandardInPath 读进表单', () => {
+  it('往返白名单键不触发守卫;UserName 读进表单,StandardInPath 不进表单', () => {
     const r = formFromPlist(
       {
         Label: 'a',
@@ -85,12 +85,13 @@ describe('formFromPlist', () => {
     )
     expect(r.unsupportedKeys).toEqual([])
     expect(r.form.userName).toBe('root')
-    expect(r.form.stdin).toBe('/tmp/in.txt')
+    expect(r.form).not.toHaveProperty('stdin') // 无 UI:只按原值往返,不给表单字段
   })
 
-  it('顶层非托管键属于 B 类:进入不兼容清单并保留键名', () => {
+  it('顶层非托管键不再锁表单(只提示保留);键名仍可从 unmanagedKeys 得到', () => {
     const r = formFromPlist({ Label: 'a', SessionCreate: true, LimitLoadToSessionType: 'Aqua' }, '')
-    expect(r.unsupportedKeys).toEqual(['LimitLoadToSessionType', 'SessionCreate'])
+    // 表单既不展示也不触碰它们 → 保存时按磁盘原值搬回,不再进不兼容清单(锁死会让 21/32 个真实 plist 不可编辑)
+    expect(r.unsupportedKeys).toEqual([])
     expect(unmanagedKeys({ Label: 'a', SessionCreate: true, LimitLoadToSessionType: 'Aqua' })).toEqual([
       'LimitLoadToSessionType',
       'SessionCreate'
@@ -99,14 +100,16 @@ describe('formFromPlist', () => {
 })
 
 describe('formIncompatibilities', () => {
-  it('顶层非托管键与表单无法表达的父键都进入不兼容清单', () => {
+  it('只有「表单拥有该键/父键」类进不兼容清单,未建模顶层键不进', () => {
     expect(
       formIncompatibilities({
         Label: 'a',
         Sockets: { x: 1 },
         KeepAlive: { PathState: { '/x': true }, Crashed: true }
       })
-    ).toEqual(['KeepAlive.PathState', 'Sockets'])
+    ).toEqual(['KeepAlive.PathState'])
+    // 而扫描结果里它作为「保留键」出现(页面据此显示一行提示)
+    expect(scanCompatibility({ Label: 'a', Sockets: { x: 1 } }).preservedTopLevelKeys).toEqual(['Sockets'])
   })
 
   it('EnvironmentVariables 非字符串值 → 带键名前缀(规范是 dictionary of strings)', () => {
@@ -157,8 +160,7 @@ describe('plistFromForm', () => {
     watchPaths: [],
     sciEntries: [],
     stdout: '',
-    stderr: '',
-    stdin: ''
+    stderr: ''
   })
 
   it('表单 → dict(空值不落键)+ 与 formFromPlist 值级往返', () => {
@@ -258,16 +260,24 @@ describe('plistFromForm', () => {
     expect(next).toEqual(base)
   })
 
-  it('UserName / StandardInPath 非空即写,带值往返', () => {
+  it('UserName 非空即写,带值往返', () => {
     const form = baseForm()
     form.userName = '_www'
-    form.stdin = '/tmp/in.txt'
     const dict = plistFromForm(form)
     expect(dict.UserName).toBe('_www')
-    expect(dict.StandardInPath).toBe('/tmp/in.txt')
     const back = formFromPlist(dict, 'x').form
     expect(back.userName).toBe('_www')
-    expect(back.stdin).toBe('/tmp/in.txt')
+  })
+
+  // StandardInPath 无 UI:表单保存既不能丢它,也不能凭空造/改动它(值原样取自磁盘快照)
+  it('StandardInPath:表单保存原样保留(含未被任何 dirtyField 触碰时)', () => {
+    const base = { Label: 'a', ProgramArguments: ['/bin/echo'], StandardInPath: '/tmp/in.txt' }
+    const form = formFromPlist(base, '').form
+    expect(plistFromForm(form, base, ['desc'])).toEqual(base)
+    expect(plistFromForm(form, base)).toEqual(base)
+    // 磁盘上没有该键 → 保存也不会新增
+    const plain = { Label: 'a', ProgramArguments: ['/bin/echo'] }
+    expect(plistFromForm(formFromPlist(plain, '').form, plain)).toEqual(plain)
   })
 
   it('dict KeepAlive 与单条 SCI', () => {
@@ -277,6 +287,34 @@ describe('plistFromForm', () => {
     const dict = plistFromForm(form)
     expect(dict.KeepAlive).toEqual({ Crashed: true })
     expect(dict.StartCalendarInterval).toEqual({ Hour: 3 }) // 单条 → dict 而非数组
+  })
+
+  it('WatchPaths 支持多个路径,且固定间隔与日历调度可同时保留', () => {
+    const form = formFromPlist(
+      {
+        Label: 'a',
+        WatchPaths: ['/tmp/inbox', '/tmp/outbox'],
+        StartInterval: 300,
+        StartCalendarInterval: { Hour: 9, Minute: 0 }
+      },
+      ''
+    ).form
+    expect(form.watchPaths).toEqual(['/tmp/inbox', '/tmp/outbox'])
+    expect(form.triggers).toMatchObject({ watchPaths: true, startInterval: 300, startCalendarInterval: true })
+
+    const dict = plistFromForm(form)
+    expect(dict.WatchPaths).toEqual(['/tmp/inbox', '/tmp/outbox'])
+    expect(dict.StartInterval).toBe(300)
+    expect(dict.StartCalendarInterval).toEqual({ Hour: 9, Minute: 0 })
+  })
+
+  it('ProcessType 缺省不写入,合法资源策略可往返', () => {
+    const defaultForm = formFromPlist({ Label: 'a' }, '').form
+    expect(plistFromForm(defaultForm).ProcessType).toBeUndefined()
+
+    const form = formFromPlist({ Label: 'a', ProcessType: 'Background' }, '').form
+    expect(form.processType).toBe('Background')
+    expect(plistFromForm(form).ProcessType).toBe('Background')
   })
 })
 
@@ -330,11 +368,17 @@ describe('scanCompatibility(P1-2 全键 schema / P1-3 保真边界)', () => {
     expect(combo.warnings.join()).toMatch(/不会创建额外实例/)
   })
 
-  it('空 SCI 规则 → warning(每分钟);顶层非托管键 → XML-only 不兼容项', () => {
+  it('空 SCI 规则 → warning(每分钟);未建模顶层键 → 保留清单而非不兼容项', () => {
     const r = scanCompatibility({ Label: 'a', StartCalendarInterval: {}, MachServices: { x: true } })
     expect(r.warnings.join()).toMatch(/每分钟/)
-    expect(r.preservedTopLevelKeys).toEqual([])
-    expect(r.unsupportedPaths).toEqual(['MachServices'])
+    expect(r.preservedTopLevelKeys).toEqual(['MachServices'])
+    expect(r.unsupportedPaths).toEqual([])
+    // 逐键说明里标记为「按值保留」,原因文案走 cfg.compat.preservedReason
+    expect(r.entries.find((e) => e.path === 'MachServices')).toMatchObject({
+      type: 'dict',
+      preservation: 'value',
+      reasonKey: 'cfg.compat.preservedReason'
+    })
   })
 
   it('嵌套 B 类路径显示真实类型与摘要', () => {
@@ -380,7 +424,6 @@ describe('validateNewAgentInput(新建/改名约束优先)', () => {
       sciEntries: [],
       stdout: '',
       stderr: '',
-      stdin: '',
       ...over
     }) as Parameters<typeof validateNewAgentInput>[0]
 

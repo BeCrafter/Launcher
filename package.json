@@ -19,7 +19,8 @@
     "build:app:x64": "node scripts/build-app.mjs --arch x64",
     "build:app:universal": "node scripts/build-app.mjs --arch universal",
     "build:app:all": "node scripts/build-app.mjs --arch all",
-    "build:app:release": "node scripts/build-app.mjs --arch all --release"
+    "build:app:release": "node scripts/build-app.mjs --arch all --release",
+    "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
     "@codemirror/commands": "^6.11.0",

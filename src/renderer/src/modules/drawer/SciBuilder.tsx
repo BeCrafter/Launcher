@@ -155,7 +155,6 @@ export function SciBuilder({
                     max={59}
                     value={e.Minute ?? ''}
                     style={INPUT_STYLE}
-                    title="Minute (0-59)"
                     onChange={(ev) => patch(i, 'Minute', ev.target.value)}
                   />
                 </div>
@@ -168,7 +167,6 @@ export function SciBuilder({
                     max={23}
                     value={e.Hour ?? ''}
                     style={INPUT_STYLE}
-                    title="Hour (0-23)"
                     onChange={(ev) => patch(i, 'Hour', ev.target.value)}
                   />
                 </div>
@@ -181,7 +179,6 @@ export function SciBuilder({
                     max={31}
                     value={e.Day ?? ''}
                     style={INPUT_STYLE}
-                    title="Day of Month (1-31)"
                     onChange={(ev) => patch(i, 'Day', ev.target.value)}
                   />
                 </div>
@@ -189,7 +186,6 @@ export function SciBuilder({
                   <select
                     className="f-input"
                     style={SELECT_STYLE}
-                    title="Weekday (0=Sunday)"
                     // 7 与 0 同为周日(man):归一显示为「周日」;未触碰时 entries 里仍是原值 7,保存不改写
                     value={e.Weekday === 7 ? '0' : (e.Weekday ?? '')}
                     onChange={(ev) => patch(i, 'Weekday', ev.target.value)}
@@ -206,7 +202,6 @@ export function SciBuilder({
                   <select
                     className="f-input"
                     style={SELECT_STYLE}
-                    title="Month (1-12)"
                     value={e.Month ?? ''}
                     onChange={(ev) => patch(i, 'Month', ev.target.value)}
                   >

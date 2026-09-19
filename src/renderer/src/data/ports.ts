@@ -31,6 +31,8 @@ import type {
 export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
 export type AgentScope = 'user' | 'system' | 'daemon'
 export type AgentFilter = 'all' | 'brew' | 'user' | 'system' | 'daemon'
+/** 运行状态筛选(与类型筛选叠加;'all' = 不限) */
+export type AgentStatusFilter = 'all' | 'running' | 'loaded' | 'stopped'
 export type CronFilter = 'all' | 'user' | 'system'
 export type SvcFilter = 'all' | 'brew' | 'node' | 'process' | 'docker'
 

@@ -18,7 +18,7 @@ export function Topbar(): React.JSX.Element {
   const searchQuery = useUiStore((s) => s.searchQuery)
   const setSearch = useUiStore((s) => s.setSearch)
   const rec = MODULES[module]
-  const label = rec.breadcrumb ?? (rec.breadcrumbKey ? t(rec.breadcrumbKey) : module)
+  const label = rec.breadcrumbKey ? t(rec.breadcrumbKey) : module
   const placeholder = rec.searchPlaceholderKey ? t(rec.searchPlaceholderKey) : t('topbar.search')
   const resetSettings = useSettingsStore((s) => s.reset)
 

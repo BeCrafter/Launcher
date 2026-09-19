@@ -117,4 +117,51 @@ describe('patchPlistXml', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toMatch(/非 <key>|CDATA|越界|缺值/)
   })
+
+  // 无行结构的文件(整份 dict 挤一行,工具生成的 plist 常见;本机样本 com.docker.socket.plist):
+  // 没有原文排版可保留,点补丁只会在单行里塞进带缩进的换行 → 整份按设置缩进重排
+  describe('单行文件', () => {
+    const ONE_LINE =
+      '<plist version="1.0"><dict><key>Label</key><string>com.demo</string><key>ProcessType</key><string>Background</string><key>ProgramArguments</key><array><string>/bin/echo</string></array></dict></plist>'
+
+    it('改值 → 整份格式化(不再在单行里塞换行),键序保持、字典等价', () => {
+      const parsed = parsePlistXml(ONE_LINE)
+      if (!parsed.ok) throw new Error(parsed.error)
+      const base = parsed.value as PlistDict
+      const next = { ...base, ProcessType: 'Interactive' }
+      const r = patchPlistXml({ originalXml: ONE_LINE, originalDict: base, nextDict: next, indent: '    ' })
+      if (!r.ok) throw new Error(r.reason)
+      expect(r.changed).toEqual(['ProcessType'])
+      // 每个顶层键各占一行,缩进用设置值(4 空格)
+      expect(r.xml).toContain('\n    <key>Label</key>\n    <string>com.demo</string>')
+      expect(r.xml).toContain('\n    <key>ProcessType</key>\n    <string>Interactive</string>')
+      // 键序与原文件一致(Label → ProcessType → ProgramArguments)
+      expect(r.xml.indexOf('ProcessType')).toBeLessThan(r.xml.indexOf('ProgramArguments'))
+      const back = parsePlistXml(r.xml)
+      expect(back.ok && back.value).toEqual(next)
+    })
+
+    it('新增键 → 追加在末尾,同样格式化', () => {
+      const parsed = parsePlistXml(ONE_LINE)
+      if (!parsed.ok) throw new Error(parsed.error)
+      const base = parsed.value as PlistDict
+      const r = patchPlistXml({
+        originalXml: ONE_LINE,
+        originalDict: base,
+        nextDict: { ...base, WorkingDirectory: '/tmp' },
+        indent: '    '
+      })
+      if (!r.ok) throw new Error(r.reason)
+      expect(r.changed).toEqual(['WorkingDirectory'])
+      expect(r.xml.trimEnd().endsWith('<key>WorkingDirectory</key>\n    <string>/tmp</string>\n</dict>\n</plist>')).toBe(true)
+    })
+
+    it('描述注释按需写入/保留', () => {
+      const parsed = parsePlistXml(ONE_LINE)
+      if (!parsed.ok) throw new Error(parsed.error)
+      const base = parsed.value as PlistDict
+      const r = patchPlistXml({ originalXml: ONE_LINE, originalDict: base, nextDict: base, indent: '    ', desc: '我的任务' })
+      expect(r.ok && r.xml).toContain('<!-- 我的任务 -->')
+    })
+  })
 })

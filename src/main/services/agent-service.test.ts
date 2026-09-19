@@ -558,7 +558,7 @@ describe('agent-service.save 守卫与保留', () => {
     }
   })
 
-  it('既有任务含顶层非托管键(Sockets / MachServices)→ 锁定表单,引导 XML 编辑', async () => {
+  it('既有任务含顶层非托管键(Sockets / MachServices)→ 放行保存,键原样保留', async () => {
     const h = saveHarness(
       [
         {
@@ -566,18 +566,21 @@ describe('agent-service.save 守卫与保留', () => {
           value: { Label: 'com.x', Sockets: { Listeners: { SockServiceName: '12345' } }, MachServices: { 'com.x': true } },
           // 节点级补丁以**原文**为准:未改动的节点原样搬过去,因此夹具的 XML 必须真的含这些键
           xml:
-            '<plist version="1.0"><dict><key>Label</key><string>com.x</string>' +
-            '<key>Sockets</key><dict><key>Listeners</key><dict><key>SockServiceName</key><string>12345</string></dict></dict>' +
-            '<key>MachServices</key><dict><key>com.x</key><true/></dict></dict></plist>'
+            '<plist version="1.0">\n<dict>\n\t<key>Label</key>\n\t<string>com.x</string>\n' +
+            '\t<key>Sockets</key>\n\t<dict>\n\t\t<key>Listeners</key>\n\t\t<dict>\n\t\t\t<key>SockServiceName</key>\n\t\t\t<string>12345</string>\n\t\t</dict>\n\t</dict>\n' +
+            '\t<key>MachServices</key>\n\t<dict>\n\t\t<key>com.x</key>\n\t\t<true/>\n\t</dict>\n</dict>\n</plist>'
         }
       ],
       { present: false }
     )
     try {
-      // 显式断言(§6:不得吞掉结果)
+      // 表单从不触碰这两个键 → 不再锁表单(锁死会让本机 21/32 个真实 plist 无法编辑)
       const outcome = await saveFormLike(h.svc, 'user:com.x', { label: 'com.x', desc: '' })
-      expect(outcome).toMatchObject({ ok: false, kind: 'unsupported' })
-      expect(h.write).not.toHaveBeenCalled()
+      expect(outcome.ok).toBe(true)
+      const written = String(h.write.mock.calls[0][2])
+      // 未改动的节点逐字节保留(含嵌套结构)
+      expect(written).toContain('\t<key>Sockets</key>\n\t<dict>\n\t\t<key>Listeners</key>')
+      expect(written).toContain('\t<key>MachServices</key>\n\t<dict>')
     } finally {
       h.cleanup()
     }
@@ -604,18 +607,18 @@ describe('agent-service.save 守卫与保留', () => {
     }
   })
 
-  it('草稿落盘时同名文件含 B 类键 → 阻止表单覆盖', async () => {
+  it('草稿落盘时同名文件含未建模顶层键 → 放行覆盖,原键保留', async () => {
     const h = saveHarness([], {
       present: true,
       value: { Label: 'com.new', Sockets: { a: 1 } },
-      xml: '<plist version="1.0"><dict><key>Label</key><string>com.new</string><key>Sockets</key><dict><key>a</key><integer>1</integer></dict></dict></plist>'
+      xml: '<plist version="1.0">\n<dict>\n\t<key>Label</key>\n\t<string>com.new</string>\n\t<key>Sockets</key>\n\t<dict>\n\t\t<key>a</key>\n\t\t<integer>1</integer>\n\t</dict>\n</dict>\n</plist>'
     })
     writeFileSync(join(h.dir, 'com.new.plist'), 'x')
     try {
       await h.svc.createDraft('user', 'com.new').catch(() => undefined)
       const outcome = await saveFormLike(h.svc, 'user:com.new', { label: 'com.new', desc: '', program: '/bin/echo' })
-      expect(outcome).toMatchObject({ ok: false, kind: 'unsupported' })
-      expect(h.write).not.toHaveBeenCalled()
+      expect(outcome.ok).toBe(true)
+      expect(String(h.write.mock.calls[0][2])).toContain('\t<key>Sockets</key>\n\t<dict>')
     } finally {
       h.cleanup()
     }

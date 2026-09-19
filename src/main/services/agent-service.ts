@@ -117,16 +117,35 @@ export function createAgentService(deps: {
     return brew.list().catch(() => [])
   }
 
-  /** 批量 ps 补充运行中 pid 的 uptime(一次调用) */
+  /**
+   * 批量补充运行中 pid 的 uptime(一次调用)。
+   * ⚠ 用 `ps -eo` 全量列举后在 JS 里过滤,不要用 `ps -p <pid,...>`:后者在 macOS 上恒定 ~2.5s
+   * (实测 5 个 pid 也要 2.6s,与数量无关),全量 `ps -eo` 只要 ~0.3-0.6s —— 列表页每次刷新
+   * 都走这里,原先 12 个任务要 5-10s(「允许登录时加载」点完迟迟不翻面的直接原因)。
+   */
   async function uptimesFor(pids: number[]): Promise<Map<number, string>> {
     const out = new Map<number, string>()
     if (pids.length === 0) return out
-    const r = await runner.run('ps', ['-p', pids.join(','), '-o', 'pid=,etime='])
+    const want = new Set(pids)
+    const r = await runner.run('ps', ['-eo', 'pid=,etime='])
     for (const line of r.stdout.split('\n')) {
       const m = line.match(/^\s*(\d+)\s+(\S+)\s*$/)
-      if (m) out.set(Number.parseInt(m[1], 10), etimeToText(m[2]))
+      if (!m) continue
+      const pid = Number.parseInt(m[1], 10)
+      if (want.has(pid)) out.set(pid, etimeToText(m[2]))
     }
     return out
+  }
+
+  /** 单个 pid 的 cpu/mem/启动时间/运行时长(同上:一次全量 `ps -eo`,替掉两次 `ps -p`) */
+  async function procInfoFor(pid: number): Promise<{ cpu: number; mem: number; startTime: string; etime: string } | null> {
+    const r = await runner.run('ps', ['-eo', 'pid=,%cpu=,%mem=,etime=,lstart='])
+    for (const line of r.stdout.split('\n')) {
+      const m = line.match(/^\s*(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\S+)\s+(.*)$/)
+      if (!m || Number.parseInt(m[1], 10) !== pid) continue
+      return { cpu: Number(m[2]), mem: Number(m[3]), startTime: m[5].trim(), etime: m[4] }
+    }
+    return null
   }
 
   function etimeToText(etime: string): string {
@@ -1252,21 +1271,21 @@ const located = await locateFresh(id, expectedRevision, '源文件已被外部�
       let cpu = '0%'
       let mem = '0%'
       let startTime = '-'
+      let uptime: string | null = null
       if (entry?.pid) {
-        const r = await runner.run('ps', ['-p', String(entry.pid), '-o', '%cpu=,%mem=,lstart='])
-        const line = r.stdout.trim()
-        const m = line.match(/^([\d.]+)\s+([\d.]+)\s+(.*)$/)
-        if (m) {
-          cpu = `${Number(m[1]).toFixed(1)}%`
-          mem = `${Number(m[2]).toFixed(1)}%`
-          startTime = m[3].trim()
+        const proc = await procInfoFor(entry.pid)
+        if (proc) {
+          cpu = `${proc.cpu.toFixed(1)}%`
+          mem = `${proc.mem.toFixed(1)}%`
+          startTime = proc.startTime
+          uptime = etimeToText(proc.etime)
         }
       }
       const state: Agent['status'] = entry ? (entry.pid !== null ? 'running' : 'loaded') : 'stopped'
       return {
         state,
         pid: entry?.pid ?? null,
-        uptime: entry?.pid ? (await uptimesFor([entry.pid])).get(entry.pid) ?? null : null,
+        uptime,
         cpu,
         cpuWidth: `${Math.min(100, Number.parseFloat(cpu) || 0)}%`,
         mem,

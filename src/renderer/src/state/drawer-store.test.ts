@@ -74,8 +74,7 @@ const docOf = (label: string): AgentDocument => ({
     watchPaths: [],
     sciEntries: [],
     stdout: '',
-    stderr: '',
-    stdin: ''
+    stderr: ''
   },
   compatibility: { unsupportedPaths: [], preservedTopLevelKeys: [], warnings: [], entries: [] },
   sourceShape: { program: 'arguments' }

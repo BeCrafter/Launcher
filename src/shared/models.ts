@@ -177,8 +177,6 @@ export interface AgentForm {
   sciEntries: SciEntry[]
   stdout: string
   stderr: string
-  /** StandardInPath;空串 = 不写 */
-  stdin: string
 }
 
 /** Program 与 ProgramArguments 的原始形态(argv 语义不同,表单不能无损表达 "both") */

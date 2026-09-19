@@ -2,7 +2,7 @@
 import { create } from 'zustand'
 import type { Agent } from '@shared/models'
 import type { MissingAgent } from '@shared/ipc'
-import type { AgentFilter } from '../data/ports'
+import type { AgentFilter, AgentStatusFilter } from '../data/ports'
 import { dataSource } from '../data'
 
 interface AgentsState {
@@ -10,11 +10,14 @@ interface AgentsState {
   /** 已加载但 plist 已不存在的孤儿(定向复核;refresh 时 diff 出消失条目后核对) */
   missingPlists: MissingAgent[]
   filter: AgentFilter
+  /** 运行状态筛选(与 filter 是「与」关系,可叠加) */
+  statusFilter: AgentStatusFilter
   selectedId: string | null
   loaded: boolean
   loadVersion: number
   load(): Promise<void>
   setFilter(f: AgentFilter): void
+  setStatusFilter(f: AgentStatusFilter): void
   select(id: string): void
   brewAction(kind: 'start' | 'stop', id: string): Promise<void>
   // 新建/导入统一落点(demo openAgentDraft):以给定 label 建草稿、入列表顶并选中
@@ -25,6 +28,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   agents: [],
   missingPlists: [],
   filter: 'all',
+  statusFilter: 'all',
   selectedId: null,
   loaded: false,
   loadVersion: 0,
@@ -64,6 +68,10 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
 
   setFilter(f) {
     set({ filter: f })
+  },
+
+  setStatusFilter(f) {
+    set({ statusFilter: f })
   },
 
   select(id) {
