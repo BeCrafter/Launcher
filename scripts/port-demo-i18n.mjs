@@ -244,7 +244,22 @@ const EXTRA = {
     'newConfirm.back': '返回修改',
     'sci.empty.confirmNote': '存在空的日历规则 = 每分钟触发',
     // demo 原文把 StandardInPath 写成了 StandardInputPath(错键名)——同键覆盖改值
-    'cfg.stdin.placeholder': 'StandardInPath（可选）'
+    'cfg.stdin.placeholder': 'StandardInPath（可选）',
+    // 界面语言一致性:demo 把侧栏/面包屑与若干表单标签写死英文,中文模式下一并本地化
+    'nav.agents': 'Agent 管理',
+    'module.agents': 'Agent 管理',
+    'cfg.label': '标签',
+    'cfg.program': '程序',
+    'cfg.args': '参数',
+    'cfg.workingDir': '工作目录',
+    'cfg.env': '环境变量',
+    'cfg.stdout': '标准输出',
+    'cfg.stderr': '标准错误',
+    'cfg.userName': '运行用户',
+    'settings.login.sectionTitle': '系统登录项',
+    'settings.login.itemLabel': '登录项',
+    'nav.helpOpen': '打开在线帮助文档',
+    'settings.about.openRepo': '打开 GitHub 仓库'
   },
   'en-US': {
     'toast.update.upToDate': 'Already up to date ({V})',
@@ -464,7 +479,21 @@ const EXTRA = {
     'newConfirm.back': 'Back to edit',
     'sci.empty.confirmNote': 'An empty calendar rule means "every minute"',
     // demo wrote StandardInputPath by mistake; the real key is StandardInPath (value override, same key)
-    'cfg.stdin.placeholder': 'StandardInPath (optional)'
+    'cfg.stdin.placeholder': 'StandardInPath (optional)',
+    'nav.agents': 'Launch Agents',
+    'module.agents': 'Launch Agents',
+    'cfg.label': 'Label',
+    'cfg.program': 'Program',
+    'cfg.args': 'Arguments',
+    'cfg.workingDir': 'Working Dir',
+    'cfg.env': 'Env Vars',
+    'cfg.stdout': 'Standard Out',
+    'cfg.stderr': 'Standard Error',
+    'cfg.userName': 'Run As User',
+    'settings.login.sectionTitle': 'Login Items',
+    'settings.login.itemLabel': 'Login Item',
+    'nav.helpOpen': 'Open the online help',
+    'settings.about.openRepo': 'Open the GitHub repository'
   }
 }
 

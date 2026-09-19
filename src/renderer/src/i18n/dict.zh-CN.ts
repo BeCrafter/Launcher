@@ -793,5 +793,19 @@ export const zhCN: Record<string, string> = {
   "newConfirm.header": "保存前确认",
   "newConfirm.ok": "知道了,继续保存",
   "newConfirm.back": "返回修改",
-  "sci.empty.confirmNote": "存在空的日历规则 = 每分钟触发"
+  "sci.empty.confirmNote": "存在空的日历规则 = 每分钟触发",
+  "nav.agents": "Agent 管理",
+  "module.agents": "Agent 管理",
+  "cfg.label": "标签",
+  "cfg.program": "程序",
+  "cfg.args": "参数",
+  "cfg.workingDir": "工作目录",
+  "cfg.env": "环境变量",
+  "cfg.stdout": "标准输出",
+  "cfg.stderr": "标准错误",
+  "cfg.userName": "运行用户",
+  "settings.login.sectionTitle": "系统登录项",
+  "settings.login.itemLabel": "登录项",
+  "nav.helpOpen": "打开在线帮助文档",
+  "settings.about.openRepo": "打开 GitHub 仓库"
 }

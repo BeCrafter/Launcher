@@ -143,7 +143,7 @@ export function NewCronModal(): React.JSX.Element {
           </div>
           <div className="f-row center">
             <span className="f-lbl">{t('modal.newCron.desc')}</span>
-            <input className="f-input" type="text" placeholder="例：每日自动备份数据库" value={desc} onChange={(e) => setDesc(e.target.value)} />
+            <input className="f-input" type="text" placeholder={t('modal.newCron.descPlaceholder')} value={desc} onChange={(e) => setDesc(e.target.value)} />
           </div>
           <div className="f-row center">
             <span className="f-lbl">{t('modal.newCron.scope')}</span>

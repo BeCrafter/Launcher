@@ -28,7 +28,7 @@ function TriggerCard({
   id: string
   icon: string
   name: string
-  sub: string
+  sub?: string
   checked: boolean
   onToggle?: (v: boolean) => void
   trailing?: React.ReactNode
@@ -41,7 +41,7 @@ function TriggerCard({
       </div>
       <div className="trig-text">
         <div className="trig-name">{name}</div>
-        <div className="trig-sub">{sub}</div>
+        {sub !== undefined && <div className="trig-sub">{sub}</div>}
       </div>
       {onToggle ? (
         <Toggle checked={checked} onChange={onToggle} />
@@ -288,9 +288,9 @@ export function EditTab(): React.JSX.Element {
           </div>
         )}
         {/* § 标识 */}
-        <CfgGroup icon="fa-solid fa-fingerprint" title={t('cfg.group.ident')} subtitle="Identification">
+        <CfgGroup icon="fa-solid fa-fingerprint" title={t('cfg.group.ident')}>
           <div className="f-row center">
-            <span className="f-lbl">Label</span>
+            <span className="f-lbl" title="Label">{t('cfg.label')}</span>
             <input className="f-input mono" type="text" value={form.label} onChange={(e) => updateForm({ label: e.target.value })} />
           </div>
           <div className="f-row center">
@@ -300,9 +300,9 @@ export function EditTab(): React.JSX.Element {
         </CfgGroup>
 
         {/* § 执行 */}
-        <CfgGroup icon="fa-solid fa-terminal" title={t('cfg.group.exec')} subtitle="Execution">
+        <CfgGroup icon="fa-solid fa-terminal" title={t('cfg.group.exec')}>
           <div className="f-row center">
-            <span className="f-lbl">Program</span>
+            <span className="f-lbl" title="Program">{t('cfg.program')}</span>
             <input className="f-input mono" type="text" value={form.program} onChange={(e) => updateForm({ program: e.target.value })} />
             <button
               className="act-btn"
@@ -321,17 +321,17 @@ export function EditTab(): React.JSX.Element {
             </button>
           </div>
           <div className="f-row">
-            <span className="f-lbl" style={{ paddingTop: 6 }}>Arguments</span>
+            <span className="f-lbl" style={{ paddingTop: 6 }} title="ProgramArguments">{t('cfg.args')}</span>
             <ArgsList args={form.args} onChange={(args) => updateForm({ args })} />
           </div>
           <div className="f-row center">
-            <span className="f-lbl">WorkingDir</span>
+            <span className="f-lbl" title="WorkingDirectory">{t('cfg.workingDir')}</span>
             <input className="f-input mono" type="text" value={form.workingDir} onChange={(e) => updateForm({ workingDir: e.target.value })} />
           </div>
           {/* 非 daemon 域:文件里若已有 UserName,如实展示为只读(launchd 会忽略;保存原值保留) */}
           {scope !== 'daemon' && form.userName !== '' && (
             <div className="f-row center" title={t('cfg.userName.ignored')}>
-              <span className="f-lbl">UserName</span>
+              <span className="f-lbl" title="UserName">{t('cfg.userName')}</span>
               <input className="f-input mono" type="text" value={form.userName} readOnly disabled />
               <span style={{ fontSize: 10, color: 'var(--dim)', marginLeft: 5, flexShrink: 0 }}>{t('cfg.userName.ignored')}</span>
             </div>
@@ -339,7 +339,7 @@ export function EditTab(): React.JSX.Element {
           {/* UserName 仅特权 system 域(daemon)生效,launchd 对 agent 会忽略该键 → 只在 daemon 域暴露(demo 页脚设计原意) */}
           {scope === 'daemon' && (
             <div className="f-row center">
-              <span className="f-lbl">UserName</span>
+              <span className="f-lbl" title="UserName">{t('cfg.userName')}</span>
               <input
                 className="f-input mono"
                 type="text"
@@ -350,13 +350,13 @@ export function EditTab(): React.JSX.Element {
             </div>
           )}
           <div className="f-row">
-            <span className="f-lbl" style={{ paddingTop: 6 }}>EnvVars</span>
+            <span className="f-lbl" style={{ paddingTop: 6 }} title="EnvironmentVariables">{t('cfg.env')}</span>
             <EnvList env={form.env} onChange={(env) => updateForm({ env })} />
           </div>
         </CfgGroup>
 
         {/* § 启动时机 */}
-        <CfgGroup icon="fa-solid fa-clock" title={t('cfg.group.schedule')} subtitle="Startup timing">
+        <CfgGroup icon="fa-solid fa-clock" title={t('cfg.group.schedule')}>
           <div className="trigger-grid">
             <TriggerCard id="ef_trig_run" icon="fa-solid fa-arrow-right-to-bracket" name={t('trig.runAtLoad')} sub="RunAtLoad" checked={trig.runAtLoad} onToggle={(v) => setTrig({ runAtLoad: v })} hint={t('trig.runAtLoad.hint')} />
             <TriggerCard id="ef_trig_watch" icon="fa-solid fa-eye" name={t('trig.watchPaths')} sub="WatchPaths" checked={trig.watchPaths} onToggle={(v) => setTrig({ watchPaths: v })} hint={t('cfg.watch.risk')} />
@@ -409,17 +409,16 @@ export function EditTab(): React.JSX.Element {
         </CfgGroup>
 
         {/* § 进程生命周期 */}
-        <CfgGroup icon="fa-solid fa-heart-pulse" title={t('cfg.group.lifetime')} subtitle="Process lifetime">
+        <CfgGroup icon="fa-solid fa-heart-pulse" title={t('cfg.group.lifetime')}>
           <div className={`keep-alive-layout${trig.keepAlive ? '' : ' solo'}`}>
             <TriggerCard id="ef_trig_keep" icon="fa-solid fa-heart-pulse" name={t('trig.keepAlive')} sub="KeepAlive" checked={trig.keepAlive} onToggle={(v) => void setKeepAlive(v)} />
 
             {trig.keepAlive && (
-              /* 与左侧「保持存活」同款卡片(图标 + 标题 + 英文小字 + 右侧控件);策略说明走 title 提示,不再占一行 */
+              /* 与左侧「保持存活」同款卡片(图标 + 标题 + 右侧控件);策略说明走 title 提示,不再占一行 */
               <TriggerCard
                 id="ef_keepAliveArea"
                 icon="fa-solid fa-sliders"
                 name={t('ka.policy')}
-                sub="KeepAlive policy"
                 checked
                 hint={t(`ka.preset.${shownPreset}.hint`)}
                 trailing={
@@ -485,13 +484,13 @@ export function EditTab(): React.JSX.Element {
         </CfgGroup>
 
         {/* § I/O */}
-        <CfgGroup icon="fa-solid fa-file-lines" title={t('cfg.group.io')} subtitle="Stdio">
+        <CfgGroup icon="fa-solid fa-file-lines" title={t('cfg.group.io')}>
           <div className="f-row center">
-            <span className="f-lbl">Stdout</span>
+            <span className="f-lbl" title="StandardOutPath">{t('cfg.stdout')}</span>
             <input className="f-input mono" type="text" value={form.stdout} onChange={(e) => updateForm({ stdout: e.target.value })} />
           </div>
           <div className="f-row center">
-            <span className="f-lbl">Stderr</span>
+            <span className="f-lbl" title="StandardErrorPath">{t('cfg.stderr')}</span>
             <input className="f-input mono" type="text" value={form.stderr} onChange={(e) => updateForm({ stderr: e.target.value })} />
           </div>
         </CfgGroup>

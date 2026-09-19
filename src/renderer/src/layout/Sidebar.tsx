@@ -50,7 +50,7 @@ export function Sidebar(): React.JSX.Element {
         <div className="nav-section-label">{t('nav.section')}</div>
         {SIDEBAR_MODULES.map((id) => {
           const active = module === id
-          const label = id === 'agents' ? 'Launch Agents' : t(`nav.${id}`)
+          const label = t(`nav.${id}`)
           return (
             <div key={id} className={`nav-item${active ? ' active' : ''}`} onClick={() => switchModule(id)}>
               <div className="nav-icon">
@@ -65,7 +65,7 @@ export function Sidebar(): React.JSX.Element {
         <button
           className="sidebar-footer-btn"
           onClick={() => openExternal(HELP_URL)}
-          title="打开在线帮助文档"
+          title={t('nav.helpOpen')}
         >
           <i className="fa-regular fa-circle-question" />
           <span>{t('nav.help')}</span>

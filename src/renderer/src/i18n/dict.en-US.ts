@@ -793,5 +793,19 @@ export const enUS: Record<string, string> = {
   "newConfirm.header": "Confirm before saving",
   "newConfirm.ok": "Got it, save",
   "newConfirm.back": "Back to edit",
-  "sci.empty.confirmNote": "An empty calendar rule means \"every minute\""
+  "sci.empty.confirmNote": "An empty calendar rule means \"every minute\"",
+  "nav.agents": "Launch Agents",
+  "module.agents": "Launch Agents",
+  "cfg.label": "Label",
+  "cfg.program": "Program",
+  "cfg.args": "Arguments",
+  "cfg.workingDir": "Working Dir",
+  "cfg.env": "Env Vars",
+  "cfg.stdout": "Standard Out",
+  "cfg.stderr": "Standard Error",
+  "cfg.userName": "Run As User",
+  "settings.login.sectionTitle": "Login Items",
+  "settings.login.itemLabel": "Login Item",
+  "nav.helpOpen": "Open the online help",
+  "settings.about.openRepo": "Open the GitHub repository"
 }
