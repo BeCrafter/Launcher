@@ -6,13 +6,11 @@ import { useState } from 'react'
 export function CfgGroup({
   icon,
   title,
-  subtitle,
   children,
   defaultOpen = true
 }: {
   icon: string
   title: string
-  subtitle?: string
   children: React.ReactNode
   defaultOpen?: boolean
 }): React.JSX.Element {
@@ -22,7 +20,6 @@ export function CfgGroup({
       <div className="cfg-group-hdr" onClick={() => setOpen(!open)}>
         <i className={icon} />
         <span className="cfg-group-title">{title}</span>
-        {subtitle !== undefined && <span className="cfg-group-subtitle">{subtitle}</span>}
         <i className={`fa-solid fa-chevron-down cfg-chevron${open ? ' open' : ''}`} />
       </div>
       <div className="cfg-group-body" style={{ display: open ? 'flex' : 'none' }}>

@@ -18,7 +18,6 @@ export interface StatusBarModel {
 export interface ModuleRecord {
   viewId: string // demo #view-* id 保留(对照用;React 由 module id 直达组件)
   icon: string // FontAwesome class(data 形态保留,icons.test.ts 兜底)
-  breadcrumb?: string // 直排文本(demo agents 用)
   breadcrumbKey?: string // i18n 键
   searchPlaceholderKey?: string
   showStatusBar: boolean
@@ -28,7 +27,7 @@ export const MODULES: Record<ModuleId, ModuleRecord> = {
   agents: {
     viewId: 'view-agents',
     icon: 'fa-rocket',
-    breadcrumb: 'Launch Agents',
+    breadcrumbKey: 'module.agents',
     searchPlaceholderKey: 'topbar.phAgents',
     showStatusBar: true
   },

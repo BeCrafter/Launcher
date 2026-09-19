@@ -4,7 +4,7 @@
 // 结构无法安全扫描(根节点异常、顶层出现 CDATA/裸文本、键缺值等)→ 返回 reason,
 // 由调用方按「锁表单、请用 XML 编辑」处理,绝不盲重建。
 import type { PlistDict, PlistValue } from './plist-xml'
-import { escapeXml, renderValueXml, scanTopLevelDict } from './plist-xml'
+import { escapeXml, extractPlistDesc, renderValueXml, scanTopLevelDict, toPlistXml } from './plist-xml'
 
 export type PatchResult = { ok: true; xml: string; changed: string[] } | { ok: false; reason: string }
 
@@ -20,6 +20,25 @@ function deepEqual(a: PlistValue | undefined, b: PlistValue | undefined): boolea
     return ka.length === kb.length && ka.every((k) => deepEqual(da[k], db[k]))
   }
   return false
+}
+
+/** 顶层键差异(新增/删除/改值):单行文件整份重排时用来如实上报改了什么 */
+function diffKeys(a: PlistDict, b: PlistDict): string[] {
+  const out: string[] = []
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const ha = Object.prototype.hasOwnProperty.call(a, k)
+    const hb = Object.prototype.hasOwnProperty.call(b, k)
+    if (!ha || !hb || !deepEqual(a[k], b[k])) out.push(k)
+  }
+  return out
+}
+
+/** 按原文件键序排列 nextDict(单行文件整份重排时用:新增键追加在末尾) */
+function orderLike(original: PlistDict, next: PlistDict): PlistDict {
+  const out: PlistDict = {}
+  for (const k of Object.keys(original)) if (k in next) out[k] = next[k]
+  for (const k of Object.keys(next)) if (!(k in out)) out[k] = next[k]
+  return out
 }
 
 /** 删除整行时把行尾换行一起吃掉,避免留下空行 */
@@ -44,6 +63,21 @@ export function patchPlistXml(opts: {
 }): PatchResult {
   const scan = scanTopLevelDict(opts.originalXml)
   if (!scan.ok) return { ok: false, reason: scan.reason }
+
+  // 无行结构的文件(整份 dict 挤在一行:工具生成的 plist 常见,本机样本 com.docker.socket.plist,
+  // 以及 keystone 的 `<dict/>` 占位)没有「原文排版」可保留,节点级补丁只会在单行里塞进带缩进的
+  // 换行、越改越乱 → 整份按设置缩进重排(toPlistXml 的规范形态),XML tab 里再读就是正常格式。
+  // ⚠ 只在这类文件**不含表示层构造**时重排:重排是从字典重建,`<data>`/`<date>`/`<real>` 的写法与
+  //   注释会变(或被写成 `<string>`/丢掉)—— 那种文件继续走下面的逐字节补丁,宁可不美化也不丢表示。
+  const body = opts.originalXml.slice(scan.bodyStart, scan.bodyEnd)
+  if (!body.includes('\n') && !/<(data|date|real)>|<!--/.test(body)) {
+    const desc = opts.desc !== undefined ? opts.desc : extractPlistDesc(opts.originalXml)
+    return {
+      ok: true,
+      xml: toPlistXml(orderLike(opts.originalDict, opts.nextDict), { indent: opts.indent, desc }),
+      changed: diffKeys(opts.originalDict, opts.nextDict)
+    }
+  }
 
   interface Edit {
     start: number

@@ -65,6 +65,34 @@
   color: var(--red);
 }
 
+/* 次级 chip(应用新增:过滤栏第二组「运行状态」)—— 不用胶囊形态,改成方括号包住的纯文本:
+   无描边、无底色,选中只换文字与括号颜色(gap 来自 .chip,给括号与文字留出空隙) */
+.chip-sub {
+  border-color: transparent;
+  padding: 4px 6px;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+.chip-sub::before {
+  content: '[';
+}
+
+.chip-sub::after {
+  content: ']';
+}
+
+.chip-sub:hover {
+  background: none;
+  color: var(--muted);
+}
+
+.chip-sub.active {
+  background: none;
+  border-color: transparent;
+  color: var(--accent);
+}
+
 /* ── 列表容器 ── */
 .list-container {
   flex: 1 1 auto;

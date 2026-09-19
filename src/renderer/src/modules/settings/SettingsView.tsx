@@ -374,7 +374,7 @@ export function SettingsView(): React.JSX.Element {
                     <button
                       className="d-btn"
                       type="button"
-                      title="打开 GitHub 仓库"
+                      title={t('settings.about.openRepo')}
                       onClick={() => openExternal(MOCK_DATA.urls.github)}
                     >
                       <i className="fa-brands fa-github" />
@@ -391,7 +391,7 @@ export function SettingsView(): React.JSX.Element {
               <SettingsHero title={t('settings.login.title')} subtitle={t('settings.login.subtitle')} />
               <SettingsSection
                 icon="fa-solid fa-right-to-bracket"
-                title="Login Items"
+                title={t('settings.login.sectionTitle')}
                 desc={t('settings.login.sectionDesc')}
               >
                 <div
@@ -413,7 +413,7 @@ export function SettingsView(): React.JSX.Element {
                       <span style={{ color: 'var(--muted)' }}>{t('settings.login.launchagentDesc')}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 10, fontSize: 11.5 }}>
-                      <span style={{ color: 'var(--blue)', fontWeight: 700, minWidth: 76 }}>Login Item</span>
+                      <span style={{ color: 'var(--blue)', fontWeight: 700, minWidth: 76 }}>{t('settings.login.itemLabel')}</span>
                       <span style={{ color: 'var(--muted)' }}>{t('settings.login.loginitemDesc')}</span>
                     </div>
                   </div>
