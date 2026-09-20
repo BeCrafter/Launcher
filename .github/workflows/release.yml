@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: write
+  # npm publish --provenance 需要 OIDC 签发供应链证明
+  id-token: write
 
 jobs:
   release:
@@ -35,16 +37,20 @@ jobs:
       - name: 校验发布配置
         env:
           TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for k in R2_ACCOUNT_ID R2_BUCKET R2_PUBLIC_DOMAIN TAP_TOKEN; do
+          for k in R2_ACCOUNT_ID R2_BUCKET R2_PUBLIC_DOMAIN TAP_TOKEN NPM_TOKEN; do
             [ -n "${!k}" ] ||
-              { echo "::error::$k 为空——检查 r2-publish 环境上的 secrets 与 TAP_GITHUB_TOKEN"; exit 1; }
+              { echo "::error::$k 为空——检查 r2-publish 环境上的 secrets（含 TAP_GITHUB_TOKEN / NPM_TOKEN）"; exit 1; }
           done
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+          # ⚠ 必须显式给 registry-url：setup-node 才会写出带 `${NODE_AUTH_TOKEN}` 的 .npmrc。
+          # 少了它，后面 `npm publish` 读不到 NODE_AUTH_TOKEN，会以 ENEEDAUTH 失败。
+          registry-url: https://registry.npmjs.org
 
       # 注意：构建期依赖（React / Vite / 字体等）全在 devDependencies，不能加 --omit=dev
       - name: 安装依赖
@@ -165,6 +171,33 @@ jobs:
             git push
           fi
 
+      # npm 包是个**安装器**：只含 cli.mjs / lib.mjs / README.md，不含应用产物。
+      # ⚠ 预发布同样跳过：否则 `npx -y @becrafter/launcher` 会拉到 rc（latest dist-tag 被占）。
+      # 版本号与 app 同步 —— `npx …@0.2.0` 装的就是应用 0.2.0。
+      - name: 发布 npm 包
+        if: env.IS_PRERELEASE != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          mkdir -p pkg
+          cp packaging/npm/package.json packaging/npm/cli.mjs packaging/npm/lib.mjs \
+             packaging/npm/README.md pkg/
+          sed -i '' -e "s|REPLACE_WITH_VERSION|${VERSION}|" pkg/package.json
+          if grep -q "REPLACE_WITH_VERSION" pkg/package.json; then
+            echo "::error::npm 包占位符未被替换"
+            exit 1
+          fi
+          cd pkg
+          # npm 不允许重复发布同一版本 —— 重跑同一 tag 时必须跳过，
+          # 否则「整个流程可重跑」这个性质在 npm 这一步断掉（cask 步骤同理，见上）
+          PKG_NAME="$(node -p "require('./package.json').name")"
+          if npm view "${PKG_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "npm 上已是 ${VERSION}，跳过发布"
+          else
+            # --provenance 走 OIDC 签发供应链证明（需顶层 id-token: write）
+            npm publish --access public --provenance
+          fi
+
       - name: 生成 Release 正文
         run: |
           R2_BASE="${R2_PUBLIC_DOMAIN}/${R2_PREFIX}"
@@ -183,6 +216,8 @@ jobs:
               echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash"
               echo
               echo "brew install --cask becrafter/brew/launcher"
+              echo
+              echo "npx -y @becrafter/launcher"
             fi
             echo '```'
             echo

@@ -66,11 +66,11 @@ macOS 15 起，「已损坏」这一档的绕过入口被移除——**只对有
 
 ---
 
-## 三、两条零成本安装通道
+## 三、三条零成本安装通道
 
 共同原理：**`com.apple.quarantine` 由下载方应用程序设置，不由网络层设置**。浏览器会设，`curl` 不设。
 
-两条通道的 zip 产物都托管在 **Cloudflare R2**（自定义域名 `https://repo.iskill.site`，路径前缀 `launcher/`），GitHub Release 作为备用下载源同步保留。R2 侧要点：
+三条通道的 zip 产物都托管在 **Cloudflare R2**（自定义域名 `https://repo.iskill.site`，路径前缀 `launcher/`），GitHub Release 作为备用下载源同步保留。R2 侧要点：
 
 | 要点 | 做法 |
 |---|---|
@@ -107,11 +107,59 @@ brew install --cask becrafter/brew/launcher
 - cask 托管在 `BeCrafter/homebrew-brew`（tap 名 `becrafter/brew`）。本仓库 `packaging/homebrew/launcher.rb` 是唯一事实来源，**发版时 CI 复制过去并替换 version / url / sha256**，tap 仓库那份不要手改
 - 维护手册见 `packaging/homebrew/README.md`
 
+### 通道 C：npm（`packaging/npm/`）
+
+```bash
+npx -y @becrafter/launcher
+```
+
+定位是**给已经装了 Node 的开发者**一个熟悉的入口，不替代 A/B。npm 包里**只有安装器**
+（`cli.mjs` + `lib.mjs` + README，约 16KB），应用产物仍从 R2 下载。
+
+**两条 npm 的硬约束决定了这个形态：**
+
+| 约束 | 依据 | 后果 |
+|---|---|---|
+| **npm v7+ 没有 uninstall 钩子** | 官方文档：「While npm v6 had `uninstall` lifecycle scripts, npm v7 does not… will not function」 | `npm uninstall` **不会**清理 `/Applications`——必须自带 `uninstall` 子命令 |
+| **`ignore-scripts=true` 静默失效** | 官方 config 文档；退出码 0、无报错，企业环境常见 | **绝不在 lifecycle script 里干活**，否则会出现"装完了但没装上"且无人察觉 |
+
+因此：**本包不在任何 lifecycle script 里做任何事**，一切由用户显式运行 CLI 完成。这样
+`--ignore-scripts` 与 pnpm 下都正常工作。
+
+**为何不用平台分包**（esbuild / sharp 的 `optionalDependencies` + `os`/`cpu` 模式）：
+本应用载荷是 **255MB 的 `.app` bundle**，不是单个二进制（对照：同 scope 的
+`@becrafter/sail-darwin-arm64` 只有 19.8MB）。`.app` 落进 `node_modules` 会被
+**Spotlight 索引、LaunchServices 注册**，系统里出现重复的「Launcher」条目；且 255MB 已贴近
+npm 的包体积上限。产物留在 R2（本就出网免费、且是 cask 的 sha256 来源）更合适。
+
+> `@becrafter` 是本项目自己的 npm scope（maintainer `kugouming`），`@becrafter/launcher`
+> 未被占用。⚠ scoped 包**默认 private**，`package.json` 里的 `publishConfig.access = "public"`
+> 不能省，否则发布失败。
+
+### 安装契约（三条通道必须一致）
+
+`scripts/install.sh`（bash）与 `packaging/npm/cli.mjs`（Node）是同一套逻辑的**两份实现** ——
+bash 与 Node 无法共用代码，硬抽只会更脆。以下不变式**改任一侧都要同步另一侧**：
+
+| 不变式 | 值 |
+|---|---|
+| 下载根 | `${LAUNCHER_R2_BASE:-https://repo.iskill.site/launcher}` |
+| 产物命名 | `Launcher-[latest\|<版本>]-<架构>.zip`（版本号去 `v` 前缀） |
+| 架构判据 | **`uname -m`**（`arm64`→arm64，`x86_64`→x64）—— 不能用 `process.arch`：那是 **Node 二进制**自身的架构，x64 Node 跑在 Apple Silicon 上会错装 x64 产物 |
+| 解压工具 | **必须 `ditto -x -k`** —— `unzip` 与任何 JS zip 库都会丢符号链接与扩展属性，破坏 `.app` 内部签名（实测安装后保留 14 个符号链接） |
+| 安装目录 | `/Applications`；不可写时回退 `~/Applications` |
+| 收尾 | `xattr -dr com.apple.quarantine`（防御性：上述下载途径本就不打该标记） |
+| 完整性 | 校验 `Contents/MacOS/Launcher` 存在，否则视为产物损坏 |
+
+npm 侧把纯函数拆到 `lib.mjs`（架构 / URL / 版本比较 / 参数解析），配 vitest；`cli.mjs` 顶层有入口
+switch，测试 import 它会真的执行，故不靠「是否主模块」判定（npm bin 是符号链接，`argv[1]` 与
+`import.meta.url` 不一致），直接分层。
+
 ---
 
 ## 四、发布流程
 
-`.github/workflows/release.yml`：push tag `v*`（或手动 dispatch）→ 校验 tag 与 `package.json` 版本一致 → typecheck + test → 构建 → 算 sha256 → 传 R2 → 验证公网可达 → 更新 tap 的 cask → 发 GitHub Release。
+`.github/workflows/release.yml`：push tag `v*`（或手动 dispatch）→ 校验 tag 与 `package.json` 版本一致（并判定是否预发布）→ typecheck + test → 构建 → 算 sha256 → 传 R2 → 验证公网可达 → 更新 tap 的 cask → 发布 npm 包 → 发 GitHub Release。
 
 任何一步失败即中断，且整个流程可重跑（重跑同一 tag 会覆盖同一批对象并重算 sha256）。
 
@@ -119,11 +167,11 @@ brew install --cask becrafter/brew/launcher
 
 | 产物 | 角色 |
 |---|---|
-| `Launcher-<version>-arm64.zip`、`Launcher-<version>-x64.zip` | **两条安装通道的产物** —— install.sh 与 cask 都只下载 zip；传 R2 + 挂 Release |
-| `Launcher-latest-<arch>.zip` | install.sh 不带 `--version` 时用的固定别名，**只存在于 R2** |
-| `Launcher-<version>-arm64.dmg`、`Launcher-<version>-x64.dmg` | 额外产物，供手动安装；**两个通道都不使用，不作为本方案的推荐路径**，只挂 Release |
+| `Launcher-<version>-arm64.zip`、`Launcher-<version>-x64.zip` | **三条安装通道的产物** —— install.sh / cask / npm CLI 都只下载 zip；传 R2 + 挂 Release |
+| `Launcher-latest-<arch>.zip` | install.sh / npm CLI 不带版本时用的固定别名，**只存在于 R2** |
+| `Launcher-<version>-arm64.dmg`、`Launcher-<version>-x64.dmg` | 额外产物，供手动安装；**三个通道都不使用，不作为本方案的推荐路径**，只挂 Release |
 
-> install.sh 按 `Launcher-[latest|<版本>]-<架构>.zip` 拼名，cask 用 `arch arm:/intel:` 拼出同名——**改产物名、或改 workflow 里的 `R2_PREFIX`（必须与 install.sh 的 `R2_BASE` 路径一致）会同时打断两条通道**。
+> install.sh 按 `Launcher-[latest|<版本>]-<架构>.zip` 拼名，cask 用 `arch arm:/intel:` 拼出同名，npm CLI 由 `packaging/npm/lib.mjs` 的 `zipUrl` 拼出——**改产物名、或改 workflow 里的 `R2_PREFIX`（必须与 install.sh 的 `R2_BASE` 路径一致）会同时打断三条通道**。
 
 ### CI 依赖的 secrets（挂在 `r2-publish` 环境上）
 
@@ -132,6 +180,7 @@ brew install --cask becrafter/brew/launcher
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 的 S3 兼容凭据（endpoint = `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`） |
 | `R2_REPO_BUCKET_NAME` / `R2_REPO_PUBLIC_DOMAIN` | bucket 名与自定义域名（**不带末尾斜杠**，如 `https://repo.iskill.site`） |
 | `TAP_GITHUB_TOKEN` | 对本仓库外的 `BeCrafter/homebrew-brew` 有 `contents: write` 的 PAT——`GITHUB_TOKEN` 只能作用于本仓库，跨仓推送必须用 PAT |
+| `NPM_TOKEN` | npmjs.com 的 Automation token，用于发布 `@becrafter/launcher`。⚠ 首次发布前需确认该 scope 属于当前账号（`@becrafter` 现有 `sail` 等包，maintainer `kugouming`） |
 
 R2 侧只需要 bucket + 绑好自定义域名并开启公开访问；`r2.dev` 域名有限流，不要用。
 
@@ -146,13 +195,14 @@ PRERELEASE_SUFFIX = /(?:[._-]?(?i:alpha|beta|pre|rc)\.?\d{,2})/
 
 实测 `Version.new('0.2.0-dev') > Version.new('0.2.0')` 为 **true** —— 其余后缀（`dev`/`next`/`canary`/`nightly`/…）会被判为**比正式版更新**，已装正式版的用户会被 `brew upgrade` 推到该构建上。故 `scripts/release-version.mjs` 对白名单外的后缀**直接拒绝发布**（fail，不是警告）。
 
-**预发布不触碰任何稳定通道**，三项都由 CI 里的 `IS_PRERELEASE` 控制：
+**预发布不触碰任何稳定通道**，四项都由 CI 里的 `IS_PRERELEASE` 控制：
 
 | 动作 | 正式版 | 预发布 |
 |---|---|---|
 | 上传 `Launcher-<版本>-<架构>.zip` | ✅ | ✅ |
 | 覆盖 `Launcher-latest-<架构>.zip` 别名 | ✅ | ❌ **跳过** —— 否则所有用默认命令安装的人会被静默换成预发布 |
 | 更新 Homebrew cask | ✅ | ❌ **跳过** —— 版本比较只保证老用户不被"升级"到 rc，但**新用户 `brew install` 会直接装到 rc**；Homebrew 应保持纯稳定通道 |
+| 发布 npm 包 | ✅ | ❌ **跳过** —— 同理，否则 `npx -y @becrafter/launcher` 会拉到 rc（`latest` dist-tag 被预发布占据） |
 | GitHub Release 标 `pre-release` | ❌ | ✅ —— 应用内「检查更新」打的是 `/releases/latest`，该 API 只返回最新的**非** pre-release、**非** draft，标记后自然不推给用户 |
 
 预发布因此只发 **zip + GitHub Release（pre-release）**；Release 正文的安装命令会自动带上 `--version`。
