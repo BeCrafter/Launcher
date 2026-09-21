@@ -4,7 +4,14 @@ cask 托管在 **`BeCrafter/homebrew-brew`** 仓库（tap 名 `becrafter/brew`�
 
 ```bash
 brew install --cask becrafter/brew/launcher
+brew outdated --cask --greedy     # 检查是否有新版（cask 需 --greedy 才会列出来）
+brew upgrade --cask launcher      # 升级到 cask 里记的版本
 ```
+
+> cask 记录的是**某一个具体版本**：查「有哪些版本可装」要走官方 CDN 上的版本清单
+> （`curl -fsSL …/install.sh | bash -s -- --list` 或 `npx -y @becrafter/launcher versions`），
+> 装历史版本用 curl 通道。Homebrew 只维护「最新稳定版」这一条线，且预发布永远不进 cask。
+> 若 `brew outdated` 迟迟不见新版，先 `brew update` 刷新 tap 缓存再试。
 
 > **token 为什么叫 `launcher`**：曾用 `becrafter-launcher` 规避与官方 homebrew-cask 的同名冲突，但官方库**当前没有 `launcher` 这个 cask**（`brew info --cask launcher` → 不存在），且改名发生在首次发布之前（tap 仓库里从无 `Casks/`，无人装过），迁移成本为零。
 > ⚠ **代价要记住**：cask 裸名解析跨**所有** tap。若日后任一 tap 定义了 `launcher`，`brew install --cask launcher` 会报歧义——**因此所有文档与安装提示一律给全限定名 `becrafter/brew/launcher`，不要省略 tap**。

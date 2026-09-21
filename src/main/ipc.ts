@@ -8,6 +8,7 @@ import {
   IPC_EVENTS,
   type AppInfo,
   type ContainerAction,
+  type InstallChannel,
   type PickedFile,
   type PickFileMode,
   type ServicesListPayload,
@@ -33,6 +34,8 @@ export interface IpcDeps {
   discovery: ProcessDiscovery
   termination: TerminationService
   docker: DockerService
+  /** 安装来源(启动时探测一次;决定「检查更新」给哪条升级命令) */
+  installChannel: InstallChannel
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -55,7 +58,8 @@ export function registerIpc(deps: IpcDeps): void {
     arch: process.arch,
     platform: process.platform,
     version: app.getVersion(),
-    isPackaged: app.isPackaged
+    isPackaged: app.isPackaged,
+    installChannel: deps.installChannel
   }))
 
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {
@@ -74,8 +78,8 @@ export function registerIpc(deps: IpcDeps): void {
     deps.tray.setBadgeCount(count)
   })
 
-  // 检查更新:main 侧请求 GitHub Releases(8s 超时;四态见 services/update-check.ts)
-  ipcMain.handle(IPC.appCheckUpdates, () => checkForUpdate(app.getVersion()))
+  // 检查更新:main 侧读 cdn 上的版本清单(与三条安装通道同源;四态见 services/update-check.ts)
+  ipcMain.handle(IPC.appCheckUpdates, () => checkForUpdate(app.getVersion(), { channel: deps.installChannel }))
 
   // ── 原生对话框(渲染层传意图,系统对话框选路径;文件读写都在 main) ──
   ipcMain.handle(IPC.shellPickFile, async (e, opts: { mode: PickFileMode; title?: string }): Promise<PickedFile | null> => {

@@ -19,6 +19,7 @@ import { createAgentService } from './services/agent-service'
 import { createDockerService } from './services/docker-service'
 import { createProcessDiscovery, toServicesPayload } from './services/process-discovery'
 import { createTermination } from './services/termination'
+import { detectInstallChannel } from './services/install-channel'
 import type { ApplyCtx } from './settings/types'
 import { registerIpc } from './ipc'
 
@@ -149,7 +150,7 @@ function showMainWindow(): void {
   if (app.isReady()) createWindow() // ready 前 store 尚未初始化,建窗会抛
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // 启动序:设置加载 → applier 注册表副作用(themeSource/Tray/Dock/登录项/目录监听) → 建窗 → IPC
   store = createSettingsStore(defaultConfigPath(app.getPath('home')))
   const trayCtl = createTrayController({ logoDir, getWindow: () => mainWindow })
@@ -204,7 +205,10 @@ app.whenReady().then(() => {
   })
   discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
 
-  registerIpc({ store, tray: trayCtl, agents, cron, discovery, termination, docker })
+  // 安装来源探测(brew/npm/manual):决定「检查更新」给哪条升级命令。
+  // 约 0.2s(brew list --cask),放在建窗之前;失败/判不出都会回退 manual,不阻断启动
+  const installChannel = await detectInstallChannel({ runner })
+  registerIpc({ store, tray: trayCtl, agents, cron, discovery, termination, docker, installChannel })
 
   createWindow()
 
