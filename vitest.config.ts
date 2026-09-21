@@ -9,7 +9,8 @@ export default defineConfig({
     }
   },
   test: {
-    // scripts/ 下的纯逻辑(版本语义等)同样纳入测试;它们已在 tsconfig.node.json 的 include 里
-    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs']
+    // scripts/ 与 packaging/ 下的纯逻辑(版本语义、安装器判定等)同样纳入测试;
+    // 它们已在 tsconfig.node.json 的 include 里
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs', 'packaging/**/*.test.mjs']
   }
 })

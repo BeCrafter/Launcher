@@ -1,0 +1,35 @@
+{
+  "name": "@becrafter/launcher",
+  "version": "REPLACE_WITH_VERSION",
+  "description": "Install BeCrafter Launcher — a macOS local service manager for launchd, crontab and port services",
+  "bin": {
+    "becrafter-launcher": "./cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "lib.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BeCrafter/Launcher.git"
+  },
+  "homepage": "https://github.com/BeCrafter/Launcher",
+  "keywords": [
+    "macos",
+    "launchd",
+    "launchagent",
+    "crontab",
+    "installer"
+  ]
+}
