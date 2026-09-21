@@ -7,12 +7,13 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { zipUrl } from './lib.mjs'
+import { parseArgs, zipUrl } from './lib.mjs'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const read = (p) => readFileSync(join(ROOT, p), 'utf8')
 
 const INSTALL_SH = read('scripts/install.sh')
+const LIB = read('packaging/npm/lib.mjs')
 const CLI = read('packaging/npm/cli.mjs')
 const WORKFLOW = read('.github/workflows/release.yml')
 
@@ -64,5 +65,49 @@ describe('安装契约三方一致', () => {
     expect(CLI).toMatch(/'\/usr\/bin\/uname', \['-m'\]/)
     // 兜底可以用 process.arch，但必须排在 uname 之后
     expect(CLI.indexOf('archOfUname(uname.stdout)')).toBeLessThan(CLI.indexOf('archOf(process.arch)'))
+  })
+})
+
+// 「有哪些版本可装」是三通道共用的发现机制：清单是 cdn 上的静态文件 versions.txt，
+// CI 发版时维护（见 release.yml 的「生成版本清单」步骤）。
+// 两侧各写一份实现（bash / Node），文件路径与解析口径必须一致。
+describe('版本发现两通道一致', () => {
+  it('清单与产物同源：都落在 R2 根下的 versions.txt', () => {
+    // Node 侧：常量 + 拼装函数（cli.mjs 只用 cdn 根调用，文件名由 lib 拼）
+    expect(LIB).toContain("VERSIONS_PATH = '/versions.txt'")
+    expect(LIB).toMatch(/const url = `\$\{String\(base\).*\}\$\{VERSIONS_PATH\}`/)
+    expect(CLI).toMatch(/fetchReleases\(r2BaseUrl\(\)\)/)
+    expect(CLI).not.toMatch(/`\$\{r2BaseUrl\(\)\}\/versions/) // 不许另拼一份地址
+    // bash 侧：同一个根 + 同一个文件名
+    expect(INSTALL_SH).toMatch(/\$R2_BASE\/versions\.txt/)
+    // 不能再依赖公网 api（内网镜像只需镜像这个根目录）
+    expect(INSTALL_SH).not.toMatch(/api\.github\.com/)
+    expect(CLI).not.toMatch(/api\.github\.com/)
+    expect(LIB).not.toMatch(/RELEASES_API_URL/)
+  })
+
+  it('清单由 CI 生成并上传（否则两条通道永远读到 404）', () => {
+    expect(WORKFLOW).toMatch(/versions\.txt/)
+    expect(WORKFLOW).toMatch(/R2_PREFIX\}\/versions\.txt/)
+    expect(WORKFLOW).toMatch(/生成版本清单/)
+  })
+
+  it('latest 指针问法相同：都 HEAD 别名并看重定向后的最终 URL', () => {
+    // install.sh 用 curl 的 url_effective；cli.mjs 走 lib.mjs 里的 HEAD + res.url
+    expect(INSTALL_SH).toMatch(/url_effective/)
+    expect(LIB).toMatch(/res\.url/)
+    expect(LIB).toMatch(/versionFromDownloadUrl/)
+  })
+
+  it('status 问的 latest 就是 install 会装的那个对象（同一个 zipUrl 拼接）', () => {
+    // 拼法必须复用 zipUrl，不能另写一份字符串拼接（否则改名时又漏一处）
+    expect(CLI).toMatch(/fetchLatestVersion\(zipUrl\(r2BaseUrl\(\), null, arch\)\)/)
+  })
+
+  it('两侧都有 versions / --list 入口（用户不必为「有哪些版本」去翻网页）', () => {
+    expect(INSTALL_SH).toMatch(/--list/)
+    expect(INSTALL_SH).toMatch(/installed_version/)
+    expect(parseArgs(['versions']).cmd).toBe('versions')
+    expect(parseArgs(['versions', '--pre'])).toMatchObject({ pre: true })
   })
 })

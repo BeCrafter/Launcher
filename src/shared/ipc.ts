@@ -65,6 +65,8 @@ export interface AppInfo {
   platform: string
   version: string
   isPackaged: boolean
+  /** 探测到的安装来源(brew/npm/manual)——决定「检查更新」给哪条升级命令 */
+  installChannel: InstallChannel
 }
 
 // agents:dirChanged 负载(launchd 目录 fs.watch 去抖命中)
@@ -72,18 +74,37 @@ export interface AgentsDirChangedPayload {
   dirs: string[]
 }
 
-export interface LatestRelease {
-  tagName: string
-  version: string
-  htmlUrl: string
-  name: string | null
+/** 安装来源:三条通道 + 探测不出来的兜底(详见 main/services/install-channel.ts) */
+export type InstallChannel = 'brew' | 'npm' | 'manual'
+
+/**
+ * 各通道的升级命令 —— 界面直接展示给用户照抄。
+ * ⚠ 与另两处是同一套入口,改通道文档/地址时一起改:
+ *   packaging/homebrew/README.md、packaging/npm/README.md、scripts/install.sh 的 usage。
+ *   （`dev` 是当前默认分支;合并回 main 后这里要跟着改,否则 curl 通道拉到的是别的分支）
+ */
+export const UPGRADE_COMMAND: Record<InstallChannel, string> = {
+  brew: 'brew upgrade --cask becrafter/brew/launcher',
+  npm: 'npx -y @becrafter/launcher',
+  manual: 'curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/dev/scripts/install.sh | bash'
 }
 
-// app:checkUpdates 结果(四态:最新/有新版本/仓库无 Release/请求失败)
+export interface LatestVersionInfo {
+  version: string
+  /** 清单里的最新稳定版(全是预发布时为 null) */
+  stable: string | null
+}
+
+// app:checkUpdates 结果(四态:最新/有新版本/尚未发版/请求失败)
 export interface UpdateCheckResult {
   status: 'upToDate' | 'available' | 'noRelease' | 'error'
   currentVersion: string
-  latest: LatestRelease | null
+  latest: LatestVersionInfo | null
+  /** 判定所用的安装来源(界面据此挑升级文案;**从结果里取,不要反推命令字符串**) */
+  installChannel: InstallChannel
+  /** 该通道对应的升级命令(界面照抄给用户) */
+  upgradeCommand: string
+  /** 失败原因(HTTP 码 / 请求超时 / 网络错误);成功为 null */
   errorMessage: string | null
 }
 

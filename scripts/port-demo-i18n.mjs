@@ -27,8 +27,18 @@ const EXTRA = {
   'zh-CN': {
     'toast.update.upToDate': '当前已是最新版本 ({V})',
     'toast.update.available': '发现新版本 {V},请前往 GitHub 下载',
+    'toast.update.available.brew': '发现新版本 {V},升级:{CMD}',
+    'toast.update.available.npm': '发现新版本 {V},升级:{CMD}',
+    'toast.update.available.manual': '发现新版本 {V},升级:{CMD}',
+    'toast.update.errorWhy': '检查更新失败:{W}',
     'toast.update.noRelease': '仓库尚未发布任何版本',
     'toast.update.error': '检查更新失败,请检查网络后重试',
+    // ── 安装来源(2026-09-21:探测到通道后按通道给升级命令)──
+    'settings.about.installChannel.rowTitle': '安装来源',
+    'settings.about.installChannel.rowDesc': '应用启动时自动探测;决定「检查更新」给出的升级方式',
+    'settings.about.installChannel.brew': 'Homebrew',
+    'settings.about.installChannel.npm': 'npm',
+    'settings.about.installChannel.manual': '脚本 / 手动安装',
     // ── 定时任务(阶段 2) ──
     'cron.next.label': '下次执行',
     'cron.next.today': '今天 {T}',
@@ -267,8 +277,18 @@ const EXTRA = {
   'en-US': {
     'toast.update.upToDate': 'Already up to date ({V})',
     'toast.update.available': 'New version {V} available on GitHub',
+    'toast.update.available.brew': 'New version {V} available — upgrade: {CMD}',
+    'toast.update.available.npm': 'New version {V} available — upgrade: {CMD}',
+    'toast.update.available.manual': 'New version {V} available — upgrade: {CMD}',
+    'toast.update.errorWhy': 'Update check failed: {W}',
     'toast.update.noRelease': 'No releases published yet',
     'toast.update.error': 'Update check failed, check your network and retry',
+    // ── install channel (2026-09-21) ──
+    'settings.about.installChannel.rowTitle': 'Installed via',
+    'settings.about.installChannel.rowDesc': 'Detected at launch; decides which upgrade command the update check hands you',
+    'settings.about.installChannel.brew': 'Homebrew',
+    'settings.about.installChannel.npm': 'npm',
+    'settings.about.installChannel.manual': 'Install script / manual',
     // ── Scheduled tasks (phase 2) ──
     'cron.next.label': 'Next run',
     'cron.next.today': 'today {T}',

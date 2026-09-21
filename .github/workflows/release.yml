@@ -90,6 +90,36 @@ jobs:
             echo "X64_SHA=$(shasum -a 256 "Launcher-${VERSION}-x64.zip" | awk '{print $1}')"
           } >> "$GITHUB_ENV"
 
+      - name: 生成版本清单（R2 上「有哪些版本」的唯一来源）
+        run: |
+          # 两条安装通道（install.sh --list / CLI versions）都读这个文件，故这里必须把
+          # **全部历史版本**汇总进去：先取 R2 上已有的清单，再把本次版本并进来。
+          # 做成增量是因为产物是不可变的、清单是派生的 —— 重跑同一 tag 也必须得到同样的结果。
+          BASE="$(mktemp)"
+          # 目录列表在公开域上是关的，取不到（404）就是首次发版，空清单起步
+          curl -fsSL --max-time 30 "${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/versions.txt" -o "$BASE" 2>/dev/null || true
+          {
+            cat "$BASE" 2>/dev/null || true
+            if [ "$IS_PRERELEASE" = "true" ]; then printf '%s pre\n' "$VERSION"; else printf '%s\n' "$VERSION"; fi
+          } | awk '
+            # 同一版本可能既有 pre 又有正式的记录（例如先发 rc 再发正式版）——
+            # 取「最正式」的那条：只要出现过不带 pre 的记录就判为正式版，
+            # 这样结论与清单里的先后顺序无关。
+            NF {
+              v = $1; isPre = ($2 == "pre")
+              if (!seen[v]) { seen[v] = 1; stable[v] = !isPre; order[++n] = v }
+              else if (!isPre) stable[v] = 1
+            }
+            END { for (i = 1; i <= n; i++) printf "%s%s\n", order[i], (stable[order[i]] ? "" : " pre") }
+          ' | sort -V -r -k1,1 > versions.txt
+          rm -f "$BASE"
+          echo "::group::versions.txt"
+          cat versions.txt
+          echo "::endgroup::"
+          # 预发布在清单里是 `0.3.0-rc.1 pre` 两段，故按字段比而不是整行比
+          awk -v v="$VERSION" '$1 == v { found = 1 } END { exit !found }' versions.txt ||
+            { echo "::error::清单里没有本次版本 $VERSION"; cat versions.txt; exit 1; }
+
       - name: 配置 AWS 凭据（R2 走 S3 兼容接口）
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -117,6 +147,16 @@ jobs:
             fi
           done
 
+      - name: 上传版本清单到 R2
+        run: |
+          # ⚠ 预发布**也要**上传：清单只是「有哪些版本可装」，不是 stable 指针。
+          #   三条通道的「列版本」都读它，因此预发布必须出现在列表里；
+          #   「默认装哪个」由下面那个 latest 别名决定 —— 那个才跳过预发布。
+          aws s3 cp versions.txt \
+            "s3://${R2_BUCKET}/${R2_PREFIX}/versions.txt" \
+            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --cache-control "no-store"
+
       - name: 验证 R2 公网可达
         run: |
           for arch in arm64 x64; do
@@ -124,6 +164,10 @@ jobs:
             curl -fsSI --max-time 60 "$URL" > /dev/null ||
               { echo "::error::$URL 不可公开访问——检查自定义域名与「公开访问」开关"; exit 1; }
           done
+          # 清单是两条通道读版本列表的地方，不可达等于 --list / versions 全废
+          curl -fsSL --max-time 60 "${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/versions.txt" |
+            awk -v v="$VERSION" '$1 == v { found = 1 } END { exit !found }' ||
+            { echo "::error::R2 上的 versions.txt 未包含 ${VERSION}"; exit 1; }
 
       # cask 模板在本仓库 packaging/homebrew/，此处只替换 version / url / 两个 sha256；
       # postflight 等其余配置以模板为准，勿在 tap 仓库手改（会被下次发版覆盖）

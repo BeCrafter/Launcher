@@ -1,19 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkForUpdate, compareVersions, fetchLatestRelease, parseTagVersion } from './update-check'
+import { checkForUpdate, compareVersions, parseManifest } from './update-check'
 
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' }
-  })
+const MANIFEST = '0.4.0-rc.1 pre\n0.3.0\n0.2.0\n0.1.0\n'
+
+function textResponse(body: string, status = 200): Response {
+  return new Response(body, { status, headers: { 'Content-Type': 'text/plain' } })
 }
 
-describe('parseTagVersion / compareVersions', () => {
-  it('剥离 v 前缀', () => {
-    expect(parseTagVersion('v2.0.0')).toBe('2.0.0')
-    expect(parseTagVersion(' 1.2.3 ')).toBe('1.2.3')
-  })
+const serving = (text: string, status = 200): typeof fetch =>
+  (async () => textResponse(text, status)) as unknown as typeof fetch
 
+describe('compareVersions', () => {
   it('数字段比较与缺段补 0', () => {
     expect(compareVersions('2.0.0', '0.1.0')).toBe(1)
     expect(compareVersions('1.10.0', '1.9.9')).toBe(1)
@@ -22,52 +19,93 @@ describe('parseTagVersion / compareVersions', () => {
     expect(compareVersions('1.2.0', '1.2.1')).toBe(-1)
   })
 
-  it('预发布低于同版本正式版;非数字段回退 0', () => {
+  it('正式版 > 同号预发布', () => {
     expect(compareVersions('2.0.0-beta', '2.0.0')).toBe(-1)
     expect(compareVersions('2.0.0', '2.0.0-beta')).toBe(1)
+  })
+
+  // 这条是本次修的真 bug:旧实现用字符串比,rc.10 < rc.9(字典序),把较新的 rc 判成不更新
+  it('预发布段按数值比,不是字典序(rc.10 > rc.9)', () => {
+    expect(compareVersions('0.3.0-rc.10', '0.3.0-rc.9')).toBe(1)
+    expect(compareVersions('0.3.0-rc.9', '0.3.0-rc.10')).toBe(-1)
+    expect(compareVersions('0.3.0-rc', '0.3.0-rc.1')).toBe(-1) // 段数少的更小
+    expect(compareVersions('0.3.0-rc.2', '0.3.0-rc.2')).toBe(0)
+  })
+
+  it('非数字段回退 0(不抛)', () => {
     expect(compareVersions('x.y.z', '0.0.0')).toBe(0)
   })
 })
 
-describe('fetchLatestRelease', () => {
-  it('200:解出 tag/version/htmlUrl', async () => {
-    const fetchImpl = vi.fn(async (_url: string, _init?: RequestInit) =>
-      jsonResponse({ tag_name: 'v1.3.0', html_url: 'https://github.com/BeCrafter/Launcher/releases/tag/v1.3.0', name: 'Release 1.3' })
-    )
-    const r = await fetchLatestRelease({ fetchImpl: fetchImpl as unknown as typeof fetch })
-    expect(r).toEqual({
-      ok: true,
-      release: {
-        tagName: 'v1.3.0',
-        version: '1.3.0',
-        htmlUrl: 'https://github.com/BeCrafter/Launcher/releases/tag/v1.3.0',
-        name: 'Release 1.3'
-      }
-    })
-    // GitHub API 硬性要求 User-Agent
-    const init = fetchImpl.mock.calls[0][1]
-    expect((init?.headers as Record<string, string>)['User-Agent']).toBeTruthy()
+describe('parseManifest', () => {
+  it('解析两列格式,分出稳定版与最新稳定版', () => {
+    const r = parseManifest(MANIFEST)
+    expect(r.all).toEqual(['0.4.0-rc.1', '0.3.0', '0.2.0', '0.1.0'])
+    expect(r.stable).toEqual(['0.3.0', '0.2.0', '0.1.0'])
+    expect(r.latestStable).toBe('0.3.0')
   })
 
-  it('404(未发布 Release)→ ok 且 release 为 null,与故障分态', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({ message: 'Not Found' }, 404))
-    const r = await fetchLatestRelease({ fetchImpl: fetchImpl as unknown as typeof fetch })
-    expect(r).toEqual({ ok: true, release: null })
+  it('坏行一律丢掉(空行、缩进、混进来的 404 页面)', () => {
+    const r = parseManifest('0.2.0\n\n   \n<!doctype html>\n0.1.0')
+    expect(r.all).toEqual(['0.2.0', '0.1.0'])
   })
 
-  it('5xx → ok:false;响应形状异常 → ok:false', async () => {
-    const bad = vi.fn(async () => jsonResponse({}, 500))
-    expect((await fetchLatestRelease({ fetchImpl: bad as unknown as typeof fetch })).ok).toBe(false)
-    const weird = vi.fn(async () => jsonResponse({ nothing: true }))
-    expect((await fetchLatestRelease({ fetchImpl: weird as unknown as typeof fetch })).ok).toBe(false)
+  it('没标 pre 但版本号自带后缀 → 仍算预发布', () => {
+    const r = parseManifest('1.0.0-rc.2')
+    expect(r.stable).toEqual([])
+    expect(r.latestStable).toBeNull()
   })
 
-  it('抛错/超时 → ok:false 且带 error', async () => {
-    const throwing = vi.fn(async () => {
+  it('空文本 → 空清单,不崩', () => {
+    expect(parseManifest('')).toMatchObject({ all: [], stable: [], latestStable: null })
+  })
+})
+
+describe('checkForUpdate(读 cdn 清单)', () => {
+  it('有新版本 → available,并带上该通道的升级命令', async () => {
+    const r = await checkForUpdate('0.1.0', { fetchImpl: serving(MANIFEST), channel: 'brew' })
+    expect(r.status).toBe('available')
+    expect(r.latest?.version).toBe('0.3.0')
+    expect(r.currentVersion).toBe('0.1.0')
+    expect(r.upgradeCommand).toBe('brew upgrade --cask becrafter/brew/launcher')
+  })
+
+  it('已最新(含本地领先) → upToDate', async () => {
+    expect((await checkForUpdate('0.3.0', { fetchImpl: serving(MANIFEST) })).status).toBe('upToDate')
+    expect((await checkForUpdate('9.9.9', { fetchImpl: serving(MANIFEST) })).status).toBe('upToDate')
+  })
+
+  it('装了预发布 → 仍会被提示正式版(清单里最新稳定版更高)', async () => {
+    const r = await checkForUpdate('0.3.0-rc.1', { fetchImpl: serving(MANIFEST) })
+    expect(r.status).toBe('available')
+    expect(r.latest).toEqual({ version: '0.3.0', stable: '0.3.0' })
+  })
+
+  it('清单里全是预发布 → 拿最高预发布比对,latest.stable 为 null', async () => {
+    const r = await checkForUpdate('0.1.0', { fetchImpl: serving('0.4.0-rc.1 pre\n') })
+    expect(r.status).toBe('available')
+    expect(r.latest).toEqual({ version: '0.4.0-rc.1', stable: null })
+  })
+
+  it('清单在但没有版本 → noRelease(与「取不到」分态)', async () => {
+    const r = await checkForUpdate('0.1.0', { fetchImpl: serving('') })
+    expect(r.status).toBe('noRelease')
+    expect(r.errorMessage).toBeNull()
+  })
+
+  it('404 → error 且原因点明清单不存在', async () => {
+    const r = await checkForUpdate('0.1.0', { fetchImpl: serving('nope', 404) })
+    expect(r.status).toBe('error')
+    expect(r.errorMessage).toMatch(/清单不存在/)
+  })
+
+  it('5xx → error 带 http 码;抛错/超时 → error 且不抛', async () => {
+    expect((await checkForUpdate('0.1.0', { fetchImpl: serving('boom', 500) })).errorMessage).toBe('HTTP 500')
+
+    const throwing = (async () => {
       throw new Error('network down')
-    })
-    const r1 = await fetchLatestRelease({ fetchImpl: throwing as unknown as typeof fetch })
-    expect(r1.ok).toBe(false)
+    }) as unknown as typeof fetch
+    expect((await checkForUpdate('0.1.0', { fetchImpl: throwing })).status).toBe('error')
 
     const hanging = vi.fn(
       (_url: string, init?: RequestInit) =>
@@ -75,36 +113,13 @@ describe('fetchLatestRelease', () => {
           init?.signal?.addEventListener('abort', () => reject(new Error('aborted')))
         })
     )
-    const r2 = await fetchLatestRelease({ fetchImpl: hanging as unknown as typeof fetch, timeoutMs: 20 })
-    expect(r2.ok).toBe(false)
-  })
-})
-
-describe('checkForUpdate', () => {
-  const releaseFetch = (tag: string): typeof fetch =>
-    (async () => jsonResponse({ tag_name: tag, html_url: `https://example.com/${tag}`, name: null })) as unknown as typeof fetch
-
-  it('有新版本 → available', async () => {
-    const r = await checkForUpdate('0.1.0', { fetchImpl: releaseFetch('v2.0.0') })
-    expect(r.status).toBe('available')
-    expect(r.latest?.version).toBe('2.0.0')
-    expect(r.currentVersion).toBe('0.1.0')
-  })
-
-  it('已最新(含本地领先)→ upToDate', async () => {
-    expect((await checkForUpdate('0.1.0', { fetchImpl: releaseFetch('v0.0.9') })).status).toBe('upToDate')
-    expect((await checkForUpdate('9.9.9', { fetchImpl: releaseFetch('v0.1.0') })).status).toBe('upToDate')
-  })
-
-  it('无 Release → noRelease;故障 → error 且 errorMessage 有值', async () => {
-    const noRel = (async () => jsonResponse({}, 404)) as unknown as typeof fetch
-    expect((await checkForUpdate('0.1.0', { fetchImpl: noRel })).status).toBe('noRelease')
-
-    const broken = (async () => {
-      throw new Error('boom')
-    }) as unknown as typeof fetch
-    const r = await checkForUpdate('0.1.0', { fetchImpl: broken })
+    const r = await checkForUpdate('0.1.0', { fetchImpl: hanging as unknown as typeof fetch, timeoutMs: 20 })
     expect(r.status).toBe('error')
-    expect(r.errorMessage).toBeTruthy()
+    expect(r.errorMessage).toBe('请求超时')
+  })
+
+  it('没探测到来源时给 manual 那条命令(不猜)', async () => {
+    const r = await checkForUpdate('0.1.0', { fetchImpl: serving(MANIFEST) })
+    expect(r.upgradeCommand).toContain('install.sh')
   })
 })

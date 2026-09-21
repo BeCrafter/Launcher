@@ -78,19 +78,27 @@ macOS 15 起，「已损坏」这一档的绕过入口被移除——**只对有
 | 公网访问 | 用**自定义域名**，不用 `r2.dev`（后者有限流，不适合给 cask 用） |
 | 上传方式 | R2 兼容 S3 API，CI 用 `aws-actions/configure-aws-credentials` + `aws s3 cp --endpoint-url https://<ACCOUNT_ID>.r2.cloudflarestorage.com`。**不传 `--acl`**——R2 不支持 ACL，公开访问靠 bucket 的自定义域名开关 |
 | latest 别名 | `Launcher-latest-<架构>.zip` 供 install.sh 默认路径使用；文件名恒定故上传时带 `--cache-control no-store`，否则会长期发旧版本 |
+| 版本清单 | `versions.txt`（纯文本，一行一版：`0.2.0` / `0.3.0-rc.1 pre`）—— **三条通道「有哪些版本可装」的唯一来源**，CI 发版时增量维护（见下） |
 
 ### 通道 A：curl 安装脚本（`scripts/install.sh`）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/dev/scripts/install.sh | bash
 curl -fsSL .../install.sh | bash -s -- --version 0.1.0    # 指定版本
+curl -fsSL .../install.sh | bash -s -- --check            # 版本检查:装没装、是不是最新
+curl -fsSL .../install.sh | bash -s -- --list             # 有哪些版本可装
 ```
 
-- 探测 `uname -m` 选择 arm64 / x64 产物；支持 `--version` / `--dir`
-- 直接从 R2 拉取（`LAUNCHER_R2_BASE` 可换镜像），不依赖 GitHub API
+> ⚠ 这条命令里的分支名(`dev`)是**唯一一处硬编码默认分支**——脚本只在打 tag 后才会进 `main`,
+> 日常发版改的是 `dev`,故安装入口指向 `dev`。仓库默认分支或流程变了要同步三处:
+> `src/shared/ipc.ts` 的 `UPGRADE_COMMAND`、`CLAUDE.md`、本文件。
+
+- 探测 `uname -m` 选择 arm64 / x64 产物；支持 `--list` / `--check` / `--version` / `--dir` / `--pre`
+- 直接从 R2 拉取（`LAUNCHER_R2_BASE` 可换镜像），不依赖 GitHub API；只有 `--list` 走 Releases api
 - **用 `ditto -x -k` 解压而非 `unzip`**——`unzip` 不保留符号链接与扩展属性，会破坏 `.app` 的代码签名
 - 安装到 `/Applications`，不可写时回退 `~/Applications`
 - curl 本就不打隔离标记，末尾的 `xattr -dr` 仅作防御
+- 装完报出版本号：优先读 `Info.plist`，读不到就从下载 URL 的文件名反解（`%{url_effective}`，不额外发请求）
 
 ### 通道 B：Homebrew Tap（`packaging/homebrew/`）
 
@@ -155,7 +163,74 @@ npm 侧把纯函数拆到 `lib.mjs`（架构 / URL / 版本比较 / 参数解析
 switch，测试 import 它会真的执行，故不靠「是否主模块」判定（npm bin 是符号链接，`argv[1]` 与
 `import.meta.url` 不一致），直接分层。
 
+### 版本发现契约（三条通道共用）
+
+「有哪些版本可装」「当前 latest 是哪个版本」在同一条不变式上 —— **两者都在 cdn 上**，
+因为这两件事问的都是「我们发布了什么」：
+
+| 问题 | 唯一来源 | 为什么不能用别的 |
+|---|---|---|
+| **有哪些版本** | `<cdn 根>/versions.txt`（纯文本，CI 发版时维护） | R2 公开域名**不支持列对象**（未开对象列表权限）；GitHub Releases 是另一条链路，产物上传成功而 Release 步骤失败时它会漏掉那个版本 |
+| **latest 指向哪个版本** | `Launcher-latest-<架构>.zip` 的 **HEAD 重定向后最终 URL** | 别名名里没有版本号，R2 也没有 `latest.txt` 之类的指针对象 |
+
+**应用内「检查更新」也读同一个清单**（`src/main/services/update-check.ts`）—— 此前打的是 GitHub
+`/releases/latest`，于是有两条链路分叉：产物传成功而 Release 步骤失败时，通道能装到的版本应用却
+说「已是最新」；内网/限流下应用直接报错而 cdn 侧完好；`/latest` 忽略 pre-release，rc 用户不会被
+提示「正式版已经发了」。改读清单后这三条一并消失，代价是本应用检查更新必须先能连上 cdn
+（**这是刻意的**：cdn 才是产物的家）。
+
+> 应用判断「有没有新版」看的是清单里的**最新稳定版**，不是 latest 别名。两者在正常发版时相同，
+> 但别名回答的是「重装一次会拿到哪个」，而这里要回答「最新的是什么」——副作用正合需要：
+> 装了 `0.3.0-rc.1` 的用户会被提示正式版 `0.3.0` 已经发布。
+
+`versions.txt` 的版式是一行一版、空白分隔两段：`0.2.0`（正式）/ `0.3.0-rc.1 pre`（预发布）。
+选纯文本而不是 json，是为了让**零依赖的 bash 侧**用 grep/sed 就能读；坏行（空行、混进来的
+html）两侧都直接跳过 —— 一份清单宁可少列一个版本，也不能让 `--list` 崩在畸形行上。
+
+**清单在 CI 里生成**（`release.yml` 的「生成版本清单」，在传产物之前）：先 `curl` 取回 R2 上
+已有的清单，把本次版本并进去，按版本号倒序去重后上传。做成增量而不是「从 git tag 重算」，
+是因为产物不可变、清单是派生的 —— 重跑同一 tag 必须得到同样的结果（幂等由 `sort -V` + 去重保证）。
+同一版本既有 `pre` 又有正式记录时（先发 rc 再发正式版），取「最正式」的那条，结论与先后顺序无关。
+
+> ⚠ **预发布也写进清单**：清单回答的是「有哪些版本可装」，不是「稳定通道指向谁」。
+> 三条通道的列版本都读它，故 rc 必须出现在列表里；「默认装哪个」由 latest 别名决定 ——
+> 那个才跳过预发布。这与「预发布不进稳定通道」并不冲突：列表如实展示，装不装是用户的选择。
+
+两份实现：`scripts/install.sh` 的 `list_versions`（curl + grep/sed，零依赖）与
+`packaging/npm/lib.mjs` 的 `fetchReleases` / `parseVersionsFile`（fetch + 文本解析）；
+latest 指针则分别是 curl 的 `%{url_effective}` 与 fetch 的 `res.url`。两侧的常量与口径由
+`packaging/npm/contract.test.mjs` 钉住：
+
+- `<cdn 根>/versions.txt`：bash 侧 `"$R2_BASE/versions.txt"` ≡ Node 侧 `base + VERSIONS_PATH`
+- `version_from_download_url()`（bash 的 `version_of_filename`）≡ `versionFromDownloadUrl()`（Node）：
+  版式 `Launcher-<版本>-<架构>.zip`，**架构不写进正则**（第一个 `-` 到最后一个 `-` 之间即版本），
+  `Launcher-latest-*.zip` 判为「问不出」而不是回填成字符串 `latest`
+- 「取不到」（网络/404）与「清单在但没有版本号」**分态**：前者提示网络与镜像，后者提示尚未发版
+
+> ⚠ 别把「本 CLI / 本脚本的版本」当成 latest：`npx` 拉到的 CLI 版本可能落后于 cdn 上的 latest
+> （npm 发版失败、或执行的是缓存的旧 CLI），拿它比对会给出「已是最新」的错误结论。取不到就
+> 如实说「未取到」。
+
 ---
+
+### 升级路径：应用自己认通道（`src/main/services/install-channel.ts`）
+
+三条通道的**升级动作完全不同**，所以「发现新版本」时不能只喊一句「去下载」——那对 brew / npx
+装的用户都是错的（照做会装出第二份应用）。应用在启动时探测一次自己的来源，只为**给对命令**：
+
+| 来源 | 判据 | 判定后给出的命令 |
+|---|---|---|
+| `brew` | `brew list --cask` 的输出里有 `launcher` | `brew upgrade --cask becrafter/brew/launcher` |
+| `npm` | 启动进程的 `_` 环境变量指向 npx 缓存 / `node_modules` / npm 的 bin shim | `npx -y @becrafter/launcher` |
+| `manual` | 其余（含探测不出） | 重跑 `install.sh` 那条 curl |
+
+**判据是尽力而为、宁可少认不可误认**：从 Dock / 双击启动时没有 `_`，npm 装的也会落到 `manual`
+（给一条无害的 curl 命令），而不是猜成 npm。brew 那条也不是猜——问的就是「`brew upgrade` 是否
+认识这个应用」。⚠ 不要改用「/Applications 那份与 Caskroom 是否同 inode」：实测 cask 装完两者
+inode 不同，该判据不成立。
+
+> 探测结果同时作为「关于」页的一行展示（Homebrew / npm / 脚本·手动安装），用户能看到应用把自己
+> 认成了什么 —— 认错了才好报回来。
 
 ## 四、发布流程
 
@@ -169,9 +244,10 @@ switch，测试 import 它会真的执行，故不靠「是否主模块」判定
 |---|---|
 | `Launcher-<version>-arm64.zip`、`Launcher-<version>-x64.zip` | **三条安装通道的产物** —— install.sh / cask / npm CLI 都只下载 zip；传 R2 + 挂 Release |
 | `Launcher-latest-<arch>.zip` | install.sh / npm CLI 不带版本时用的固定别名，**只存在于 R2** |
+| `versions.txt` | 可用版本清单，**只存在于 R2**（由「生成版本清单」步骤从远端旧清单增量合成） |
 | `Launcher-<version>-arm64.dmg`、`Launcher-<version>-x64.dmg` | 额外产物，供手动安装；**三个通道都不使用，不作为本方案的推荐路径**，只挂 Release |
 
-> install.sh 按 `Launcher-[latest|<版本>]-<架构>.zip` 拼名，cask 用 `arch arm:/intel:` 拼出同名，npm CLI 由 `packaging/npm/lib.mjs` 的 `zipUrl` 拼出——**改产物名、或改 workflow 里的 `R2_PREFIX`（必须与 install.sh 的 `R2_BASE` 路径一致）会同时打断三条通道**。
+> install.sh 按 `Launcher-[latest|<版本>]-<架构>.zip` 拼名，cask 用 `arch arm:/intel:` 拼出同名，npm CLI 由 `packaging/npm/lib.mjs` 的 `zipUrl` 拼出——**改产物名、或改 workflow 里的 `R2_PREFIX`（必须与 install.sh 的 `R2_BASE` / cli.mjs 的 `DEFAULT_R2_BASE` 路径一致）会同时打断三条通道**；`versions.txt` 同理，它的路径由「cdn 根 + 固定文件名」拼出，两侧都不能各写一份。
 
 ### CI 依赖的 secrets（挂在 `r2-publish` 环境上）
 
@@ -259,3 +335,11 @@ npm run release:check -- --tag v0.2.0  # 额外校验:tag 与版本一致、本�
 5. `node scripts/build-app.mjs --arch all --release --no-run` → `dist/` 出 4 个产物（2 个 **zip 供两条通道**、2 个 dmg 为额外产物）
 6. 发版后 `curl -fsSI https://repo.iskill.site/launcher/Launcher-latest-arm64.zip` 返回 200（R2 公开访问 + latest 别名都活着）
 7. `brew install --cask becrafter/brew/launcher` 后 `xattr /Applications/Launcher.app` **无 quarantine 输出**，双击能开
+8. 版本发现三处一致（任一未发版时都应给出「尚未发过版」而不是崩溃/空列表）：
+   - 发版后 `curl -fsSL https://repo.iskill.site/launcher/versions.txt` 里能看到本次版本（预发布是 `0.3.0-rc.1 pre` 两段）
+   - `curl -fsSL .../install.sh | bash -s -- --list` 与 `npx -y @becrafter/launcher versions` 列出的版本集合相同
+   - `--check` 与 `npx … status` 报出的「仓库最新」都等于 `Launcher-latest-<架构>.zip` 重定向指向的版本
+9. 应用内「关于 → 检查更新」与 cdn 同源，且**按通道给对命令**：
+   - 用 cask 装的那份，点检查更新 → 提示里应是 `brew upgrade --cask …`（不是「前往 GitHub 下载」）
+   - 「关于」页的「安装来源」一行显示探测结果（cask 装的应显示 Homebrew）——**判错在界面上一眼可见**
+   - 未发版时提示「尚未发布」，断网时提示带原因（HTTP 码 / 请求超时）

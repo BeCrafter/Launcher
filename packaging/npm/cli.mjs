@@ -3,6 +3,7 @@
 //
 //   npx -y @becrafter/launcher              默认:未装则装,已装则报告状态
 //   npx -y @becrafter/launcher status       版本检查
+//   npx -y @becrafter/launcher versions     列出可用版本（--pre 连预发布一起列）
 //   npx -y @becrafter/launcher install [--version <v|latest>] [--dir <目录>] [--force]
 //   npx -y @becrafter/launcher uninstall
 //
@@ -29,7 +30,16 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { archOf, archOfUname, compareVersions, parseArgs, plistVersion, zipUrl } from './lib.mjs'
+import {
+  archOf,
+  archOfUname,
+  compareVersions,
+  fetchLatestVersion,
+  fetchReleases,
+  parseArgs,
+  plistVersion,
+  zipUrl
+} from './lib.mjs'
 
 // Node 18/20 首次访问全局 fetch 会往 stderr 打 "ExperimentalWarning: The Fetch API is an
 // experimental feature"（Node 21 起 fetch 转正）。只过滤这一条，其余告警照常放行。
@@ -55,6 +65,17 @@ const STALL_MS = 60_000
 class ExitSignal extends Error {}
 
 const out = (s = '') => process.stdout.write(s + '\n')
+
+/**
+ * 下游提前关闭管道（`… | head` / `| less` 按 q）时 Node 会在 stdout 上抛 EPIPE。
+ * 那是正常的用法，不该吐一屏堆栈 —— 静默按 0 收场（与 `head` 的语义一致）。
+ */
+function exitOnEpipe(err) {
+  if (err?.code !== 'EPIPE') throw err
+  process.exit(0)
+}
+process.stdout.on('error', exitOnEpipe)
+process.stderr.on('error', exitOnEpipe)
 
 /**
  * 报错并中止。
@@ -190,6 +211,11 @@ function installedVersion(appPath) {
   }
 }
 
+/** 生效的 cdn 根地址（每次现读环境变量，测试里才好换） */
+function r2BaseUrl() {
+  return (process.env.LAUNCHER_R2_BASE || DEFAULT_R2_BASE).replace(/\/+$/, '')
+}
+
 /**
  * 退出**正占用目标路径**的那个实例。
  * `osascript quit app "Launcher"` 是按名字退的，会把任意路径下的实例都退掉 ——
@@ -226,7 +252,7 @@ async function install({ version, dir, force }) {
     fail('本包的版本号未被替换（像是直接运行了仓库里的模板）。请用 --version <版本> 指定要安装的版本。')
   }
 
-  const r2Base = process.env.LAUNCHER_R2_BASE || DEFAULT_R2_BASE
+  const r2Base = r2BaseUrl()
   const wantLatest = version === 'latest'
   const explicit = version !== null && !wantLatest
   const url = zipUrl(r2Base, explicit ? String(version).replace(/^v/, '') : null, arch)
@@ -324,29 +350,35 @@ async function publishedInfo() {
 async function status({ dir }) {
   const appPath = findInstalled(dir)
   const installed = appPath ? installedVersion(appPath) : null
-  const info = await publishedInfo()
-  const latest = info.state === 'ok' ? info.version : null
-  const latestShown =
-    info.state === 'ok' ? info.version : info.state === 'unpublished' ? '(尚未发布)' : `(未取到：${info.detail})`
+  const uname = await run('/usr/bin/uname', ['-m'])
+  const arch = archOfUname(uname.stdout) ?? archOf(process.arch)
+  const r2 = arch ? await fetchLatestVersion(zipUrl(r2BaseUrl(), null, arch)) : { ok: false, error: '架构未知' }
+  const reg = await publishedInfo()
+
+  // 「仓库最新」= latest 别名实际指向的版本（= 不带参数安装会装到的那个），不是本 CLI 的版本：
+  // 两者通常相同，但 R2 才是安装源，拿 CLI 版本冒充会在发版空档期说错话。
+  const latestShown = r2.ok
+    ? r2.version
+    : `(未取到：${r2.error}${r2.error.startsWith('HTTP 404') ? '，可能尚未发布' : ''})`
 
   // .app 在但版本读不出来（Info.plist 缺失/半残安装）时不能说「未安装」——那是自相矛盾
   const installedShown = installed ?? (appPath ? '未知版本（Info.plist 不可读）' : '未安装')
 
   out('BeCrafter Launcher')
   out(`  已安装    ${installedShown}${appPath ? `  (${appPath})` : ''}`)
-  out(`  本 CLI    ${PKG_VERSION}`)
   out(`  仓库最新  ${latestShown}`)
+  out(`  npm 包    ${reg.state === 'ok' ? reg.version : reg.state === 'unpublished' ? '(尚未发布)' : `(未取到：${reg.detail})`}`)
 
   if (!appPath) {
     out()
     out(`  安装：npx -y ${PKG_NAME}`)
     return
   }
-  const cmp = latest && installed ? compareVersions(latest, installed) : null
+  const cmp = r2.ok && installed ? compareVersions(r2.version, installed) : null
   if (cmp !== null && cmp > 0) {
     out()
-    out(`  有新版：${installed} → ${latest}`)
-    out(`  升级：npx -y ${PKG_NAME}@${latest}`)
+    out(`  有新版：${installed} → ${r2.version}`)
+    out(`  升级：npx -y ${PKG_NAME} --version ${r2.version}`)
   } else if (cmp === 0) {
     out()
     out('  已是最新。')
@@ -354,6 +386,50 @@ async function status({ dir }) {
     out()
     out(`  版本读不出来，建议重装：npx -y ${PKG_NAME} --force`)
   }
+}
+
+async function versions({ pre, json }) {
+  // 版本列表与产物同源：都从 cdn 根取（CI 发版时维护 `<cdn 根>/versions.txt`）
+  const r = await fetchReleases(r2BaseUrl())
+  if (!r.ok) {
+    fail(
+      `取不到版本列表：${r.error}\n  ${r.url}\n` +
+        (r.error === 'HTTP 404' ? '  cdn 上还没有 versions.txt —— 可能尚未发过版。\n' : '')
+    )
+  }
+  if (json) {
+    out(JSON.stringify(r.all, null, 2))
+    return
+  }
+  if (r.all.length === 0) {
+    out(`cdn 上的 versions.txt 里没有可用的版本号（尚未发过版？）\n  ${r.url}`)
+    return
+  }
+
+  const appPath = findInstalled(null)
+  const installed = appPath ? installedVersion(appPath) : null
+  const listed = pre ? r.all : r.stable
+
+  out('BeCrafter Launcher 可用版本')
+  if (listed.length === 0) {
+    out(`  没有稳定版（只有 ${r.all.length} 个预发布；加 --pre 查看）`)
+  } else {
+    for (const rel of listed) {
+      const tags = [
+        rel.version === installed ? '[已安装]' : null,
+        rel.version === r.latestStable ? '[最新]' : null,
+        rel.prerelease ? '[预发布]' : null
+      ].filter(Boolean)
+      out(`  ${rel.version.padEnd(14)}${tags.join(' ')}`)
+    }
+  }
+
+  const hidden = r.all.length - r.stable.length
+  if (!pre && hidden > 0) out(`（另有 ${hidden} 个预发布，加 --pre 查看）`)
+  out()
+  out(`  安装：npx -y ${PKG_NAME} --version <版本>`)
+  out(`  说明：不带 --version 装的是最新稳定版 ${r.latestStable ?? '(暂无)'}`)
+  out(`  列表来自官方 cdn：${r.url}`)
 }
 
 function usage() {
@@ -364,21 +440,25 @@ function usage() {
 命令：
   （无）                    未安装则安装；已安装则显示状态
   install                  安装 / 重装
-  status                   版本检查（已装版本、本 CLI 版本、仓库最新版）
+  status                   版本检查（已装版本、仓库最新版、npm 包最新版）
+  versions                 列出可用版本（默认只列稳定版）
   uninstall                卸载（退出应用并删除 .app）
 
 选项：
   --version <x.y.z|latest> 指定要安装的版本；默认 = 本 CLI 的版本
   --dir <目录>             安装目录；默认 /Applications，不可写时回退 ~/Applications
   -f, --force              已安装同版本时也强制重装
+  --pre                     versions 专用：连预发布版本一起列
+  --json                    versions 专用：输出 json，供脚本消费
   -h, --help               显示本帮助
 
 环境变量：
-  LAUNCHER_R2_BASE         替换下载根地址（镜像 / 自建 cdn）
+  LAUNCHER_R2_BASE         替换下载根地址（镜像 / 自建 cdn）；版本列表与产物同源
   LAUNCHER_INSTALL_DIR     同 --dir
 
 说明：
   · 产物从官方 cdn 下载（约 123MB），装到 /Applications，并清除隔离标记。
+  · 版本列表来自 cdn 上的 versions.txt —— 与 curl / Homebrew 通道同一个来源。
   · npm 没有卸载钩子 —— 卸载必须显式运行 \`${PKG_NAME} uninstall\`。
   · 其它安装方式：curl 脚本（scripts/install.sh）与 Homebrew cask。`)
 }
@@ -405,6 +485,9 @@ if (args.error) {
         break
       case 'status':
         await status(args)
+        break
+      case 'versions':
+        await versions(args)
         break
       default:
         // 默认智能路径：未装则装，已装则报状态（`npx -y @becrafter/launcher` 的主入口）
