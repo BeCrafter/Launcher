@@ -62,8 +62,8 @@ export function AiPane(): React.JSX.Element {
   const [storedKey, setStoredKey] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<'ok' | 'fail' | null>(null)
-  /** Key 默认明文可见(粘贴后要能核对);点眼睛可临时隐藏 */
-  const [keyVisible, setKeyVisible] = useState(true)
+  /** Key 默认隐藏(眼睛按钮可临时显示) */
+  const [keyVisible, setKeyVisible] = useState(false)
   /** 自定义请求头的文本形态(每行 `名称: 值`);失焦时解析写回 */
   const [headerDraft, setHeaderDraft] = useState('')
 
@@ -253,7 +253,7 @@ export function AiPane(): React.JSX.Element {
               <div className="ai-cfg-key-field">
                 <input
                   className="f-input mono ai-cfg-input"
-                  /* 默认明文:粘贴后要能一眼核对自己贴了什么 */
+                  /* 默认隐藏,点眼睛查看 */
                   type={keyVisible ? 'text' : 'password'}
                   autoComplete="off"
                   spellCheck={false}

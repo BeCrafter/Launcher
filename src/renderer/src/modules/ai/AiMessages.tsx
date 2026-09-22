@@ -10,6 +10,9 @@ import { TagChip } from '../../components/ui/TagChip'
 import { renderMarkdown } from '../../lib/markdown'
 import { getTs } from '../../lib/utils'
 import { isRunningHere, useAiStore } from '../../state/ai-store'
+import { useSettingsStore } from '../../state/settings-store'
+import { useSettingsNav } from '../../state/settings-nav-store'
+import { useUiStore } from '../../state/ui-store'
 import { AiCard, AiSuggest } from './AiCards'
 import type {
   AiAssistantMessage,
@@ -398,6 +401,28 @@ function AiThinking({ block, streaming }: { block: AiThinkingBlock; streaming: b
 
 // ── 欢迎态(demo aiWelcomeHtml;数据来自 dataSource().ai.skills())──
 
+/**
+ * 新会话顶部提示:对话语言来自系统设置(用户要求 —— 否则用户不知道助手为什么说这种语言、
+ * 也不知道去哪改)。做成可点的:直接跳到设置 › 常规与外观。
+ */
+function WelcomeLangHint(): React.JSX.Element {
+  const t = useT()
+  const fmt = useFmt()
+  const lang = useSettingsStore((s) => s.settings?.language ?? 'zh-CN')
+  const goto = (): void => {
+    useSettingsNav.getState().setTab('general')
+    useUiStore.getState().switchModule('settings')
+  }
+  const label = lang === 'zh-CN' ? t('settings.general.lang.zhCN') : 'English (US)'
+  return (
+    <button className="ai-welcome-lang" type="button" onClick={goto} title={t('ai.welcome.langChange')}>
+      <i className="fa-solid fa-language" />
+      <span>{fmt(t('ai.welcome.langHint'), { L: label })}</span>
+      <i className="fa-solid fa-arrow-right ai-welcome-lang-arrow" />
+    </button>
+  )
+}
+
 function AiWelcome(): React.JSX.Element {
   const t = useT()
   const skills = useAiStore((s) => s.skills)
@@ -414,6 +439,7 @@ function AiWelcome(): React.JSX.Element {
         {t('ai.welcome.greet')}
       </div>
       <div className="ai-welcome-sub">{t('ai.welcome.sub')}</div>
+      <WelcomeLangHint />
       <div
         className="ai-health-card"
         onClick={() => run(`${t('ai.welcome.healthTitle')}：${t('ai.welcome.healthDesc')}`)}

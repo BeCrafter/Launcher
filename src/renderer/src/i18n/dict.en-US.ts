@@ -886,6 +886,8 @@ export const enUS: Record<string, string> = {
   "settings.ai.headers.rowTitle": "Custom headers",
   "settings.ai.headers.rowDesc": "One \"Name: value\" per line, sent with every request for this protocol. Rarely needed — only for gateways that gate on client identity",
   "settings.ai.headers.ph": "User-Agent: claude-cli/2.0.0",
+  "ai.welcome.langHint": "Replies follow the app language: {L}",
+  "ai.welcome.langChange": "Change it in Settings › General",
   "ai.rail.today": "Today {T}",
   "ai.thinking.done": "Thinking",
   "ai.thinking.redacted": "Reasoning hidden (encrypted by provider)",

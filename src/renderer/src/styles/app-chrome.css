@@ -774,6 +774,18 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* 「模型 ID」与下方「最近用过」是一个整体:把 settings-row 自带的那条分隔线
+     从输入框与 chips 之间挪到整个 block 下面,否则两块被一条线割开,读起来是两件事 */
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-model-block .ai-model-row {
+  /* 组内**虚线**分隔:`模型 ID` 与 `最近用过` 之间不再是一片空白。
+     用虚线而不是实线是有意的 —— 实线是"分组边界"(割裂感重,用户上一轮就是这么反馈的),
+     虚线是"组内分隔",既填了空又不把一件事切成两件。颜色取 --border2 而非 --border:
+     后者只有 0.06/0.08 透明度,做成虚线几乎看不见。 */
+  border-bottom: 1px dashed var(--border2);
+  padding-bottom: 10px;
 }
 .ai-model-picks.ai-model-picks-wide {
   flex-wrap: wrap;
@@ -834,7 +846,10 @@
 .ai-anchors {
   position: absolute;
   right: 6px;
-  top: 50%;
+  /* 中间偏上:视觉重心对着正文,而不是整屏的几何中心。
+     注意这个百分比是相对 .ai-main 的,而 .ai-main 从顶栏之下才开始、到底部输入区结束,
+     所以 42% 落到整窗上其实是 48%(≈正中)。取 36% 才真的在"中间偏上"。 */
+  top: 36%;
   transform: translateY(-50%);
   z-index: 12;
   display: flex;
@@ -844,12 +859,34 @@
   border-radius: 10px;
   /* 常态几乎隐形,指针进来才浮现 —— 否则一列小横杠会跟正文抢注意力 */
   opacity: 0.45;
-  transition: opacity 0.18s ease, background 0.18s ease;
+  transition: opacity 0.18s ease;
 }
+/* 悬浮只提亮,不加边框/底色/阴影 —— 那会把一小列横杠变成一个"控件盒子",反而更抢眼 */
 .ai-anchors:hover {
   opacity: 1;
-  background: var(--panel);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16);
+}
+/* 还有更多锚点在窗口外:上下两端做渐隐,像由远及近(近处清晰、远处淡出)。
+   比画箭头或截断更安静,也不会跟"当前锚点加长"的强调打架。 */
+.ai-anchors.is-windowed {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 20px,
+    #000 calc(100% - 20px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 20px,
+    #000 calc(100% - 20px),
+    transparent 100%
+  );
+}
+/* 窗口两端的那两颗再收一点长度,配合 mask 把"更远处还有"的层次拉开 */
+.ai-anchors.is-windowed .ai-anchor:first-child .ai-anchor-bar,
+.ai-anchors.is-windowed .ai-anchor:last-child .ai-anchor-bar {
+  width: 5px;
 }
 
 .ai-anchor {
@@ -904,4 +941,30 @@
   border-radius: 10px;
   box-shadow: 0 0 0 1px var(--accent2), 0 0 0 6px var(--wash-accent);
   transition: box-shadow 0.15s ease;
+}
+
+/* AI 新会话顶部:语言来源提示(整条可点 → 设置 › 常规与外观) */
+.ai-welcome-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.ai-welcome-lang:hover {
+  color: var(--accent2);
+  border-color: var(--accent2);
+  background: var(--wash-accent);
+}
+.ai-welcome-lang-arrow {
+  font-size: 9px;
+  opacity: 0.7;
 }

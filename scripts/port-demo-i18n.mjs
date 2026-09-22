@@ -287,6 +287,9 @@ const EXTRA = {
     'settings.ai.headers.rowDesc': '每行一条「名称: 值」，附加到该协议的每次请求；多数网关用不到，按客户端标识放行的网关需要',
     'settings.ai.headers.ph': 'User-Agent: claude-cli/2.0.0',
     // ── AI 对话页(内容块模型;demo 只有运行中/完成两态,新增的 UI 文案)──
+    // 新会话顶部:说明对话语言来自系统设置(否则用户不知道助手为什么说这种语言、也不知道去哪改)
+    'ai.welcome.langHint': '对话语言跟随应用设置:{L}',
+    'ai.welcome.langChange': '前往设置 › 常规与外观修改',
     'ai.rail.today': '今天 {T}',
     'ai.thinking.done': '思考过程',
     'ai.thinking.redacted': '推理内容不可见(已被服务端加密)',
@@ -551,6 +554,8 @@ const EXTRA = {
     'settings.ai.headers.rowDesc': 'One "Name: value" per line, sent with every request for this protocol. Rarely needed — only for gateways that gate on client identity',
     'settings.ai.headers.ph': 'User-Agent: claude-cli/2.0.0',
     // AI chat page (content-block model; the demo only had running/done states, these are new UI strings)
+    'ai.welcome.langHint': 'Replies follow the app language: {L}',
+    'ai.welcome.langChange': 'Change it in Settings › General',
     'ai.rail.today': 'Today {T}',
     'ai.thinking.done': 'Thinking',
     'ai.thinking.redacted': 'Reasoning hidden (encrypted by provider)',

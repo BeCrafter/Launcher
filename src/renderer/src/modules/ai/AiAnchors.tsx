@@ -154,7 +154,7 @@ export function AiAnchors({
 
   return (
     <div
-      className="ai-anchors"
+      className={`ai-anchors${windowed ? ' is-windowed' : ''}`}
       ref={stripRef}
       onPointerMove={(e) => {
         const strip = stripRef.current

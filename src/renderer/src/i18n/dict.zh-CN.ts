@@ -886,6 +886,8 @@ export const zhCN: Record<string, string> = {
   "settings.ai.headers.rowTitle": "自定义请求头",
   "settings.ai.headers.rowDesc": "每行一条「名称: 值」，附加到该协议的每次请求；多数网关用不到，按客户端标识放行的网关需要",
   "settings.ai.headers.ph": "User-Agent: claude-cli/2.0.0",
+  "ai.welcome.langHint": "对话语言跟随应用设置:{L}",
+  "ai.welcome.langChange": "前往设置 › 常规与外观修改",
   "ai.rail.today": "今天 {T}",
   "ai.thinking.done": "思考过程",
   "ai.thinking.redacted": "推理内容不可见(已被服务端加密)",
