@@ -145,12 +145,6 @@
             <div class="ai-shell" id="aiShell">
               <!-- 左：会话栏 -->
               <aside class="ai-rail" id="aiRail">
-                <div class="ai-rail-hd">
-                  <span class="ai-rail-hd-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
-                  <span class="ai-rail-title" data-i18n="ai.rail.title">会话</span>
-                  <span class="ai-rail-count" id="aiRailCount">0</span>
-                  <button class="ai-rail-collapse" onclick="aiToggleRail()" data-i18n-title="ai.rail.collapse" title="收起会话栏"><i class="fa-solid fa-angles-left"></i></button>
-                </div>
                 <div class="ai-rail-tools">
                   <div class="search-wrap ai-rail-search" id="aiRailSearchWrap">
                     <i class="fa-solid fa-magnifying-glass"></i>
@@ -161,17 +155,24 @@
                 </div>
                 <div class="ai-rail-list" id="aiRailList"></div>
               </aside>
-              <button class="ai-rail-expand" id="aiRailExpand" onclick="aiToggleRail()" data-i18n-title="ai.rail.expand" title="展开会话栏"><i class="fa-solid fa-angles-right"></i></button>
-
               <!-- 右：对话列 -->
               <section class="ai-main">
+                <button class="ai-rail-toggle is-in" id="aiRailToggle" onclick="aiToggleRail()" data-i18n-title="ai.rail.collapse" title="收起会话栏"><i class="fa-solid fa-angles-right"></i></button>
                 <div class="ai-scroll" id="aiScroll" onscroll="aiOnScroll()">
                   <div class="ai-col" id="aiCol"></div>
                 </div>
                 <div class="ai-composer">
                   <button class="ai-scroll-bot" id="aiScrollBot" onclick="aiScrollBottom(true)" data-i18n-title="ai.scroll.bottom" title="回到底部"><i class="fa-solid fa-arrow-down"></i></button>
                   <div class="ai-composer-inner">
-                    <span class="ai-engine-chip" data-i18n-title="ai.engine.info" title="pi 引擎（pi-ai + pi-agent-core）：流式输出 · 14 个领域工具 · 4 项内置技能"><span class="ai-engine-dot"></span><span data-i18n="ai.engine.connected">pi 引擎 · 已连接</span></span>
+                    <button class="ai-engine-chip" id="aiEngineChip" onclick="aiOpenAiSettings()"></button>
+                    <div class="ai-connect-card" id="aiConnectCard" style="display:none;">
+                      <span class="ai-connect-icon"><i class="fa-solid fa-key"></i></span>
+                      <div class="ai-connect-body">
+                        <div class="ai-connect-title" data-i18n="ai.connect.title">尚未配置模型</div>
+                        <div class="ai-connect-desc" data-i18n="ai.connect.desc">前往设置 › AI 助手，选择模型供应商并填写 API Key 后即可开始对话。</div>
+                      </div>
+                      <button class="d-btn accent" type="button" onclick="aiOpenAiSettings()"><span data-i18n="ai.connect.btn">去配置</span><i class="fa-solid fa-arrow-right"></i></button>
+                    </div>
                     <div class="ai-composer-chips" id="aiComposerChips"></div>
                     <div class="ai-composer-box">
                       <button class="ai-comp-btn" id="aiMentionBtn" onclick="aiMentionToggle()" data-i18n-title="ai.input.mention" title="引用本机任务"><i class="fa-solid fa-at"></i></button>
@@ -329,6 +330,9 @@
               </button>
               <button class="set-nav-btn" onclick="switchSettingsSection('login', this)">
                 <i class="fa-solid fa-right-to-bracket"></i><span data-i18n="settings.tab.login">登录项</span>
+              </button>
+              <button class="set-nav-btn" onclick="switchSettingsSection('ai', this)">
+                <i class="fa-solid fa-wand-magic-sparkles"></i><span data-i18n="settings.tab.ai">AI 助手</span>
               </button>
             </div>
 
@@ -724,6 +728,9 @@
                     </div>
                   </section>
                 </div>
+
+                <!-- ═ Pane 7: AI 助手 ═ —— 内容由 js/ai-config.js 的 renderAiSettings() 整块渲染（配置是单一状态源，静态写死会与 localStorage 分叉）-->
+                <div class="settings-pane" id="sp-ai"></div>
 
                 <div class="settings-footer">
                   <span style="font-size:10.5px;color:var(--dim);"><i class="fa-solid fa-circle-check" style="color:var(--green);margin-right:5px;"></i><span data-i18n="settings.footer.hint">所有设置项均会自动实时持久化保存</span></span>
@@ -1518,7 +1525,7 @@
       </div>
     </div>
 
-    <!-- 模态框：AI 接入 MCP（挂载命令 / 外部写权限 / 本机 CLI Agent） -->
+    <!-- 模态框：AI 接入 MCP（两种用法并列：stdio 一键挂载 / 本地 HTTP 端点 + 外部写权限） -->
     <div class="modal-mask" id="aiMcpModal" onclick="closeModalBg(event,'aiMcpModal')">
       <div class="modal-box" style="width:520px;">
         <div class="modal-hdr">
@@ -1527,27 +1534,40 @@
         </div>
         <div class="modal-body">
           <div style="font-size:11px;color:var(--muted);line-height:1.6;" data-i18n="ai.mcp.lead"></div>
-          <div>
-            <div class="ai-mcp-lbl" data-i18n="ai.mcp.cmdLabel">挂载命令</div>
+
+          <div class="ai-mcp-cmd">
+            <div class="ai-mcp-cmd-hd">
+              <span class="ai-mcp-cmd-tag">stdio</span>
+              <span class="ai-mcp-cmd-name" data-i18n="ai.mcp.stdioLabel">命令行挂载（推荐）</span>
+              <button class="ai-mcp-cmd-copy" type="button" onclick="aiCopyMcpCmd(this)" data-i18n-title="xml.copy" title="复制"><i class="fa-solid fa-copy"></i></button>
+            </div>
             <div class="ai-appr-cmd" id="aiMcpCmd" style="margin:0;"></div>
+            <div class="ai-mcp-cmd-hint" data-i18n="ai.mcp.stdioHint">由外部 Agent 按需拉起 launcher-mcp 子进程，无需本应用常驻</div>
           </div>
-          <div class="ai-mcp-perm">
+
+          <div class="ai-mcp-cmd" id="aiMcpHttpWrap">
+            <div class="ai-mcp-cmd-hd">
+              <span class="ai-mcp-cmd-tag">HTTP</span>
+              <span class="ai-mcp-cmd-name" data-i18n="ai.mcp.httpLabel">本地 HTTP 端点</span>
+              <button class="ai-mcp-cmd-copy" type="button" onclick="aiCopyMcpCmd(this)" data-i18n-title="xml.copy" title="复制"><i class="fa-solid fa-copy"></i></button>
+            </div>
+            <div class="ai-appr-cmd" id="aiMcpHttp" style="margin:0;"></div>
+            <div class="ai-mcp-cmd-hint" data-i18n="ai.mcp.httpHint">仅监听 127.0.0.1；需本应用正在运行</div>
+          </div>
+
+          <div class="ai-mcp-perm" id="aiMcpPermRow">
             <div>
               <div class="ai-mcp-perm-t" data-i18n="ai.mcp.permTitle">允许外部 Agent 修改</div>
-              <div class="ai-mcp-perm-d" data-i18n="ai.mcp.permDesc"></div>
+              <div class="ai-mcp-perm-d" id="aiMcpPermDesc"></div>
             </div>
             <label class="toggle"><input type="checkbox" id="aiMcpWriteToggle" onchange="aiToggleMcpPerm(this)" />
               <div class="toggle-track"></div>
               <div class="toggle-thumb"></div>
             </label>
           </div>
-          <div>
-            <div class="ai-mcp-lbl" data-i18n="ai.mcp.agentsTitle">本机已装 CLI Agent</div>
-            <div class="ai-mcp-agents" id="aiMcpAgents"></div>
-          </div>
         </div>
         <div class="modal-footer">
-          <button class="d-btn accent" onclick="aiCopyMcpCmd()"><i class="fa-solid fa-copy"></i> <span data-i18n="xml.copy">复制</span></button>
+          <button class="d-btn accent" id="aiMcpCopyMain" onclick="aiCopyMcpCmd(this)"><i class="fa-solid fa-copy"></i> <span data-i18n="xml.copy">复制</span></button>
         </div>
       </div>
     </div>
@@ -1575,6 +1595,7 @@
     <script src="js/crontab.js"></script>
     <script src="js/services.js"></script>
     <script src="js/ai.js"></script>
+    <script src="js/ai-config.js"></script>
     <script src="js/drawer.js"></script>
     <script src="js/settings.js"></script>
     <script src="js/modules.js"></script>

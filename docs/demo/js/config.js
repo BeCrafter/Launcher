@@ -107,19 +107,27 @@ const MODULES = {
               <button class="topbar-btn" onclick="aiOpenMcpModal()"><i class="fa-solid fa-plug"></i><span>${t('ai.mcp.title')}</span></button>
             `,
     showStatusBar: true,
-    statusbar: (d = {}) => ({
-      summaryIcon: 'fa-wand-magic-sparkles',
-      summary: t('ai.sb.engine'),
-      items: [
-        `<span class="launch-status-dot running"></span><span>${t('ai.sb.tools')}</span>`,
-        `<span class="launch-status-dot loaded"></span><span>${t('ai.sb.wtools')}</span>`,
-        `<span class="launch-status-dot loaded"></span><span>${fmt(t('ai.sb.skills'), { N: aiSkillData.length })}</span>`,
-        `<span class="launch-status-dot unloaded"></span><span>${fmt(t('ai.sb.calls'), { N: d.calls ?? 0 })}</span>`
-      ],
-      pathIcon: 'fa-solid fa-plug',
-      path: t('ai.sb.path'),
-      monitor: t('ai.sb.monitor')
-    })
+    statusbar: (d = {}) => {
+      // 引擎行跟随 AI 配置（未配置时如实说未配置，不写死「已连接」）
+      const hasCfg = typeof aiCfgConfigured === 'function';
+      const ready = hasCfg && aiCfgConfigured();
+      const prov = hasCfg ? aiCfgFindProvider(aiCfgState().providerId) : null;
+      return {
+        summaryIcon: 'fa-wand-magic-sparkles',
+        summary: ready
+          ? fmt(t('ai.sb.engineLive'), { P: prov ? prov.name : '', M: aiCfgModelLabel(aiCfgState().modelId) })
+          : t('ai.sb.engineOff'),
+        items: [
+          `<span class="launch-status-dot running"></span><span>${t('ai.sb.tools')}</span>`,
+          `<span class="launch-status-dot loaded"></span><span>${t('ai.sb.wtools')}</span>`,
+          `<span class="launch-status-dot loaded"></span><span>${fmt(t('ai.sb.skills'), { N: aiSkillData.length })}</span>`,
+          `<span class="launch-status-dot unloaded"></span><span>${fmt(t('ai.sb.calls'), { N: d.calls ?? 0 })}</span>`
+        ],
+        pathIcon: 'fa-solid fa-plug',
+        path: t('ai.sb.path'),
+        monitor: t('ai.sb.monitor')
+      };
+    }
   },
 
   /* ── 无侧边栏入口的页面（映射保留，供 switchModule 直接调用）── */

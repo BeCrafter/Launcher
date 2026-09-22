@@ -4,6 +4,9 @@
 // 数据源：MOCK_DATA.aiChats（预置会话静态直出）+ MOCK_DATA.aiScenes（时间线脚本化播放）。
 
 const AI_MCP_CMD = 'claude mcp add launcher -- /Applications/Launcher.app/Contents/MacOS/launcher-mcp';
+/* HTTP 形态：由本应用的 MCP 服务在 127.0.0.1 上监听（阶段 4 起带会话 token），
+   与上面的 stdio 命令并列展示——两者是「用哪套」而非「切到哪套」 */
+const AI_MCP_HTTP_URL = 'http://127.0.0.1:7788/mcp';
 
 let chatState = {
   currentId: null,
@@ -62,6 +65,8 @@ function renderAiChat() {
   if (!chatState.sessions.length) aiInitSessions();
   const rail = document.getElementById('aiRail');
   if (rail && window.innerWidth > 900) rail.classList.toggle('collapsed', localStorage.getItem('launcherAiRailCollapsed') === 'true');
+  aiRenderEngineState();
+  aiRenderConnectCard();
   aiSyncComposer();
   aiRenderRail();
   aiRenderMessages(true);
@@ -94,10 +99,9 @@ function aiRailHit(s, q) {
 }
 
 function aiRenderRail() {
+  aiSyncRailToggle();
   const list = document.getElementById('aiRailList');
   if (!list) return;
-  const cnt = document.getElementById('aiRailCount');
-  if (cnt) cnt.textContent = chatState.sessions.length;
   const search = document.getElementById('aiRailSearch');
   const q = search ? search.value.trim().toLowerCase() : '';
   const wrap = document.getElementById('aiRailSearchWrap');
@@ -159,15 +163,31 @@ function aiNewChat() {
   if (ta) ta.focus();
 }
 
+/* 折叠钮始终在会话栏外，展开/折叠共用它：只换 .is-in 与 tooltip，位置不动 */
+function aiSyncRailToggle() {
+  const rail = document.getElementById('aiRail');
+  const btn = document.getElementById('aiRailToggle');
+  if (!rail || !btn) return;
+  const visible = window.innerWidth > 900
+    ? !rail.classList.contains('collapsed')
+    : rail.classList.contains('mobile-open');
+  const key = visible ? 'ai.rail.collapse' : 'ai.rail.expand';
+  // 图标恒为 fa-angles-right，展开态由 CSS 整体旋转 180°（见 .ai-rail-toggle.is-in i）
+  btn.classList.toggle('is-in', visible);
+  btn.setAttribute('data-i18n-title', key);
+  btn.title = t(key);
+}
+
 function aiToggleRail() {
   const rail = document.getElementById('aiRail');
   if (!rail) return;
   if (window.innerWidth <= 900) {
     rail.classList.toggle('mobile-open');
-    return;
+  } else {
+    const collapsed = rail.classList.toggle('collapsed');
+    localStorage.setItem('launcherAiRailCollapsed', collapsed ? 'true' : 'false');
   }
-  const collapsed = rail.classList.toggle('collapsed');
-  localStorage.setItem('launcherAiRailCollapsed', collapsed ? 'true' : 'false');
+  aiSyncRailToggle();
 }
 
 // ── 消息渲染 ──
@@ -441,6 +461,11 @@ function aiRunScene(sceneId) {
 
 function aiSend() {
   if (chatState.running) { aiStopRun(false); return; }
+  if (typeof aiCfgConfigured === 'function' && !aiCfgConfigured()) {
+    showToast(t('ai.connect.toast'), '#eec04d', 'fa-key');
+    aiPulseConnectCard();
+    return;
+  }
   const input = document.getElementById('aiInput');
   if (!input) return;
   const v = input.value.trim();
@@ -699,13 +724,17 @@ function aiSetRunning(on) {
 }
 
 function aiSyncComposer() {
+  const configured = typeof aiCfgConfigured === 'function' && aiCfgConfigured();
   const btn = document.getElementById('aiSendBtn');
   if (btn) {
     btn.classList.toggle('stop', chatState.running);
+    btn.classList.toggle('disabled', !configured);
     btn.innerHTML = chatState.running ? '<i class="fa-solid fa-stop"></i>' : '<i class="fa-solid fa-arrow-up"></i>';
-    btn.setAttribute('data-i18n-title', chatState.running ? 'ai.input.stop' : 'ai.input.send');
-    btn.setAttribute('title', t(chatState.running ? 'ai.input.stop' : 'ai.input.send'));
+    btn.setAttribute('data-i18n-title', chatState.running ? 'ai.input.stop' : (configured ? 'ai.input.send' : 'ai.connect.title'));
+    btn.setAttribute('title', t(chatState.running ? 'ai.input.stop' : (configured ? 'ai.input.send' : 'ai.connect.title')));
   }
+  const input = document.getElementById('aiInput');
+  if (input) input.placeholder = t(configured ? 'ai.input.ph' : 'ai.input.phLocked');
   const mb = document.getElementById('aiMentionBtn');
   if (mb) mb.classList.remove('active');
   const pop = document.getElementById('aiMentionPop');
@@ -886,6 +915,43 @@ function aiUpdateStatusBar() {
   updateModuleStatusBar('ai', { calls: chatState.toolCalls });
 }
 
+// ── AI 引擎状态（composer chip / 未配置引导）──
+/* chip 是本次配置的唯一可见面：点它跳到设置页那份配置（配置有且只有一处，这里不再放第二套编辑入口）。
+   已配置显示「供应商 · 模型」，未配置显示「未配置模型」并关闭状态点。 */
+function aiRenderEngineState() {
+  const chip = document.getElementById('aiEngineChip');
+  if (!chip || typeof aiCfgState !== 'function') return;
+  const st = aiCfgState();
+  const configured = aiCfgConfigured();
+  const p = aiCfgFindProvider(st.providerId);
+  chip.className = 'ai-engine-chip' + (configured ? '' : ' off');
+  chip.setAttribute('title', t(configured ? 'ai.engine.info' : 'ai.engine.pickProvider'));
+  chip.innerHTML = `<span class="ai-engine-dot"></span><span>${configured
+    ? aiEsc((p ? p.name : '') + ' · ' + aiCfgModelLabel(st.modelId))
+    : t('ai.engine.unconfigured')}</span><i class="fa-solid fa-sliders ai-engine-cog"></i>`;
+}
+
+function aiRenderConnectCard() {
+  const card = document.getElementById('aiConnectCard');
+  if (!card || typeof aiCfgConfigured !== 'function') return;
+  card.style.display = aiCfgConfigured() ? 'none' : 'flex';
+}
+
+/* 未配置时点发送/技能卡：把眼睛拉到引导卡上，避免"点了没反应" */
+function aiPulseConnectCard() {
+  const card = document.getElementById('aiConnectCard');
+  if (!card) return;
+  card.classList.remove('pulse');
+  void card.offsetWidth; // 强制重排以重启动画
+  card.classList.add('pulse');
+}
+
+// 跳转设置页的 AI 配置：设置页默认折叠侧边栏（modules.js），故统一走 switchModule
+function aiOpenAiSettings() {
+  switchModule('settings');
+  if (typeof aiSyncSettingsNav === 'function') aiSyncSettingsNav();
+}
+
 // ── MCP 接入 ──
 function aiOpenMcpModal() {
   aiRenderMcpModal();
@@ -893,30 +959,36 @@ function aiOpenMcpModal() {
 }
 
 function aiRenderMcpModal() {
+  const st = aiCfgState();
+  const writeOn = st.mcpPermission === 'full';
+  // 两种用法并列展示，不做单选：stdio 由外部 Agent 拉子进程（不依赖本应用在跑），
+  // HTTP 依赖本应用的 MCP 服务在跑 —— 是「用哪套」而不是「切到哪套」，故没有 mcpTransport 配置项。
+  // MCP 服务默认常开、设置页无开关；权限模式是唯一闸门，留在本弹窗。
   const cmd = document.getElementById('aiMcpCmd');
   if (cmd) cmd.textContent = AI_MCP_CMD;
+  const http = document.getElementById('aiMcpHttp');
+  if (http) http.textContent = AI_MCP_HTTP_URL;
+  // 页脚那枚是「复制主命令」，页内两个块各有自己的小复制钮 —— 三处都把来源写成 data-copy，行为统一
+  const mainCopy = document.getElementById('aiMcpCopyMain');
+  if (mainCopy) mainCopy.dataset.copy = AI_MCP_CMD;
+  const stdioCopy = document.getElementById('aiMcpCmd');
+  if (stdioCopy) stdioCopy.parentElement.querySelector('.ai-mcp-cmd-copy').dataset.copy = AI_MCP_CMD;
+  const httpCopy = document.getElementById('aiMcpHttpWrap');
+  if (httpCopy) httpCopy.querySelector('.ai-mcp-cmd-copy').dataset.copy = AI_MCP_HTTP_URL;
   const tg = document.getElementById('aiMcpWriteToggle');
-  if (tg) tg.checked = localStorage.getItem('launcher_mcpAllowWrite') === 'true';
-  const box = document.getElementById('aiMcpAgents');
-  if (box) {
-    box.innerHTML = aiAgentData.map(a => {
-      const st = a.status === 'installed' ? 'running' : 'stopped';
-      return `<div class="ai-mcp-agent">
-        <i class="${a.icon} ai-mcp-agent-icon"></i>
-        <span class="ai-mcp-agent-name">${a.name}</span>
-        <span class="ai-mcp-agent-cli">${a.cli}</span>
-        <span class="ai-mcp-agent-st">${statusDot(st)}${statusLabel(st, { running: 'ai.status.installed', stopped: 'ai.status.notfound' })}</span>
-      </div>`;
-    }).join('');
-  }
+  if (tg) tg.checked = writeOn;
+  const stateEl = document.getElementById('aiMcpPermDesc');
+  if (stateEl) stateEl.textContent = t(writeOn ? 'ai.mcp.permDesc' : 'ai.mcp.permDescReadOnly');
 }
 
-function aiCopyMcpCmd() {
-  fallbackCopy(AI_MCP_CMD, () => showToast(t('toast.xmlCopied'), '#22d3ee', 'fa-copy'));
+function aiCopyMcpCmd(btn) {
+  const text = (btn && btn.dataset && btn.dataset.copy) || AI_MCP_CMD;
+  fallbackCopy(text, () => showToast(t('toast.xmlCopied'), '#22d3ee', 'fa-copy'));
 }
 
 function aiToggleMcpPerm(cb) {
   const on = !!(cb && cb.checked);
-  localStorage.setItem('launcher_mcpAllowWrite', on ? 'true' : 'false');
+  aiCfgSet({ mcpPermission: on ? 'full' : 'readOnly' }, true); // 静默：本弹窗自己负责重渲染
+  aiRenderMcpModal();
   showToast(t(on ? 'ai.mcp.permOn' : 'ai.mcp.permOff'), on ? '#f87171' : '#4ade80', 'fa-shield-halved');
 }

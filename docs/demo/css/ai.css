@@ -27,72 +27,12 @@
   display: none;
 }
 
-.ai-rail-hd {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 13px 10px 10px;
-}
-
-/* 会话栏身份砖：与消息里的 Launcher Agent 头像同源材质 */
-.ai-rail-hd-icon {
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  background: var(--accent-wash-grad);
-  border: 1px solid rgba(124, 106, 244, 0.3);
-  color: var(--accent2);
-  font-size: 10px;
-  flex-shrink: 0;
-}
-
-.ai-rail-title {
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-/* 会话数：把头部右侧收成"计数 + 折叠"一组，避免标题与按钮之间空一条 */
-.ai-rail-count {
-  margin-left: auto;
-  font-size: 9.5px;
-  line-height: 1.5;
-  color: var(--accent2);
-  background: var(--wash-accent);
-  border-radius: 99px;
-  padding: 1px 6px;
-}
-
-.ai-rail-collapse {
-  width: 24px;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  border: none;
-  background: none;
-  color: var(--dim);
-  font-size: 9px;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.2s;
-}
-
-.ai-rail-collapse:hover {
-  color: var(--accent2);
-  background: var(--hover);
-}
-
-/* 工具行：搜索框 + 右侧方形「新对话」 */
+/* 工具行：搜索框 + 右侧方形「新对话」—— 会话栏第一行（无独立标题行，标题见左侧导航/顶栏面包屑） */
 .ai-rail-tools {
   display: flex;
   align-items: stretch;
   gap: 6px;
-  margin: 4px 10px 8px;
+  margin: 12px 10px 8px;
 }
 
 .ai-rail-new {
@@ -231,32 +171,45 @@
   color: var(--dim);
 }
 
-/* 展开钮：会话栏折叠（或窄屏隐藏）时出现 */
-.ai-rail-expand {
-  display: none;
-  align-self: flex-start;
-  margin: 14px 0 0 10px;
+/* 折叠钮：悬浮在对话画布左上角、紧贴会话栏右缘，不占布局宽度（会话栏收起时画布完全吃满）。
+   裸图标无框无底（用户要求），故颜色取 --muted 而非更暗的 --dim。
+   图标恒为 fa-angles-right，展开态整体旋转 180° 得到向左的形态——开合是"转"出来的，
+   而不是硬换图标；悬停再朝"即将收/放的方向"轻推一下。.is-in 由 aiSyncRailToggle() 写。 */
+.ai-rail-toggle {
+  --nudge: 2px;
+  position: absolute;
+  top: 14px;
+  left: 6px;
+  z-index: 41;
   width: 24px;
   height: 24px;
+  display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  border: 1px solid var(--border);
+  border: none;
   background: none;
-  color: var(--dim);
-  font-size: 9px;
+  color: var(--muted);
+  font-size: 12px;
   cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.2s;
+  transition: color 0.2s, transform 0.2s;
 }
 
-.ai-rail-expand:hover {
+/* 展开态意味着下一步是"收起"（向左），折叠态意味着"展开"（向右） */
+.ai-rail-toggle.is-in {
+  --nudge: -2px;
+}
+
+.ai-rail-toggle:hover {
   color: var(--accent2);
-  border-color: rgba(124, 106, 244, 0.4);
+  transform: translateX(var(--nudge));
 }
 
-.ai-rail.collapsed ~ .ai-rail-expand {
-  display: flex;
+.ai-rail-toggle i {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ai-rail-toggle.is-in i {
+  transform: rotate(180deg);
 }
 
 /* ── 对话列 ── */
@@ -290,6 +243,9 @@ body.light-theme .ai-main {
 
 .ai-col {
   max-width: 720px;
+  /* flex 子项 + auto 横向外边距不会自动撑满：auto 外边距先吃掉剩余空间，元素就按内容宽度收缩。
+     不写 width 的话，流式输出时整列会随文字增长由窄变宽（卡片尤其明显），故显式撑满再靠 auto 居中 */
+  width: 100%;
   margin: 0 auto;
   /* 内容贴底生长：短会话不再在下方留大片空洞；内容超出时该 auto 归零，按普通滚动 */
   margin-top: auto;
@@ -1287,8 +1243,10 @@ body.light-theme .ai-main {
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.3);
   }
 
-  .ai-rail:not(.mobile-open) ~ .ai-rail-expand {
-    display: flex;
+  /* 窄屏会话栏是覆盖层，会盖住画布左上角的折叠钮（面板内已无处可放关闭钮），
+     故覆盖层打开时把钮让到它右侧——始终浮在面板外，也只能在它右边关掉 */
+  .ai-shell:has(.ai-rail.mobile-open) .ai-rail-toggle {
+    left: 246px;
   }
 
   .ai-col {
@@ -1303,5 +1261,437 @@ body.light-theme .ai-main {
 @media(max-width:560px) {
   .ai-skill-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ══════════ AI 配置页（设置页 sp-ai）══════════
+   样式归在 ai.css（与 .ai-mcp-* 同源），尽管宿主是设置页——沿「按功能归文件」约定。
+   全部走主题变量，故 settings.css 不含 body.light-theme 覆写的做法在这里同样成立。 */
+
+/* 字段宽度单一来源：端点、API Key、模型 ID 三处共用，保证切换协议时不跳宽；
+   560px 窄屏由文末媒体查询放宽为 100% */
+#sp-ai {
+  --cfg-field-w: 280px;
+}
+
+/* 引擎 chip：从静态 span 改为可点按钮（点击跳设置页那份配置） */
+.ai-engine-chip {
+  font-family: inherit;
+  appearance: none;
+}
+
+.ai-engine-chip:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 1px;
+}
+
+/* 未配置态：整个 chip 由绿转中性，一眼看出引擎没就绪 */
+.ai-engine-chip.off {
+  color: var(--muted);
+  background: var(--panel);
+  border-color: var(--border2);
+}
+
+.ai-engine-chip.off .ai-engine-dot {
+  background: var(--dim);
+  box-shadow: none;
+  animation: none;
+}
+
+.ai-engine-cog {
+  font-size: 9px;
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+
+.ai-engine-chip:hover .ai-engine-cog {
+  opacity: 1;
+}
+
+/* 未配置引导卡：落在输入框上方，替代纯 toast 的「看得见」引导 */
+.ai-connect-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(238, 192, 77, 0.28);
+  background: var(--wash-yellow);
+}
+
+.ai-connect-icon {
+  color: var(--yellow);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.ai-connect-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-connect-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-connect-desc {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 1px;
+}
+
+/* 未配置时点发送：脉冲一次把视线引到上面那张卡 */
+.ai-connect-card.pulse {
+  animation: ai-connect-pulse 0.9s ease;
+}
+
+@keyframes ai-connect-pulse {
+  0%, 100% { border-color: rgba(238, 192, 77, 0.28); }
+  30%, 70% { border-color: var(--yellow); box-shadow: 0 0 0 3px rgba(238, 192, 77, 0.16); }
+}
+
+.ai-send.disabled {
+  background: var(--surface4);
+  color: var(--dim);
+  cursor: not-allowed;
+}
+
+.ai-send.disabled:hover {
+  filter: none;
+}
+
+/* 协议卡网格：两个协议各一张（2026-09-22 由「四家厂商」收敛为「两种协议」） */
+.ai-prov-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 12px 0 4px;
+}
+
+.ai-prov-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--surface2);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ai-prov-card:hover {
+  border-color: rgba(124, 106, 244, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+/* 选中态：从「深色块 + 描边」改为「柔和紫 wash」——原来的背景是给深色主题调的，
+   浅色下压在浅灰区块上会糊成一片脏灰（用户反馈）。wash 变量本身随主题取值，两端都成立。 */
+.ai-prov-card.selected {
+  background: var(--wash-accent);
+  border-color: var(--accent);
+}
+
+.ai-prov-card-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ai-prov-card-icon {
+  color: var(--accent2);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ai-prov-card-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-prov-check {
+  margin-left: auto;
+  color: var(--accent2);
+  font-size: 11px;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.ai-prov-card.selected .ai-prov-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 协议标识：卡片副行由「N 个可用模型」改为协议名 pill（协议是主身份，模型数不再是卖点） */
+.ai-prov-card-sub {
+  align-self: flex-start;
+  font-size: 9px;
+  color: var(--accent2);
+  background: rgba(124, 106, 244, 0.14);
+  border-radius: 99px;
+  padding: 1px 6px;
+  margin-top: 1px;
+}
+
+/* 选中态底色已是紫 wash，pill 再叠一层就糊了，改用描边 */
+.ai-prov-card.selected .ai-prov-card-sub {
+  background: none;
+  border: 1px solid rgba(124, 106, 244, 0.35);
+}
+
+.ai-prov-card-foot {
+  margin-top: 3px;
+}
+
+.ai-prov-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  color: var(--dim);
+}
+
+.ai-prov-key.ok {
+  color: var(--green);
+}
+
+.ai-prov-key i {
+  font-size: 8.5px;
+}
+
+/* 选中卡底色是紫 wash，亮绿落在上面会显脏 —— 借 accent2 压一档，图标形状仍表意 */
+.ai-prov-card.selected .ai-prov-key.ok {
+  color: var(--accent2);
+}
+
+/* 端点、API Key、模型 ID 三处共用同一字段宽来源，避免切换协议或填入预设时这一列跳宽；
+   760px 窄屏由下面的媒体查询收窄 */
+.ai-cfg-input {
+  width: var(--cfg-field-w);
+  max-width: var(--cfg-field-w);
+  font-size: 11px;
+}
+
+.ai-cfg-key-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.ai-cfg-key-wrap .ai-cfg-input {
+  width: var(--cfg-field-w);
+  max-width: var(--cfg-field-w);
+}
+
+.ai-cfg-test-st-wrap {
+  font-size: 10.5px;
+}
+
+.ai-cfg-test-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-cfg-test-st.ok {
+  color: var(--green);
+}
+
+.ai-cfg-test-st.fail {
+  color: var(--red);
+}
+
+.ai-cfg-test-st.run {
+  color: var(--blue);
+}
+
+/* 模型行：输入框 + 预设快捷填入（OpenAI 兼容端点没有已知目录，只能给常见落脚点） */
+.ai-model-row {
+  align-items: flex-start;
+}
+
+.ai-model-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+/* 快捷填入恒为单行：不换行，放不下就横向滚动（宽度与上方输入框对齐）。
+   Anthropic 最多 3 个内置模型，OpenAI 兼容只有一个「上次用过」——都不会挤爆 */
+.ai-model-picks {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 5px;
+  width: var(--cfg-field-w);
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.ai-model-picks::-webkit-scrollbar {
+  height: 4px;
+}
+
+.ai-model-picks::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 2px;
+}
+
+.ai-model-chip {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 99px;
+  border: 1px solid var(--border2);
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-model-chip:hover {
+  color: var(--text);
+  border-color: var(--border2);
+  background: var(--hover);
+}
+
+.ai-model-chip.active {
+  border-color: rgba(124, 106, 244, 0.4);
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* 设置页里的挂载命令块与页脚 */
+.ai-mcp-cfg {
+  padding: 10px 0 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-mcp-cfg .settings-row-desc {
+  margin-top: 6px;
+}
+
+.ai-cfg-footer {
+  padding: 12px 0 6px;
+}
+
+.ai-cfg-footer-hint {
+  font-size: 10px;
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+.ai-cfg-footer-hint i {
+  margin-right: 5px;
+}
+
+/* MCP 弹窗：两种用法并列成两块（不单选——stdio 由外部 Agent 拉子进程、HTTP 依赖本应用在跑，
+   是「用哪套」而非「切到哪套」） */
+.ai-mcp-cmd {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 11px;
+  background: var(--panel);
+}
+
+.ai-mcp-cmd-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+/* 协议名用等宽小胶囊，与命令内容同族视觉 */
+.ai-mcp-cmd-tag {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--accent2);
+  background: var(--wash-accent);
+  border-radius: 5px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+.ai-mcp-cmd-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-mcp-cmd-copy {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--dim);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.ai-mcp-cmd-copy:hover {
+  color: var(--accent2);
+  background: var(--hover);
+}
+
+.ai-mcp-cmd-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--dim);
+  line-height: 1.5;
+  margin-top: 7px;
+}
+
+@media(max-width:560px) {
+  .ai-prov-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-cfg-key-wrap {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .ai-cfg-key-wrap .ai-cfg-input,
+  .ai-cfg-input {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* 模型列保持右对齐的定宽列，只有快捷 chip 换行；否则输入框被 flex 抻满后 chip 被挤出可视区 */
+  .ai-model-pick {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ai-model-picks {
+    width: 100%;
+    flex-wrap: wrap;
   }
 }

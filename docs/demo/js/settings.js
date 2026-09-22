@@ -7,6 +7,8 @@ function switchSettingsSection(sectionId, btn) {
   const pane = document.getElementById('sp-' + sectionId);
   if (pane) pane.classList.add('active');
   if (btn) btn.classList.add('active');
+  // AI pane 是整块 JS 渲染（配置有单一状态源），每次进入都重渲染以反映最新配置
+  if (sectionId === 'ai') refreshAiSurfaces();
 }
 
 function setTheme(theme) {
@@ -58,7 +60,8 @@ function checkAppUpdates() {
 }
 
 function resetSettings() {
-  ['launcherTheme', 'launcherLanguage', 'launcher_confirmDangerous', 'launcher_launchAtLogin', 'launcher_menubarOnly', 'launcher_menubarBadge', 'launcher_trayVisible', 'launcher_dockVisible', 'launcher_fseventsActive', 'launcher_cmdTimeout'].forEach(key => localStorage.removeItem(key));
+  ['launcherTheme', 'launcherLanguage', 'launcher_confirmDangerous', 'launcher_launchAtLogin', 'launcher_menubarOnly', 'launcher_menubarBadge', 'launcher_trayVisible', 'launcher_dockVisible', 'launcher_fseventsActive', 'launcher_cmdTimeout', 'launcher_aiConfig'].forEach(key => localStorage.removeItem(key));
+  if (typeof aiCfgResetAll === 'function') aiCfgResetAll(true); // 全局恢复默认：AI 配置一并回退（静默，避免与下面的 toast 打架）
   setTheme('system');
   const language = document.getElementById('languageSelect');
   if (language) language.value = 'zh-CN';

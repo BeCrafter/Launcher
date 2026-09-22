@@ -664,6 +664,49 @@ const MOCK_DATA = {
   </dict>
 </dict>
 </plist>`
+  },
+
+  /* AI 配置页：接入协议（对齐 pi-ai 的实际形态，2026-09-22 重做）。
+     pi 的线协议是一组命名 adapter（anthropic-messages / openai-completions / google-generative-ai /
+     bedrock-converse-stream …），内置厂商约 28 个；绝大多数第三方端点（DeepSeek / Groq / Mistral /
+     xAI / OpenRouter / 本地 Ollama 等）都走 openai-completions，故收敛为两张卡：原生 Anthropic
+     与「OpenAI 兼容」（baseUrl 可改，覆盖长尾与自建网关）。pi 另有 createProvider({baseUrl,auth,models,api})
+     可自定义 provider，每个内置厂商还自带模型目录与各自鉴权（OAuth 等）—— 需要时再加卡，不必现在铺开。 */
+  aiProviders: [
+    {
+      id: 'anthropic',
+      name: 'Anthropic',
+      icon: 'fa-solid fa-clone',
+      defaultBase: 'https://api.anthropic.com',
+      models: [
+        { id: 'claude-opus-5', label: 'Claude Opus 5' },
+        { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
+        { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' }
+      ]
+    },
+    {
+      id: 'openai-compatible',
+      name: 'OpenAI',
+      icon: 'fa-solid fa-code',
+      defaultBase: 'https://api.openai.com/v1'
+      /* 无内置模型目录：端点连到哪家未知，pi 的目录又是按具名 provider 组织（openrouter / deepseek /
+         groq … 各自成条目），故这里不列预设——改由「上次用过的模型」快捷填入（见 ai-config.js） */
+    }
+  ],
+
+  /* AI 引擎设置默认值（用户改动存 localStorage 的 launcher_aiConfig，本对象是「恢复默认」的回退源）。
+     apiKey 在 demo 里是明文占位串，仅用于展示掩码形态；真实实现由 main 进程 safeStorage 加密存放。 */
+  aiConfigDefaults: {
+    providerId: 'anthropic',
+    modelId: 'claude-opus-5',
+    providerConfigs: {
+      anthropic: { apiKey: 'sk-ant-api03-••••••••••••4f2a', baseUrl: 'https://api.anthropic.com' },
+      'openai-compatible': { apiKey: '', baseUrl: 'https://api.openai.com/v1' }
+    },
+    mcpPermission: 'readOnly',
+    toolCallLimit: 8,
+    stream: true,
+    requestTimeout: 60
   }
 };
 
@@ -676,6 +719,8 @@ const aiAgentData = MOCK_DATA.aiAgents;
 const aiSkillData = MOCK_DATA.aiSkills;
 const aiChatData = MOCK_DATA.aiChats;
 const aiSceneData = MOCK_DATA.aiScenes;
+const aiProviderData = MOCK_DATA.aiProviders;
+const AI_CONFIG_DEFAULTS = MOCK_DATA.aiConfigDefaults;
 const CRON_PRESETS = MOCK_DATA.cronPresets;
 const liveLogs = MOCK_DATA.liveLogs;
 const GITHUB_REPO_URL = MOCK_DATA.urls.github;
