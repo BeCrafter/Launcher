@@ -105,7 +105,6 @@ const MODULES = {
     /* 对话页不设顶栏搜索框：searchPlaceholderKey / searchHandler 有意省略（校验中为可选项） */
     actions: () => `
               <button class="topbar-btn" onclick="aiOpenMcpModal()"><i class="fa-solid fa-plug"></i><span>${t('ai.mcp.title')}</span></button>
-              <button class="topbar-btn accent" onclick="aiNewChat()"><i class="fa-solid fa-plus"></i><span>${t('ai.rail.new')}</span></button>
             `,
     showStatusBar: true,
     statusbar: (d = {}) => ({

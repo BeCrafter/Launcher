@@ -75,18 +75,58 @@ function aiInitSessions() {
 }
 
 // ── 会话栏 ──
+/* 会话搜索命中摘要：返回带 <mark> 高亮的片段；仅标题命中返回空串；未命中返回 null */
+function aiRailHit(s, q) {
+  if (s.title.toLowerCase().includes(q)) return '';
+  for (const m of s.messages) {
+    const text = aiResolve(m.text || '');
+    const i = text.toLowerCase().indexOf(q);
+    if (i < 0) continue;
+    const from = Math.max(0, i - 12);
+    const to = Math.min(text.length, i + q.length + 28);
+    return (from > 0 ? '…' : '')
+      + aiEsc(text.slice(from, i))
+      + `<mark class="ai-rail-hit-mark">${aiEsc(text.slice(i, i + q.length))}</mark>`
+      + aiEsc(text.slice(i + q.length, to))
+      + (to < text.length ? '…' : '');
+  }
+  return null;
+}
+
 function aiRenderRail() {
   const list = document.getElementById('aiRailList');
   if (!list) return;
+  const cnt = document.getElementById('aiRailCount');
+  if (cnt) cnt.textContent = chatState.sessions.length;
+  const search = document.getElementById('aiRailSearch');
+  const q = search ? search.value.trim().toLowerCase() : '';
+  const wrap = document.getElementById('aiRailSearchWrap');
+  if (wrap) wrap.classList.toggle('has-text', !!q);
+
   if (!chatState.sessions.length) {
     list.innerHTML = `<div class="ai-rail-empty">${t('ai.rail.empty')}</div>`;
     return;
   }
-  list.innerHTML = chatState.sessions.map(s => `
+  const rows = chatState.sessions
+    .map(s => ({ s, hit: q ? aiRailHit(s, q) : null }))
+    .filter(r => !q || r.hit !== null);
+  if (!rows.length) {
+    list.innerHTML = `<div class="ai-rail-empty">${t('ai.rail.searchEmpty')}</div>`;
+    return;
+  }
+  list.innerHTML = rows.map(({ s, hit }) => `
     <div class="ai-rail-item${s.id === chatState.currentId ? ' active' : ''}" onclick="aiSelectChat('${s.id}')">
       <div class="ai-rail-item-title" title="${aiEsc(s.title)}">${aiEsc(s.title)}</div>
-      <div class="ai-rail-item-ts">${aiEsc(s.ts)}</div>
+      ${hit ? `<div class="ai-rail-hit">${hit}</div>` : `<div class="ai-rail-item-ts">${aiEsc(s.ts)}</div>`}
     </div>`).join('');
+}
+
+function aiRailSearchClear() {
+  const search = document.getElementById('aiRailSearch');
+  if (!search) return;
+  search.value = '';
+  aiRenderRail();
+  search.focus();
 }
 
 function aiSelectChat(id) {
@@ -110,6 +150,8 @@ function aiNewChat() {
   chatState.mentions = [];
   const ta = document.getElementById('aiInput');
   if (ta) { ta.value = ''; aiAutoGrow(ta); }
+  const search = document.getElementById('aiRailSearch');
+  if (search) search.value = '';
   aiSyncComposer();
   aiRenderRail();
   aiRenderMessages(true);

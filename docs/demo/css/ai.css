@@ -19,7 +19,7 @@
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--surface);
   min-height: 0;
 }
 
@@ -30,57 +30,146 @@
 .ai-rail-hd {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 14px 14px 8px;
+  gap: 8px;
+  padding: 13px 10px 10px;
 }
 
-.ai-rail-title {
-  font-size: 9.5px;
-  font-weight: 700;
-  color: var(--dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.ai-rail-collapse {
-  width: 22px;
-  height: 22px;
+/* 会话栏身份砖：与消息里的 Launcher Agent 头像同源材质 */
+.ai-rail-hd-icon {
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  border: 1px solid var(--border);
+  background: var(--accent-wash-grad);
+  border: 1px solid rgba(124, 106, 244, 0.3);
+  color: var(--accent2);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.ai-rail-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* 会话数：把头部右侧收成"计数 + 折叠"一组，避免标题与按钮之间空一条 */
+.ai-rail-count {
+  margin-left: auto;
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--accent2);
+  background: var(--wash-accent);
+  border-radius: 99px;
+  padding: 1px 6px;
+}
+
+.ai-rail-collapse {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: none;
   background: none;
   color: var(--dim);
   font-size: 9px;
   cursor: pointer;
+  flex-shrink: 0;
   transition: all 0.2s;
 }
 
 .ai-rail-collapse:hover {
   color: var(--accent2);
-  border-color: rgba(124, 106, 244, 0.4);
+  background: var(--hover);
+}
+
+/* 工具行：搜索框 + 右侧方形「新对话」 */
+.ai-rail-tools {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin: 4px 10px 8px;
 }
 
 .ai-rail-new {
+  width: 28px;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin: 4px 10px 10px;
-  padding: 8px 12px;
+  justify-content: center;
   border-radius: 8px;
-  border: 1px solid rgba(124, 106, 244, 0.3);
-  background: var(--accent-wash-grad);
+  border: 1px solid rgba(124, 106, 244, 0.25);
+  background: var(--wash-accent);
   color: var(--accent2);
-  font-size: 11.5px;
-  font-weight: 600;
-  font-family: inherit;
+  font-size: 11px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .ai-rail-new:hover {
-  border-color: rgba(124, 106, 244, 0.5);
+  border-color: rgba(124, 106, 244, 0.4);
+}
+
+/* 会话搜索：复用 .search-wrap 原语（浅底 + 紫色聚焦环），只覆盖宽度与字号以适配 232px 栏宽 */
+.ai-rail-search {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 9px;
+}
+
+.ai-rail-search input {
+  font-size: 11.5px;
+}
+
+.ai-rail-search-clear {
+  display: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* 有输入才出现，避免空态多一个死按钮 */
+.ai-rail-search.has-text .ai-rail-search-clear {
+  display: flex;
+}
+
+.ai-rail-search-clear i {
+  color: var(--dim);
+  font-size: 10px;
+  transition: color 0.2s;
+}
+
+.ai-rail-search-clear:hover i {
+  color: var(--accent2);
+}
+
+/* 命中片段：占用时间戳那一行的位置，命中词高亮 */
+.ai-rail-hit {
+  font-size: 10px;
+  color: var(--dim);
+  line-height: 1.5;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-rail-hit-mark {
+  background: var(--wash-accent);
+  color: var(--accent2);
+  border-radius: 3px;
+  padding: 0 2px;
 }
 
 .ai-rail-list {
@@ -109,8 +198,12 @@
 
 .ai-rail-item.active {
   background: var(--wash-accent);
-  border-color: rgba(124, 106, 244, 0.25);
   color: var(--accent2);
+}
+
+/* 选中态与设置页侧栏同款：只换底色与文字，不加描边 */
+.ai-rail-item.active .ai-rail-item-title {
+  font-weight: 600;
 }
 
 .ai-rail-item-title {
@@ -162,7 +255,7 @@
   border-color: rgba(124, 106, 244, 0.4);
 }
 
-.ai-rail.collapsed + .ai-rail-expand {
+.ai-rail.collapsed ~ .ai-rail-expand {
   display: flex;
 }
 
@@ -174,27 +267,47 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  /* 对话画布：顶部紫调氛围光，与左侧会话栏（实色 surface）、底部悬浮输入区拉开三层 */
+  background:
+    radial-gradient(1000px 440px at 50% -40px, rgba(124, 106, 244, 0.28), transparent 66%),
+    linear-gradient(180deg, rgba(124, 106, 244, 0.05), transparent 420px);
+}
+
+/* 浅色底上同一束光要压得更淡，否则整片发紫 */
+body.light-theme .ai-main {
+  background:
+    radial-gradient(1000px 440px at 50% -40px, rgba(106, 88, 224, 0.08), transparent 66%),
+    linear-gradient(180deg, rgba(106, 88, 224, 0.02), transparent 420px);
 }
 
 .ai-scroll {
   flex: 1;
   overflow-y: auto;
   scroll-behavior: smooth;
+  display: flex;
+  flex-direction: column;
 }
 
 .ai-col {
   max-width: 720px;
   margin: 0 auto;
+  /* 内容贴底生长：短会话不再在下方留大片空洞；内容超出时该 auto 归零，按普通滚动 */
+  margin-top: auto;
   padding: 26px 24px 16px;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 
-/* 回到底部浮标 */
+/* 欢迎态是"入口"而非对话，保持贴顶，不走贴底生长 */
+.ai-col:has(.ai-welcome) {
+  margin-top: 0;
+}
+
+/* 回到底部浮标：挂在输入区上方（输入区高度会随 @ 引用行变化，故按 100% 定位而非固定值） */
 .ai-scroll-bot {
   position: absolute;
-  bottom: 116px;
+  bottom: calc(100% + 12px);
   left: 50%;
   transform: translateX(-50%);
   z-index: 5;
@@ -407,6 +520,12 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* 助手回答卡片化：在画布上给每条回答一个容器，与用户气泡成对 */
+  background: var(--surface);
+  border: 1px solid rgba(124, 106, 244, 0.22);
+  border-radius: 12px;
+  padding: 13px 15px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
 }
 
 .ai-bot-name {
@@ -415,7 +534,7 @@
   gap: 7px;
   margin-bottom: 8px;
   font-size: 10.5px;
-  color: var(--dim);
+  color: var(--accent2);
 }
 
 .ai-bot-avatar {
@@ -824,14 +943,27 @@
 
 /* ── 输入区 ── */
 .ai-composer {
+  position: relative;
   flex-shrink: 0;
-  border-top: 1px solid var(--border);
-  background: var(--panel);
-  /* 底部预留固定状态栏高度（38px）+ 呼吸：与 list-container 的 64px 同源 */
-  padding: 10px 24px 50px;
+  /* 悬浮输入区：不做整条底栏，改由渐隐遮罩与上方内容分层
+     底部预留固定状态栏高度（38px）+ 呼吸：与 list-container 的 64px 同源 */
+  padding: 6px 24px 50px;
+}
+
+/* 遮罩：内容滚到输入区下方时淡出，避免与悬浮卡片叠字 */
+.ai-composer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -64px;
+  bottom: 0;
+  background: linear-gradient(180deg, transparent, var(--bg) 62%);
+  pointer-events: none;
 }
 
 .ai-composer-inner {
+  position: relative;
   max-width: 720px;
   margin: 0 auto;
 }
@@ -903,10 +1035,11 @@
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  background: var(--surface2);
+  background: var(--surface);
   border: 1px solid var(--border2);
-  border-radius: 12px;
-  padding: 8px 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
@@ -1154,7 +1287,7 @@
     box-shadow: 0 0 40px rgba(0, 0, 0, 0.3);
   }
 
-  .ai-rail:not(.mobile-open)+.ai-rail-expand {
+  .ai-rail:not(.mobile-open) ~ .ai-rail-expand {
     display: flex;
   }
 
