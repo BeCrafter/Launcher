@@ -5,6 +5,10 @@ on:
   push:
     tags:
       - 'v*'
+      # 测试版由 dev-release.yml 构建/发布。必须排除：-dev 后缀会被 release-version.mjs
+      # 拒绝（Homebrew 认不得），不排除的话推 dev tag 会把正式流水线拉起来然后红掉。
+      # 顺序有意义 —— 后出现的负向模式优先生效。
+      - '!v*-dev*'
   workflow_dispatch:
     inputs:
       tag:

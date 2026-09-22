@@ -1,0 +1,186 @@
+name: Dev Release
+
+# 测试版构建与验证：v<基线>-dev.<序号>
+#   基线 = 最新正式版 tag（只要 X.Y.Z），没有 tag 时取 package.json 的 X.Y.Z，再兜底 0.1.0
+#   序号 = 该基线下已有 dev tag 的最大值 + 1（累加，不复用）
+#
+# ⚠ 本流水线**只发 GitHub Release（pre-release）+ Actions 产物**，刻意不碰任何分发通道：
+#   · 不传 Cloudflare R2 —— 没有 latest 别名、没有 versions.txt 记录
+#   · 不推 Homebrew cask
+#   · 不发 npm 包
+#   原因是 -dev 不在 Homebrew 的预发布白名单（alpha/beta/pre/rc）里，会被 Version 判为
+#   **比正式版更新**（实测 Version.new('0.2.0-dev') > Version.new('0.2.0')），
+#   详见 scripts/release-version.mjs 与 docs/design/distribution.md「预发布版本」。
+#   只要 dev 构建永远不进 cask / latest 别名 / npm 的 latest dist-tag，稳定通道就不会被污染 ——
+#   所以本文件**不引用任何 R2 / TAP / NPM secret**：「没有凭据」是最硬的围栏。
+#   将来若想让它接 R2，必须先解决 -dev 的版本比较问题，而不是顺手加两行 aws s3 cp。
+#
+# 正式发布走 release.yml（打 v<正式版> tag）；那边已排除 v*-dev*，两者不会互相触发。
+
+on:
+  # 推 v*-dev* tag 直接构建：tag 名即版本号，且不要求本文件先在默认分支上
+  push:
+    tags:
+      - 'v*-dev*'
+  # 手动触发：版本号自动计算。
+  # ⚠ workflow_dispatch 的 Run workflow 按钮要求本文件已存在于默认分支 main；
+  #   未合并前请用上面的 tag 触发（或先在 main 上放一份同样的文件）
+  workflow_dispatch:
+    inputs:
+      base:
+        description: '基线版本（留空 = 取最新正式版 tag，无 tag 时取 package.json）'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+# 同时只跑一个 dev 构建：两个 run 并发会算出同一个序号、抢同一个 tag
+concurrency:
+  group: dev-release
+  cancel-in-progress: false
+
+jobs:
+  dev:
+    # macos-14 是 arm64 主机；--arch all 交叉构建 x64，故两种产物由同一 job 产出
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 手动触发时固定跟 dev（本流水线是 dev 专用的）；push tag 时跟那个 tag
+          ref: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+          # 算 dev 序号要读全部 tag；默认浅克隆只带当前 ref 的 tag
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 解析 dev 版本号
+        env:
+          INPUT_BASE: ${{ inputs.base }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # 算号只有一处实现（scripts/release-version.mjs），本地 `npm run release:dev` 与这里
+          # 共用它，避免两边算法漂移。--print 只输出版本号，不做任何检查与改动。
+          if [ "$REF_TYPE" = "tag" ]; then
+            VERSION="$(node scripts/release.mjs dev --tag "$REF_NAME" --print)"
+          else
+            VERSION="$(node scripts/release.mjs dev --base "$INPUT_BASE" --print)"
+          fi
+          # 记下真正 build 出来的那个 commit：github.sha 是「在哪个分支上点的按钮」，
+          # 不是 checkout 到的 dev HEAD，拿它建 tag 会指错 commit
+          SHA="$(git rev-parse HEAD)"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=v${VERSION}" >> "$GITHUB_ENV"
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          echo "本次构建：$VERSION（$(git rev-parse --short HEAD)）"
+
+      # 注意：构建期依赖（React / Vite / 字体等）全在 devDependencies，不能加 --omit=dev
+      - name: 安装依赖
+        run: npm ci
+
+      # ⚠ 必须在 `npm ci` **之后**：npm ci 会校验 package.json 与 package-lock.json 的
+      #   版本是否一致，提前改会让安装步骤直接失败。
+      # electron-builder 的 artifactName 是 ${version}，取的就是 package.json 的 version，
+      # 而应用内「关于」页的版本号也来自它 —— 故测试版会如实自报 0.1.0-dev.N。
+      # 只改工作区、不提交：dev 版本号属于产物，不属于源码历史。
+      - name: 写入版本号
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = process.argv[1];
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          ' "$VERSION"
+          echo "package.json version = $(node -p "require('./package.json').version")"
+
+      - name: 类型检查与测试
+        run: |
+          npm run typecheck
+          npm test
+
+      # --no-run 与 release.yml 一致：runner 上不启动 GUI 应用；
+      # 静态架构 / bundle 图标 / 打包资源 / asar 不含 node_modules 四项断言照常执行
+      - name: 构建 arm64 + x64 测试产物
+        run: node scripts/build-app.mjs --arch all --release --no-run
+
+      - name: 校验产物
+        run: |
+          for arch in arm64 x64; do
+            f="dist/Launcher-${VERSION}-${arch}.zip"
+            [ -f "$f" ] || { echo "::error::产物缺失 $f"; ls -l dist; exit 1; }
+            echo "OK  $f  $(du -h "$f" | cut -f1)"
+          done
+          cd dist && shasum -a 256 ./*.zip ./*.dmg | tee /tmp/sha256.txt
+
+      - name: 上传 Actions 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Launcher-${{ env.VERSION }}
+          path: |
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: error
+          # dev 构建是消耗品，别长期占配额
+          retention-days: 30
+
+      - name: 生成 Release 正文
+        run: |
+          {
+            echo "> ⚠ **测试版构建**，仅供验证。不进 R2、不更新 Homebrew cask、不发 npm ——"
+            echo "> 三条安装通道与应用内「检查更新」都不会看到它。"
+            echo
+            echo "## 安装"
+            echo
+            echo '```bash'
+            echo "curl -fL -o /tmp/Launcher-dev.zip \\"
+            echo "  https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/Launcher-${VERSION}-arm64.zip"
+            echo "ditto -x -k /tmp/Launcher-dev.zip /tmp/launcher-dev && open /tmp/launcher-dev/Launcher.app"
+            echo '```'
+            echo
+            echo "（Intel 机器把 \`arm64\` 换成 \`x64\`。curl 下载不写 quarantine 标记可直接运行；"
+            echo "用浏览器下载的需在「系统设置 → 隐私与安全性」里放行。）"
+            echo
+            echo "## 产物 sha256"
+            echo
+            echo '```'
+            cat /tmp/sha256.txt
+            echo '```'
+            echo
+            echo "## 本次执行的验证"
+            echo
+            echo "- \`npm run typecheck\` + \`npm test\`"
+            echo "- \`build-app.mjs --arch all --release --no-run\`：静态架构（主 bin + Electron Framework 的 lipo 断言）、"
+            echo "  bundle 图标完整尺寸表示、打包资源（logo 四件套）、asar 不含 node_modules"
+          } > /tmp/dev-release-body.md
+
+      - name: 发布 GitHub Release（pre-release）
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.VERSION }}
+          # tag 不存在时按实际 checkout 的 commit 建；不指定的话 API 会用默认分支 main
+          target_commitish: ${{ env.SHA }}
+          # 打上 pre-release：任何读 GitHub Releases 的旧客户端/外部工具都不会当成稳定版
+          prerelease: true
+          body_path: /tmp/dev-release-body.md
+          files: |
+            dist/*.zip
+            dist/*.dmg
+          fail_on_unmatched_files: true
+
+      - name: 汇总
+        run: |
+          {
+            echo "## Dev ${VERSION} ✅"
+            echo
+            echo "已发 pre-release：\`${TAG}\`（未触碰 R2 / cask / npm）"
+            echo
+            echo '```bash'
+            echo "gh release download ${TAG} --pattern '*arm64.zip'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

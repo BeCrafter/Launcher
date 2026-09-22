@@ -20,6 +20,11 @@
     "build:app:universal": "node scripts/build-app.mjs --arch universal",
     "build:app:all": "node scripts/build-app.mjs --arch all",
     "build:app:release": "node scripts/build-app.mjs --arch all --release",
+    "release": "node scripts/release.mjs",
+    "release:major": "node scripts/release.mjs major",
+    "release:minor": "node scripts/release.mjs minor",
+    "release:patch": "node scripts/release.mjs patch",
+    "release:dev": "node scripts/release.mjs dev",
     "release:check": "node scripts/release-check.mjs"
   },
   "devDependencies": {
