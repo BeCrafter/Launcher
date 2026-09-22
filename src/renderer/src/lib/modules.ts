@@ -45,6 +45,13 @@ export const MODULES: Record<ModuleId, ModuleRecord> = {
     searchPlaceholderKey: 'topbar.phServices',
     showStatusBar: true
   },
+  // AI 对话页:无顶栏搜索(demo MODULES.ai 有意省略 searchPlaceholderKey);操作区仅「接入 MCP」
+  ai: {
+    viewId: 'view-ai',
+    icon: 'fa-wand-magic-sparkles',
+    breadcrumbKey: 'ai.module',
+    showStatusBar: true
+  },
   settings: {
     viewId: 'view-settings',
     icon: 'fa-sliders',
@@ -53,5 +60,5 @@ export const MODULES: Record<ModuleId, ModuleRecord> = {
   }
 }
 
-// demo 侧边栏入口顺序(4 项;ai 未迁移,不含)
-export const SIDEBAR_MODULES: ModuleId[] = ['agents', 'crontab', 'services']
+// demo 侧边栏入口顺序(4 项:Agents / 定时任务 / 端口服务 / AI 助手;设置页是底部按钮,不在此列)
+export const SIDEBAR_MODULES: ModuleId[] = ['agents', 'crontab', 'services', 'ai']

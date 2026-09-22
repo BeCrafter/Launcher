@@ -1,5 +1,4 @@
 import { app, BrowserWindow, nativeTheme, shell } from 'electron'
-import { userInfo } from 'node:os'
 import { join } from 'node:path'
 import { APP_NAME } from '../shared/constants'
 import { IPC_EVENTS } from '../shared/ipc'
@@ -11,15 +10,10 @@ import { createApplierRegistry } from './settings/appliers'
 import { launchdWatchDirs } from './services/dir-watcher'
 import { createShellRunner } from './services/shell-runner'
 import { createElevationExecutor } from './services/elevation'
-import { createCrontabService } from './services/crontab-service'
-import { createLaunchctlService } from './services/launchctl-service'
-import { createPlistService } from './services/plist-service'
-import { createBrewAgentService } from './services/brew-agent-service'
-import { createAgentService } from './services/agent-service'
-import { createDockerService } from './services/docker-service'
-import { createProcessDiscovery, toServicesPayload } from './services/process-discovery'
-import { createTermination } from './services/termination'
+import { toServicesPayload } from './services/process-discovery'
 import { detectInstallChannel } from './services/install-channel'
+import { createCoreServices } from './core-services'
+import { createAiStack } from './ai'
 import type { ApplyCtx } from './settings/types'
 import { registerIpc } from './ipc'
 
@@ -167,48 +161,44 @@ app.whenReady().then(async () => {
   const runner = createShellRunner({ getTimeoutMs: () => store.get().cmdTimeout })
   const elevate = createElevationExecutor()
 
-  // plist 服务(先于 registry 建好:fsevents applier 的 onDirsChanged 需失效其 scanAll 记忆)
-  const plists = createPlistService({ runner, elevate, home: app.getPath('home') })
-  registry.apply(store.get())
-  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用
-  store.onChange((s) => registry.apply(s))
-
-  const cron = createCrontabService({
-    runner,
-    elevate,
-    home: app.getPath('home'),
-    username: userInfo().username,
-    getRetainDays: () => store.get().cronLogRetainDays
-  })
-
-  // Launch Agents(阶段 1):launchctl/plist/brew 门面
   const xmlIndentOf = (): string => {
     const v = store.get().xmlIndent
     return v === 'tab' ? '\t' : ' '.repeat(Number(v))
   }
-  const agents = createAgentService({
-    runner,
-    launchctl: createLaunchctlService({ runner, elevate, uid: process.getuid?.() ?? 501 }),
-    plists,
-    brew: createBrewAgentService({ runner, elevate }),
-    getXmlIndent: xmlIndentOf
-  })
 
-  // 端口服务(阶段 3):docker 容器 + 终止/重启 + 进程发现(轮询仅在服务页激活时进行)
-  const docker = createDockerService({ runner })
-  const termination = createTermination({ runner, elevate })
-  const discovery = createProcessDiscovery({
+  // 核心服务栈(定时任务/Launch Agents/端口服务)——装配单一来源见 core-services.ts
+  // (launcher-mcp 独立进程复用同一份,避免两处漂移)
+  const { plists, agents, cron, discovery, termination, docker, launchctl, brew } = createCoreServices({
     runner,
-    docker,
-    log: (m) => console.log(`[svc] ${m}`),
-    onChange: (r) => broadcast(IPC_EVENTS.servicesUpdated, toServicesPayload(r, discovery.polling))
+    elevate,
+    home: app.getPath('home'),
+    getXmlIndent: xmlIndentOf,
+    getCronRetainDays: () => store.get().cronLogRetainDays,
+    onServicesChange: (r, polling) => broadcast(IPC_EVENTS.servicesUpdated, toServicesPayload(r, polling)),
+    log: (m) => console.log(`[svc] ${m}`)
   })
+  // plist 必须在 registry.apply 之前建好:fsevents applier 的 onDirsChanged 会失效其 scanAll 记忆
+  registry.apply(store.get())
+  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用
+  store.onChange((s) => registry.apply(s))
+
   discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
 
   // 安装来源探测(brew/npm/manual):决定「检查更新」给哪条升级命令。
   // 约 0.2s(brew list --cask),放在建窗之前;失败/判不出都会回退 manual,不阻断启动
   const installChannel = await detectInstallChannel({ runner })
-  registerIpc({ store, tray: trayCtl, agents, cron, discovery, termination, docker, installChannel })
+
+  // AI 助手(阶段 4):pi 引擎 + ToolRegistry + 内置会话;MCP HTTP 端点同批启动
+  const ai = createAiStack({
+    store,
+    services: { plists, agents, cron, discovery, termination, docker, launchctl, brew },
+    home: app.getPath('home'),
+    userDataDir: app.getPath('userData'),
+    emit: (ev) => broadcast(IPC_EVENTS.aiRunEvent, ev)
+  })
+  await ai.start()
+
+  registerIpc({ store, tray: trayCtl, agents, cron, discovery, termination, docker, installChannel, ai })
 
   createWindow()
 

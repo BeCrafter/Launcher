@@ -1,0 +1,1697 @@
+/* ============================================================
+   Launcher demo — AI 助手对话页样式（2026-09-13 重设计 · 冻结例外）
+   会话栏 + 对话流 + 工具步骤块 + 授权卡 + composer，全部走主题变量
+   ============================================================ */
+
+/* ── 外壳：会话栏 + 对话列 ── */
+.ai-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ── 会话栏 ── */
+.ai-rail {
+  width: 232px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  min-height: 0;
+}
+
+.ai-rail.collapsed {
+  display: none;
+}
+
+/* 工具行：搜索框 + 右侧方形「新对话」—— 会话栏第一行（无独立标题行，标题见左侧导航/顶栏面包屑） */
+.ai-rail-tools {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin: 12px 10px 8px;
+}
+
+.ai-rail-new {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid rgba(124, 106, 244, 0.25);
+  background: var(--wash-accent);
+  color: var(--accent2);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-rail-new:hover {
+  border-color: rgba(124, 106, 244, 0.4);
+}
+
+/* 会话搜索：复用 .search-wrap 原语（浅底 + 紫色聚焦环），只覆盖宽度与字号以适配 232px 栏宽 */
+.ai-rail-search {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 9px;
+}
+
+.ai-rail-search input {
+  font-size: 11.5px;
+}
+
+.ai-rail-search-clear {
+  display: none;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* 有输入才出现，避免空态多一个死按钮 */
+.ai-rail-search.has-text .ai-rail-search-clear {
+  display: flex;
+}
+
+.ai-rail-search-clear i {
+  color: var(--dim);
+  font-size: 10px;
+  transition: color 0.2s;
+}
+
+.ai-rail-search-clear:hover i {
+  color: var(--accent2);
+}
+
+/* 命中片段：占用时间戳那一行的位置，命中词高亮 */
+.ai-rail-hit {
+  font-size: 10px;
+  color: var(--dim);
+  line-height: 1.5;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-rail-hit-mark {
+  background: var(--wash-accent);
+  color: var(--accent2);
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+.ai-rail-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 2px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-rail-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1px solid transparent;
+}
+
+.ai-rail-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ai-rail-item.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* 选中态与设置页侧栏同款：只换底色与文字，不加描边 */
+.ai-rail-item.active .ai-rail-item-title {
+  font-weight: 600;
+}
+
+.ai-rail-item-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.ai-rail-item-ts {
+  font-size: 9.5px;
+  color: var(--dim);
+  margin-top: 2px;
+}
+
+.ai-rail-item.active .ai-rail-item-ts {
+  color: var(--accent2);
+  opacity: 0.7;
+}
+
+.ai-rail-empty {
+  padding: 20px 10px;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+/* 折叠钮：悬浮在对话画布左上角、紧贴会话栏右缘，不占布局宽度（会话栏收起时画布完全吃满）。
+   裸图标无框无底（用户要求），故颜色取 --muted 而非更暗的 --dim。
+   图标恒为 fa-angles-right，展开态整体旋转 180° 得到向左的形态——开合是"转"出来的，
+   而不是硬换图标；悬停再朝"即将收/放的方向"轻推一下。.is-in 由 aiSyncRailToggle() 写。 */
+.ai-rail-toggle {
+  --nudge: 2px;
+  position: absolute;
+  top: 14px;
+  left: 6px;
+  z-index: 41;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s, transform 0.2s;
+}
+
+/* 展开态意味着下一步是"收起"（向左），折叠态意味着"展开"（向右） */
+.ai-rail-toggle.is-in {
+  --nudge: -2px;
+}
+
+.ai-rail-toggle:hover {
+  color: var(--accent2);
+  transform: translateX(var(--nudge));
+}
+
+.ai-rail-toggle i {
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ai-rail-toggle.is-in i {
+  transform: rotate(180deg);
+}
+
+/* ── 对话列 ── */
+.ai-main {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /* 对话画布：顶部紫调氛围光，与左侧会话栏（实色 surface）、底部悬浮输入区拉开三层 */
+  background:
+    radial-gradient(1000px 440px at 50% -40px, rgba(124, 106, 244, 0.28), transparent 66%),
+    linear-gradient(180deg, rgba(124, 106, 244, 0.05), transparent 420px);
+}
+
+/* 浅色底上同一束光要压得更淡，否则整片发紫 */
+body.light-theme .ai-main {
+  background:
+    radial-gradient(1000px 440px at 50% -40px, rgba(106, 88, 224, 0.08), transparent 66%),
+    linear-gradient(180deg, rgba(106, 88, 224, 0.02), transparent 420px);
+}
+
+.ai-scroll {
+  flex: 1;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-col {
+  max-width: 720px;
+  /* flex 子项 + auto 横向外边距不会自动撑满：auto 外边距先吃掉剩余空间，元素就按内容宽度收缩。
+     不写 width 的话，流式输出时整列会随文字增长由窄变宽（卡片尤其明显），故显式撑满再靠 auto 居中 */
+  width: 100%;
+  margin: 0 auto;
+  /* 内容贴底生长：短会话不再在下方留大片空洞；内容超出时该 auto 归零，按普通滚动 */
+  margin-top: auto;
+  padding: 26px 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* 欢迎态是"入口"而非对话，保持贴顶，不走贴底生长 */
+.ai-col:has(.ai-welcome) {
+  margin-top: 0;
+}
+
+/* 回到底部浮标：挂在输入区上方（输入区高度会随 @ 引用行变化，故按 100% 定位而非固定值） */
+.ai-scroll-bot {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: 28px;
+  height: 28px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: all 0.2s;
+}
+
+.ai-scroll-bot.show {
+  display: flex;
+}
+
+.ai-scroll-bot:hover {
+  color: var(--accent2);
+  border-color: rgba(124, 106, 244, 0.4);
+}
+
+/* ── 欢迎态 ── */
+.ai-welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 5vh;
+}
+
+.ai-welcome-greet {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-welcome-greet i {
+  color: var(--accent2);
+  font-size: 18px;
+}
+
+.ai-welcome-sub {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.75;
+  max-width: 560px;
+}
+
+.ai-health-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(124, 106, 244, 0.32);
+  background: var(--accent-wash-grad);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-health-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  border-color: rgba(124, 106, 244, 0.5);
+}
+
+.ai-health-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(124, 106, 244, 0.18);
+  color: var(--accent2);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.ai-health-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-health-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ai-health-desc {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.ai-health-arrow {
+  color: var(--accent2);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ai-skill-lbl {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 4px;
+}
+
+.ai-skill-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.ai-skill-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-skill-card:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+
+.ai-skill-card-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-skill-card-icon {
+  color: var(--accent2);
+  font-size: 12px;
+}
+
+.ai-skill-card-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-skill-card-desc {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+/* ── 消息 ── */
+@keyframes ai-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ai-msg {
+  animation: ai-fade-in 0.22s ease;
+}
+
+.ai-msg.user {
+  align-self: flex-end;
+  max-width: 82%;
+}
+
+.ai-bubble {
+  background: var(--wash-accent);
+  border: 1px solid rgba(124, 106, 244, 0.26);
+  border-radius: 12px 12px 3px 12px;
+  padding: 9px 13px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-bubble .ai-chip-ref {
+  margin-right: 6px;
+}
+
+.ai-msg.bot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  /* 助手回答卡片化：在画布上给每条回答一个容器，与用户气泡成对 */
+  background: var(--surface);
+  border: 1px solid rgba(124, 106, 244, 0.22);
+  border-radius: 12px;
+  padding: 13px 15px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+}
+
+.ai-bot-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  font-size: 10.5px;
+  color: var(--accent2);
+}
+
+.ai-bot-avatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  background: var(--accent-wash-grad);
+  border: 1px solid rgba(124, 106, 244, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent2);
+  font-size: 9px;
+  flex-shrink: 0;
+}
+
+.ai-txt {
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ai-txt+.ai-txt {
+  margin-top: 6px;
+}
+
+.ai-chip-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--wash-blue);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: var(--blue);
+  font-size: 10.5px;
+  font-family: 'SF Mono', Menlo, monospace;
+  white-space: nowrap;
+}
+
+/* 流式光标 */
+.ai-caret {
+  display: inline-block;
+  width: 7px;
+  height: 13px;
+  background: var(--accent2);
+  border-radius: 1px;
+  vertical-align: -2px;
+  margin-left: 2px;
+  animation: pulse-g 1s infinite;
+}
+
+/* 思考中 */
+.ai-thinking {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+
+.ai-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.ai-dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent2);
+  animation: ai-dot 1.2s infinite;
+}
+
+.ai-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.ai-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes ai-dot {
+
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+/* ── 工具步骤块 ── */
+.ai-steps {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+  margin: 10px 0;
+}
+
+.ai-steps-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 10.5px;
+  color: var(--muted);
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.ai-steps-hd:hover {
+  background: var(--hover);
+}
+
+.ai-steps-hd>i:first-child {
+  color: var(--accent2);
+  font-size: 10px;
+}
+
+.ai-chev {
+  margin-left: auto;
+  font-size: 9px;
+  color: var(--dim);
+  transition: transform 0.2s;
+}
+
+.ai-chev.open {
+  transform: rotate(90deg);
+}
+
+.ai-steps-body {
+  display: none;
+  border-top: 1px solid var(--border);
+  padding: 7px 12px 4px;
+}
+
+.ai-steps.open .ai-steps-body {
+  display: block;
+}
+
+.ai-step {
+  padding: 4px 0;
+}
+
+.ai-step-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ai-step.no-out .ai-step-hd {
+  cursor: default;
+}
+
+.ai-tool {
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--accent2);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.ai-step-args {
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--dim);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ai-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ai-step-dot.ok {
+  background: var(--green);
+}
+
+.ai-step-dot.warn {
+  background: var(--yellow);
+}
+
+.ai-step-dot.err {
+  background: var(--red);
+}
+
+.ai-spin {
+  color: var(--cyan);
+  font-size: 10px;
+  animation: spin 1s linear infinite;
+  flex-shrink: 0;
+  width: 6px;
+  text-align: center;
+}
+
+.ai-step-ms {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 9.5px;
+  font-family: 'SF Mono', Menlo, monospace;
+  flex-shrink: 0;
+}
+
+.ai-step-chev {
+  font-size: 8px;
+  color: var(--dim);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+
+.ai-step-chev.open {
+  transform: rotate(90deg);
+}
+
+.ai-step-out {
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 3px 0 7px 22px;
+}
+
+.ai-step-out.open {
+  display: flex;
+}
+
+.ai-step-out .log-line {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+}
+
+/* ── 内联卡片 ── */
+.ai-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+
+.ai-card-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.ai-card-hd i {
+  font-size: 11px;
+}
+
+.ai-card-sub {
+  font-size: 10.5px;
+  color: var(--dim);
+  font-weight: 400;
+  margin-left: auto;
+}
+
+.ai-report-item {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  align-items: flex-start;
+}
+
+.ai-report-item i {
+  margin-top: 3px;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.ai-report-item.ok i {
+  color: var(--green);
+}
+
+.ai-report-item.warn i {
+  color: var(--yellow);
+}
+
+.ai-report-item.err i {
+  color: var(--red);
+}
+
+.ai-report-go {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.ai-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.ai-code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.7;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.ai-cron-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+
+.ai-cron-row i {
+  color: var(--accent2);
+  font-size: 10px;
+}
+
+.ai-cron-row .ai-cron-expr {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--cyan);
+}
+
+/* ── 授权卡 ── */
+.ai-appr {
+  border-color: rgba(124, 106, 244, 0.4);
+  background: var(--accent-wash-grad);
+}
+
+.ai-appr-cmd {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+
+.ai-appr-st {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+.ai-appr-st.done {
+  color: var(--green);
+}
+
+.ai-appr-st.cancelled {
+  color: var(--dim);
+}
+
+/* ── 追问建议 ── */
+.ai-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.ai-suggest-lbl {
+  font-size: 10px;
+  color: var(--dim);
+  margin-right: 2px;
+}
+
+.ai-suggest .chip {
+  font-size: 10.5px;
+}
+
+/* ── 输入区 ── */
+.ai-composer {
+  position: relative;
+  flex-shrink: 0;
+  /* 悬浮输入区：不做整条底栏，改由渐隐遮罩与上方内容分层
+     底部预留固定状态栏高度（38px）+ 呼吸：与 list-container 的 64px 同源 */
+  padding: 6px 24px 50px;
+}
+
+/* 遮罩：内容滚到输入区下方时淡出，避免与悬浮卡片叠字 */
+.ai-composer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -64px;
+  bottom: 0;
+  background: linear-gradient(180deg, transparent, var(--bg) 62%);
+  pointer-events: none;
+}
+
+.ai-composer-inner {
+  position: relative;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.ai-engine-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--green);
+  cursor: pointer;
+  padding: 3px 9px;
+  border-radius: 99px;
+  background: var(--wash-green);
+  border: 1px solid rgba(62, 207, 142, 0.35);
+  margin-bottom: 7px;
+  transition: filter 0.2s;
+}
+
+.ai-engine-chip:hover {
+  filter: brightness(1.15);
+}
+
+.ai-engine-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 5px var(--green);
+  animation: pulse-g 1.6s infinite;
+}
+
+.ai-composer-chips {
+  display: none;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 7px;
+  align-items: center;
+}
+
+.ai-composer-chips.show {
+  display: flex;
+}
+
+.ai-composer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--wash-blue);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: var(--blue);
+  font-size: 10.5px;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+.ai-composer-chip i {
+  cursor: pointer;
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+.ai-composer-chip i:hover {
+  opacity: 1;
+}
+
+.ai-composer-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: 14px;
+  padding: 10px 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.ai-composer-box:focus-within {
+  border-color: rgba(124, 106, 244, 0.45);
+  box-shadow: 0 0 0 3px rgba(124, 106, 244, 0.08);
+}
+
+.ai-comp-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: none;
+  background: none;
+  color: var(--dim);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.ai-comp-btn:hover,
+.ai-comp-btn.active {
+  color: var(--accent2);
+  background: var(--hover);
+}
+
+.ai-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.6;
+  max-height: 160px;
+  font-family: inherit;
+  padding: 5px 0;
+}
+
+.ai-input::placeholder {
+  color: var(--dim);
+}
+
+.ai-send {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+
+.ai-send:hover {
+  filter: brightness(1.12);
+}
+
+.ai-send.stop {
+  background: var(--surface4);
+  color: var(--red);
+}
+
+.ai-composer-hint {
+  font-size: 10px;
+  color: var(--dim);
+  margin-top: 7px;
+  text-align: center;
+}
+
+/* ── @ 引用弹层（fixed，挂 body；材质同 topbar 下拉） ── */
+.ai-mention-pop {
+  position: fixed;
+  z-index: 120;
+  min-width: 280px;
+  max-width: 380px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--surface3);
+  border: 1px solid rgba(124, 106, 244, 0.28);
+  border-radius: 10px;
+  padding: 5px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(12px);
+  display: none;
+}
+
+.ai-mention-pop.open {
+  display: block;
+}
+
+.ai-mention-lbl {
+  padding: 7px 10px 3px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ai-mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.ai-mention-item:hover,
+.ai-mention-item.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+.ai-mention-item i {
+  width: 13px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 10px;
+}
+
+.ai-mention-item .ai-mention-sub {
+  margin-left: auto;
+  font-size: 9.5px;
+  color: var(--dim);
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+.ai-mention-empty {
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+/* ── MCP 接入模态内部 ── */
+.ai-mcp-lbl {
+  font-size: 9.5px;
+  color: var(--dim);
+  margin-bottom: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ai-mcp-perm {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+}
+
+.ai-mcp-perm>div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-mcp-perm-t {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-mcp-perm-d {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 2px;
+  line-height: 1.5;
+}
+
+.ai-mcp-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-mcp-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ai-mcp-agent i.ai-mcp-agent-icon {
+  color: var(--dim);
+  font-size: 11px;
+  width: 14px;
+  text-align: center;
+}
+
+.ai-mcp-agent-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-mcp-agent-cli {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.ai-mcp-agent-st {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ── 响应式 ── */
+@media(max-width:900px) {
+  .ai-rail {
+    display: none;
+  }
+
+  .ai-rail.mobile-open {
+    display: flex;
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+    background: var(--surface);
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.3);
+  }
+
+  /* 窄屏会话栏是覆盖层，会盖住画布左上角的折叠钮（面板内已无处可放关闭钮），
+     故覆盖层打开时把钮让到它右侧——始终浮在面板外，也只能在它右边关掉 */
+  .ai-shell:has(.ai-rail.mobile-open) .ai-rail-toggle {
+    left: 246px;
+  }
+
+  .ai-col {
+    padding: 18px 16px 12px;
+  }
+
+  .ai-composer {
+    padding: 10px 16px 50px;
+  }
+}
+
+@media(max-width:560px) {
+  .ai-skill-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ══════════ AI 配置页（设置页 sp-ai）══════════
+   样式归在 ai.css（与 .ai-mcp-* 同源），尽管宿主是设置页——沿「按功能归文件」约定。
+   全部走主题变量，故 settings.css 不含 body.light-theme 覆写的做法在这里同样成立。 */
+
+/* 字段宽度单一来源：端点、API Key、模型 ID 三处共用，保证切换协议时不跳宽；
+   560px 窄屏由文末媒体查询放宽为 100% */
+#sp-ai {
+  --cfg-field-w: 280px;
+}
+
+/* 引擎 chip：从静态 span 改为可点按钮（点击跳设置页那份配置） */
+.ai-engine-chip {
+  font-family: inherit;
+  appearance: none;
+}
+
+.ai-engine-chip:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 1px;
+}
+
+/* 未配置态：整个 chip 由绿转中性，一眼看出引擎没就绪 */
+.ai-engine-chip.off {
+  color: var(--muted);
+  background: var(--panel);
+  border-color: var(--border2);
+}
+
+.ai-engine-chip.off .ai-engine-dot {
+  background: var(--dim);
+  box-shadow: none;
+  animation: none;
+}
+
+.ai-engine-cog {
+  font-size: 9px;
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+
+.ai-engine-chip:hover .ai-engine-cog {
+  opacity: 1;
+}
+
+/* 未配置引导卡：落在输入框上方，替代纯 toast 的「看得见」引导 */
+.ai-connect-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(238, 192, 77, 0.28);
+  background: var(--wash-yellow);
+}
+
+.ai-connect-icon {
+  color: var(--yellow);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.ai-connect-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-connect-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-connect-desc {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 1px;
+}
+
+/* 未配置时点发送：脉冲一次把视线引到上面那张卡 */
+.ai-connect-card.pulse {
+  animation: ai-connect-pulse 0.9s ease;
+}
+
+@keyframes ai-connect-pulse {
+  0%, 100% { border-color: rgba(238, 192, 77, 0.28); }
+  30%, 70% { border-color: var(--yellow); box-shadow: 0 0 0 3px rgba(238, 192, 77, 0.16); }
+}
+
+.ai-send.disabled {
+  background: var(--surface4);
+  color: var(--dim);
+  cursor: not-allowed;
+}
+
+.ai-send.disabled:hover {
+  filter: none;
+}
+
+/* 协议卡网格：两个协议各一张（2026-09-22 由「四家厂商」收敛为「两种协议」） */
+.ai-prov-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 12px 0 4px;
+}
+
+.ai-prov-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--surface2);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ai-prov-card:hover {
+  border-color: rgba(124, 106, 244, 0.4);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+/* 选中态：从「深色块 + 描边」改为「柔和紫 wash」——原来的背景是给深色主题调的，
+   浅色下压在浅灰区块上会糊成一片脏灰（用户反馈）。wash 变量本身随主题取值，两端都成立。 */
+.ai-prov-card.selected {
+  background: var(--wash-accent);
+  border-color: var(--accent);
+}
+
+.ai-prov-card-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ai-prov-card-icon {
+  color: var(--accent2);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ai-prov-card-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ai-prov-check {
+  margin-left: auto;
+  color: var(--accent2);
+  font-size: 11px;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.ai-prov-card.selected .ai-prov-check {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* 协议标识：卡片副行由「N 个可用模型」改为协议名 pill（协议是主身份，模型数不再是卖点） */
+.ai-prov-card-sub {
+  align-self: flex-start;
+  font-size: 9px;
+  color: var(--accent2);
+  background: rgba(124, 106, 244, 0.14);
+  border-radius: 99px;
+  padding: 1px 6px;
+  margin-top: 1px;
+}
+
+/* 选中态底色已是紫 wash，pill 再叠一层就糊了，改用描边 */
+.ai-prov-card.selected .ai-prov-card-sub {
+  background: none;
+  border: 1px solid rgba(124, 106, 244, 0.35);
+}
+
+.ai-prov-card-foot {
+  margin-top: 3px;
+}
+
+.ai-prov-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  color: var(--dim);
+}
+
+.ai-prov-key.ok {
+  color: var(--green);
+}
+
+.ai-prov-key i {
+  font-size: 8.5px;
+}
+
+/* 选中卡底色是紫 wash，亮绿落在上面会显脏 —— 借 accent2 压一档，图标形状仍表意 */
+.ai-prov-card.selected .ai-prov-key.ok {
+  color: var(--accent2);
+}
+
+/* 端点、API Key、模型 ID 三处共用同一字段宽来源，避免切换协议或填入预设时这一列跳宽；
+   760px 窄屏由下面的媒体查询收窄 */
+.ai-cfg-input {
+  width: var(--cfg-field-w);
+  max-width: var(--cfg-field-w);
+  font-size: 11px;
+}
+
+.ai-cfg-key-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.ai-cfg-key-wrap .ai-cfg-input {
+  width: var(--cfg-field-w);
+  max-width: var(--cfg-field-w);
+}
+
+.ai-cfg-test-st-wrap {
+  font-size: 10.5px;
+}
+
+.ai-cfg-test-st {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ai-cfg-test-st.ok {
+  color: var(--green);
+}
+
+.ai-cfg-test-st.fail {
+  color: var(--red);
+}
+
+.ai-cfg-test-st.run {
+  color: var(--blue);
+}
+
+/* 模型行：输入框 + 预设快捷填入（OpenAI 兼容端点没有已知目录，只能给常见落脚点） */
+.ai-model-row {
+  align-items: flex-start;
+}
+
+.ai-model-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+  flex-shrink: 0;
+}
+
+/* 快捷填入恒为单行：不换行，放不下就横向滚动（宽度与上方输入框对齐）。
+   Anthropic 最多 3 个内置模型，OpenAI 兼容只有一个「上次用过」——都不会挤爆 */
+.ai-model-picks {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 5px;
+  width: var(--cfg-field-w);
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.ai-model-picks::-webkit-scrollbar {
+  height: 4px;
+}
+
+.ai-model-picks::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 2px;
+}
+
+.ai-model-chip {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 99px;
+  border: 1px solid var(--border2);
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-model-chip:hover {
+  color: var(--text);
+  border-color: var(--border2);
+  background: var(--hover);
+}
+
+.ai-model-chip.active {
+  border-color: rgba(124, 106, 244, 0.4);
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* 设置页里的挂载命令块与页脚 */
+.ai-mcp-cfg {
+  padding: 10px 0 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-mcp-cfg .settings-row-desc {
+  margin-top: 6px;
+}
+
+.ai-cfg-footer {
+  padding: 12px 0 6px;
+}
+
+.ai-cfg-footer-hint {
+  font-size: 10px;
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+.ai-cfg-footer-hint i {
+  margin-right: 5px;
+}
+
+/* MCP 弹窗：两种用法并列成两块（不单选——stdio 由外部 Agent 拉子进程、HTTP 依赖本应用在跑，
+   是「用哪套」而非「切到哪套」） */
+.ai-mcp-cmd {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 11px;
+  background: var(--panel);
+}
+
+.ai-mcp-cmd-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+/* 协议名用等宽小胶囊，与命令内容同族视觉 */
+.ai-mcp-cmd-tag {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--accent2);
+  background: var(--wash-accent);
+  border-radius: 5px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
+.ai-mcp-cmd-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-mcp-cmd-copy {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--dim);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.ai-mcp-cmd-copy:hover {
+  color: var(--accent2);
+  background: var(--hover);
+}
+
+.ai-mcp-cmd-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--dim);
+  line-height: 1.5;
+  margin-top: 7px;
+}
+
+@media(max-width:560px) {
+  .ai-prov-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-cfg-key-wrap {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .ai-cfg-key-wrap .ai-cfg-input,
+  .ai-cfg-input {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* 模型列保持右对齐的定宽列，只有快捷 chip 换行；否则输入框被 flex 抻满后 chip 被挤出可视区 */
+  .ai-model-pick {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .ai-model-picks {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+}

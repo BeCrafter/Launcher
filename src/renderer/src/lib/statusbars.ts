@@ -76,3 +76,26 @@ export function servicesStatusBar(
     monitor: t('statusbar.scanEvery3s')
   }
 }
+
+// AI 模块状态栏(demo config.js MODULES.ai.statusbar;引擎行跟随配置,未配置时如实说未配置)
+export function aiStatusBar(
+  d: { ready: boolean; providerName: string; modelLabel: string; skills: number; calls: number },
+  t: T,
+  fmtFn: FmtFn
+): StatusBarModel {
+  return {
+    summaryIcon: 'fa-wand-magic-sparkles',
+    summaryHtml: d.ready
+      ? fmtFn(t('ai.sb.engineLive'), { P: d.providerName, M: d.modelLabel })
+      : t('ai.sb.engineOff'),
+    items: [
+      { dot: 'running', textHtml: t('ai.sb.tools') },
+      { dot: 'loaded', textHtml: t('ai.sb.wtools') },
+      { dot: 'loaded', textHtml: fmtFn(t('ai.sb.skills'), { N: d.skills }) },
+      { dot: 'unloaded', textHtml: fmtFn(t('ai.sb.calls'), { N: d.calls }) }
+    ],
+    pathIcon: 'fa-solid fa-plug',
+    path: t('ai.sb.path'),
+    monitor: t('ai.sb.monitor')
+  }
+}

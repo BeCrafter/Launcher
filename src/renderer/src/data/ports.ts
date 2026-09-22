@@ -24,8 +24,14 @@ import type {
   CronUpdateResult,
   KillOutcome,
   RestartOutcome,
-  ServicesListPayload
+  ServicesListPayload,
+  AiApprovalInput,
+  AiMcpInfo,
+  AiSendInput,
+  AiTestResult
 } from '@shared/ipc'
+import type { AiEngineState, AiMessage, AiRunEvent, AiSession, AiSkillInfo } from '@shared/ai'
+import type { AiProviderId } from '@shared/settings'
 
 /** 意图动作(用户语义):顺序逻辑在 main 内部完成 */
 export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
@@ -95,4 +101,29 @@ export interface DataSource {
   agents: AgentRepository
   crons: CronRepository
   services: ServiceRepository
+  ai: AiRepository
+}
+
+/**
+ * AI 仓储(阶段 4:pi 引擎在 main,renderer 只发意图 + 订阅事件流)。
+ * Key 的读写只传明文进不出:setKey 单向送入 main,safeStorage 加密后存;状态里只有 hasKey 布尔。
+ */
+export interface AiRepository {
+  getState(): Promise<AiEngineState>
+  setKey(providerId: AiProviderId, apiKey: string): Promise<AiEngineState>
+  clearKey(providerId: AiProviderId): Promise<AiEngineState>
+  testConnection(providerId: AiProviderId): Promise<AiTestResult>
+  listSessions(): Promise<AiSession[]>
+  createSession(): Promise<AiSession>
+  deleteSession(id: string): Promise<void>
+  getMessages(sessionId: string): Promise<AiMessage[]>
+  send(input: AiSendInput): Promise<void>
+  abort(): Promise<void>
+  respondApproval(input: AiApprovalInput): Promise<void>
+  skills(): Promise<AiSkillInfo[]>
+  /** 该协议的模型目录(仅内置目录的协议非空) */
+  catalog(providerId: AiProviderId): Promise<{ id: string; name: string }[]>
+  mcpInfo(): Promise<AiMcpInfo>
+  /** 运行事件订阅(返回退订函数) */
+  onRunEvent(cb: (e: AiRunEvent) => void): () => void
 }
