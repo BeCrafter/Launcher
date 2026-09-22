@@ -73,6 +73,7 @@ export function createAiStack(deps: {
   const mcp = createMcpHttpEndpoint({
     registry,
     getPermission: () => get().mcpPermission,
+    getLanguage: () => get().language,
     log: (m) => console.log(`[mcp] ${m}`)
   })
 

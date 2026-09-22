@@ -31,7 +31,8 @@ afterEach(async () => {
 })
 
 async function start(port: number): Promise<string> {
-  ep = createMcpHttpEndpoint({ registry, getPermission: () => 'readOnly', port, log: () => {} })
+  ep = createMcpHttpEndpoint({ registry, getPermission: () => 'readOnly',
+      getLanguage: () => 'zh-CN', port, log: () => {} })
   await ep.start()
   return `http://127.0.0.1:${port}/mcp`
 }
@@ -73,7 +74,8 @@ describe('MCP HTTP 端点', () => {
   })
 
   it('running() 反映真实监听状态', async () => {
-    ep = createMcpHttpEndpoint({ registry, getPermission: () => 'readOnly', port: 17804, log: () => {} })
+    ep = createMcpHttpEndpoint({ registry, getPermission: () => 'readOnly',
+      getLanguage: () => 'zh-CN', port: 17804, log: () => {} })
     expect(ep.running()).toBe(false)
     await ep.start()
     expect(ep.running()).toBe(true)
@@ -83,7 +85,8 @@ describe('MCP HTTP 端点', () => {
 
   it('端口被占时不抛异常(只降级为未监听,不阻断应用启动)', async () => {
     const url = await start(17805)
-    const second = createMcpHttpEndpoint({ registry, getPermission: () => 'readOnly', port: 17805, log: () => {} })
+    const second = createMcpHttpEndpoint({ registry, getPermission: () => 'readOnly',
+      getLanguage: () => 'zh-CN', port: 17805, log: () => {} })
     await expect(second.start()).resolves.toBeUndefined()
     expect(second.running()).toBe(false)
     // 原端点仍可用

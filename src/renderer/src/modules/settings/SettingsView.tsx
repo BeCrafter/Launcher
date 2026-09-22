@@ -31,8 +31,9 @@ const TABS = [
   { id: 'editor', icon: 'fa-solid fa-code', labelKey: 'settings.tab.editor' },
   { id: 'security', icon: 'fa-solid fa-shield-halved', labelKey: 'settings.tab.security' },
   { id: 'about', icon: 'fa-solid fa-circle-info', labelKey: 'settings.tab.about' },
-  { id: 'login', icon: 'fa-solid fa-right-to-bracket', labelKey: 'settings.tab.login' },
-  { id: 'ai', icon: 'fa-solid fa-wand-magic-sparkles', labelKey: 'settings.tab.ai' }
+  // AI 助手排在登录项之前(用户要求;登录项是低频只读说明页)
+  { id: 'ai', icon: 'fa-solid fa-wand-magic-sparkles', labelKey: 'settings.tab.ai' },
+  { id: 'login', icon: 'fa-solid fa-right-to-bracket', labelKey: 'settings.tab.login' }
 ] as const
 
 type TabId = (typeof TABS)[number]['id']

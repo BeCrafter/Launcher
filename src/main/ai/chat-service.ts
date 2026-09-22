@@ -24,7 +24,7 @@ import type { AiApprovalInput, AiSendInput, AiTestResult } from '../../shared/ip
 import type { AiProviderId, LauncherSettings } from '../../shared/settings'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { EXPERT_PROMPT } from './prompts/expert'
+import { expertPrompt } from './prompts/expert'
 import { SKILLS, findSkill } from './skills'
 import type { LlmClient } from './llm'
 import type { SecretStore } from './secret-store'
@@ -499,7 +499,9 @@ export function createChatService(deps: {
     if (!session) throw new Error('AI_SESSION_MISSING')
     // 最后一条用户消息已入库;送进 agent 的历史不含它(prompt() 会追加)
     const history = session.messages.slice(0, -1)
-    const systemPrompt = skill ? `${EXPERT_PROMPT}\n\n---\n\n${skill.task}` : EXPERT_PROMPT
+    // 输出语言跟随应用语言(用户要求)
+    const base = expertPrompt(settings.language)
+    const systemPrompt = skill ? `${base}\n\n---\n\n${skill.task}` : base
 
     const agent = new Agent({
       initialState: {

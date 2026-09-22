@@ -785,27 +785,123 @@
 }
 
 /* ── 设置页 › AI 助手:API Key 行 ──
-   显示/隐藏按钮移到输入框上方并靠右(用户要求);整体仍是输入框 + 测试连接一行。 */
-.ai-cfg-key-col {
+   眼睛钮**浮动在输入框内部**右缘(用户要求:在输入框范围里的那种浮动,不是另起一行)。 */
+.ai-cfg-key-field {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex-shrink: 0;
+  align-items: center;
 }
-.ai-cfg-key-tools {
-  display: flex;
-  justify-content: flex-end;
+/* 给浮动钮留出空间,否则长 Key 的文字会钻到眼睛底下 */
+.ai-cfg-key-field .ai-cfg-input {
+  padding-right: 30px;
 }
 .ai-cfg-eye {
-  padding: 3px 9px;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ai-cfg-eye:hover {
+  color: var(--accent2);
+  background: var(--wash-accent);
+}
+/* 测试连接:图标钮(tooltip 带文案)—— 文字版在这一行里占地过大 */
+.ai-cfg-test-btn {
+  flex-shrink: 0;
+  padding: 5px 9px;
   line-height: 1;
 }
+.ai-cfg-test-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 
-/* AI 助手 › 自定义请求头:多行输入(与其它 ai-cfg-input 同宽,等宽字体便于对齐「名称: 值」) */
-.ai-cfg-headers {
-  width: var(--cfg-field-w);
-  max-width: var(--cfg-field-w);
-  min-height: 46px;
-  resize: vertical;
-  line-height: 1.5;
+/* ══════════ AI 对话页:右侧会话锚点 ══════════
+   快速定位到某条用户消息。锚点条浮在画布右侧,平时克制、指针靠近才亮起来;
+   悬浮时目标消息加 .is-anchor-hl 高亮(命令式加类,避免划过就重渲整条消息流)。 */
+.ai-anchors {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 6px 4px;
+  border-radius: 10px;
+  /* 常态几乎隐形,指针进来才浮现 —— 否则一列小横杠会跟正文抢注意力 */
+  opacity: 0.45;
+  transition: opacity 0.18s ease, background 0.18s ease;
+}
+.ai-anchors:hover {
+  opacity: 1;
+  background: var(--panel);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.16);
+}
+
+.ai-anchor {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.ai-anchor-bar {
+  display: block;
+  width: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--dim);
+  transition: width 0.16s cubic-bezier(0.32, 0.72, 0, 1), background 0.16s ease;
+}
+/* 当前阅读位置:更长更亮,一眼看出"我在哪" */
+.ai-anchor.is-active .ai-anchor-bar {
+  width: 14px;
+  background: var(--accent);
+}
+/* 悬浮:再长一点,并把浮层文字显示出来 */
+.ai-anchor.is-hover .ai-anchor-bar {
+  width: 18px;
+  background: var(--accent2);
+}
+
+.ai-anchor-tip {
+  position: absolute;
+  right: calc(100% + 6px);
+  max-width: 260px;
+  padding: 4px 9px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  color: var(--fg);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+/* 悬浮锚点时对应的消息:一层柔和描边,不改变布局(不改 padding/margin,避免跳动) */
+.ai-msg.is-anchor-hl {
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--accent2), 0 0 0 6px var(--wash-accent);
+  transition: box-shadow 0.15s ease;
 }

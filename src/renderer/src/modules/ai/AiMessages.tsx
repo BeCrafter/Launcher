@@ -39,7 +39,7 @@ export function AiMessages(): React.JSX.Element {
     <>
       {items.map((it, i) =>
         it.kind === 'user' ? (
-          <UserMsg key={it.msg.id} msg={it.msg} />
+          <UserMsg key={it.msg.id} msg={it.msg} mi={i} />
         ) : (
           <BotGroupView key={it.group.assistant.id} group={it.group} idx={i} isFinal={i === items.length - 1} />
         )
@@ -50,9 +50,9 @@ export function AiMessages(): React.JSX.Element {
 
 // ── 用户消息(demo aiMsgHtml user 分支:@ 引用 chips + 气泡)──
 
-function UserMsg({ msg }: { msg: AiUserMessage }): React.JSX.Element {
+function UserMsg({ msg, mi }: { msg: AiUserMessage; mi: number }): React.JSX.Element {
   return (
-    <div className="ai-msg user">
+    <div className="ai-msg user" data-mi={mi}>
       <div className="ai-bubble">
         {(msg.mentions ?? []).map((m) => (
           <span className="ai-chip-ref" key={m.key}>
@@ -77,7 +77,8 @@ interface BotGroup {
 
 type RenderItem = { kind: 'user'; msg: AiUserMessage } | { kind: 'bot'; group: BotGroup }
 
-function buildItems(messages: AiMessage[]): RenderItem[] {
+/** 消息 → 渲染项(右侧锚点也要用它找出「用户消息」的位置,故导出) */
+export function buildItems(messages: AiMessage[]): RenderItem[] {
   const items: RenderItem[] = []
   for (const m of messages) {
     if (m.role === 'user') items.push({ kind: 'user', msg: m })
@@ -184,7 +185,7 @@ function BotGroupView({
   const awaiting = assistant.blocks.length === 0
 
   return (
-    <div className="ai-msg bot">
+    <div className="ai-msg bot" data-mi={idx}>
       <div className="ai-bot-name">
         <span className="ai-bot-avatar">
           <i className="fa-solid fa-wand-magic-sparkles" />

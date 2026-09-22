@@ -245,40 +245,12 @@ export function AiPane(): React.JSX.Element {
         />
 
         <SettingsRow
-          title={t('settings.ai.headers.rowTitle')}
-          desc={t('settings.ai.headers.rowDesc')}
-          control={
-            <textarea
-              className="f-input mono ai-cfg-input ai-cfg-headers"
-              rows={2}
-              spellCheck={false}
-              placeholder={t('settings.ai.headers.ph')}
-              value={headerDraft}
-              onChange={(e) => setHeaderDraft(e.target.value)}
-              onBlur={() => patchProvider({ headers: parseHeaders(headerDraft) })}
-            />
-          }
-        />
-
-        <SettingsRow
           title={t('settings.ai.apiKey.rowTitle')}
           desc={t('settings.ai.apiKey.rowDesc')}
           control={
-            <div className="ai-cfg-key-col">
-              {/* 显示/隐藏按钮放在输入框**上方**、靠右对齐(用户要求) */}
-              <div className="ai-cfg-key-tools">
-                <button
-                  className="d-btn ai-cfg-eye"
-                  type="button"
-                  title={t(keyVisible ? 'settings.ai.apiKey.hide' : 'settings.ai.apiKey.show')}
-                  aria-label={t(keyVisible ? 'settings.ai.apiKey.hide' : 'settings.ai.apiKey.show')}
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setKeyVisible((v) => !v)}
-                >
-                  <i className={`fa-solid ${keyVisible ? 'fa-eye-slash' : 'fa-eye'}`} />
-                </button>
-              </div>
-              <div className="ai-cfg-key-wrap">
+            <div className="ai-cfg-key-wrap">
+              {/* 眼睛钮**浮动在输入框内部**右缘(不是另起一行) */}
+              <div className="ai-cfg-key-field">
                 <input
                   className="f-input mono ai-cfg-input"
                   /* 默认明文:粘贴后要能一眼核对自己贴了什么 */
@@ -290,11 +262,28 @@ export function AiPane(): React.JSX.Element {
                   onChange={(e) => setKeyDraft(e.target.value)}
                   onBlur={() => void saveKey()}
                 />
-                <button className="d-btn" type="button" onClick={() => void testConnection()}>
-                  <i className="fa-solid fa-plug-circle-check" />
-                  <span>{t('settings.ai.test.btn')}</span>
+                <button
+                  className="ai-cfg-eye"
+                  type="button"
+                  title={t(keyVisible ? 'settings.ai.apiKey.hide' : 'settings.ai.apiKey.show')}
+                  aria-label={t(keyVisible ? 'settings.ai.apiKey.hide' : 'settings.ai.apiKey.show')}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => setKeyVisible((v) => !v)}
+                >
+                  <i className={`fa-solid ${keyVisible ? 'fa-eye-slash' : 'fa-eye'}`} />
                 </button>
               </div>
+              {/* 测试连接:图标钮(带 tooltip)—— 文字版在这行里占地太大 */}
+              <button
+                className="d-btn ai-cfg-test-btn"
+                type="button"
+                title={t('settings.ai.test.btn')}
+                aria-label={t('settings.ai.test.btn')}
+                disabled={testing}
+                onClick={() => void testConnection()}
+              >
+                <i className={`fa-solid ${testing ? 'fa-circle-notch ai-spin' : 'fa-plug-circle-check'}`} />
+              </button>
             </div>
           }
         />
@@ -346,6 +335,22 @@ export function AiPane(): React.JSX.Element {
             </div>
           )}
         </div>
+
+        <SettingsRow
+          title={t('settings.ai.headers.rowTitle')}
+          desc={t('settings.ai.headers.rowDesc')}
+          control={
+            <textarea
+              className="f-input mono ai-cfg-input ai-cfg-headers"
+              rows={2}
+              spellCheck={false}
+              placeholder={t('settings.ai.headers.ph')}
+              value={headerDraft}
+              onChange={(e) => setHeaderDraft(e.target.value)}
+              onBlur={() => patchProvider({ headers: parseHeaders(headerDraft) })}
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection

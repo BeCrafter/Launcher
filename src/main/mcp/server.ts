@@ -13,9 +13,9 @@ import {
   ListPromptsRequestSchema,
   ListToolsRequestSchema
 } from '@modelcontextprotocol/sdk/types.js'
-import type { McpPermission } from '../../shared/settings'
+import type { Language, McpPermission } from '../../shared/settings'
 import { APP_NAME, APP_VERSION } from '../../shared/constants'
-import { EXPERT_PROMPT } from '../ai/prompts/expert'
+import { expertPrompt } from '../ai/prompts/expert'
 import { SKILLS } from '../ai/skills'
 import type { ToolDef, ToolRegistry } from '../ai/tool-types'
 
@@ -33,6 +33,8 @@ export function createLauncherMcpServer(deps: {
   registry: ToolRegistry
   /** 权限模式在**每次请求时**读取:设置里改完立刻生效,不必重启服务 */
   getPermission(): McpPermission
+  /** 当前应用语言(提示词用它决定「用哪种语言回答」) */
+  getLanguage(): Language
   /** 工具调用的会话标识(审计/日志用) */
   sessionId: string
 }): Server {
@@ -108,14 +110,13 @@ export function createLauncherMcpServer(deps: {
   server.setRequestHandler(GetPromptRequestSchema, (req) => {
     const name = req.params.name
     if (name === 'expert') {
-      return { messages: [{ role: 'user', content: { type: 'text', text: EXPERT_PROMPT } }] }
+      return { messages: [{ role: 'user', content: { type: 'text', text: expertPrompt(deps.getLanguage()) } }] }
     }
     const skill = SKILLS.find((s) => s.id === name)
     if (!skill) throw new Error(`未知提示词:${name}`)
     const taskArg = req.params.arguments?.['task']
-    const text = taskArg
-      ? `${EXPERT_PROMPT}\n\n---\n\n${skill.task}\n\n用户诉求:${taskArg}`
-      : `${EXPERT_PROMPT}\n\n---\n\n${skill.task}`
+    const base = expertPrompt(deps.getLanguage())
+    const text = taskArg ? `${base}\n\n---\n\n${skill.task}\n\n用户诉求:${taskArg}` : `${base}\n\n---\n\n${skill.task}`
     return { messages: [{ role: 'user', content: { type: 'text', text } }] }
   })
 
