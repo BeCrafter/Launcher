@@ -20,6 +20,12 @@ const PITCH = 16
 const EDGE_ZONE = 26
 /** 判定"当前锚点"的容差:消息顶部进入视口上方这么多以内就算到了 */
 const ACTIVE_SLACK = 90
+/** 边缘滚动速度(格/秒)。按时间累积而不是"一帧一格" —— 后者 ~60 格/秒,会一顿一顿地窜 */
+const EDGE_SPEED = 7
+/** 横线长度:焦点处最长,按与焦点的距离指数衰减到 MIN_LEN(形成"聚焦"的层次) */
+const MAX_LEN = 18
+const MIN_LEN = 4
+const LEN_FALLOFF = 0.6
 
 interface Anchor {
   /** 渲染项下标(用于在 DOM 里找回那条消息) */
@@ -72,13 +78,20 @@ export function AiAnchors({
     const sc = scrollRef.current
     if (!sc || total === 0) return
     const sync = (): void => {
-      const top = sc.scrollTop + ACTIVE_SLACK
+      // 滚到底 → 当前锚点就是最后一条。按"视口上方最近"算的话,末条消息若还没顶到视口上沿
+      // 就仍算上一条,窗口便滑不到末尾、底部一直淡出,看起来像"后面还有"(用户正是问到这点)。
+      const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 4
       let idx = 0
-      for (let i = 0; i < anchors.length; i++) {
-        const el = sc.querySelector<HTMLElement>(`[data-mi="${anchors[i].mi}"]`)
-        if (!el) continue
-        if (offsetIn(sc, el) <= top) idx = i
-        else break
+      if (atBottom) {
+        idx = anchors.length - 1
+      } else {
+        const top = sc.scrollTop + ACTIVE_SLACK
+        for (let i = 0; i < anchors.length; i++) {
+          const el = sc.querySelector<HTMLElement>(`[data-mi="${anchors[i].mi}"]`)
+          if (!el) continue
+          if (offsetIn(sc, el) <= top) idx = i
+          else break
+        }
       }
       setActive(idx)
       // 当前锚点跑到窗口外时把窗口挪过去(手动滚窗口后的短时间内不抢)
@@ -92,7 +105,9 @@ export function AiAnchors({
 
   // ── 边缘滚动:指针停在条的上/下缘 → 窗口持续滚动 ──
   const runEdge = useCallback(() => {
-    const step = (): void => {
+    let last = performance.now()
+    let acc = 0
+    const step = (now: number): void => {
       const y = pointerYRef.current
       const strip = stripRef.current
       if (y === null || !strip) {
@@ -100,12 +115,24 @@ export function AiAnchors({
         return
       }
       const dir = y < EDGE_ZONE ? -1 : y > strip.clientHeight - EDGE_ZONE ? 1 : 0
-      if (dir !== 0) {
+      if (dir === 0) {
+        edgeRafRef.current = null
+        return
+      }
+      // 按**时间**累积:每帧固定走一格在 60Hz 下就是 60 格/秒,快到看不清且一格一跳。
+      // 累积到整数格再动,既匀速又与帧率无关。
+      acc += ((now - last) / 1000) * EDGE_SPEED
+      last = now
+      const steps = Math.floor(acc)
+      if (steps > 0) {
+        acc -= steps
         // 手动滚窗口期间锁一下自动跟随,否则"当前锚点必须在窗口内"会立刻把它拉回来
         windowLockRef.current = Date.now() + 600
-        setWinStart((w) => Math.max(0, Math.min(w + dir, Math.max(0, total - visibleCount(total)))))
+        setWinStart((w) =>
+          Math.max(0, Math.min(w + dir * steps, Math.max(0, total - visibleCount(total))))
+        )
       }
-      edgeRafRef.current = dir === 0 ? null : requestAnimationFrame(step)
+      edgeRafRef.current = requestAnimationFrame(step)
     }
     if (edgeRafRef.current === null) edgeRafRef.current = requestAnimationFrame(step)
   }, [total])
@@ -149,12 +176,22 @@ export function AiAnchors({
   if (total < 2) return null
 
   const visible = Math.min(MAX_VISIBLE, total)
-  const windowed = total > MAX_VISIBLE
   const win = clampedWin(winStart, total, visible)
+  // 窗口两端是否真的还有内容 —— 到头了就不该再渐隐(否则"上面还有"是假的)
+  const hasAbove = win > 0
+  const hasBelow = win + visible < total
+  const windowed = hasAbove || hasBelow
+  // 长度以"焦点"为中心:鼠标在条上时跟鼠标,否则跟当前阅读位置
+  const focus = hover ?? active
 
   return (
     <div
-      className={`ai-anchors${windowed ? ' is-windowed' : ''}`}
+      className={
+        'ai-anchors' +
+        (windowed ? ' is-windowed' : '') +
+        (hasAbove ? ' fade-top' : '') +
+        (hasBelow ? ' fade-bottom' : '')
+      }
       ref={stripRef}
       onPointerMove={(e) => {
         const strip = stripRef.current
@@ -191,13 +228,19 @@ export function AiAnchors({
             }}
             onClick={() => jumpTo(a.mi)}
           >
-            <span className="ai-anchor-bar" />
+            {/* 长度由"离焦点多远"决定(内联宽度 + CSS 过渡 = 鼠标划过时整列随之起伏) */}
+            <span className="ai-anchor-bar" style={{ width: tickLen(Math.abs(i - focus)) }} />
             {hover === i && <span className="ai-anchor-tip">{a.label}</span>}
           </button>
         )
       })}
     </div>
   )
+}
+
+/** 横线长度:焦点(d0)最长,越远越短 */
+function tickLen(dist: number): number {
+  return MIN_LEN + (MAX_LEN - MIN_LEN) * Math.pow(LEN_FALLOFF, dist)
 }
 
 /** 元素在滚动容器内容坐标里的顶部位置 */

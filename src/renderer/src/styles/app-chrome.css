@@ -846,10 +846,10 @@
 .ai-anchors {
   position: absolute;
   right: 6px;
-  /* 中间偏上:视觉重心对着正文,而不是整屏的几何中心。
-     注意这个百分比是相对 .ai-main 的,而 .ai-main 从顶栏之下才开始、到底部输入区结束,
-     所以 42% 落到整窗上其实是 48%(≈正中)。取 36% 才真的在"中间偏上"。 */
-  top: 36%;
+  /* 中间偏上再提一档:视觉重心对着正文而不是整屏几何中心。
+     ⚠ 百分比是相对 .ai-main 的(它从顶栏之下才开始、到输入区结束),所以 36% 落到整窗约 42.6%;
+     再上移到 32% ≈ 整窗 38%。 */
+  top: 32%;
   transform: translateY(-50%);
   z-index: 12;
   display: flex;
@@ -865,28 +865,31 @@
 .ai-anchors:hover {
   opacity: 1;
 }
-/* 还有更多锚点在窗口外:上下两端做渐隐,像由远及近(近处清晰、远处淡出)。
-   比画箭头或截断更安静,也不会跟"当前锚点加长"的强调打架。 */
-.ai-anchors.is-windowed {
+/* 上下渐隐,**只在那一侧真的还有锚点时才加** —— 否则滚到头了还在淡出第一个,
+   等于撒谎说"上面还有"。(用户明确问到"到结尾了要不要体现出来"。) */
+.ai-anchors.fade-top {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+}
+.ai-anchors.fade-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 22px), transparent 100%);
+}
+.ai-anchors.fade-top.fade-bottom {
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0,
-    #000 20px,
-    #000 calc(100% - 20px),
+    #000 22px,
+    #000 calc(100% - 22px),
     transparent 100%
   );
   mask-image: linear-gradient(
     to bottom,
     transparent 0,
-    #000 20px,
-    #000 calc(100% - 20px),
+    #000 22px,
+    #000 calc(100% - 22px),
     transparent 100%
   );
-}
-/* 窗口两端的那两颗再收一点长度,配合 mask 把"更远处还有"的层次拉开 */
-.ai-anchors.is-windowed .ai-anchor:first-child .ai-anchor-bar,
-.ai-anchors.is-windowed .ai-anchor:last-child .ai-anchor-bar {
-  width: 5px;
 }
 
 .ai-anchor {
@@ -901,39 +904,47 @@
 }
 .ai-anchor-bar {
   display: block;
-  width: 8px;
   height: 2px;
   border-radius: 2px;
   background: var(--dim);
-  transition: width 0.16s cubic-bezier(0.32, 0.72, 0, 1), background 0.16s ease;
+  /* 长度由 JS 内联给(离焦点越远越短);这里的过渡让鼠标划过时整列**平滑起伏**而不是逐根跳变 */
+  transition:
+    width 0.2s cubic-bezier(0.32, 0.72, 0, 1),
+    background 0.18s ease;
 }
-/* 当前阅读位置:更长更亮,一眼看出"我在哪" */
+/* 当前阅读位置:换色标记"我在哪"(长度已由渐变体现) */
 .ai-anchor.is-active .ai-anchor-bar {
-  width: 14px;
   background: var(--accent);
 }
-/* 悬浮:再长一点,并把浮层文字显示出来 */
+/* 悬浮这一根:更亮,焦点就在这根横线上 */
 .ai-anchor.is-hover .ai-anchor-bar {
-  width: 18px;
   background: var(--accent2);
 }
 
+/* 浮层文字:不再做成带底/边框/阴影的胶囊 —— 那会在横线左侧堆出一个"卡片",
+   视线被它拽走。现在只留一行淡色文字,焦点回到横线本身(用户要求)。 */
 .ai-anchor-tip {
   position: absolute;
-  right: calc(100% + 6px);
-  max-width: 260px;
-  padding: 4px 9px;
-  border-radius: 7px;
-  background: var(--surface);
-  border: 1px solid var(--border2);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
-  color: var(--fg);
+  right: calc(100% + 10px);
+  max-width: 240px;
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
+  animation: aiAnchorTipIn 0.16s ease both;
+}
+@keyframes aiAnchorTipIn {
+  from {
+    opacity: 0;
+    transform: translateX(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* 悬浮锚点时对应的消息:一层柔和描边,不改变布局(不改 padding/margin,避免跳动) */
