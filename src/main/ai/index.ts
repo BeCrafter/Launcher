@@ -48,7 +48,6 @@ export function createAiStack(deps: {
     secrets,
     getProviders: () => get().aiProviders,
     getProviderId: () => get().aiProviderId,
-    getModelId: () => get().aiModelId,
     getTimeoutSec: () => get().aiRequestTimeout
   })
 

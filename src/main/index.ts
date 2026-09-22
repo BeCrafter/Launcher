@@ -26,8 +26,12 @@ if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_DEV_DEBUG_PORT
 }
 
 // dev E2E:隔离 userData(与正在运行的打包版互不争抢单实例锁/缓存);必须在取锁之前设置
-if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_E2E_USER_DATA']) {
-  app.setPath('userData', process.env['LAUNCHER_E2E_USER_DATA'])
+// ⚠ 用 LAUNCHER_E2E_USER_DATA 同时隔离设置文件:此前它只隔离 userData,而设置文件仍写真实的
+//   ~/.config/launcher/config.json —— 自动化验证会悄悄改掉用户的配置(本项目真发生过)。
+//   `home` 由 NSHomeDirectory 决定,改 HOME 环境变量对它无效,故只能在这里显式改路径。
+const e2eUserData = process.env['ELECTRON_RENDERER_URL'] ? process.env['LAUNCHER_E2E_USER_DATA'] : undefined
+if (e2eUserData) {
+  app.setPath('userData', e2eUserData)
 }
 
 // 单实例锁：重复启动时唤起既有窗口
@@ -146,7 +150,9 @@ function showMainWindow(): void {
 
 app.whenReady().then(async () => {
   // 启动序:设置加载 → applier 注册表副作用(themeSource/Tray/Dock/登录项/目录监听) → 建窗 → IPC
-  store = createSettingsStore(defaultConfigPath(app.getPath('home')))
+  store = createSettingsStore(
+    e2eUserData ? join(e2eUserData, 'config.json') : defaultConfigPath(app.getPath('home'))
+  )
   const trayCtl = createTrayController({ logoDir, getWindow: () => mainWindow })
   const ctx: ApplyCtx = {
     logoDir,

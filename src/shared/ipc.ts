@@ -54,6 +54,7 @@ export const IPC = {
   aiGetState: 'ai:getState',
   aiSetKey: 'ai:setKey',
   aiClearKey: 'ai:clearKey',
+  aiRevealKey: 'ai:revealKey',
   aiTestConnection: 'ai:testConnection',
   aiListSessions: 'ai:listSessions',
   aiCreateSession: 'ai:createSession',

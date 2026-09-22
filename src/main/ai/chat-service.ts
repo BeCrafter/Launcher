@@ -47,6 +47,8 @@ interface StoreFile {
 
 export interface ChatService {
   getEngineState(): AiEngineState
+  /** 读回已存的明文 Key(仅供设置页显示) */
+  revealKey(providerId: AiProviderId): string
   setKey(providerId: AiProviderId, apiKey: string): AiEngineState
   clearKey(providerId: AiProviderId): AiEngineState
   testConnection(providerId: AiProviderId): Promise<AiTestResult>
@@ -148,12 +150,14 @@ export function createChatService(deps: {
     const s = deps.getSettings()
     const hasKey = deps.secrets.has(s.aiProviderId)
     const resolved = deps.llm.resolve()
+    // 模型 id 属于「当前协议」,不在全局
+    const modelId = (s.aiProviders[s.aiProviderId]?.modelId ?? '').trim()
     return {
       providerId: s.aiProviderId,
       providerName: deps.llm.providerName(s.aiProviderId),
-      modelId: s.aiModelId,
+      modelId,
       // 未配置时 resolve 会失败,此时回退到 id 本身(界面只在已配置时展示模型名)
-      modelLabel: resolved.ok ? resolved.value.modelLabel : s.aiModelId,
+      modelLabel: resolved.ok ? resolved.value.modelLabel : modelId,
       hasKey,
       configured: hasKey
     }
@@ -548,6 +552,8 @@ export function createChatService(deps: {
 
   return {
     getEngineState: engineState,
+
+    revealKey: (providerId) => deps.secrets.get(providerId) ?? '',
 
     setKey(providerId, apiKey) {
       deps.secrets.set(providerId, apiKey)

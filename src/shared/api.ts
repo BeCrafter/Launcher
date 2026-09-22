@@ -111,6 +111,13 @@ export interface LauncherApi {
   ai: {
     /** 引擎状态(协议/模型/有无 Key);Key 本体永不出 main */
     getState: () => Promise<AiEngineState>
+    /**
+     * 读回某协议已存的 API Key(明文)。
+     * ⚠ 与「只回 hasKey 布尔」的克制相比,这是一处**刻意放宽**:设置页要能一直显示配好的 Key,
+     *   否则用户无从确认自己当初填了什么。Key 仍然只存在于 safeStorage(不落设置文件),
+     *   也只在打开设置页时按需取一次,不随引擎态广播到各处。
+     */
+    revealKey: (providerId: AiProviderId) => Promise<string>
     /** 写入某协议的 API Key(safeStorage 加密) */
     setKey: (providerId: AiProviderId, apiKey: string) => Promise<AiEngineState>
     clearKey: (providerId: AiProviderId) => Promise<AiEngineState>

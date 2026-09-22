@@ -276,6 +276,16 @@ const EXTRA = {
     // AI 面板:清除已存密钥(demo 无此动作 —— 它的 Key 是明文存在 localStorage 里的占位串,
     // 真实实现走 safeStorage,需要一条显式的清除入口)
     'settings.ai.apiKey.clear': '清除密钥',
+    // Key 输入框:默认明文可见(粘贴后要能核对),眼睛按钮可临时遮挡
+    'settings.ai.apiKey.show': '显示密钥',
+    'settings.ai.apiKey.hide': '隐藏密钥',
+    'settings.ai.apiKey.phSet': '已保存;填入新值可替换',
+    // 模型:不再铺整个内置目录,只列最近用过的几个
+    'settings.ai.model.rowDescRecent': '该协议使用的模型 ID;下方是最近用过的几个,点击即可回填',
+    // 附加请求头:企业网关常按客户端标识放行(实测某网关要求 User-Agent 前缀为 claude-cli,否则 403)
+    'settings.ai.headers.rowTitle': '自定义请求头',
+    'settings.ai.headers.rowDesc': '每行一条「名称: 值」，附加到该协议的每次请求；多数网关用不到，按客户端标识放行的网关需要',
+    'settings.ai.headers.ph': 'User-Agent: claude-cli/2.0.0',
     // ── AI 对话页(内容块模型;demo 只有运行中/完成两态,新增的 UI 文案)──
     'ai.rail.today': '今天 {T}',
     'ai.thinking.done': '思考过程',
@@ -533,6 +543,13 @@ const EXTRA = {
     'settings.about.openRepo': 'Open the GitHub repository',
     'filter.allStatus': 'All statuses',
     'settings.ai.apiKey.clear': 'Clear key',
+    'settings.ai.apiKey.show': 'Show key',
+    'settings.ai.apiKey.hide': 'Hide key',
+    'settings.ai.apiKey.phSet': 'Saved; type a new value to replace it',
+    'settings.ai.model.rowDescRecent': 'Model ID used by this protocol; the chips below are recent ones — click to fill in',
+    'settings.ai.headers.rowTitle': 'Custom headers',
+    'settings.ai.headers.rowDesc': 'One "Name: value" per line, sent with every request for this protocol. Rarely needed — only for gateways that gate on client identity',
+    'settings.ai.headers.ph': 'User-Agent: claude-cli/2.0.0',
     // AI chat page (content-block model; the demo only had running/done states, these are new UI strings)
     'ai.rail.today': 'Today {T}',
     'ai.thinking.done': 'Thinking',

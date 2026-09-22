@@ -112,6 +112,8 @@ export interface AiRepository {
   getState(): Promise<AiEngineState>
   setKey(providerId: AiProviderId, apiKey: string): Promise<AiEngineState>
   clearKey(providerId: AiProviderId): Promise<AiEngineState>
+  /** 读回已存的明文 Key(仅设置页用来显示;不参与引擎态) */
+  revealKey(providerId: AiProviderId): Promise<string>
   testConnection(providerId: AiProviderId): Promise<AiTestResult>
   listSessions(): Promise<AiSession[]>
   createSession(): Promise<AiSession>

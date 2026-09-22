@@ -423,7 +423,40 @@ demo 的 AI 页是**脚本化模拟**(`aiScenes` 时间线 + `aiChats` 预置会
 9. **MCP 挂载命令是真实路径**(`ELECTRON_RUN_AS_NODE=1 <应用二进制> <app.asar>/out/main/launcher-mcp.js`),不是 demo 里示意性的 `/Applications/Launcher.app/Contents/MacOS/launcher-mcp`。
 10. **工具行不再有 `warn` 字符串级别**:结果错误是 `isError` 布尔(pi 约定);界面三态由 `status`(ok/warn/err)表达,其中 **warn 特指「用户取消」**——与真正失败在视觉上分开。
 11. **工具显示名用 `label`**(pi 的 `AgentTool.label`),不再拿工具 id 当显示名(demo 显示 `generate_plist`,现在显示「生成 plist 草稿」)。
+13. **模型 id 按协议各存各的**(2026-09-22 用户报「切换协议后模型没保留」):demo 只有一份全局配置,没有这个问题。真实实现里端点一直是按协议存的(`aiProviders[id].baseUrl`),模型却是**一个全局槽位** `aiModelId` —— 切到另一协议再切回来就丢。已把模型挪进 `aiProviders[id].modelId`,全局键删除;老配置的 `aiModelId` 在 normalize 时迁移给「当时生效的那个协议」。
 12. **切会话不中止运行**:demo 切换会话会 `aiAbortRun()` 掐掉本地脚本;真实运行归 main 管,切走再切回来仍在跑。
+
+### 设置页 AI pane 的三处调整(2026-09-22,用户要求)
+
+1. **Key 输入框默认明文** —— demo 是 `type=password`(占位串本来也是假的)。真实场景下用户粘完 Key 看不到自己贴了什么,核对困难,故改为**默认明文**,右侧加一枚眼睛按钮可临时遮挡。同时:**保存后不再清空输入框**(以前一保存就清空,更没法核对);并**移除「清除密钥」按钮**(用户明确不要;`clearKey` 能力保留,仍被「恢复默认」用于清两条协议的 Key)。
+2. **模型快捷填入只列最近用过的 3 个** —— demo 铺的是整个内置目录(Anthropic 14 个),既撑爆一行也没人会点第 14 个。改为按协议维护 `recentModels`(新在前、去重、上限 3,**含当前模型并以 `active` 态呈现**),两侧协议一视同仁。
+3. **chip 行不再横向滚动,改为占满整行换行** —— demo 后期把 `flex-wrap` 从 wrap 改成 `nowrap + overflow-x: auto`(为了让 4 个预设挤在一行对齐输入框),但它挤在右上角那 280px 的一列里,多了就得拉滚动条。覆盖样式在 `app-chrome.css`(`.ai-model-picks-wide`,双类选择器压过冻结的 `ai.css`),换成**换行 + 占满整行宽度**(含左半区)。
+
+⚠ **附带修掉的一个测试性缺口**:`LAUNCHER_E2E_USER_DATA` 此前只隔离 userData,而设置文件仍写真实的 `~/.config/launcher/config.json` —— 自动化验证会**悄悄改掉用户的配置**(本项目真发生过:验证脚本把 Anthropic 端点留成了一个已关闭的本机测试地址)。`app.getPath('home')` 走 NSHomeDirectory,改 `HOME` 环境变量无效,故改为在同一个环境变量下**显式把 config 路径也指到隔离目录**。
+
+### AI pane 第二轮调整(2026-09-22,用户要求)
+
+4. **显示/隐藏按钮移到输入框上方并靠右** —— 原来与输入框同排,挤在「测试连接」旁边。
+5. **Key 常驻显示** —— 光显示「已保存」用户没法确认当初填了什么。新增 `ai:revealKey`(main → 明文)按需取回填进输入框;**这是一处刻意放宽**:引擎态与其它视图仍只拿 `hasKey` 布尔,Key 依旧只存 safeStorage、不落设置文件。值没变时不重写(避免每次失焦都写一次盘)。
+6. **模型 chip 改靠右** —— 与上方输入框同侧;放不下时向左换行(仍保留「不横向滚动」)。
+7. **新增「自定义请求头」** —— 起因是下面那条 cc-switch 调试:企业网关常按客户端标识放行。按协议存 `headers: Record<string,string>`,UI 是多行「名称: 值」文本框。
+   ⚠ **实现要点**:附加头必须注入到 **`streamSimple` 的 `options.headers`**,不能放 `createProvider({ headers })` —— 后者到不了线上(实测:A 方案仍 403,C/D 方案才通)。`testConnection` 也必须带上,否则「测试连接」与实际对话会给出相反结论。
+
+### cc-switch 本地代理接入(2026-09-22,用户要求调试)
+
+本机 Claude Code 走 `cc-switch`(监听 `127.0.0.1:15721`)转发到企业网关 `ai-service.tal.com/coding`。
+**此前直连该代理一律 403,根因是 `User-Agent`**:上游只放行 UA 前缀为小写 `claude-cli` 的请求(`Claude-CLI/1.0`、`curl/8.0`、无 UA 全部 403;`claude-cli` 裸串即可)。补上自定义请求头后,应用侧**真实跑通**:连接测试通过、真实对话调用了工具(`list_services` 返回本机 30 项任务的真实数据)、零 console 错误。
+
+配置(直接在设置 › AI 助手 › Anthropic 卡片里填):
+
+| 字段 | 值 |
+|---|---|
+| API 端点 | `http://127.0.0.1:15721` |
+| 自定义请求头 | `User-Agent: claude-cli/2.0.0` |
+| API Key | `PROXY_MANAGED`(cc-switch 写进 `~/.claude/settings.json` 的固定代理令牌) |
+| 模型 ID | `claude-sonnet-5` / `claude-opus-5` / `claude-haiku-4-5` 等(由 cc-switch 映射到上游真实模型) |
+
+⚠ **两个注意**:① 该网关把模型名映射到自己的后端(实测 `claude-sonnet-5` → `deepseek-v4-flash-vision`、`claude-opus-5` → `deepseek-v4-pro`),因此界面上的**费用是按你填的模型名用 pi 目录价估的,不是真实计费**;② cc-switch 必须处于运行状态(其代理端口是本机进程,应用侧无法代它启动)。
 
 ### 刻意不做 / 未覆盖
 

@@ -89,6 +89,7 @@ const api: LauncherApi = {
     getState: () => ipcRenderer.invoke(IPC.aiGetState),
     setKey: (providerId, apiKey) => ipcRenderer.invoke(IPC.aiSetKey, providerId, apiKey),
     clearKey: (providerId) => ipcRenderer.invoke(IPC.aiClearKey, providerId),
+    revealKey: (providerId) => ipcRenderer.invoke(IPC.aiRevealKey, providerId),
     testConnection: (providerId) => ipcRenderer.invoke(IPC.aiTestConnection, providerId),
     listSessions: () => ipcRenderer.invoke(IPC.aiListSessions),
     createSession: () => ipcRenderer.invoke(IPC.aiCreateSession),

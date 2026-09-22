@@ -764,3 +764,48 @@
   color: var(--muted);
   white-space: nowrap;
 }
+
+/* ── 设置页 › AI 助手:模型快捷填入 (2026-09-22 用户要求两点改动) ──
+   ① 不再横向滚动:demo 的 `.ai-model-picks` 是 nowrap + overflow-x: auto + 固定 --cfg-field-w,
+      十几个模型 chip 挤在一行里靠滚动条翻,既难发现也难点;
+   ② 允许占满整行宽度(含左半区)换行排布,而不是缩在右上角那一列里。
+   ⚠ 面板在 ai.css(冻结的 demo 逐字节副本),不就地改;用双类选择器压过它的单类(0,2,0 > 0,1,0)。 */
+.ai-model-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ai-model-picks.ai-model-picks-wide {
+  flex-wrap: wrap;
+  /* 靠右对齐(与上方输入框同侧);放不下时向左换行 —— 也就是"可以用上左边那片空间" */
+  justify-content: flex-end;
+  width: 100%;
+  overflow-x: visible;
+  padding-bottom: 0;
+}
+
+/* ── 设置页 › AI 助手:API Key 行 ──
+   显示/隐藏按钮移到输入框上方并靠右(用户要求);整体仍是输入框 + 测试连接一行。 */
+.ai-cfg-key-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.ai-cfg-key-tools {
+  display: flex;
+  justify-content: flex-end;
+}
+.ai-cfg-eye {
+  padding: 3px 9px;
+  line-height: 1;
+}
+
+/* AI 助手 › 自定义请求头:多行输入(与其它 ai-cfg-input 同宽,等宽字体便于对齐「名称: 值」) */
+.ai-cfg-headers {
+  width: var(--cfg-field-w);
+  max-width: var(--cfg-field-w);
+  min-height: 46px;
+  resize: vertical;
+  line-height: 1.5;
+}
