@@ -282,7 +282,10 @@ const EXTRA = {
     'ai.thinking.redacted': '推理内容不可见(已被服务端加密)',
     'ai.notice.aborted': '已中止生成',
     'ai.notice.error': '生成失败:{M}',
-    'ai.notice.length': '回复达到长度上限,已被截断'
+    'ai.notice.length': '回复达到长度上限,已被截断',
+    // 工具轮数上限被打满:运行结束时最后一条助手消息仍是 toolUse —— 不提示的话
+    // 用户只看到一屏工具步骤却没有答案,像是「没反应」
+    'ai.notice.toolLimit': '已达到工具调用上限,回答可能不完整(可在设置 › AI 助手中调高)'
   },
   'en-US': {
     'toast.update.upToDate': 'Already up to date ({V})',
@@ -536,7 +539,8 @@ const EXTRA = {
     'ai.thinking.redacted': 'Reasoning hidden (encrypted by provider)',
     'ai.notice.aborted': 'Generation aborted',
     'ai.notice.error': 'Generation failed: {M}',
-    'ai.notice.length': 'Reply truncated at the length limit'
+    'ai.notice.length': 'Reply truncated at the length limit',
+    'ai.notice.toolLimit': 'Tool-call limit reached — the answer may be incomplete (raise it in Settings › AI)'
   }
 }
 

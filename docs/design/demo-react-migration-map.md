@@ -446,4 +446,26 @@ demo 的 AI 页是**脚本化模拟**(`aiScenes` 时间线 + `aiChats` 预置会
 - **独立进程 MCP**:用弹窗给出的真实命令拉起 `launcher-mcp`,握手成功、9 个只读工具、5 个 prompts、真实工具调用返回本机数据、`write_plist` 在 readOnly 下被正确拒绝。
 - **真机只读工具冒烟**:30 个 launchd 任务(三作用域)、2 个非任务占位文件、停用位、brew 服务、33 个监听端口均如实报出。
 - 验收未在机器上留下任何残留(launchd 目录/launchctl/crontab 均已核对为空)。
-- ⚠ **未覆盖**:Anthropic 协议的真实链路(需要真 Key);system/daemon 域的**成功特权写入**(需交互式授权)。两者都由单测与本地端点覆盖了代码路径,但不等于真机授权路径已验证。
+- **真实第三方 provider 验收(2026-09-22)**:用 OpenAI 兼容端点(`apihub.agnes-ai.com/v1` + `agnes-2.5-flash`)实跑 ——
+  连接测试通过;真实对话**确实调用了工具**(`list_services` / `collect_diagnostic_context`,工具名按 label 显示)、
+  工具输出 19 行真实数据落进消息流;回答里给出本机真实的 30 项任务统计与任务表;
+  **推理内容按 thinking 块渲染**(该模型的 `reasoning_content` 经 pi 的 openai-completions 适配器映射为 thinking 块);
+  正文里的 Markdown 表格渲染成真表格。
+- **真跑中发现并修掉的三处**:
+  ① **工具轮数上限打满时是静默死路** —— 模型连续调工具直到上限,用户只看到一屏步骤、没有任何答案也没有解释。
+     现在末条终止原因为 `toolUse` 时给出提示(`ai.notice.toolLimit`),并收紧了专家提示词(禁止逐个枚举、
+     要求先给结论):同题实测从 **8 轮 36 次调用无答案** 降到 **3 轮 2 次调用 + 完整回答**。
+     ⚠ 该提示**必须限定在整段对话的最后一条** —— 中间任何调过工具的助手消息都是 `toolUse` 状态,不限定会满屏重复。
+  ② **未知计价显示 `$0.0000`** 会被读成「免费」而不是「不知道」—— 改为仅有真实目录价时才显示。
+  ③ **Markdown 表格退化成一堆竖线** —— 模型在概览/对比类回答里大量用表格,补了 GFM 表格渲染(`.md-table`,窄容器横向滚动)。
+- **Anthropic 协议链路验收(2026-09-22)**:本机的 Claude 配置走 `cc-switch` 代理到企业网关(`ai-service.tal.com/coding`),
+  实测该网关对第三方客户端**一律 403**(经代理、以及用配置里的 key 直连上游都试过),故**没能拿它当上游**。
+  改用本地的 **Anthropic Messages 原生协议**端点验收(SSE 事件名、content_block_start/delta/stop、thinking 块带 signature、
+  tool_use 的 input_json_delta 分片一个不少 —— 不是 OpenAI 转译),验的正是我们自己这条链路:
+  provider 构造 / anthropic-messages 适配器 / thinking 映射 / tool_use 往返 / 计费展示。
+  结果:配置与连接测试通过;模型显示名取自 pi 目录(`Claude Opus 5`);thinking 块渲染出推理正文;
+  `input_json_delta` 分片被正确拼成参数;授权卡 → **授权** → 工具真实执行并回填结果 → 卡片转「已执行」;
+  `已取消` 分支同样验过(该步标 warn);正文 Markdown 列表/代码块/引用正常;**用量带真实目录价**(`1108 tok · $0.0068`);
+  运行期零 window error。
+  ⚠ 副产品知识:pi 的 anthropic 适配器请求路径带查询串(`/v1/messages?beta=true`),自建端点判路由要按 pathname。
+- ⚠ **仍未覆盖**:真实 Anthropic 上游(system/daemon 域的**成功特权写入**,需交互式授权)。写工具的取消/执行两条分支都已验,但「系统授权框走完并成功落盘」这一段没有。

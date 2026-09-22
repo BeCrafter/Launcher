@@ -41,7 +41,7 @@ export function AiMessages(): React.JSX.Element {
         it.kind === 'user' ? (
           <UserMsg key={it.msg.id} msg={it.msg} />
         ) : (
-          <BotGroupView key={it.group.assistant.id} group={it.group} idx={i} />
+          <BotGroupView key={it.group.assistant.id} group={it.group} idx={i} isFinal={i === items.length - 1} />
         )
       )}
     </>
@@ -94,10 +94,12 @@ function buildItems(messages: AiMessage[]): RenderItem[] {
 
 function BotGroupView({
   group,
-  idx
+  idx,
+  isFinal
 }: {
   group: BotGroup
   idx: number
+  isFinal: boolean
 }): React.JSX.Element {
   const t = useT()
   const fmt = useFmt()
@@ -200,7 +202,7 @@ function BotGroupView({
         </div>
       )}
       {nodes}
-      <MsgMeta assistant={assistant} />
+      <MsgMeta assistant={assistant} isFinal={isFinal} />
     </div>
   )
 }
@@ -217,7 +219,13 @@ function cardToolCallId(
 
 // ── 用量与终止原因(7 态;demo 只有运行中/完成两态)──
 
-function MsgMeta({ assistant }: { assistant: AiAssistantMessage }): React.JSX.Element | null {
+function MsgMeta({
+  assistant,
+  isFinal
+}: {
+  assistant: AiAssistantMessage
+  isFinal: boolean
+}): React.JSX.Element | null {
   const t = useT()
   const fmt = useFmt()
   const { stopReason, usage, errorMessage } = assistant
@@ -228,7 +236,12 @@ function MsgMeta({ assistant }: { assistant: AiAssistantMessage }): React.JSX.El
         ? t('ai.notice.length')
         : (stopReason === 'error' || errorMessage) && stopReason !== 'pending'
           ? fmt(t('ai.notice.error'), { M: errorMessage ?? '' })
-          : null
+          : // 末条仍是 toolUse = 运行在"还想继续调工具"时被截断(工具轮数上限)。
+            // ⚠ 必须限定"整段对话的最后一条":中间任何调过工具的助手消息都是 toolUse 状态
+            //   (循环接着跑下一轮),不限定就会满屏都是这条提示。
+            stopReason === 'toolUse' && isFinal
+            ? t('ai.notice.toolLimit')
+            : null
   const cost = usage?.cost
   if (!notice && !(usage && usage.totalTokens > 0)) return null
   return (
@@ -237,7 +250,9 @@ function MsgMeta({ assistant }: { assistant: AiAssistantMessage }): React.JSX.El
       {usage && usage.totalTokens > 0 && (
         <span className="ai-msg-usage">
           {usage.totalTokens} tok
-          {cost ? ` · $${cost.total.toFixed(4)}` : ''}
+          {/* 只在有真实计价时显示:OpenAI 兼容端点连到哪家未知,目录价一律补 0,
+             显示 $0.0000 会被读成"免费"而不是"不知道",不如不显示 */}
+          {cost && cost.total > 0 ? ` · $${cost.total.toFixed(4)}` : ''}
         </span>
       )}
     </div>

@@ -884,5 +884,6 @@ export const zhCN: Record<string, string> = {
   "ai.thinking.redacted": "推理内容不可见(已被服务端加密)",
   "ai.notice.aborted": "已中止生成",
   "ai.notice.error": "生成失败:{M}",
-  "ai.notice.length": "回复达到长度上限,已被截断"
+  "ai.notice.length": "回复达到长度上限,已被截断",
+  "ai.notice.toolLimit": "已达到工具调用上限,回答可能不完整(可在设置 › AI 助手中调高)"
 }

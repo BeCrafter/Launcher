@@ -884,5 +884,6 @@ export const enUS: Record<string, string> = {
   "ai.thinking.redacted": "Reasoning hidden (encrypted by provider)",
   "ai.notice.aborted": "Generation aborted",
   "ai.notice.error": "Generation failed: {M}",
-  "ai.notice.length": "Reply truncated at the length limit"
+  "ai.notice.length": "Reply truncated at the length limit",
+  "ai.notice.toolLimit": "Tool-call limit reached — the answer may be incomplete (raise it in Settings › AI)"
 }
