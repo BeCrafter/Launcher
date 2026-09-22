@@ -2,7 +2,7 @@
 
 import { create } from 'zustand'
 
-export type ModuleId = 'agents' | 'crontab' | 'services' | 'settings'
+export type ModuleId = 'agents' | 'crontab' | 'services' | 'ai' | 'settings'
 
 // demo 的 modal id 命名保留(importModal/newCronModal 等),浮层组件按 id 挂载
 export type OverlayId =

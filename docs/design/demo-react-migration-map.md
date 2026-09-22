@@ -33,7 +33,8 @@
 | crontab | ✅ | 同上 |
 | services | ✅ | searchHandler 在 demo 亦仅 toast,如实移植 |
 | settings | ✅ | 状态栏含版本/主题/语言/架构/GitHub |
-| ai / login / plist / design | ❌ | AI 未迁移(demo 侧已重设计为对话式 Agent,见文末;React 落点属阶段 4);login 为设置页 login pane;plist/design 静态说明页 |
+| ai | ✅ | 2026-09-22 阶段 4 落地(对话页 + 设置页 AI pane);消息模型改内容块数组,**非** demo 的固定槽位 —— 差异见文末「AI 助手页迁移」 |
+| login / plist / design | ❌ | login 为设置页 login pane;plist/design 静态说明页 |
 
 ## 视图 1:Launch Agents(`js/agents.js` → `modules/agents/AgentsView.tsx`)
 
@@ -391,3 +392,58 @@ E2E(CDP,dev 模式):warm reload → 首张卡片中位 **879ms**(修复前 ~10s)
     - **④ system scope 的 launchctl 动词不再提权(本机实测)**:域映射上 `system`(`/Library/LaunchAgents`)**属用户自己的 `gui/<uid>` 域**(差异 28 已证),但 `privileged()` 原为 `scope !== 'user'` —— 在自己域里执行动词却申请了 root。实测(无 sudo):`enable` exit 0、`kickstart` exit 0、`bootout`(不存在 label)返回 "No such process" 而非 EPERM,而**同样三个动词打到 `system` 域全部 `Operation not permitted`**。唯一无法静态判定的是 `bootstrap`:它对非 root 调用者一律返回不透明的 errno 5(不区分权限与"不是合法 plist",system 域也是同样的 5)。**故不逐动词猜,统一改为「先在用户域试跑 → 仅当系统明确拒绝才升级为提权重试」**,由系统裁决;业务错误(未载入/找不到)不重试,避免把真实失败包装成一次授权弹窗。`plist-service` 的**文件读写判定不变**(`/Library/LaunchAgents` 目录 root 拥有、文件 root:wheel 644,写仍需 root)。渲染层闸口同步从 `scope !== 'user'` 改为 `scope !== 'daemon'`。实测回归:system agent 的开机自启开关**不再弹任何框**、daemon agent 仍弹说明框。
     - **③ 多命令合并授权 —— 测量后结论为「不做」**:先前列出的「改名保存 3 次 / 启动 3 次 / 停止 2 次」是 **osascript 进程 spawn 次数,不等于用户看到的弹窗次数** —— macOS 授权缓存(约 5 分钟)吸收同一 burst 内的后续调用,`authCacheMin` 另外抑制应用说明框。且逐条看:启动序列(`bootstrap` 后需重新读取才能判断是否 `kickstart`)与停止序列(`SIGTERM` → 等待 → `SIGKILL`)都**不能安全合并**(合并会改变语义或引入无条件 `kickstart -k`);④ 落地后 system scope 更是完全不提权。唯一可安全合并的「改名保存」属低频路径,收益不足,不做。
 
+
+## AI 助手页迁移(阶段 4:真实引擎 + MCP,2026-09-22)
+
+demo 的 AI 页是**脚本化模拟**(`aiScenes` 时间线 + `aiChats` 预置会话),迁移后由 **pi 真实引擎**驱动
+(`@earendil-works/pi-ai` + `pi-agent-core`,锁精确版本 `0.87.0`)。UI 逐项对齐原型,数据来源整体替换。
+
+### 落地位置
+
+| 层 | 文件 | 说明 |
+|---|---|---|
+| 契约 | `shared/ai.ts` | 消息模型 / 运行事件 / 引擎状态 / 技能;**内容块数组**,非固定槽位 |
+| 引擎 | `main/ai/{llm,agent→chat-service,message-map,secret-store,skills,prompts/expert}` | `llm.ts` 是全仓唯一 import pi-ai 的文件(防腐层) |
+| 工具 | `main/ai/tools/{shared,service,plist,cron,log,index}` | 14 个工具(9 只读 + 5 写),**内置聊天与 MCP 共用同一份** |
+| MCP | `main/mcp/{server,http-endpoint,stdio-entry}` | stdio 与 HTTP 环回;入口见 `electron.vite.config.ts` 的第二 main entry |
+| 视图 | `renderer/src/modules/ai/*`(`AiView`/`AiRail`/`AiMessages`/`AiCards`/`AiComposer`/`AiMentionPopover`/`AiMcpModal`)+ `state/ai-store.ts` | 逐项对齐 `js/ai.js` |
+| 设置 | `modules/settings/AiPane.tsx` + `state/settings-nav-store.ts` | 设置页第 7 个 tab;Key 走 safeStorage |
+| 样式 | `styles/ai.css` | **逐字节复制自 `demo/css/ai.css`**,勿就地修改 |
+
+### 与 demo 的差异(逐条)
+
+1. **消息模型改内容块数组**(`docs/design/ai-message-model-gap.md` 的结论)。demo 是 `{thinking,steps,text,cards,suggest}` 固定槽位 + 写死渲染顺序,表达不了「工具中途插一段文字」;现在助手消息是 `text / thinking / image / toolCall / card / suggest` 的**有序块数组**,按到达顺序渲染。工具**调用**在助手消息的 content 里,工具**结果**是独立记录,按 `toolCallId` 配对(不是数组下标)。
+2. **审批改为引擎钩子触发**,不是消息里的一种卡片类型。demo 把 `approve` 做成 `cards[]` 的一种 `kind`;真实机制是宿主的 `beforeToolCall` 拦下调用 → 抛授权卡 → 用户裁决 → 放行或 `{block:true}`。**授权卡视觉与位置不变**,仍内联在消息流里。
+3. **预置会话(`aiChats`)不移植**。它们是手写的假历史(引用 mock agent),真实应用不该凭空多出这些对话。会话栏只列用户真跑过的会话(落 `${userData}/ai-sessions.json`)。
+4. **场景脚本(`aiScenes`)整体不移植** —— 由真实模型驱动;技能(= 任务提示词 + 工具白名单)在 `main/ai/skills.ts`,4 项与 demo 同名同图标。
+5. **正文改 Markdown 渲染**(新增 `lib/markdown.tsx`):demo 是「转义 + `pre-wrap`」裸文本,因为它是手写 mock;真实模型输出标题/列表/代码块时裸文本会一片混乱。产出 **React 节点,不拼 HTML**,HTML 一律 inert。demo 的 `ai.css` 未含相关样式,markdown 样式落在 `app-chrome.css`。
+6. **thinking 块渲染正文**(demo 只有「思考中」三点转圈);`stopReason` 7 态、`usage`/cost 有展示位 —— 都是 demo 没有的位,新增在消息底部 meta 行。
+7. **未配置态是真判定**:demo 的 `aiCfgConfigured()` 只看 localStorage 里有没有非空 Key 串;真实实现按「该协议是否存有 Key」判定,且 **Key 本体不出 main**(IPC 只回 `hasKey` 布尔)。
+8. **「测试连接」真发一次最小请求**(demo 按 Key 里有没有 `example`/`invalid` 假装成败)。
+9. **MCP 挂载命令是真实路径**(`ELECTRON_RUN_AS_NODE=1 <应用二进制> <app.asar>/out/main/launcher-mcp.js`),不是 demo 里示意性的 `/Applications/Launcher.app/Contents/MacOS/launcher-mcp`。
+10. **工具行不再有 `warn` 字符串级别**:结果错误是 `isError` 布尔(pi 约定);界面三态由 `status`(ok/warn/err)表达,其中 **warn 特指「用户取消」**——与真正失败在视觉上分开。
+11. **工具显示名用 `label`**(pi 的 `AgentTool.label`),不再拿工具 id 当显示名(demo 显示 `generate_plist`,现在显示「生成 plist 草稿」)。
+12. **切会话不中止运行**:demo 切换会话会 `aiAbortRun()` 掐掉本地脚本;真实运行归 main 管,切走再切回来仍在跑。
+
+### 刻意不做 / 未覆盖
+
+- **孤儿任务不在 AI 工具里报**。判定「launchd 里还在、plist 已不存在」需要逐 label 跑 `launchctl print` 拿路径,而 launchctl 的表里混着上千条系统自带服务(本就不在扫描的三个目录里)。实测按「表里有、文件没有」粗判会报出 **1344 条假孤儿** → 宁可不报。界面上的孤儿横幅用的是有界候选集,不受影响。
+- **孤儿/按行级别着色**:工具结果的行级 `level` 未随消息模型下发(结果块只带文本),步骤级 ok/warn/err 保留。
+- **全量运行耗时**:demo 自己播放脚本所以能计时;真实运行的「用时」= 各工具耗时之和(没有整轮计时源)。
+
+### 后端新增(超出原型)
+
+- **同一份 ToolRegistry 供给内置聊天与 MCP**;MCP 走低层 `Server` 直接复用 typebox(= JSON Schema)定义,零二次转换。
+- **MCP 权限模式**:`readOnly`(默认,只暴露 9 个只读工具)/ `full`(加 5 个写工具,带 `destructiveHint` 标注)。⚠ 只对 **HTTP 环回连接**名副其实 —— stdio 是用户自己在终端拉起的进程,以用户身份运行,应用管不着。
+- **HTTP 端点必须显式拒绝非 POST**(无状态模式)。交给 transport 处理时它不给应答,MCP 客户端的 `connect()` 会一直挂着(实测卡满 90s),表现为「HTTP 通道连不上」而服务端日志正常 —— 已加回归测试锁住。
+- **专家提示词作为 MCP Prompts 暴露**(`expert` + 4 个技能),外部 Agent 拉到的与内置聊天同一份设定。
+- **`core-services.ts`**:应用与 `launcher-mcp` 独立进程共用一份服务栈装配,避免两处漂移。
+
+### 验收(2026-09-22)
+
+- 单测:**591 项全绿**(AI 模块内 62 项);`typecheck` 双配置干净;`npm run build` 通过;demo 自检通过(demo 零改动)。
+- **应用级 CDP 端到端**:用本地假 OpenAI 兼容端点(真 SSE 流)跑完整链路 —— 未配置引导态 → 设置页配端点/存 Key(safeStorage)→ 真实连接测试 → 流式对话 → 工具步骤块(人类可读工具名)→ 内联授权卡(含待执行命令)→ **取消**(卡片转已取消、该步标 warn、工具确未执行)→ **授权**(卡片转已执行、工具真执行)→ 会话栏/正文搜索高亮 → MCP 弹窗。20 项断言全过,运行期零 window error。
+- **独立进程 MCP**:用弹窗给出的真实命令拉起 `launcher-mcp`,握手成功、9 个只读工具、5 个 prompts、真实工具调用返回本机数据、`write_plist` 在 readOnly 下被正确拒绝。
+- **真机只读工具冒烟**:30 个 launchd 任务(三作用域)、2 个非任务占位文件、停用位、brew 服务、33 个监听端口均如实报出。
+- 验收未在机器上留下任何残留(launchd 目录/launchctl/crontab 均已核对为空)。
+- ⚠ **未覆盖**:Anthropic 协议的真实链路(需要真 Key);system/daemon 域的**成功特权写入**(需交互式授权)。两者都由单测与本地端点覆盖了代码路径,但不等于真机授权路径已验证。

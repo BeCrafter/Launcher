@@ -4,6 +4,7 @@ import { AgentsView } from '../modules/agents/AgentsView'
 import { CronView } from '../modules/cron/CronView'
 import { ServicesView } from '../modules/services/ServicesView'
 import { SettingsView } from '../modules/settings/SettingsView'
+import { AiView } from '../modules/ai/AiView'
 import type { ModuleId } from '../state/ui-store'
 
 export function ViewHost({ module }: { module: ModuleId }): React.JSX.Element {
@@ -14,6 +15,8 @@ export function ViewHost({ module }: { module: ModuleId }): React.JSX.Element {
       return <CronView />
     case 'services':
       return <ServicesView />
+    case 'ai':
+      return <AiView />
     case 'settings':
       return <SettingsView />
   }

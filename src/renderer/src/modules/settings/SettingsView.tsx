@@ -10,6 +10,8 @@ import { showToast } from '../../lib/utils'
 import { openExternal } from '../../lib/utils'
 import { SettingsSection, SettingsRow, SettingsHero } from './SettingsBits'
 import { ThemeCards } from './ThemeCards'
+import { AiPane } from './AiPane'
+import { useSettingsNav } from '../../state/settings-nav-store'
 import { Toggle } from '../../components/ui/Toggle'
 import { MOCK_DATA } from '../../data/mock/mock-data'
 
@@ -29,7 +31,8 @@ const TABS = [
   { id: 'editor', icon: 'fa-solid fa-code', labelKey: 'settings.tab.editor' },
   { id: 'security', icon: 'fa-solid fa-shield-halved', labelKey: 'settings.tab.security' },
   { id: 'about', icon: 'fa-solid fa-circle-info', labelKey: 'settings.tab.about' },
-  { id: 'login', icon: 'fa-solid fa-right-to-bracket', labelKey: 'settings.tab.login' }
+  { id: 'login', icon: 'fa-solid fa-right-to-bracket', labelKey: 'settings.tab.login' },
+  { id: 'ai', icon: 'fa-solid fa-wand-magic-sparkles', labelKey: 'settings.tab.ai' }
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -38,7 +41,9 @@ export function SettingsView(): React.JSX.Element {
   const t = useT()
   const fmt = useFmt()
   const info = useAppInfo()
-  const [tab, setTab] = useState<TabId>('general')
+  // tab 提到共享 store:AI 页的引擎 chip / 引导卡要能直接跳到 AI 面板
+  const tab = useSettingsNav((s) => s.tab)
+  const setTab = useSettingsNav((s) => s.setTab)
   const [checking, setChecking] = useState(false)
   const settings = useSettingsStore((s) => s.settings)
   const set = useSettingsStore((s) => s.set)
@@ -466,6 +471,8 @@ export function SettingsView(): React.JSX.Element {
               </SettingsSection>
             </div>
           )}
+
+          {tab === 'ai' && <AiPane />}
 
           <div className="settings-footer">
             <span style={{ fontSize: 10.5, color: 'var(--dim)' }}>

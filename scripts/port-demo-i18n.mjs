@@ -272,7 +272,17 @@ const EXTRA = {
     'nav.helpOpen': '打开在线帮助文档',
     'settings.about.openRepo': '打开 GitHub 仓库',
     // 运行状态筛选(demo 只有类型筛选):状态 chip 复用 status.* 文案,这里只加「不限」那颗
-    'filter.allStatus': '全部状态'
+    'filter.allStatus': '全部状态',
+    // AI 面板:清除已存密钥(demo 无此动作 —— 它的 Key 是明文存在 localStorage 里的占位串,
+    // 真实实现走 safeStorage,需要一条显式的清除入口)
+    'settings.ai.apiKey.clear': '清除密钥',
+    // ── AI 对话页(内容块模型;demo 只有运行中/完成两态,新增的 UI 文案)──
+    'ai.rail.today': '今天 {T}',
+    'ai.thinking.done': '思考过程',
+    'ai.thinking.redacted': '推理内容不可见(已被服务端加密)',
+    'ai.notice.aborted': '已中止生成',
+    'ai.notice.error': '生成失败:{M}',
+    'ai.notice.length': '回复达到长度上限,已被截断'
   },
   'en-US': {
     'toast.update.upToDate': 'Already up to date ({V})',
@@ -518,7 +528,15 @@ const EXTRA = {
     'settings.login.itemLabel': 'Login Item',
     'nav.helpOpen': 'Open the online help',
     'settings.about.openRepo': 'Open the GitHub repository',
-    'filter.allStatus': 'All statuses'
+    'filter.allStatus': 'All statuses',
+    'settings.ai.apiKey.clear': 'Clear key',
+    // AI chat page (content-block model; the demo only had running/done states, these are new UI strings)
+    'ai.rail.today': 'Today {T}',
+    'ai.thinking.done': 'Thinking',
+    'ai.thinking.redacted': 'Reasoning hidden (encrypted by provider)',
+    'ai.notice.aborted': 'Generation aborted',
+    'ai.notice.error': 'Generation failed: {M}',
+    'ai.notice.length': 'Reply truncated at the length limit'
   }
 }
 
