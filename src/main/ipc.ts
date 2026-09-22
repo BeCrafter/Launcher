@@ -211,6 +211,7 @@ export function registerIpc(deps: IpcDeps): void {
     deps.ai.chat.setKey(providerId, String(apiKey ?? ''))
   )
   ipcMain.handle(IPC.aiClearKey, (_e, providerId: AiProviderId) => deps.ai.chat.clearKey(providerId))
+  ipcMain.handle(IPC.aiRevealKey, (_e, providerId: AiProviderId) => deps.ai.chat.revealKey(providerId))
   ipcMain.handle(IPC.aiTestConnection, (_e, providerId: AiProviderId) => deps.ai.chat.testConnection(providerId))
   ipcMain.handle(IPC.aiListSessions, () => deps.ai.chat.listSessions())
   ipcMain.handle(IPC.aiCreateSession, () => deps.ai.chat.createSession())
@@ -222,4 +223,5 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.aiSkills, () => deps.ai.chat.skills())
   ipcMain.handle(IPC.aiCatalog, (_e, providerId: AiProviderId) => deps.ai.chat.catalog(providerId))
   ipcMain.handle(IPC.aiMcpInfo, () => deps.ai.mcpInfo())
+  ipcMain.handle(IPC.aiInstallMcpLink, () => deps.ai.installMcpLink())
 }

@@ -159,10 +159,42 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
       continue
     }
 
+    // 表格(GFM):形如 `| a | b |` + `|---|---|`。只支持带表头的简单表格 ——
+    // 模型在「概览/对比」类回答里很自然地用表格,不认它就会退化成一堆竖线
+    if (isTableRow(line) && i + 1 < lines.length && isTableSep(lines[i + 1])) {
+      const header = splitRow(line)
+      i += 2
+      const rows: string[][] = []
+      while (i < lines.length && isTableRow(lines[i])) rows.push(splitRow(lines[i++]))
+      out.push(
+        <div className="md-table-wrap" key={key()}>
+          <table className="md-table">
+            <thead>
+              <tr>
+                {header.map((h, n) => (
+                  <th key={n}>{renderInline(parseInline(h), `${keyPrefix}-th${n}`)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, rn) => (
+                <tr key={rn}>
+                  {r.map((c, cn) => (
+                    <td key={cn}>{renderInline(parseInline(c), `${keyPrefix}-td${rn}-${cn}`)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+      continue
+    }
+
     // 普通段落:吃到空行或下一个块级结构为止
     const para: string[] = [line]
     i++
-    while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i])) para.push(lines[i++])
+    while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i], lines[i + 1])) para.push(lines[i++])
     out.push(
       <p className="md-p" key={key()}>
         {renderInline(parseInline(para.join('\n')), key())}
@@ -172,6 +204,29 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
   return out
 }
 
-function isBlockStart(line: string): boolean {
-  return FENCE_RE.test(line) || HEAD_RE.test(line) || UL_RE.test(line) || OL_RE.test(line) || /^>\s?/.test(line)
+function isBlockStart(line: string, next?: string): boolean {
+  return (
+    FENCE_RE.test(line) ||
+    HEAD_RE.test(line) ||
+    UL_RE.test(line) ||
+    OL_RE.test(line) ||
+    /^>\s?/.test(line) ||
+    // 表格要连着看下一行:单独一行 `| a | b |` 只是普通文本,配上分隔行才是表格
+    (isTableRow(line) && next !== undefined && isTableSep(next))
+  )
+}
+
+function isTableRow(line: string): boolean {
+  return /^\s*\|.*\|\s*$/.test(line)
+}
+function isTableSep(line: string): boolean {
+  return /^\s*\|[\s:|-]+\|\s*$/.test(line) && line.includes('-')
+}
+function splitRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((c) => c.trim())
 }

@@ -78,16 +78,17 @@ export function servicesStatusBar(
 }
 
 // AI 模块状态栏(demo config.js MODULES.ai.statusbar;引擎行跟随配置,未配置时如实说未配置)
+//
+// ⚠ 摘要**不再重复「供应商 · 模型」** —— 那个信息由输入区上方的引擎 chip 承担(而且可点击跳配置),
+// 状态栏再说一遍纯属冗余。这里只留一行子系统状态。
 export function aiStatusBar(
-  d: { ready: boolean; providerName: string; modelLabel: string; skills: number; calls: number },
+  d: { ready: boolean; skills: number; calls: number },
   t: T,
   fmtFn: FmtFn
 ): StatusBarModel {
   return {
     summaryIcon: 'fa-wand-magic-sparkles',
-    summaryHtml: d.ready
-      ? fmtFn(t('ai.sb.engineLive'), { P: d.providerName, M: d.modelLabel })
-      : t('ai.sb.engineOff'),
+    summaryHtml: d.ready ? t('ai.sb.engine') : t('ai.sb.engineOff'),
     items: [
       { dot: 'running', textHtml: t('ai.sb.tools') },
       { dot: 'loaded', textHtml: t('ai.sb.wtools') },

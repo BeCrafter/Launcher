@@ -37,8 +37,20 @@ export type McpPermission = 'readOnly' | 'full'
 export interface AiProviderConfig {
   /** 服务端点(官方地址 / 代理网关 / 本地服务均可) */
   baseUrl: string
-  /** 上次用过的模型 id:无内置模型目录的协议(OpenAI 兼容)做「上次用过」快捷填入 */
-  lastModel?: string
+  /**
+   * 该协议使用的模型 id。
+   * ⚠ **必须按协议各存各的**:此前是全局单值,切到另一个协议再切回来就丢了
+   * (端点一直是按协议存的,模型却只有一个全局槽位 —— 两者不对称就是那个 bug)。
+   */
+  modelId?: string
+  /** 最近用过的模型 id(新的在前,最多 {@link RECENT_MODEL_MAX} 个),用作快捷填入 */
+  recentModels?: string[]
+  /**
+   * 附加到每次模型请求上的自定义请求头(键值对)。
+   * 存在的理由:不少企业网关/反代会按客户端标识放行 —— 例如要求 `User-Agent` 必须是某个 CLI,
+   * 否则一律 403(实测某企业 Claude 网关就是如此)。没有这个口子,这类端点根本用不了。
+   */
+  headers?: Record<string, string>
 }
 
 export interface AiProvidersConfig {
@@ -73,9 +85,7 @@ export interface LauncherSettings {
   // ── AI 引擎 ──
   /** 当前接入协议 */
   aiProviderId: AiProviderId
-  /** 当前模型 id(自定义端点连到哪家未知,故是自由字符串而非枚举) */
-  aiModelId: string
-  /** 按协议各存各的端点,切卡不互相覆盖 */
+  /** 按协议各存各的端点与模型(切协议互不覆盖) */
   aiProviders: AiProvidersConfig
   /** 单次回答内最多连续调用多少次领域工具 */
   aiToolCallLimit: number
@@ -108,9 +118,13 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   serviceOverrides: {},
   // AI 引擎(默认端点取 pi 目录里的官方地址;Key 未配置 → 进入未配置引导态)
   aiProviderId: 'anthropic',
-  aiModelId: 'claude-opus-5',
   aiProviders: {
-    anthropic: { baseUrl: 'https://api.anthropic.com' },
+    // Anthropic 有内置目录,给一个默认可直接跑;OpenAI 兼容连到哪家未知,留空由用户自己填
+    anthropic: {
+      baseUrl: 'https://api.anthropic.com',
+      modelId: 'claude-opus-5',
+      recentModels: ['claude-opus-5']
+    },
     'openai-compatible': { baseUrl: 'https://api.openai.com/v1' }
   },
   aiToolCallLimit: 8,
@@ -131,7 +145,13 @@ const AI_TIMEOUT_VALUES = [30, 60, 120]
 const MCP_PERMISSION_VALUES: McpPermission[] = ['readOnly', 'full']
 /** 模型 id 上限:防损坏文件塞进超长串(正常模型 id 数十字符) */
 const AI_MODEL_ID_MAX = 200
+/** 快捷填入最多留几个模型:再多会把这一行撑爆(demo 原本列整个目录,用户要求收敛到最近 3 个) */
+export const RECENT_MODEL_MAX = 3
 const AI_BASE_URL_MAX = 400
+/** 自定义请求头上限:键值都会进请求,不设界时损坏文件能塞进任意大的串 */
+export const HEADER_MAX_ENTRIES = 16
+const HEADER_NAME_MAX = 64
+const HEADER_VALUE_MAX = 400
 
 function boolOr(v: unknown, fallback: boolean): boolean {
   return typeof v === 'boolean' ? v : fallback
@@ -174,30 +194,78 @@ export function normalizeServiceOverrides(v: unknown): Record<string, ServiceOve
   return out
 }
 
-/** 模型 id:trim + 截断;空串回默认(端点连到哪家未知,但其值本身仍是自由字符串) */
-function normalizeModelId(v: unknown): string {
-  if (typeof v !== 'string') return DEFAULT_SETTINGS.aiModelId
-  const s = v.trim().slice(0, AI_MODEL_ID_MAX)
-  return s === '' ? DEFAULT_SETTINGS.aiModelId : s
+/** 模型 id:trim + 截断(自由字符串 —— 自定义端点连到哪家未知) */
+function modelIdOr(v: unknown): string {
+  return typeof v === 'string' ? v.trim().slice(0, AI_MODEL_ID_MAX) : ''
 }
 
-/** 单条协议配置:非对象回默认端点;baseUrl 空串回默认(端点不能为空,否则请求必失败) */
-function aiProviderConfigOr(v: unknown, fallback: AiProviderConfig): AiProviderConfig {
+/** 自定义请求头:同 serviceOverrides 的守卫(丢 __proto__、逐键截断、空值丢弃) */
+export function normalizeHeaders(v: unknown): Record<string, string> | undefined {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined
+  const out: Record<string, string> = {}
+  for (const [rawK, rawV] of Object.entries(v as Record<string, unknown>)) {
+    if (Object.keys(out).length >= HEADER_MAX_ENTRIES) break
+    if (rawK === '__proto__') continue
+    if (typeof rawV !== 'string') continue
+    const k = rawK.trim().slice(0, HEADER_NAME_MAX)
+    const val = rawV.trim().slice(0, HEADER_VALUE_MAX)
+    if (k === '' || val === '') continue
+    out[k] = val
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * 单条协议配置:非对象回默认端点;baseUrl 空串回默认(端点不能为空,否则请求必失败)。
+ * `legacyModelId` 只给「当前生效的那个协议」,用于把老配置里的全局 aiModelId 迁移过来。
+ */
+function aiProviderConfigOr(v: unknown, fallback: AiProviderConfig, legacyModelId: string): AiProviderConfig {
   const o = typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
   const base = typeof o.baseUrl === 'string' ? o.baseUrl.trim().slice(0, AI_BASE_URL_MAX) : ''
   const out: AiProviderConfig = { baseUrl: base === '' ? fallback.baseUrl : base }
-  const last = typeof o.lastModel === 'string' ? o.lastModel.trim().slice(0, AI_MODEL_ID_MAX) : ''
-  if (last !== '') out.lastModel = last
+
+  const own = modelIdOr(o.modelId)
+  const model = own !== '' ? own : legacyModelId !== '' ? legacyModelId : (fallback.modelId ?? '')
+  if (model !== '') out.modelId = model
+
+  const recents = Array.isArray(o.recentModels) ? o.recentModels : []
+  const list: string[] = []
+  for (const r of recents) {
+    const id = modelIdOr(r)
+    if (id === '' || list.includes(id)) continue
+    list.push(id)
+    if (list.length >= RECENT_MODEL_MAX) break
+  }
+  // 当前模型保证在列表里:chip 行就是「最近用过的模型」,当前那个以 active 态呈现
+  // (否则在用满 3 个时,用户只看得到 2 颗,与「显示最近 3 个」的预期不符)
+  if (model !== '' && !list.includes(model)) list.unshift(model)
+  if (list.length > 0) out.recentModels = list.slice(0, RECENT_MODEL_MAX)
+
+  const headers = normalizeHeaders(o.headers)
+  if (headers) out.headers = headers
   return out
 }
 
-/** 按固定两条协议逐键取值 —— 不遍历入参键名(未知键丢弃,形状恒定) */
-export function normalizeAiProviders(v: unknown): AiProvidersConfig {
+/**
+ * 按固定两条协议逐键取值 —— 不遍历入参键名(未知键丢弃,形状恒定)。
+ * `legacyModelId` 是老配置(RECENT_MODEL_MAX 之前的全局 aiModelId)的迁移入口,
+ * 只落到当前生效的协议上;没有它就说明是新配置,各协议用各自的默认模型。
+ */
+export function normalizeAiProviders(
+  v: unknown,
+  activeProviderId: AiProviderId,
+  legacyModelId = ''
+): AiProvidersConfig {
   const o = typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
   const d = DEFAULT_SETTINGS.aiProviders
+  const legacyFor = (id: AiProviderId): string => (id === activeProviderId ? legacyModelId : '')
   return {
-    anthropic: aiProviderConfigOr(o.anthropic, d.anthropic),
-    'openai-compatible': aiProviderConfigOr(o['openai-compatible'], d['openai-compatible'])
+    anthropic: aiProviderConfigOr(o.anthropic, d.anthropic, legacyFor('anthropic')),
+    'openai-compatible': aiProviderConfigOr(
+      o['openai-compatible'],
+      d['openai-compatible'],
+      legacyFor('openai-compatible')
+    )
   }
 }
 
@@ -205,6 +273,8 @@ export function normalizeAiProviders(v: unknown): AiProvidersConfig {
 export function normalizeSettings(raw: unknown): LauncherSettings {
   const r = (raw ?? {}) as Record<string, unknown>
   const d = DEFAULT_SETTINGS
+  // 先定协议,再解析协议配置:老配置的全局 aiModelId 只迁给「当时生效的那个协议」
+  const activeAiProviderId = enumOr(r.aiProviderId, AI_PROVIDER_VALUES, d.aiProviderId)
   return {
     // 外观与语言
     theme: enumOr(r.theme, THEME_VALUES, d.theme),
@@ -228,10 +298,9 @@ export function normalizeSettings(raw: unknown): LauncherSettings {
     confirmDangerous: boolOr(r.confirmDangerous, d.confirmDangerous),
     // 端口服务覆写
     serviceOverrides: normalizeServiceOverrides(r.serviceOverrides),
-    // AI 引擎
-    aiProviderId: enumOr(r.aiProviderId, AI_PROVIDER_VALUES, d.aiProviderId),
-    aiModelId: normalizeModelId(r.aiModelId),
-    aiProviders: normalizeAiProviders(r.aiProviders),
+    // AI 引擎(模型按协议各存各的;老配置的全局 aiModelId 迁移给当时生效的协议)
+    aiProviderId: activeAiProviderId,
+    aiProviders: normalizeAiProviders(r.aiProviders, activeAiProviderId, modelIdOr(r.aiModelId)),
     aiToolCallLimit: enumNumberOr(r.aiToolCallLimit, AI_TOOL_ROUNDS_VALUES, d.aiToolCallLimit),
     aiStream: boolOr(r.aiStream, d.aiStream),
     aiRequestTimeout: enumNumberOr(r.aiRequestTimeout, AI_TIMEOUT_VALUES, d.aiRequestTimeout),

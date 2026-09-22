@@ -296,6 +296,8 @@ async function install({ version, dir, force }) {
 
     // Node 下载本就不打隔离标记；此处仅作防御（例如该 zip 曾被浏览器下载过）
     await run('/usr/bin/xattr', ['-dr', 'com.apple.quarantine', appPath])
+    // MCP stdio 入口:解压链路可能丢执行位,补一次(见 packaging/mcp/launcher-mcp)
+    await run('/bin/chmod', ['+x', join(appPath, 'Contents/Resources/launcher-mcp')])
 
     // 落盘完整性：签名被破坏的 .app 往往连主可执行文件都不在
     if (!existsSync(join(appPath, APP_BIN))) {

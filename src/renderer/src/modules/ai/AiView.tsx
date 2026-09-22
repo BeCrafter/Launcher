@@ -7,6 +7,7 @@ import { useT } from '../../hooks/useT'
 import { useAiStore } from '../../state/ai-store'
 import { AiRail } from './AiRail'
 import { AiMessages } from './AiMessages'
+import { AiAnchors } from './AiAnchors'
 import { AiComposer } from './AiComposer'
 import { AiMcpModal } from './AiMcpModal'
 
@@ -108,6 +109,7 @@ export function AiView(): React.JSX.Element {
               <AiMessages />
             </div>
           </div>
+          <AiAnchors scrollRef={scrollRef} />
           <AiComposer showBot={showBot} scrollBottom={scrollBottom} />
         </section>
       </div>

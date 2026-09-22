@@ -75,4 +75,25 @@ describe('renderMarkdown', () => {
     expect(preventDefault).toHaveBeenCalledOnce()
     expect(openExternal).toHaveBeenCalledWith('https://docs.anthropic.com/llms.txt')
   })
+
+  it('GFM 表格:带分隔行才成表,单行竖线文本仍是段落', () => {
+    const t1 = renderMarkdown('| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |')
+    const table = findElement(t1, 'table')
+    expect(table).toBeTruthy()
+    expect(textOf(table)).toContain('A')
+    expect(textOf(table)).toContain('4')
+
+    // 没有分隔行 → 不是表格(避免把正文里的竖线误判成表格)
+    const t2 = renderMarkdown('| 这只是一句话 |')
+    expect(findElement(t2, 'table')).toBeNull()
+    expect(textOf(t2)).toContain('这只是一句话')
+  })
+
+  it('表格里的行内标记仍按行内解析,HTML 保持 inert', () => {
+    const nodes = renderMarkdown('| 键 | 值 |\n|---|---|\n| `Label` | <b>x</b> |')
+    const table = findElement(nodes, 'table')
+    expect(textOf(table)).toContain('Label')
+    expect(textOf(table)).toContain('<b>x</b>')
+    expect(findElement(nodes, 'code')).toBeTruthy()
+  })
 })

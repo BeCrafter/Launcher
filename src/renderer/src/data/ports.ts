@@ -112,6 +112,8 @@ export interface AiRepository {
   getState(): Promise<AiEngineState>
   setKey(providerId: AiProviderId, apiKey: string): Promise<AiEngineState>
   clearKey(providerId: AiProviderId): Promise<AiEngineState>
+  /** 读回已存的明文 Key(仅设置页用来显示;不参与引擎态) */
+  revealKey(providerId: AiProviderId): Promise<string>
   testConnection(providerId: AiProviderId): Promise<AiTestResult>
   listSessions(): Promise<AiSession[]>
   createSession(): Promise<AiSession>
@@ -124,6 +126,8 @@ export interface AiRepository {
   /** 该协议的模型目录(仅内置目录的协议非空) */
   catalog(providerId: AiProviderId): Promise<{ id: string; name: string }[]>
   mcpInfo(): Promise<AiMcpInfo>
+  /** 安装/修复 PATH 上的 launcher-mcp 链接(用户显式点击);error 非空时带回原因 */
+  installMcpLink(): Promise<{ info: AiMcpInfo; error: string | null }>
   /** 运行事件订阅(返回退订函数) */
   onRunEvent(cb: (e: AiRunEvent) => void): () => void
 }

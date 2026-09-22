@@ -21,6 +21,11 @@ cask "launcher" do
 
   app "Launcher.app"
 
+  # 把 MCP stdio 入口暴露到 PATH:外部 Agent 挂载时只写 `launcher-mcp` 即可,
+  # 不用记住应用包内的完整路径(那串路径以前还得带上 Electron 二进制与 app.asar 两段)。
+  # ⚠ 它是指向 app 内部文件的符号链接 —— 应用被移走/删除后该命令会失效(脚本自身会给出可读报错)。
+  binary "#{appdir}/Launcher.app/Contents/Resources/launcher-mcp"
+
   # Homebrew 会给下载物打上 com.apple.quarantine（cask/download.rb 无条件调用 Quarantine.cask!，
   # 且 Homebrew 7 已移除 --no-quarantine 选项），而未公证的 app 带该标记会被 macOS 判为
   # 「已损坏」且不再提供任何图形化绕过入口 —— 故装完立即移除。
@@ -34,6 +39,11 @@ cask "launcher" do
       opoo "未能自动移除隔离标记，请手动执行：" \
            "xattr -dr com.apple.quarantine \"#{appdir}/Launcher.app\""
     end
+
+    # 解压链路可能丢掉执行位,补一次 —— 否则 PATH 上的 launcher-mcp 会「找到但跑不起来」
+    chmod = system_command "/bin/chmod",
+                           args: ["+x", "#{appdir}/Launcher.app/Contents/Resources/launcher-mcp"]
+    opoo "未能设置 launcher-mcp 执行位,请手动执行：chmod +x \"#{appdir}/Launcher.app/Contents/Resources/launcher-mcp\"" unless chmod&.success?
   end
 
   caveats <<~EOS
