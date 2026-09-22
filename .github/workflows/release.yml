@@ -35,7 +35,7 @@ jobs:
       TAP_REPO: BeCrafter/homebrew-brew
       CASK_PATH: Casks/launcher.rb
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # 放在构建前：secrets 没配好时立刻失败，不必白等一次 macOS 构建
       - name: 校验发布配置
@@ -48,7 +48,7 @@ jobs:
               { echo "::error::$k 为空——检查 r2-publish 环境上的 secrets（含 TAP_GITHUB_TOKEN / NPM_TOKEN）"; exit 1; }
           done
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -125,7 +125,7 @@ jobs:
             { echo "::error::清单里没有本次版本 $VERSION"; cat versions.txt; exit 1; }
 
       - name: 配置 AWS 凭据（R2 走 S3 兼容接口）
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -206,7 +206,7 @@ jobs:
           # 而不是静默把别人的 cask 一起提交掉。
           STAGED="$(git diff --cached --name-only)"
           if [ -n "$STAGED" ] && [ "$STAGED" != "$CASK_PATH" ]; then
-            echo "::error::暂存区包含预期外的文件（应只有 $CASK_PATH）:"
+            echo "::error::暂存区包含预期外的文件（应只有 ${CASK_PATH}）:"
             echo "$STAGED"
             exit 1
           fi
@@ -288,7 +288,7 @@ jobs:
           } > /tmp/release-body.md
 
       - name: 发布
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}

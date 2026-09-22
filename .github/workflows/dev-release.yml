@@ -45,14 +45,14 @@ jobs:
     # macos-14 是 arm64 主机；--arch all 交叉构建 x64，故两种产物由同一 job 产出
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # 手动触发时固定跟 dev（本流水线是 dev 专用的）；push tag 时跟那个 tag
           ref: ${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
           # 算 dev 序号要读全部 tag；默认浅克隆只带当前 ref 的 tag
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -77,7 +77,7 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "TAG=v${VERSION}" >> "$GITHUB_ENV"
           echo "SHA=$SHA" >> "$GITHUB_ENV"
-          echo "本次构建：$VERSION（$(git rev-parse --short HEAD)）"
+          echo "本次构建：${VERSION}（$(git rev-parse --short HEAD)）"
 
       # 注意：构建期依赖（React / Vite / 字体等）全在 devDependencies，不能加 --omit=dev
       - name: 安装依赖
@@ -118,7 +118,7 @@ jobs:
           cd dist && shasum -a 256 ./*.zip ./*.dmg | tee /tmp/sha256.txt
 
       - name: 上传 Actions 产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: Launcher-${{ env.VERSION }}
           path: |
@@ -159,7 +159,7 @@ jobs:
           } > /tmp/dev-release-body.md
 
       - name: 发布 GitHub Release（pre-release）
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           name: ${{ env.VERSION }}

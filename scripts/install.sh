@@ -64,7 +64,7 @@ while [ $# -gt 0 ]; do
     --list) DO_LIST=1; shift ;;
     --pre) SHOW_PRE=1; shift ;;
     -h | --help) usage; exit 0 ;;
-    *) die "未知参数：$1（可用 --list / --check / --version / --dir，见 -h）" ;;
+    *) die "未知参数：${1}（可用 --list / --check / --version / --dir，见 -h）" ;;
   esac
 done
 
