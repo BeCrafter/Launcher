@@ -65,9 +65,8 @@ export function AppShell(): React.JSX.Element {
     // 订阅的是派生标量(计数/长度),流式 token 增量不会引起外壳重渲染
     model = aiStatusBar(
       {
+        // 供应商/模型不在这里重复(见 lib/statusbars.ts 的说明)
         ready: !!aiEngine?.configured,
-        providerName: aiEngine?.providerName ?? '',
-        modelLabel: aiEngine?.modelLabel ?? '',
         skills: aiSkillsCount,
         calls: aiCalls
       },

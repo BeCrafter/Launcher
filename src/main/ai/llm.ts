@@ -27,6 +27,8 @@ interface ResolvedConfig {
   modelId: string
   baseUrl: string
   apiKey: string | null
+  /** 该协议的附加请求头(企业网关常按 User-Agent 之类放行) */
+  headers: Record<string, string> | undefined
 }
 
 export interface ResolvedModel {
@@ -53,7 +55,6 @@ export function createLlmClient(deps: {
   secrets: SecretStore
   getProviders(): AiProvidersConfig
   getProviderId(): AiProviderId
-  getModelId(): string
   /** 请求超时(秒) */
   getTimeoutSec(): number
 }): LlmClient {
@@ -62,9 +63,11 @@ export function createLlmClient(deps: {
     const cfg = deps.getProviders()[pid]
     return {
       providerId: pid,
-      modelId: deps.getModelId(),
+      // 模型取自该协议自己的配置(切协议不会互相覆盖)
+      modelId: (cfg.modelId ?? '').trim(),
       baseUrl: cfg.baseUrl,
-      apiKey: deps.secrets.get(pid)
+      apiKey: deps.secrets.get(pid),
+      headers: cfg.headers
     }
   }
 
@@ -161,11 +164,12 @@ export function createLlmClient(deps: {
       const provider = buildProvider(cfg)
       const models = createModels()
       models.setProvider(provider)
-      const model = buildModel(cfg)
       // TranscriptContext 可赋值给 Context,且 normalizeContext 对已规范化的 transcript 幂等
       // (systemPrompt/tools 为空时原样返回)——故不要在这里再注入 tools,agent 已放进 system message
-      const fn: StreamFn = (m, context, options) => models.streamSimple(m, context, options)
-      void model
+      const extra = cfg.headers
+      const fn: StreamFn = (m, context, options) =>
+        // ⚠ 头必须走**请求选项**这一层:createProvider 的 headers 到不了线上(实测)。
+        models.streamSimple(m, context, extra ? { ...options, headers: { ...(options?.headers ?? {}), ...extra } } : options)
       return fn
     },
     testConnection: async (providerId) => {
@@ -177,8 +181,9 @@ export function createLlmClient(deps: {
         await models.completeSimple(
           buildModel(cfg),
           { messages: [{ role: 'user', content: 'ping', timestamp: Date.now() }] },
-          // 最小请求:只要端点/Key/模型名三者有一处不对就会失败
-          { maxTokens: 8, timeoutMs: deps.getTimeoutSec() * 1000 }
+          // 最小请求:只要端点/Key/模型名三者有一处不对就会失败。
+          // 附加头必须带上 —— 否则「测试连接」失败的端点实际是通的(反之亦然)
+          { maxTokens: 8, timeoutMs: deps.getTimeoutSec() * 1000, ...(cfg.headers ? { headers: cfg.headers } : {}) }
         )
         return { ok: true, message: 'ok' }
       } catch (err) {

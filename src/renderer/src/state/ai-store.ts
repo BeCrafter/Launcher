@@ -55,6 +55,8 @@ interface AiState {
   respondApproval(toolCallId: string, decision: 'approve' | 'cancel'): Promise<void>
   openMcp(): Promise<void>
   closeMcp(): void
+  /** 安装/修复 PATH 上的 launcher-mcp 链接(用户显式点击才调) */
+  installMcpLink(): Promise<void>
   /** 运行事件应用(main → renderer 流式推送的唯一入口) */
   applyEvent(e: AiRunEvent): void
 }
@@ -236,6 +238,20 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   closeMcp() {
     set({ mcpOpen: false })
+  },
+
+  async installMcpLink() {
+    try {
+      const { info, error } = await dataSource().ai.installMcpLink()
+      set({ mcpInfo: info })
+      if (error) {
+        showToast(fmt(t('ai.mcp.link.failed'), { R: error }), '#f87171', 'fa-triangle-exclamation')
+      } else if (info.link.foundAt) {
+        showToast(fmt(t('ai.mcp.link.done'), { P: info.link.foundAt }), '#4ade80', 'fa-link')
+      }
+    } catch (err) {
+      showToast(fmt(t('ai.mcp.link.failed'), { R: err instanceof Error ? err.message : String(err) }), '#f87171', 'fa-triangle-exclamation')
+    }
   },
 
   // ── 运行事件应用 ──

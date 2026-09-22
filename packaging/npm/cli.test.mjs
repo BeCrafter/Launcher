@@ -154,7 +154,9 @@ describe('cli 冒烟', () => {
       rmSync(dir, { recursive: true, force: true })
       server.close()
     }
-  })
+    // 本用例起本地 HTTP 夹具并**三次 spawn CLI 子进程**,默认 5s 在机器忙时会假失败(实测反复出现)。
+    // 给一个与真实代价相称的上限:仍然能抓住真正的挂死,但不再被负载抖动影响。
+  }, 20_000)
 
   it('versions --json 同样在取不到时退出 1（不能输出半截 json）', async () => {
     const r = await cli(['versions', '--json'], DEAD)

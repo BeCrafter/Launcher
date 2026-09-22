@@ -11,21 +11,22 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { normalizeSettings, type McpPermission } from '../../shared/settings'
+import { normalizeSettings, type Language, type McpPermission } from '../../shared/settings'
 import { createShellRunner } from '../services/shell-runner'
 import { createElevationExecutor } from '../services/elevation'
 import { createCoreServices } from '../core-services'
 import { createToolRegistry } from '../ai/tools'
 import { createLauncherMcpServer } from './server'
 
-function readPermission(): McpPermission {
+function readConfig(): { permission: McpPermission; language: Language } {
   const home = homedir()
   const path = process.env['LAUNCHER_CONFIG_PATH'] ?? join(home, '.config', 'launcher', 'config.json')
   try {
-    return normalizeSettings(JSON.parse(readFileSync(path, 'utf8'))).mcpPermission
+    const s = normalizeSettings(JSON.parse(readFileSync(path, 'utf8')))
+    return { permission: s.mcpPermission, language: s.language }
   } catch {
-    // 没有设置文件 / 读不动 → 回只读:外部 Agent 的默认姿态就是不给写
-    return 'readOnly'
+    // 没有设置文件 / 读不动 → 回只读 + 中文:外部 Agent 的默认姿态就是不给写
+    return { permission: 'readOnly', language: 'zh-CN' }
   }
 }
 
@@ -54,7 +55,8 @@ async function main(): Promise<void> {
 
   const server = createLauncherMcpServer({
     registry,
-    getPermission: readPermission,
+    getPermission: () => readConfig().permission,
+    getLanguage: () => readConfig().language,
     sessionId: `stdio-${process.pid}`
   })
   await server.connect(new StdioServerTransport())

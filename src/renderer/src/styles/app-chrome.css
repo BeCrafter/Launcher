@@ -740,3 +740,284 @@
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 9.5px;
 }
+
+/* Markdown 表格(模型在概览/对比类回答里常用;窄容器横向滚动而不挤压正文) */
+.md-table-wrap {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.md-table {
+  border-collapse: collapse;
+  font-size: 11.5px;
+  width: 100%;
+}
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  background: var(--surface2);
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ── 设置页 › AI 助手:模型快捷填入 (2026-09-22 用户要求两点改动) ──
+   ① 不再横向滚动:demo 的 `.ai-model-picks` 是 nowrap + overflow-x: auto + 固定 --cfg-field-w,
+      十几个模型 chip 挤在一行里靠滚动条翻,既难发现也难点;
+   ② 允许占满整行宽度(含左半区)换行排布,而不是缩在右上角那一列里。
+   ⚠ 面板在 ai.css(冻结的 demo 逐字节副本),不就地改;用双类选择器压过它的单类(0,2,0 > 0,1,0)。 */
+.ai-model-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* 「模型 ID」与下方「最近用过」是一个整体:把 settings-row 自带的那条分隔线
+     从输入框与 chips 之间挪到整个 block 下面,否则两块被一条线割开,读起来是两件事 */
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.ai-model-block .ai-model-row {
+  /* 组内**虚线**分隔:`模型 ID` 与 `最近用过` 之间不再是一片空白。
+     用虚线而不是实线是有意的 —— 实线是"分组边界"(割裂感重,用户上一轮就是这么反馈的),
+     虚线是"组内分隔",既填了空又不把一件事切成两件。颜色取 --border2 而非 --border:
+     后者只有 0.06/0.08 透明度,做成虚线几乎看不见。 */
+  border-bottom: 1px dashed var(--border2);
+  padding-bottom: 10px;
+}
+.ai-model-picks.ai-model-picks-wide {
+  flex-wrap: wrap;
+  /* 靠右对齐(与上方输入框同侧);放不下时向左换行 —— 也就是"可以用上左边那片空间" */
+  justify-content: flex-end;
+  width: 100%;
+  overflow-x: visible;
+  padding-bottom: 0;
+}
+
+/* ── 设置页 › AI 助手:API Key 行 ──
+   眼睛钮**浮动在输入框内部**右缘(用户要求:在输入框范围里的那种浮动,不是另起一行)。 */
+.ai-cfg-key-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+/* 给浮动钮留出空间,否则长 Key 的文字会钻到眼睛底下 */
+.ai-cfg-key-field .ai-cfg-input {
+  padding-right: 30px;
+}
+.ai-cfg-eye {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ai-cfg-eye:hover {
+  color: var(--accent2);
+  background: var(--wash-accent);
+}
+/* 测试连接:图标钮(tooltip 带文案)—— 文字版在这一行里占地过大 */
+.ai-cfg-test-btn {
+  flex-shrink: 0;
+  padding: 5px 9px;
+  line-height: 1;
+}
+.ai-cfg-test-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ══════════ AI 对话页:右侧会话锚点 ══════════
+   快速定位到某条用户消息。锚点条浮在画布右侧,平时克制、指针靠近才亮起来;
+   悬浮时目标消息加 .is-anchor-hl 高亮(命令式加类,避免划过就重渲整条消息流)。 */
+.ai-anchors {
+  position: absolute;
+  right: 6px;
+  /* 中间偏上再提一档:视觉重心对着正文而不是整屏几何中心。
+     ⚠ 百分比是相对 .ai-main 的(它从顶栏之下才开始、到输入区结束),所以 36% 落到整窗约 42.6%;
+     再上移到 32% ≈ 整窗 38%。 */
+  top: 32%;
+  transform: translateY(-50%);
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 6px 4px;
+  border-radius: 10px;
+  /* 常态几乎隐形,指针进来才浮现 —— 否则一列小横杠会跟正文抢注意力 */
+  opacity: 0.45;
+  transition: opacity 0.18s ease;
+}
+/* 悬浮只提亮,不加边框/底色/阴影 —— 那会把一小列横杠变成一个"控件盒子",反而更抢眼 */
+.ai-anchors:hover {
+  opacity: 1;
+}
+/* 上下渐隐,**只在那一侧真的还有锚点时才加** —— 否则滚到头了还在淡出第一个,
+   等于撒谎说"上面还有"。(用户明确问到"到结尾了要不要体现出来"。) */
+.ai-anchors.fade-top {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+}
+.ai-anchors.fade-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 22px), transparent 100%);
+}
+.ai-anchors.fade-top.fade-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 22px,
+    #000 calc(100% - 22px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 22px,
+    #000 calc(100% - 22px),
+    transparent 100%
+  );
+}
+
+.ai-anchor {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 18px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.ai-anchor-bar {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--dim);
+  /* 长度由 JS 内联给(离焦点越远越短);这里的过渡让鼠标划过时整列**平滑起伏**而不是逐根跳变 */
+  transition:
+    width 0.2s cubic-bezier(0.32, 0.72, 0, 1),
+    background 0.18s ease;
+}
+/* 当前阅读位置:换色标记"我在哪"(长度已由渐变体现) */
+.ai-anchor.is-active .ai-anchor-bar {
+  background: var(--accent);
+}
+/* 悬浮这一根:更亮,焦点就在这根横线上 */
+.ai-anchor.is-hover .ai-anchor-bar {
+  background: var(--accent2);
+}
+
+/* 浮层文字:不再做成带底/边框/阴影的胶囊 —— 那会在横线左侧堆出一个"卡片",
+   视线被它拽走。现在只留一行淡色文字,焦点回到横线本身(用户要求)。 */
+.ai-anchor-tip {
+  position: absolute;
+  right: calc(100% + 10px);
+  max-width: 240px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  animation: aiAnchorTipIn 0.16s ease both;
+}
+@keyframes aiAnchorTipIn {
+  from {
+    opacity: 0;
+    transform: translateX(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 悬浮锚点时对应的消息:一层柔和描边,不改变布局(不改 padding/margin,避免跳动) */
+.ai-msg.is-anchor-hl {
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--accent2), 0 0 0 6px var(--wash-accent);
+  transition: box-shadow 0.15s ease;
+}
+
+/* AI 新会话顶部:语言来源提示(整条可点 → 设置 › 常规与外观) */
+.ai-welcome-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 10px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.ai-welcome-lang:hover {
+  color: var(--accent2);
+  border-color: var(--accent2);
+  background: var(--wash-accent);
+}
+.ai-welcome-lang-arrow {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+/* MCP 弹窗:launcher-mcp 的 PATH 链接状态行(只有非 linked 时才给安装按钮) */
+.ai-mcp-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 6px;
+}
+.ai-mcp-link-txt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.ai-mcp-link-txt span {
+  overflow-wrap: anywhere;
+}
+.ai-mcp-link.linked .ai-mcp-link-txt i {
+  color: var(--green);
+}
+.ai-mcp-link.dangling .ai-mcp-link-txt i,
+.ai-mcp-link.foreign .ai-mcp-link-txt i {
+  color: var(--yellow);
+}
+.ai-mcp-link-btn {
+  flex-shrink: 0;
+  padding: 4px 9px;
+  font-size: 10.5px;
+}
+
+/* MCP 弹窗:客户端配置示例行(次要信息,不做成命令块避免跟命令本体抢注意力) */
+.ai-mcp-cmd-example {
+  margin-top: 5px;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}

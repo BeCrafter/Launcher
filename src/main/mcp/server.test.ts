@@ -55,6 +55,7 @@ async function pair(permission: McpPermission): Promise<Client> {
   const server = createLauncherMcpServer({
     registry: registry(),
     getPermission: () => permission,
+    getLanguage: () => 'zh-CN',
     sessionId: 'test'
   })
   const client = new Client({ name: 'test-client', version: '1.0.0' })
@@ -145,6 +146,7 @@ describe('MCP server', () => {
     const server = createLauncherMcpServer({
       registry: registry(),
       getPermission: () => perm,
+      getLanguage: () => 'zh-CN',
       sessionId: 'test'
     })
     const client = new Client({ name: 'c', version: '1.0.0' })

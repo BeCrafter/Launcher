@@ -34,8 +34,12 @@ export function Topbar(): React.JSX.Element {
       </div>
       <div className="topbar-spacer" />
       <div className="topbar-actions">
-        {/* AI 对话页无顶栏搜索(demo MODULES.ai 有意省略 searchPlaceholderKey) */}
-        {module !== 'ai' && <SearchBox placeholder={placeholder} value={searchQuery} onChange={setSearch} />}
+        {/* 有搜索行为的模块才渲染搜索框:由 MODULES 的 searchPlaceholderKey 驱动。
+            设置页与 AI 对话页在 demo 里就没有搜索框(注册表里也没有 searchPlaceholderKey)——
+            此前按 module !== 'ai' 硬判,给设置页多渲染了一个点了没反应的搜索框。 */}
+        {rec.searchPlaceholderKey && (
+          <SearchBox placeholder={placeholder} value={searchQuery} onChange={setSearch} />
+        )}
         {module === 'agents' && <AgentsActions />}
         {module === 'crontab' && <CrontabActions />}
         {module === 'services' && <ServicesActions />}

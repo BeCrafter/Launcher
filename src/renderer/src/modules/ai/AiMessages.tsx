@@ -10,6 +10,9 @@ import { TagChip } from '../../components/ui/TagChip'
 import { renderMarkdown } from '../../lib/markdown'
 import { getTs } from '../../lib/utils'
 import { isRunningHere, useAiStore } from '../../state/ai-store'
+import { useSettingsStore } from '../../state/settings-store'
+import { useSettingsNav } from '../../state/settings-nav-store'
+import { useUiStore } from '../../state/ui-store'
 import { AiCard, AiSuggest } from './AiCards'
 import type {
   AiAssistantMessage,
@@ -39,9 +42,9 @@ export function AiMessages(): React.JSX.Element {
     <>
       {items.map((it, i) =>
         it.kind === 'user' ? (
-          <UserMsg key={it.msg.id} msg={it.msg} />
+          <UserMsg key={it.msg.id} msg={it.msg} mi={i} />
         ) : (
-          <BotGroupView key={it.group.assistant.id} group={it.group} idx={i} />
+          <BotGroupView key={it.group.assistant.id} group={it.group} idx={i} isFinal={i === items.length - 1} />
         )
       )}
     </>
@@ -50,9 +53,9 @@ export function AiMessages(): React.JSX.Element {
 
 // ── 用户消息(demo aiMsgHtml user 分支:@ 引用 chips + 气泡)──
 
-function UserMsg({ msg }: { msg: AiUserMessage }): React.JSX.Element {
+function UserMsg({ msg, mi }: { msg: AiUserMessage; mi: number }): React.JSX.Element {
   return (
-    <div className="ai-msg user">
+    <div className="ai-msg user" data-mi={mi}>
       <div className="ai-bubble">
         {(msg.mentions ?? []).map((m) => (
           <span className="ai-chip-ref" key={m.key}>
@@ -77,7 +80,8 @@ interface BotGroup {
 
 type RenderItem = { kind: 'user'; msg: AiUserMessage } | { kind: 'bot'; group: BotGroup }
 
-function buildItems(messages: AiMessage[]): RenderItem[] {
+/** 消息 → 渲染项(右侧锚点也要用它找出「用户消息」的位置,故导出) */
+export function buildItems(messages: AiMessage[]): RenderItem[] {
   const items: RenderItem[] = []
   for (const m of messages) {
     if (m.role === 'user') items.push({ kind: 'user', msg: m })
@@ -94,10 +98,12 @@ function buildItems(messages: AiMessage[]): RenderItem[] {
 
 function BotGroupView({
   group,
-  idx
+  idx,
+  isFinal
 }: {
   group: BotGroup
   idx: number
+  isFinal: boolean
 }): React.JSX.Element {
   const t = useT()
   const fmt = useFmt()
@@ -182,7 +188,7 @@ function BotGroupView({
   const awaiting = assistant.blocks.length === 0
 
   return (
-    <div className="ai-msg bot">
+    <div className="ai-msg bot" data-mi={idx}>
       <div className="ai-bot-name">
         <span className="ai-bot-avatar">
           <i className="fa-solid fa-wand-magic-sparkles" />
@@ -200,7 +206,7 @@ function BotGroupView({
         </div>
       )}
       {nodes}
-      <MsgMeta assistant={assistant} />
+      <MsgMeta assistant={assistant} isFinal={isFinal} />
     </div>
   )
 }
@@ -217,7 +223,13 @@ function cardToolCallId(
 
 // ── 用量与终止原因(7 态;demo 只有运行中/完成两态)──
 
-function MsgMeta({ assistant }: { assistant: AiAssistantMessage }): React.JSX.Element | null {
+function MsgMeta({
+  assistant,
+  isFinal
+}: {
+  assistant: AiAssistantMessage
+  isFinal: boolean
+}): React.JSX.Element | null {
   const t = useT()
   const fmt = useFmt()
   const { stopReason, usage, errorMessage } = assistant
@@ -228,7 +240,12 @@ function MsgMeta({ assistant }: { assistant: AiAssistantMessage }): React.JSX.El
         ? t('ai.notice.length')
         : (stopReason === 'error' || errorMessage) && stopReason !== 'pending'
           ? fmt(t('ai.notice.error'), { M: errorMessage ?? '' })
-          : null
+          : // 末条仍是 toolUse = 运行在"还想继续调工具"时被截断(工具轮数上限)。
+            // ⚠ 必须限定"整段对话的最后一条":中间任何调过工具的助手消息都是 toolUse 状态
+            //   (循环接着跑下一轮),不限定就会满屏都是这条提示。
+            stopReason === 'toolUse' && isFinal
+            ? t('ai.notice.toolLimit')
+            : null
   const cost = usage?.cost
   if (!notice && !(usage && usage.totalTokens > 0)) return null
   return (
@@ -237,7 +254,9 @@ function MsgMeta({ assistant }: { assistant: AiAssistantMessage }): React.JSX.El
       {usage && usage.totalTokens > 0 && (
         <span className="ai-msg-usage">
           {usage.totalTokens} tok
-          {cost ? ` · $${cost.total.toFixed(4)}` : ''}
+          {/* 只在有真实计价时显示:OpenAI 兼容端点连到哪家未知,目录价一律补 0,
+             显示 $0.0000 会被读成"免费"而不是"不知道",不如不显示 */}
+          {cost && cost.total > 0 ? ` · $${cost.total.toFixed(4)}` : ''}
         </span>
       )}
     </div>
@@ -382,6 +401,28 @@ function AiThinking({ block, streaming }: { block: AiThinkingBlock; streaming: b
 
 // ── 欢迎态(demo aiWelcomeHtml;数据来自 dataSource().ai.skills())──
 
+/**
+ * 新会话顶部提示:对话语言来自系统设置(用户要求 —— 否则用户不知道助手为什么说这种语言、
+ * 也不知道去哪改)。做成可点的:直接跳到设置 › 常规与外观。
+ */
+function WelcomeLangHint(): React.JSX.Element {
+  const t = useT()
+  const fmt = useFmt()
+  const lang = useSettingsStore((s) => s.settings?.language ?? 'zh-CN')
+  const goto = (): void => {
+    useSettingsNav.getState().setTab('general')
+    useUiStore.getState().switchModule('settings')
+  }
+  const label = lang === 'zh-CN' ? t('settings.general.lang.zhCN') : 'English (US)'
+  return (
+    <button className="ai-welcome-lang" type="button" onClick={goto} title={t('ai.welcome.langChange')}>
+      <i className="fa-solid fa-language" />
+      <span>{fmt(t('ai.welcome.langHint'), { L: label })}</span>
+      <i className="fa-solid fa-arrow-right ai-welcome-lang-arrow" />
+    </button>
+  )
+}
+
 function AiWelcome(): React.JSX.Element {
   const t = useT()
   const skills = useAiStore((s) => s.skills)
@@ -398,6 +439,7 @@ function AiWelcome(): React.JSX.Element {
         {t('ai.welcome.greet')}
       </div>
       <div className="ai-welcome-sub">{t('ai.welcome.sub')}</div>
+      <WelcomeLangHint />
       <div
         className="ai-health-card"
         onClick={() => run(`${t('ai.welcome.healthTitle')}：${t('ai.welcome.healthDesc')}`)}

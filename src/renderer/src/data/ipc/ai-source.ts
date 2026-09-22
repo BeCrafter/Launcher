@@ -9,6 +9,7 @@ export function createIpcAiRepo(): AiRepository {
     getState: () => api().getState(),
     setKey: (providerId, apiKey) => api().setKey(providerId, apiKey),
     clearKey: (providerId) => api().clearKey(providerId),
+    revealKey: (providerId) => api().revealKey(providerId),
     testConnection: (providerId) => api().testConnection(providerId),
     listSessions: () => api().listSessions(),
     createSession: () => api().createSession(),
@@ -20,6 +21,7 @@ export function createIpcAiRepo(): AiRepository {
     skills: () => api().skills(),
     catalog: (providerId) => api().catalog(providerId),
     mcpInfo: () => api().mcpInfo(),
+    installMcpLink: () => api().installMcpLink(),
     onRunEvent: (cb) =>
       window.launcher.onEvent(IPC_EVENTS.aiRunEvent, (payload) => cb(payload as AiRunEvent))
   }

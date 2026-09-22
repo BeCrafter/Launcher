@@ -6,7 +6,7 @@
 
 import { createServer, type Server as HttpServer } from 'node:http'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import type { McpPermission } from '../../shared/settings'
+import type { Language, McpPermission } from '../../shared/settings'
 import type { ToolRegistry } from '../ai/tool-types'
 import { createLauncherMcpServer } from './server'
 
@@ -22,6 +22,7 @@ export interface McpHttpEndpoint {
 export function createMcpHttpEndpoint(deps: {
   registry: ToolRegistry
   getPermission(): McpPermission
+  getLanguage(): Language
   port?: number
   log?(msg: string): void
 }): McpHttpEndpoint {
@@ -47,6 +48,7 @@ export function createMcpHttpEndpoint(deps: {
     const mcp = createLauncherMcpServer({
       registry: deps.registry,
       getPermission: deps.getPermission,
+      getLanguage: deps.getLanguage,
       sessionId: `http-${Date.now().toString(36)}`
     })
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
