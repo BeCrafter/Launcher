@@ -13,13 +13,14 @@ import { useSettingsStore } from '../state/settings-store'
 import { useSidebarLayout, toggleSidebarCollapse } from '../hooks/useSidebarLayout'
 import { useT, useFmt } from '../hooks/useT'
 import { useAppInfo } from '../hooks/useAppInfo'
-import { agentsStatusBar, crontabStatusBar, servicesStatusBar } from '../lib/statusbars'
+import { agentsStatusBar, crontabStatusBar, servicesStatusBar, aiStatusBar } from '../lib/statusbars'
 import { themeLabelKey, languageLabel } from '../lib/labels'
 import { archLabel } from '../lib/arch'
 import { showToast } from '../lib/utils'
 import { useAgentsStore } from '../state/agents-store'
 import { useCronStore } from '../state/cron-store'
 import { useServicesStore } from '../state/services-store'
+import { useAiStore, countToolCalls } from '../state/ai-store'
 import { MOCK_DATA } from '../data/mock/mock-data'
 
 export function AppShell(): React.JSX.Element {
@@ -34,6 +35,10 @@ export function AppShell(): React.JSX.Element {
   const language = useSettingsStore((s) => s.settings?.language ?? 'zh-CN')
   const info = useAppInfo()
   const arch = info ? archLabel(info.arch) : ''
+  // AI 状态栏数据源(派生标量订阅,见下方 ai 分支)
+  const aiEngine = useAiStore((s) => s.engine)
+  const aiSkillsCount = useAiStore((s) => s.skills.length)
+  const aiCalls = useAiStore((s) => countToolCalls(s.messages))
   useSidebarLayout(sidebarCollapsed)
 
   // 设置页默认折叠侧边栏(demo switchModule('settings') 行为,toast 文案同款)
@@ -55,6 +60,21 @@ export function AppShell(): React.JSX.Element {
   if (module === 'agents') model = agentsStatusBar({ agents }, t, fmt)
   else if (module === 'crontab') model = crontabStatusBar({ crons }, t, fmt)
   else if (module === 'services') model = servicesStatusBar({ services }, t, fmt)
+  else if (module === 'ai') {
+    // 引擎行跟随 AI 配置(demo MODULES.ai.statusbar);调用数 = 当前会话 toolCall 块计数
+    // 订阅的是派生标量(计数/长度),流式 token 增量不会引起外壳重渲染
+    model = aiStatusBar(
+      {
+        ready: !!aiEngine?.configured,
+        providerName: aiEngine?.providerName ?? '',
+        modelLabel: aiEngine?.modelLabel ?? '',
+        skills: aiSkillsCount,
+        calls: aiCalls
+      },
+      t,
+      fmt
+    )
+  }
   else if (module === 'settings')
     model = {
       summaryIcon: 'fa-sliders',

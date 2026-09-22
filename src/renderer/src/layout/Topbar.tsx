@@ -9,6 +9,7 @@ import { useAgentsStore } from '../state/agents-store'
 import { useDrawerStore } from '../state/drawer-store'
 import { useCronStore } from '../state/cron-store'
 import { useServicesStore } from '../state/services-store'
+import { useAiStore } from '../state/ai-store'
 import { cronErrorToast } from '../lib/cron'
 import { showToast } from '../lib/utils'
 
@@ -33,10 +34,12 @@ export function Topbar(): React.JSX.Element {
       </div>
       <div className="topbar-spacer" />
       <div className="topbar-actions">
-        <SearchBox placeholder={placeholder} value={searchQuery} onChange={setSearch} />
+        {/* AI 对话页无顶栏搜索(demo MODULES.ai 有意省略 searchPlaceholderKey) */}
+        {module !== 'ai' && <SearchBox placeholder={placeholder} value={searchQuery} onChange={setSearch} />}
         {module === 'agents' && <AgentsActions />}
         {module === 'crontab' && <CrontabActions />}
         {module === 'services' && <ServicesActions />}
+        {module === 'ai' && <AiActions />}
         {module === 'settings' && (
           <>
             <button
@@ -192,5 +195,20 @@ function ServicesActions(): React.JSX.Element {
         <span>{t('topbar.watchState')}</span>
       </button>
     </>
+  )
+}
+
+// AI 模块唯一操作:接入 MCP(弹窗挂载在 AiView 内,经 ai-store 的 mcpOpen 通信)
+function AiActions(): React.JSX.Element {
+  const t = useT()
+  return (
+    <button
+      className="topbar-btn"
+      type="button"
+      onClick={() => void useAiStore.getState().openMcp()}
+    >
+      <i className="fa-solid fa-plug" />
+      <span>{t('ai.mcp.title')}</span>
+    </button>
   )
 }

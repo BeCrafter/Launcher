@@ -14,8 +14,12 @@ import { openExternal, showToast } from '../lib/utils'
 const NAV_ICONS: Record<string, string> = {
   agents: 'fa-solid fa-rocket',
   crontab: 'fa-regular fa-clock',
-  services: 'fa-solid fa-network-wired'
+  services: 'fa-solid fa-network-wired',
+  ai: 'fa-solid fa-wand-magic-sparkles'
 }
+
+// demo 的 AI 入口标签走 ai.module(非 nav.* 键);其余入口沿用 nav.<id>
+const NAV_LABEL_KEYS: Partial<Record<string, string>> = { ai: 'ai.module' }
 
 export function Sidebar(): React.JSX.Element {
   const t = useT()
@@ -50,7 +54,7 @@ export function Sidebar(): React.JSX.Element {
         <div className="nav-section-label">{t('nav.section')}</div>
         {SIDEBAR_MODULES.map((id) => {
           const active = module === id
-          const label = t(`nav.${id}`)
+          const label = t(NAV_LABEL_KEYS[id] ?? `nav.${id}`)
           return (
             <div key={id} className={`nav-item${active ? ' active' : ''}`} onClick={() => switchModule(id)}>
               <div className="nav-icon">

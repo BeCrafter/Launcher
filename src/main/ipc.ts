@@ -25,6 +25,9 @@ import type { ProcessDiscovery, ScanResult } from './services/process-discovery'
 import type { TerminationService } from './services/termination'
 import type { SettingsStore } from './settings/store'
 import type { TrayController } from './settings/types'
+import type { AiStack } from './ai'
+import type { AiApprovalInput, AiSendInput } from '../shared/ipc'
+import type { AiProviderId } from '../shared/settings'
 
 export interface IpcDeps {
   store: SettingsStore
@@ -36,6 +39,8 @@ export interface IpcDeps {
   docker: DockerService
   /** 安装来源(启动时探测一次;决定「检查更新」给哪条升级命令) */
   installChannel: InstallChannel
+  /** AI 助手(阶段 4):会话/引擎/授权;MCP 端点由它一并管着 */
+  ai: AiStack
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -198,4 +203,23 @@ export function registerIpc(deps: IpcDeps): void {
       void deps.cron.cleanupLogs()
     }
   })
+
+  // ── AI 助手(阶段 4) ──
+  // Key 只有「送进去」的方向:setKey 收明文,返回的状态里只有 hasKey 布尔
+  ipcMain.handle(IPC.aiGetState, () => deps.ai.chat.getEngineState())
+  ipcMain.handle(IPC.aiSetKey, (_e, providerId: AiProviderId, apiKey: string) =>
+    deps.ai.chat.setKey(providerId, String(apiKey ?? ''))
+  )
+  ipcMain.handle(IPC.aiClearKey, (_e, providerId: AiProviderId) => deps.ai.chat.clearKey(providerId))
+  ipcMain.handle(IPC.aiTestConnection, (_e, providerId: AiProviderId) => deps.ai.chat.testConnection(providerId))
+  ipcMain.handle(IPC.aiListSessions, () => deps.ai.chat.listSessions())
+  ipcMain.handle(IPC.aiCreateSession, () => deps.ai.chat.createSession())
+  ipcMain.handle(IPC.aiDeleteSession, (_e, id: string) => deps.ai.chat.deleteSession(String(id)))
+  ipcMain.handle(IPC.aiGetMessages, (_e, sessionId: string) => deps.ai.chat.getMessages(String(sessionId)))
+  ipcMain.handle(IPC.aiSend, (_e, input: AiSendInput) => deps.ai.chat.send(input))
+  ipcMain.handle(IPC.aiAbort, () => deps.ai.chat.abort())
+  ipcMain.handle(IPC.aiRespondApproval, (_e, input: AiApprovalInput) => deps.ai.chat.respondApproval(input))
+  ipcMain.handle(IPC.aiSkills, () => deps.ai.chat.skills())
+  ipcMain.handle(IPC.aiCatalog, (_e, providerId: AiProviderId) => deps.ai.chat.catalog(providerId))
+  ipcMain.handle(IPC.aiMcpInfo, () => deps.ai.mcpInfo())
 }

@@ -12,7 +12,11 @@ import type {
   RestartOutcome,
   ServicesListPayload,
   SettingsPatch,
-  UpdateCheckResult
+  UpdateCheckResult,
+  AiApprovalInput,
+  AiMcpInfo,
+  AiSendInput,
+  AiTestResult
 } from './ipc'
 import type {
   Agent,
@@ -31,7 +35,8 @@ import type {
   SaveOutcome,
   SaveXmlInput
 } from './models'
-import type { LauncherSettings } from './settings'
+import type { LauncherSettings, AiProviderId } from './settings'
+import type { AiEngineState, AiMessage, AiSession, AiSkillInfo } from './ai'
 
 export interface LauncherApi {
   appName: string
@@ -102,4 +107,28 @@ export interface LauncherApi {
   }
   // main → renderer 推送订阅(白名单通道),返回退订函数
   onEvent: (channel: IpcEventChannel, cb: (payload: unknown) => void) => () => void
+  // AI 助手(阶段 4:pi 引擎 + ToolRegistry + MCP)
+  ai: {
+    /** 引擎状态(协议/模型/有无 Key);Key 本体永不出 main */
+    getState: () => Promise<AiEngineState>
+    /** 写入某协议的 API Key(safeStorage 加密) */
+    setKey: (providerId: AiProviderId, apiKey: string) => Promise<AiEngineState>
+    clearKey: (providerId: AiProviderId) => Promise<AiEngineState>
+    /** 用当前配置真连一次端点(testConnection 用于设置页的「测试连接」) */
+    testConnection: (providerId: AiProviderId) => Promise<AiTestResult>
+    listSessions: () => Promise<AiSession[]>
+    createSession: () => Promise<AiSession>
+    deleteSession: (id: string) => Promise<void>
+    getMessages: (sessionId: string) => Promise<AiMessage[]>
+    /** 发起一轮对话;过程经 onEvent(IPC_EVENTS.aiRunEvent) 流式推送 */
+    send: (input: AiSendInput) => Promise<void>
+    /** 中止当前运行 */
+    abort: () => Promise<void>
+    /** 应答授权卡(approve / cancel) */
+    respondApproval: (input: AiApprovalInput) => Promise<void>
+    skills: () => Promise<AiSkillInfo[]>
+    /** 该协议的模型目录(仅 Anthropic 有内置目录,其余返回空 —— 模型名需用户自填) */
+    catalog: (providerId: AiProviderId) => Promise<{ id: string; name: string }[]>
+    mcpInfo: () => Promise<AiMcpInfo>
+  }
 }

@@ -19,7 +19,8 @@ function readInitialSettings(): ReturnType<typeof normalizeSettings> {
 const EVENT_CHANNELS: readonly IpcEventChannel[] = [
   IPC_EVENTS.settingsChanged,
   IPC_EVENTS.agentsDirChanged,
-  IPC_EVENTS.servicesUpdated
+  IPC_EVENTS.servicesUpdated,
+  IPC_EVENTS.aiRunEvent
 ]
 
 const api: LauncherApi = {
@@ -83,6 +84,22 @@ const api: LauncherApi = {
     const listener = (_e: Electron.IpcRendererEvent, payload: unknown): void => cb(payload)
     ipcRenderer.on(channel, listener)
     return () => ipcRenderer.removeListener(channel, listener)
+  },
+  ai: {
+    getState: () => ipcRenderer.invoke(IPC.aiGetState),
+    setKey: (providerId, apiKey) => ipcRenderer.invoke(IPC.aiSetKey, providerId, apiKey),
+    clearKey: (providerId) => ipcRenderer.invoke(IPC.aiClearKey, providerId),
+    testConnection: (providerId) => ipcRenderer.invoke(IPC.aiTestConnection, providerId),
+    listSessions: () => ipcRenderer.invoke(IPC.aiListSessions),
+    createSession: () => ipcRenderer.invoke(IPC.aiCreateSession),
+    deleteSession: (id) => ipcRenderer.invoke(IPC.aiDeleteSession, id),
+    getMessages: (sessionId) => ipcRenderer.invoke(IPC.aiGetMessages, sessionId),
+    send: (input) => ipcRenderer.invoke(IPC.aiSend, input),
+    abort: () => ipcRenderer.invoke(IPC.aiAbort),
+    respondApproval: (input) => ipcRenderer.invoke(IPC.aiRespondApproval, input),
+    skills: () => ipcRenderer.invoke(IPC.aiSkills),
+    catalog: (providerId) => ipcRenderer.invoke(IPC.aiCatalog, providerId),
+    mcpInfo: () => ipcRenderer.invoke(IPC.aiMcpInfo)
   }
 }
 

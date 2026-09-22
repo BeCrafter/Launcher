@@ -3,6 +3,7 @@
 import type { AgentScope, CronJob } from './models'
 import type { CronScope, DockerContainer, DockerUnavailableReason, PortService } from './models'
 import type { LauncherSettings } from './settings'
+import type { AiApprovalDecision, AiMention } from './ai'
 
 // ── invoke 通道 ──
 export const IPC = {
@@ -48,14 +49,31 @@ export const IPC = {
   svcRestart: 'services:restart',
   svcContainerAction: 'services:containerAction',
   svcSetPolling: 'services:setPolling',
-  svcSetActive: 'services:setActive'
+  svcSetActive: 'services:setActive',
+  // ── AI 助手(阶段 4) ──
+  aiGetState: 'ai:getState',
+  aiSetKey: 'ai:setKey',
+  aiClearKey: 'ai:clearKey',
+  aiTestConnection: 'ai:testConnection',
+  aiListSessions: 'ai:listSessions',
+  aiCreateSession: 'ai:createSession',
+  aiDeleteSession: 'ai:deleteSession',
+  aiGetMessages: 'ai:getMessages',
+  aiSend: 'ai:send',
+  aiAbort: 'ai:abort',
+  aiRespondApproval: 'ai:respondApproval',
+  aiSkills: 'ai:skills',
+  aiCatalog: 'ai:catalog',
+  aiMcpInfo: 'ai:mcpInfo'
 } as const
 
 // ── main → renderer 推送事件(preload onEvent 白名单) ──
 export const IPC_EVENTS = {
   settingsChanged: 'settings:changed',
   agentsDirChanged: 'agents:dirChanged',
-  servicesUpdated: 'services:updated'
+  servicesUpdated: 'services:updated',
+  /** AI 运行事件流(AiRunEvent;高频,只在会话运行期间推送) */
+  aiRunEvent: 'ai:runEvent'
 } as const
 
 export type IpcEventChannel = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]
@@ -166,3 +184,36 @@ export const ELEVATION_FAILED = 'ELEVATION_FAILED'
 
 // settings:set 的合法 patch(部分键)
 export type SettingsPatch = Partial<LauncherSettings>
+
+// ── AI 助手负载(阶段 4) ──
+
+/** ai:send 的入参 */
+export interface AiSendInput {
+  sessionId: string
+  text: string
+  mentions?: AiMention[]
+  /** 技能 id(欢迎态技能卡进入时带;决定注入的任务段与工具白名单) */
+  skillId?: string
+}
+
+/** ai:testConnection 结果 */
+export interface AiTestResult {
+  ok: boolean
+  message: string
+}
+
+/** ai:respondApproval 入参 */
+export interface AiApprovalInput {
+  runId: string
+  toolCallId: string
+  decision: AiApprovalDecision
+}
+
+/** ai:mcpInfo —— 接入弹窗的两条用法(权限模式读设置里的 mcpPermission) */
+export interface AiMcpInfo {
+  /** 命令行挂载用的完整命令(含 launcher-mcp 真实路径) */
+  stdioCommand: string
+  httpUrl: string
+  /** HTTP 端点是否在监听(需应用在跑) */
+  httpRunning: boolean
+}
