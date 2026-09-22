@@ -21,6 +21,7 @@ export function createIpcAiRepo(): AiRepository {
     skills: () => api().skills(),
     catalog: (providerId) => api().catalog(providerId),
     mcpInfo: () => api().mcpInfo(),
+    installMcpLink: () => api().installMcpLink(),
     onRunEvent: (cb) =>
       window.launcher.onEvent(IPC_EVENTS.aiRunEvent, (payload) => cb(payload as AiRunEvent))
   }

@@ -288,6 +288,17 @@ const EXTRA = {
     'settings.ai.headers.ph': 'User-Agent: claude-cli/2.0.0',
     // ── AI 对话页(内容块模型;demo 只有运行中/完成两态,新增的 UI 文案)──
     // 新会话顶部:说明对话语言来自系统设置(否则用户不知道助手为什么说这种语言、也不知道去哪改)
+    // MCP 的 launcher-mcp PATH 链接状态(判据从"猜安装来源"改成"实际扫 PATH")
+    // 示例文案:{CMD} 是某一家客户端的配置语法,只作示例(命令本体在上一行)
+    'ai.mcp.stdioExample': '配置示例(Claude Code CLI):{CMD}',
+    'ai.mcp.link.linked': '已安装到 PATH:{P}',
+    'ai.mcp.link.missing': '未安装到 PATH —— 外部 Agent 只能用上面的完整路径',
+    'ai.mcp.link.dangling': 'PATH 上的 {N} 已失效(应用被移动或删除过):{P}',
+    'ai.mcp.link.foreign': 'PATH 上的 {N} 指向另一个 Launcher 副本:{P}',
+    'ai.mcp.link.install': '安装到 PATH',
+    'ai.mcp.link.repair': '修复指向',
+    'ai.mcp.link.done': '已安装到 {P}',
+    'ai.mcp.link.failed': '未能安装到 PATH:{R}',
     'ai.welcome.langHint': '对话语言跟随应用设置:{L}',
     'ai.welcome.langChange': '前往设置 › 常规与外观修改',
     'ai.rail.today': '今天 {T}',
@@ -554,6 +565,15 @@ const EXTRA = {
     'settings.ai.headers.rowDesc': 'One "Name: value" per line, sent with every request for this protocol. Rarely needed — only for gateways that gate on client identity',
     'settings.ai.headers.ph': 'User-Agent: claude-cli/2.0.0',
     // AI chat page (content-block model; the demo only had running/done states, these are new UI strings)
+    'ai.mcp.stdioExample': 'Example config (Claude Code CLI): {CMD}',
+    'ai.mcp.link.linked': 'Installed on PATH: {P}',
+    'ai.mcp.link.missing': 'Not on PATH — external agents must use the full path above',
+    'ai.mcp.link.dangling': '{N} on PATH is broken (the app was moved or removed): {P}',
+    'ai.mcp.link.foreign': '{N} on PATH points at another Launcher copy: {P}',
+    'ai.mcp.link.install': 'Install to PATH',
+    'ai.mcp.link.repair': 'Fix target',
+    'ai.mcp.link.done': 'Installed to {P}',
+    'ai.mcp.link.failed': 'Could not install to PATH: {R}',
     'ai.welcome.langHint': 'Replies follow the app language: {L}',
     'ai.welcome.langChange': 'Change it in Settings › General',
     'ai.rail.today': 'Today {T}',

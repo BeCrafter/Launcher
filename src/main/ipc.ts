@@ -223,4 +223,5 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.aiSkills, () => deps.ai.chat.skills())
   ipcMain.handle(IPC.aiCatalog, (_e, providerId: AiProviderId) => deps.ai.chat.catalog(providerId))
   ipcMain.handle(IPC.aiMcpInfo, () => deps.ai.mcpInfo())
+  ipcMain.handle(IPC.aiInstallMcpLink, () => deps.ai.installMcpLink())
 }

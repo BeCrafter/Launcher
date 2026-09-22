@@ -343,3 +343,50 @@ npm run release:check -- --tag v0.2.0  # 额外校验:tag 与版本一致、本�
    - 用 cask 装的那份，点检查更新 → 提示里应是 `brew upgrade --cask …`（不是「前往 GitHub 下载」）
    - 「关于」页的「安装来源」一行显示探测结果（cask 装的应显示 Homebrew）——**判错在界面上一眼可见**
    - 未发版时提示「尚未发布」，断网时提示带原因（HTTP 码 / 请求超时）
+
+## MCP stdio 入口:`launcher-mcp`(2026-09-22)
+
+应用内含一个 MCP stdio 入口,供外部 Agent(Claude Code / Claude Desktop)挂载。它**不再要求用户
+手写那串又长又脆的命令**。
+
+**做法**:打包时把 `packaging/mcp/launcher-mcp`(一个可执行 shell 脚本)放进
+`Contents/Resources/`(asar **外面**),脚本自己按相对位置找到隔壁 `MacOS/Launcher` 与
+`Resources/app.asar/out/main/launcher-mcp.js`,再以 `ELECTRON_RUN_AS_NODE=1` exec。
+这样**不额外分发 Node 运行时,也不需要给第二个可执行文件签名**。
+
+**命令给短形式还是完整路径,判据是 PATH 上那条链接的真实状态**(`main/services/path-link.ts` 扫 PATH +
+解析符号链接 + 比对是否指向**本应用**的脚本),不是「安装来源是不是 brew」——
+链接可能被删、应用可能被挪走、也可能指向另一个 Launcher 副本,靠猜迟早猜错,猜错的后果是用户拿到一条
+`command not found`。四种状态:`linked`(给短命令)/ `missing` / `dangling` / `foreign`(后三者给完整路径,
+并在弹窗里说明原因)。检查是**只读**的,启动即可算。
+
+弹窗展示的是**要运行的命令本身**(`launcher-mcp` 或完整路径),不是 `claude mcp add …` 那种客户端配置语法 ——
+前者是各家 MCP 客户端通用的"跑什么",后者只是某一家的语法(该示例行与弹窗底部那个复制按钮均已按用户要求移除,
+块头的小复制钮复制命令本体)。
+
+| 状态 | 弹窗给的命令 |
+|---|---|
+| `linked` | `claude mcp add launcher -- launcher-mcp` |
+| 其余三态 | `claude mcp add launcher -- "<安装目录>/Launcher.app/Contents/Resources/launcher-mcp"` |
+
+**「安装到 PATH」按钮**:非 `linked` 时弹窗出现该按钮,**点了才写** ——
+往 PATH 里放可执行文件是应用之外可见的动作,而且 brew 装的情况下那条链接归 brew 管
+(`brew uninstall` 要靠它清理),应用不该在启动时静默跟包管理器抢所有权。落点优先级:
+① 已命中的那个目录(悬空/指向别处时**就地修**,不制造第二份)② PATH 里已有的 `~/.local/bin`
+③ 其余可写 PATH 目录;都不行就如实报原因,让用户手动建。dev 下不提供该按钮(仓库里那份脚本
+假设打包布局,链进 PATH 只会造出坏命令)。
+
+**三条通道必须一致的两点**:
+1. 解压链路可能**丢掉执行位** —— cask `postflight`、`scripts/install.sh`、`packaging/npm/cli.mjs`
+   三处都补了一次 `chmod +x`,否则 PATH 上的 `launcher-mcp` 会「找得到但跑不起来」。
+2. 脚本会解开自身的符号链接再定位(brew 的 `binary` 建的就是符号链接);不用 `readlink -f`,
+   它到 macOS 12.3 才有,而本应用最低支持 12.0。
+
+⚠ **两个实现坑(实测)**:
+- 脚本里**不能**用 shell 的 `-f` 去检查 `app.asar/out/...` 是否存在 —— asar 是**单个文件**,
+  其内部路径只有 Electron 打过补丁的 fs 才认识,shell 永远判为不存在,会把本来能跑的场景误判成缺失。
+  检查 `app.asar` 本身即可。
+- 已实测确认 `ELECTRON_RUN_AS_NODE=1` **能**读取 asar 内部的脚本(打包产物完整 MCP 握手通过),
+  故入口留在 asar 里是安全的。
+
+⚠ 符号链接指向 app 内部文件 —— **应用被移走或删除后该命令会失效**(脚本自身会给出可读报错)。

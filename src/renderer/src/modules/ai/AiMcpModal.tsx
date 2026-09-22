@@ -2,12 +2,54 @@
 // MCP 接入模态:stdio 命令 + HTTP 端点两种用法并列展示(「用哪套」而非「切到哪套」),各自带复制;
 // 权限开关绑定设置里的 mcpPermission(唯一闸门,设置页无开关)
 import { useEffect, useState } from 'react'
-import { useT } from '../../hooks/useT'
+import { useT, useFmt } from '../../hooks/useT'
 import { Modal } from '../../components/Modal'
 import { Toggle } from '../../components/ui/Toggle'
 import { useAiStore } from '../../state/ai-store'
 import { useSettingsStore } from '../../state/settings-store'
 import { copyText, showToast } from '../../lib/utils'
+
+/**
+ * PATH 链接状态行。
+ *
+ * 有它之前,弹窗只按「安装来源是不是 brew」猜链接在不在 —— 猜错就把用户送进一条
+ * command not found。现在以 main 侧**实际扫 PATH 的结果**为准,并把状态与原因讲清楚。
+ */
+function McpLinkStatus(): React.JSX.Element {
+  const t = useT()
+  const fmt = useFmt()
+  const info = useAiStore((s) => s.mcpInfo)
+  const installLink = useAiStore((s) => s.installMcpLink)
+  if (!info) return <div className="ai-mcp-cmd-hint" />
+  const { state, foundAt, expected } = info.link
+  const bin = info.binName
+
+  const text =
+    state === 'linked'
+      ? fmt(t('ai.mcp.link.linked'), { P: foundAt ?? '' })
+      : state === 'dangling'
+        ? fmt(t('ai.mcp.link.dangling'), { N: bin, P: foundAt ?? '' })
+        : state === 'foreign'
+          ? fmt(t('ai.mcp.link.foreign'), { N: bin, P: foundAt ?? '' })
+          : t('ai.mcp.link.missing')
+
+  return (
+    <div className={`ai-mcp-link ${state}`}>
+      <div className="ai-mcp-link-txt">
+        <i
+          className={`fa-solid ${state === 'linked' ? 'fa-circle-check' : state === 'missing' ? 'fa-circle-info' : 'fa-triangle-exclamation'}`}
+        />
+        <span>{text}</span>
+      </div>
+      {state !== 'linked' && expected !== '' && (
+        <button className="d-btn ai-mcp-link-btn" type="button" onClick={() => void installLink()}>
+          <i className="fa-solid fa-link" />
+          <span>{t(state === 'missing' ? 'ai.mcp.link.install' : 'ai.mcp.link.repair')}</span>
+        </button>
+      )}
+    </div>
+  )
+}
 
 export function AiMcpModal(): React.JSX.Element {
   const t = useT()
@@ -69,7 +111,7 @@ export function AiMcpModal(): React.JSX.Element {
             <div className="ai-appr-cmd" style={{ margin: 0 }}>
               {info?.stdioCommand ?? ''}
             </div>
-            <div className="ai-mcp-cmd-hint">{t('ai.mcp.stdioHint')}</div>
+            <McpLinkStatus />
           </div>
 
           <div className="ai-mcp-cmd">
@@ -101,15 +143,6 @@ export function AiMcpModal(): React.JSX.Element {
             </div>
             <Toggle checked={writeOn} onChange={onToggle} />
           </div>
-        </div>
-        <div className="modal-footer">
-          <button
-            className="d-btn accent"
-            type="button"
-            onClick={() => info && copy(info.stdioCommand)}
-          >
-            <i className="fa-solid fa-copy" /> <span>{t('xml.copy')}</span>
-          </button>
         </div>
       </div>
     </Modal>

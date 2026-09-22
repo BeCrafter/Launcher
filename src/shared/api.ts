@@ -137,5 +137,7 @@ export interface LauncherApi {
     /** 该协议的模型目录(仅 Anthropic 有内置目录,其余返回空 —— 模型名需用户自填) */
     catalog: (providerId: AiProviderId) => Promise<{ id: string; name: string }[]>
     mcpInfo: () => Promise<AiMcpInfo>
+    /** 把 launcher-mcp 安装到 PATH(用户显式点击才调用);error 非空时如实带回原因 */
+    installMcpLink: () => Promise<{ info: AiMcpInfo; error: string | null }>
   }
 }

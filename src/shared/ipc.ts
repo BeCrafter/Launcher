@@ -64,6 +64,7 @@ export const IPC = {
   aiAbort: 'ai:abort',
   aiRespondApproval: 'ai:respondApproval',
   aiSkills: 'ai:skills',
+  aiInstallMcpLink: 'ai:installMcpLink',
   aiCatalog: 'ai:catalog',
   aiMcpInfo: 'ai:mcpInfo'
 } as const
@@ -210,11 +211,38 @@ export interface AiApprovalInput {
   decision: AiApprovalDecision
 }
 
+/** PATH 上 launcher-mcp 链接的状态 */
+export type McpLinkState =
+  /** 指向**本应用**的脚本,可直接用短命令 */
+  | 'linked'
+  /** PATH 上找不到 */
+  | 'missing'
+  /** 找到了但目标不存在(应用被移动/删除过) */
+  | 'dangling'
+  /** 指向另一个 Launcher 副本 */
+  | 'foreign'
+
+export interface AiMcpLink {
+  state: McpLinkState
+  /** 在 PATH 上命中的路径;missing 时为 null */
+  foundAt: string | null
+  /** 期望指向的目标(本应用包内脚本) */
+  expected: string
+}
+
 /** ai:mcpInfo —— 接入弹窗的两条用法(权限模式读设置里的 mcpPermission) */
 export interface AiMcpInfo {
-  /** 命令行挂载用的完整命令(含 launcher-mcp 真实路径) */
+  /**
+   * 命令行挂载要运行的**命令本身**(链接可用时是 `launcher-mcp`,否则是完整路径)。
+   * 刻意不是 `claude mcp add ...` —— 那是某一家客户端的配置语法,不是命令;
+   * 各家客户端(gui 配置 / 其他 CLI)要的都是"跑什么",那部分才是通用的。
+   */
   stdioCommand: string
   httpUrl: string
   /** HTTP 端点是否在监听(需应用在跑) */
   httpRunning: boolean
+  /** 命令名(展示用,如 launcher-mcp) */
+  binName: string
+  /** PATH 上那条链接的真实状态 —— 命令给短形式还是完整路径就以此为准 */
+  link: AiMcpLink
 }

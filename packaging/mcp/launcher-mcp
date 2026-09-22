@@ -1,0 +1,37 @@
+#!/bin/sh
+# launcher-mcp —— Launcher 的 MCP stdio 入口(随应用包分发,供外部 Agent 挂载)
+#
+# 为什么长这样:不额外分发一份 Node 运行时、也不给第二个可执行文件做签名,而是**复用应用自带的
+# Electron 二进制当 Node 跑**(ELECTRON_RUN_AS_NODE=1)。这个脚本的作用就是把那条长命令
+# (二进制路径 + 脚本路径 + 环境变量)收成一个可执行文件,让用户只需要写 launcher-mcp。
+#
+# ⚠ Homebrew cask 的 `binary` 会把本脚本 symlink 到 PATH 上,那时 $0 是符号链接而非真实路径 ——
+#   必须先把链接解开才能定位同目录下的 app.asar 与隔壁 MacOS/ 里的二进制。
+#   (不用 readlink -f:它到 macOS 12.3 才有,而本应用最低支持 12.0。)
+set -e
+
+SELF="$0"
+while [ -L "$SELF" ]; do
+  LINK=$(readlink "$SELF")
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *) SELF="$(dirname "$SELF")/$LINK" ;;
+  esac
+done
+RES="$(cd "$(dirname "$SELF")" && pwd)"   # .../Launcher.app/Contents/Resources
+BIN="$RES/../MacOS/Launcher"              # .../Launcher.app/Contents/MacOS/Launcher
+ENTRY="$RES/app.asar/out/main/launcher-mcp.js"
+
+if [ ! -x "$BIN" ]; then
+  echo "launcher-mcp: 找不到应用主程序 $BIN —— 应用可能已被移动或删除" >&2
+  exit 1
+fi
+# ⚠ 只检查 app.asar 本身,不要检查 ENTRY —— asar 是**单个文件**,它内部的路径只有 Electron
+#   打过补丁的 fs 才认识,shell 的 -f 永远为假(会把本来能跑的场景误判成缺失)。
+if [ ! -f "$RES/app.asar" ]; then
+  echo "launcher-mcp: 找不到应用资源 $RES/app.asar" >&2
+  exit 1
+fi
+
+# stdout 属于 MCP 协议本身,所以任何日志都绝不能写 stdout(应用侧也只往 stderr 写)
+ELECTRON_RUN_AS_NODE=1 exec "$BIN" "$ENTRY"

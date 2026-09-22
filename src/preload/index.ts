@@ -100,7 +100,8 @@ const api: LauncherApi = {
     respondApproval: (input) => ipcRenderer.invoke(IPC.aiRespondApproval, input),
     skills: () => ipcRenderer.invoke(IPC.aiSkills),
     catalog: (providerId) => ipcRenderer.invoke(IPC.aiCatalog, providerId),
-    mcpInfo: () => ipcRenderer.invoke(IPC.aiMcpInfo)
+    mcpInfo: () => ipcRenderer.invoke(IPC.aiMcpInfo),
+    installMcpLink: () => ipcRenderer.invoke(IPC.aiInstallMcpLink)
   }
 }
 

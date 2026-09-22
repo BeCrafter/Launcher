@@ -210,6 +210,9 @@ ditto "$TMP/out/$APP_NAME" "$INSTALL_DIR/$APP_NAME"
 # curl 本就不打隔离标记；此处仅作防御（例如该 zip 曾被浏览器下载过）
 xattr -dr com.apple.quarantine "$INSTALL_DIR/$APP_NAME" 2>/dev/null || true
 
+# MCP stdio 入口:解压链路可能丢执行位,补一次(否则它「找得到但跑不起来」)
+chmod +x "$INSTALL_DIR/$APP_NAME/Contents/Resources/launcher-mcp" 2>/dev/null || true
+
 echo
 echo "✅ 已安装到 $INSTALL_DIR/$APP_NAME"
 # 版本号取自下载 URL 的文件名（重定向后的最终地址），不额外发请求
