@@ -9,6 +9,7 @@ export function GroupBlock({
   label,
   count,
   labelTitle,
+  hidden,
   children
 }: {
   id: string
@@ -17,11 +18,17 @@ export function GroupBlock({
   label: string
   count: number
   labelTitle?: string
+  /**
+   * 空组时**隐藏而不是卸载**(应用新增,端口服务视图用):
+   * 卸载会连 `open` 状态一起丢掉 —— 组内条目下次回来时折叠状态被重置成展开,
+   * 整块内容突然铺开,正是「每 3s 刷新一次」下最容易被看见的闪动。
+   */
+  hidden?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   const [open, setOpen] = useState(true)
   return (
-    <div className="group-block">
+    <div className="group-block" style={hidden ? { display: 'none' } : undefined}>
       <div className="group-block-header" onClick={() => setOpen(!open)}>
         <i className={icon} style={{ fontSize: 11, color }} />
         <span className="group-block-label" title={labelTitle}>

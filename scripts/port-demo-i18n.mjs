@@ -153,6 +153,10 @@ const EXTRA = {
     'toast.svcUrlCopied': '已复制 {U}',
     'toast.svcUrlOpening': '打开 {U}',
     'toast.svcUrlInvalid': '地址无效,请检查「配置」中的 Host 与路径',
+    // ── 扫描失败可见化(2026-09-23):main 侧 lsof/ps 失败此前会把整张表静默清空 ──
+    'svc.scanFailed': '端口扫描失败,以下为上次成功的结果',
+    'svc.scanFailedHint': 'lsof / ps 未返回结果;恢复后会自动刷新',
+    'statusbar.svcScanFailed': '扫描失败',
     'cron.systemUnavailable': '系统级不可用:/etc/crontab 不存在(macOS 系统保护禁止新建)',
     // ── Agent 操作:意图层(启动/停止/重启 + 开机自启) ──
     'ops.start': '启动',
@@ -438,6 +442,10 @@ const EXTRA = {
     'toast.svcUrlCopied': 'Copied {U}',
     'toast.svcUrlOpening': 'Opening {U}',
     'toast.svcUrlInvalid': 'Invalid address; check Host and path in Configure',
+    // ── Scan failures made visible (2026-09-23): lsof/ps failures used to blank the whole list ──
+    'svc.scanFailed': 'Port scan failed — showing the last successful result',
+    'svc.scanFailedHint': 'lsof / ps returned no result; it retries automatically',
+    'statusbar.svcScanFailed': 'Scan failed',
     'cron.systemUnavailable': 'System scope unavailable: /etc/crontab missing (macOS protection blocks creating it)',
     // ── Agent ops: intent layer (start / stop / restart + start at login) ──
     'ops.start': 'Start',

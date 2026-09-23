@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DockerContainer } from '../../shared/models'
 import type { DockerService } from './docker-service'
-import { createProcessDiscovery, type ScanResult } from './process-discovery'
+import { createProcessDiscovery, toServicesPayload, type ScanResult } from './process-discovery'
 import type { ShellRunner, ShellRunResult } from './shell-runner'
 
 const ok = (stdout = ''): ShellRunResult => ({ code: 0, signal: null, stdout, stderr: '', timedOut: false, error: null })
 const fail = (stderr: string): ShellRunResult => ({ code: 1, signal: null, stdout: '', stderr, timedOut: false, error: null })
+const timedOut = (stdout = ''): ShellRunResult => ({ code: null, signal: 'SIGTERM', stdout, stderr: '', timedOut: true, error: null })
 
 const LSOF = [
   'p2900',
@@ -47,14 +48,29 @@ const container = (): DockerContainer => ({
   portsRaw: '0.0.0.0:8080->80/tcp'
 })
 
-function harness(opts?: { lsofFail?: boolean; dockerAvailable?: boolean }) {
+/** ps 的异常形态(2026-09-23:ps 失败此前会把整张表静默清空 → 端口页整片白) */
+type PsFault = 'exit' | 'timeout' | 'garbage' | 'partial'
+
+function harness(opts?: { lsofFail?: boolean; lsofTimeout?: boolean; psFault?: PsFault; dockerAvailable?: boolean }) {
   const calls: string[][] = []
   let lsofFailOnce = opts?.lsofFail ?? false
+  let lsofTimeoutOnce = opts?.lsofTimeout ?? false
+  let psFault = opts?.psFault
   const runner: ShellRunner = {
     async run(file, args = []) {
       calls.push([file, ...args])
-      if (file === 'lsof') return lsofFailOnce ? fail('lsof: operation not permitted') : ok(LSOF)
-      if (file === 'ps') return ok(PS)
+      // 超时被杀时 stdout 可能是半截表:必须与「完整结果」区分开
+      if (file === 'lsof') {
+        if (lsofTimeoutOnce) return timedOut(LSOF.split('\n').slice(0, 6).join('\n'))
+        return lsofFailOnce ? fail('lsof: operation not permitted') : ok(LSOF)
+      }
+      if (file === 'ps') {
+        if (psFault === 'exit') return fail('ps: not permitted')
+        if (psFault === 'timeout') return timedOut(PS.split('\n')[0])
+        if (psFault === 'garbage') return ok('   PID USER     ELAPSED COMMAND\n     1 root       1-00:00 launchd\n')
+        if (psFault === 'partial') return ok(PS.split('\n').slice(0, 2).join('\n')) // 少列一个已退出的 pid
+        return ok(PS)
+      }
       if (file === 'brew') return ok('Name Status User File\nredis started wangming\nnginx none\n')
       return ok('')
     }
@@ -68,7 +84,14 @@ function harness(opts?: { lsofFail?: boolean; dockerAvailable?: boolean }) {
   }
   const onChange = vi.fn<(r: ScanResult) => void>()
   const discovery = createProcessDiscovery({ runner, docker, onChange, pollMs: 30, brewRefreshMs: 0, brewPath: 'brew', dockerRefreshMs: 0 })
-  return { discovery, onChange, calls, setLsofFail: (v: boolean) => (lsofFailOnce = v) }
+  return {
+    discovery,
+    onChange,
+    calls,
+    setLsofFail: (v: boolean) => (lsofFailOnce = v),
+    setLsofTimeout: (v: boolean) => (lsofTimeoutOnce = v),
+    setPsFault: (v: PsFault | undefined) => (psFault = v)
+  }
 }
 
 describe('process-discovery.scanOnce', () => {
@@ -91,6 +114,67 @@ describe('process-discovery.scanOnce', () => {
     const r = await h.discovery.scanOnce()
     expect(r.error).toContain('operation not permitted')
     expect(r.services).toHaveLength(3) // 上次结果保留
+  })
+
+  // ── 扫描失败不得清空列表(2026-09-23 修复:ps 失败会让端口页整片变白) ──
+  it('ps 失败(非 0 退出)→ 保留上次数据 + error,绝不清空整张表', async () => {
+    const h = harness()
+    await h.discovery.scanOnce()
+    h.setPsFault('exit')
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toContain('ps')
+    expect(r.services).toHaveLength(3) // ← 修复前是 []:空 psMap 过筛把每一行都滤掉了
+  })
+
+  it('ps 超时 → 同上(半截 stdout 不作数)', async () => {
+    const h = harness()
+    await h.discovery.scanOnce()
+    h.setPsFault('timeout')
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toContain('timed out')
+    expect(r.services).toHaveLength(3)
+  })
+
+  it('ps 退出码 0 但输出形态不认识 → 视为失败(而不是拿空 psMap 过筛)', async () => {
+    const h = harness()
+    await h.discovery.scanOnce()
+    h.setPsFault('garbage')
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toContain('not understood')
+    expect(r.services).toHaveLength(3)
+  })
+
+  it('ps 少列一个已退出的 pid → 仍按「进程已死」丢弃该行,不触发失败兜底', async () => {
+    const h = harness({ psFault: 'partial' })
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toBeNull()
+    // redis-server(4001) 不在 ps 输出里 → 只丢这一行;其余两行照旧(不是整张表清空)
+    expect(r.services.map((s) => s.port)).toEqual([5173, 49168])
+  })
+
+  it('lsof 超时 → 保留上次数据 + error(即使 stdout 已有半截表,也不解析)', async () => {
+    const h = harness()
+    await h.discovery.scanOnce()
+    h.setLsofTimeout(true)
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toContain('timed out')
+    // 半截输出里第 1 个进程是完整的(rapportd),解析它就会得到 1 条 → 保留上次的 3 条才对
+    expect(r.services).toHaveLength(3)
+  })
+
+  it('失败态不重复推送(此前每 3s 重推同一份空表,UI 反复被清空)', async () => {
+    const h = harness()
+    await h.discovery.scanOnce()
+    h.setPsFault('exit')
+    await h.discovery.scanOnce()
+    const after = h.onChange.mock.calls.length // 成功 1 次 + 失败 1 次
+    expect(after).toBe(2)
+    await h.discovery.scanOnce()
+    await h.discovery.scanOnce()
+    expect(h.onChange.mock.calls.length).toBe(after) // 失败内容未变 → 不再推
+    h.setPsFault(undefined)
+    await h.discovery.scanOnce()
+    expect(h.onChange.mock.calls.length).toBe(after + 1) // 恢复 → 推一次
   })
 
   it('docker 可用时容器条目并入(降级时无痕迹)', async () => {
@@ -131,5 +215,20 @@ describe('process-discovery.scanOnce', () => {
     await new Promise((r) => setTimeout(r, 130))
     expect(h.calls.filter((c) => c[0] === 'lsof').length).toBe(lsofCount) // 暂停后不再扫描
     h.discovery.stop()
+  })
+})
+
+describe('process-discovery.toServicesPayload', () => {
+  it('error 随 payload 带出(renderer 据此区分「扫描失败」与「真的没有端口」)', async () => {
+    const h = harness()
+    const healthy = await h.discovery.scanOnce()
+    expect(toServicesPayload(healthy, true).error).toBeNull()
+
+    h.setPsFault('exit')
+    const broken = await h.discovery.scanOnce()
+    const p = toServicesPayload(broken, true)
+    expect(p.error).toContain('ps')
+    expect(p.services).toHaveLength(3) // 带 error 的同时仍是上次成功的数据
+    expect(p.polling).toBe(true)
   })
 })

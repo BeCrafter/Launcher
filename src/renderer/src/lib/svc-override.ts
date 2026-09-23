@@ -23,6 +23,20 @@ export function serviceIdentityKey(svc: SvcKeyFields): string {
   return `${svc.port}:${stem.toLowerCase().slice(0, KEY_STEM_MAX)}`
 }
 
+/**
+ * 卡片 React key(应用新增):**跨进程重启稳定** —— 端口 / 程序名 / 绑定地址都不随 PID 变。
+ *
+ * 刻意不用 `PortService.id`(=`<pid>:<port>`):进程一重启 id 就变,React 会销毁重建整张卡片 ——
+ * 正在进行的「双击改名」被吞掉、组内其余卡片随之重排;而轮询每 3s 就会把新 pid 推上来,
+ * 于是「重启过的服务」在界面上表现为闪一下。
+ *
+ * 三元组唯一性:同一 addr+port 不可能被两个进程同时监听(lsof 侧已按 pid:port:addr 去重)。
+ */
+export function cardKey(svc: Pick<PortService, 'port' | 'command' | 'addr' | 'containerId'>): string {
+  if (svc.containerId !== undefined) return `docker:${svc.containerId}`
+  return `${svc.port}:${svc.command}:${svc.addr}`
+}
+
 /** 由 lsof 的绑定地址推导可连接 host:通配/未指定类 → 127.0.0.1;`[::1]` 及其他地址原样(方括号是 URL 必需的) */
 export function connectHost(addr: string): string {
   const a = addr.trim()

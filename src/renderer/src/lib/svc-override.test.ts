@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cardKey,
   connectHost,
   displayName,
   isOpenableUrl,
@@ -58,6 +59,31 @@ describe('serviceIdentityKey', () => {
   it('容器 = 端口:docker:容器名', () => {
     const s = svc({ port: 5432, name: 'My-PG', containerId: 'abc123' })
     expect(serviceIdentityKey(s)).toBe('5432:docker:my-pg')
+  })
+})
+
+describe('cardKey(卡片 React key)', () => {
+  it('跨 PID 稳定:进程重启后同一服务仍是同一张卡片', () => {
+    const before = svc({ pid: 1234, port: 8080, command: 'node', addr: '*' })
+    const after = svc({ id: '9999:8080', pid: 9999, port: 8080, command: 'node', addr: '*' })
+    expect(cardKey(before)).toBe(cardKey(after))
+    expect(cardKey(before)).not.toBe(before.id) // 不是 PortService.id(那是 pid:port)
+  })
+
+  it('同端口不同程序 / 不同绑定地址 不撞键', () => {
+    const keys = [
+      cardKey(svc({ port: 5000, command: 'node', addr: '127.0.0.1' })),
+      cardKey(svc({ port: 5000, command: 'python', addr: '127.0.0.1' })),
+      cardKey(svc({ port: 5000, command: 'node', addr: '*' }))
+    ]
+    expect(new Set(keys).size).toBe(3)
+  })
+
+  it('容器用 containerId(与容器名/端口漂移无关)', () => {
+    const a = svc({ port: 5432, name: 'pg', containerId: 'abc123' })
+    const b = svc({ port: 5433, name: 'pg-renamed', containerId: 'abc123' })
+    expect(cardKey(a)).toBe(cardKey(b))
+    expect(cardKey(a)).toBe('docker:abc123')
   })
 })
 

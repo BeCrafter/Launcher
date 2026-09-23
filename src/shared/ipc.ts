@@ -167,6 +167,12 @@ export interface ServicesListPayload {
   dockerReason: DockerUnavailableReason | null
   polling: boolean
   scannedAt: number
+  /**
+   * 本轮扫描的失败原因(非空 ⇒ 这份 services 是**上次成功的结果**,不是当前真相)。
+   * 不带上它,「扫描挂了」与「真的没有监听端口」在 UI 上完全同形 —— 之前正是因此把整张表
+   * 静默清空并显示成「共 0 个端口服务」。
+   */
+  error: string | null
 }
 
 export type KillOutcome = 'ok' | 'alreadyGone' | 'denied' | 'notFound' | 'timeout'

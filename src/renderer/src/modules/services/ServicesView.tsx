@@ -16,6 +16,7 @@ import { containerToService, dockerNotice, effectiveType, filterServices, SVC_GR
 import { ELEVATION, confirmDangerous } from '../../lib/elevation'
 import { showToast, copyText, openExternal } from '../../lib/utils'
 import {
+  cardKey,
   displayName,
   isOpenableUrl,
   matchesServiceQuery,
@@ -48,6 +49,7 @@ export function ServicesView(): React.JSX.Element {
   const dockerAvailable = useServicesStore((s) => s.dockerAvailable)
   const dockerReason = useServicesStore((s) => s.dockerReason)
   const loaded = useServicesStore((s) => s.loaded)
+  const scanError = useServicesStore((s) => s.error)
   const filter = useServicesStore((s) => s.filter)
   const setFilter = useServicesStore((s) => s.setFilter)
   const searchQuery = useUiStore((s) => s.searchQuery)
@@ -190,14 +192,23 @@ export function ServicesView(): React.JSX.Element {
         ))}
       </FilterBar>
       <div className="list-container" id="svcList">
+        {/* 扫描失败横幅:此时下面这张表是**上次成功的结果**,必须如实说 ——
+            否则「扫描挂了」与「真的没有监听端口」在界面上完全同形(main 侧失败会保留上次数据) */}
+        {scanError && (
+          <div className="svc-scan-error" id="svcScanError" title={scanError}>
+            <i className="fa-solid fa-triangle-exclamation" />
+            <span>{t('svc.scanFailed')}</span>
+            <span className="svc-scan-error-hint">{t('svc.scanFailedHint')}</span>
+          </div>
+        )}
         {SVC_GROUP_ORDER.map((k) => {
-          const items = groups[k]
+          const items = groups[k] ?? []
           // docker 不可用时也渲染该组:否则整组消失,「没有容器」与「Docker 不可用」无从区分
           const showNotice = k === 'docker' && dockerDown
-          if (!items?.length && !showNotice) return null
           const meta = SVC_GROUP_META[k]
           const notice = dockerNotice(dockerReason)
           return (
+            // 空组**隐藏而不是卸载**:卸载会丢掉折叠状态,组内条目回来时整块突然铺开(每 3s 一轮的可见闪动)
             <GroupBlock
               key={k}
               id={`svcgrp_${k}`}
@@ -206,6 +217,7 @@ export function ServicesView(): React.JSX.Element {
               label={t('svc.type.' + k)}
               count={items.length}
               labelTitle={t(meta.clsKey + '.group')}
+              hidden={items.length === 0 && !showNotice}
             >
               {showNotice && (
                 <div className="svc-docker-notice">
@@ -216,7 +228,8 @@ export function ServicesView(): React.JSX.Element {
               )}
               {items.map((s) => (
                 <SvcCard
-                  key={s.id}
+                  // 身份键跨 PID 稳定:重启后 React 复用同一张卡片(仅 PID 徽章变),不销毁重建
+                  key={cardKey(s)}
                   svc={s}
                   brewManaged={brewManaged}
                   overrides={overrides}
@@ -233,7 +246,10 @@ export function ServicesView(): React.JSX.Element {
             </GroupBlock>
           )
         })}
-        {!list.length && !dockerDown && (loading ? <Skeleton rows={5} /> : <EmptyState icon="fa-solid fa-network-wired" text={t('svc.empty')} />)}
+        {/* 空状态不再被 docker 提示条抑制(此前 `!dockerDown` 会把「无服务 + Docker 不可用」
+            渲染成整片空白);扫描失败时也不谎称「未发现监听端口」 */}
+        {!list.length &&
+          (scanError ? null : loading ? <Skeleton rows={5} /> : <EmptyState icon="fa-solid fa-network-wired" text={t('svc.empty')} />)}
       </div>
     </div>
   )
