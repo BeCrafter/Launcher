@@ -14,6 +14,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
+  vi.restoreAllMocks()
 })
 
 describe('createSettingsStore', () => {
@@ -46,17 +47,24 @@ describe('createSettingsStore', () => {
   })
 
   it('损坏文件 → 备份 .bak 并回默认值', () => {
+    // 文件是**故意**损坏的,store 会按设计打告警 —— 吞掉它免得两三行堆栈淹了测试输出,
+    // 顺带把「确实走了告警分支」也变成断言(原来只测了结果,没测这条日志)
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {})
     writeFileSync(file, '{ not valid json !!', 'utf8')
     const store = createSettingsStore(file)
     expect(store.get().theme).toBe('system')
     expect(existsSync(`${file}.bak`)).toBe(true)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0][0])).toContain('配置损坏')
   })
 
   it('损坏文件在下次 save 时被新内容覆盖恢复', () => {
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {})
     writeFileSync(file, 'broken', 'utf8')
     const store = createSettingsStore(file)
     store.save({ theme: 'light' })
     expect(JSON.parse(readFileSync(file, 'utf8')).theme).toBe('light')
+    expect(warn).toHaveBeenCalledTimes(1)
   })
 
   it('reset 回默认值并落盘', () => {
