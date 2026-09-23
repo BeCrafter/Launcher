@@ -57,10 +57,19 @@
 .skeleton-row {
   height: 52px;
   border-radius: 10px;
-  background: var(--panel);
-  border: 1px solid var(--border);
+  /* 深色沿用原有观感(rgba(255,255,255,.03));浅色主题下 --panel 是 70% 白、叠在 #f6f7fb 上
+     几乎看不见 —— 那种「过渡页刚摘、数据还没到」的一屏会被读成白屏,故浅色单独给一档可见的底色 */
+  --sk-bg: rgba(255, 255, 255, 0.03);
+  --sk-border: rgba(255, 255, 255, 0.06);
+  background: var(--sk-bg);
+  border: 1px solid var(--sk-border);
   position: relative;
   overflow: hidden;
+}
+
+body.light-theme .skeleton-row {
+  --sk-bg: rgba(30, 38, 68, 0.06);
+  --sk-border: rgba(30, 38, 68, 0.1);
 }
 
 .skeleton-row::after {

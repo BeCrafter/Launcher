@@ -264,8 +264,9 @@ app.whenReady().then(async () => {
   discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
 
   // 安装来源探测(brew/npm/manual):决定「检查更新」给哪条升级命令。
-  // 约 0.2s(brew list --cask),放在建窗之前;失败/判不出都会回退 manual,不阻断启动
-  const installChannel = await detectInstallChannel({ runner })
+  // ⚠ 只**发起**不 await —— `brew list --cask` 冷启动可达数秒,挡在建窗之前等于让用户干等
+  // 一个连窗口都没有的启动;消费者(app:info / app:checkUpdates)各自 await 这个 promise。
+  const installChannel = detectInstallChannel({ runner })
 
   // AI 助手(阶段 4):pi 引擎 + ToolRegistry + 内置会话;MCP HTTP 端点同批启动
   const ai = createAiStack({
@@ -275,11 +276,28 @@ app.whenReady().then(async () => {
     userDataDir: app.getPath('userData'),
     emit: (ev) => broadcast(IPC_EVENTS.aiRunEvent, ev)
   })
-  await ai.start()
 
-  registerIpc({ store, tray: trayCtl, agents, cron, discovery, termination, docker, installChannel, ai })
+  // ⚠ 顺序有两处硬约束,别顺手调换:
+  //   · registry.apply()(themeSource / Tray / Dock / 登录项 / fs.watch)必须在建窗**之前** ——
+  //     否则窗口底色会跟随系统外观而不是应用主题;
+  //   · registerIpc() 也必须在建窗**之前** —— 渲染层启动瞬间就会调 settings:get / agents:list。
+  registerIpc({
+    store,
+    tray: trayCtl,
+    agents,
+    cron,
+    discovery,
+    termination,
+    docker,
+    getInstallChannel: () => installChannel,
+    ai
+  })
 
   createWindow()
+
+  // MCP 端点起服放在建窗之后:它只影响 MCP 客户端,不该拖慢首屏;
+  // 顺带修掉「抛错 → whenReady 回调 unhandled rejection → 整个启动序中断」的隐患
+  void ai.start().catch((err) => console.error('[mcp] 启动失败', err))
 
   // Dock 图标点击 / 重新打开应用 → 唤起(Dock 点击由 macOS 的 applicationShouldHandleReopen 触发,必发此事件)
   app.on('activate', () => showMainWindow())

@@ -37,8 +37,13 @@ export interface IpcDeps {
   discovery: ProcessDiscovery
   termination: TerminationService
   docker: DockerService
-  /** 安装来源(启动时探测一次;决定「检查更新」给哪条升级命令) */
-  installChannel: InstallChannel
+  /**
+   * 安装来源(brew/npm/manual),决定「检查更新」给哪条升级命令。
+   * 传的是**一个 promise** 而不是结果:探测里要跑 `brew list --cask`(冷启动可达数秒),
+   * 不能挡在建窗之前;但也不能先返回 'manual' 再改 —— 渲染层 useAppInfo 是模块级一次性缓存,
+   * 先拿到 manual 会整个会话显示错误的升级命令。故两个消费者各自 await 它。
+   */
+  getInstallChannel: () => Promise<InstallChannel>
   /** AI 助手(阶段 4):会话/引擎/授权;MCP 端点由它一并管着 */
   ai: AiStack
 }
@@ -59,13 +64,16 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(IPC.settingsReset, () => store.reset())
 
-  ipcMain.handle(IPC.appInfo, (): AppInfo => ({
-    arch: process.arch,
-    platform: process.platform,
-    version: app.getVersion(),
-    isPackaged: app.isPackaged,
-    installChannel: deps.installChannel
-  }))
+  ipcMain.handle(
+    IPC.appInfo,
+    async (): Promise<AppInfo> => ({
+      arch: process.arch,
+      platform: process.platform,
+      version: app.getVersion(),
+      isPackaged: app.isPackaged,
+      installChannel: await deps.getInstallChannel()
+    })
+  )
 
   ipcMain.handle(IPC.openExternal, (_e, url: string) => {
     if (!isAllowedExternalUrl(url)) {
@@ -84,7 +92,9 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   // 检查更新:main 侧读 cdn 上的版本清单(与三条安装通道同源;四态见 services/update-check.ts)
-  ipcMain.handle(IPC.appCheckUpdates, () => checkForUpdate(app.getVersion(), { channel: deps.installChannel }))
+  ipcMain.handle(IPC.appCheckUpdates, async () =>
+    checkForUpdate(app.getVersion(), { channel: await deps.getInstallChannel() })
+  )
 
   // ── 原生对话框(渲染层传意图,系统对话框选路径;文件读写都在 main) ──
   ipcMain.handle(IPC.shellPickFile, async (e, opts: { mode: PickFileMode; title?: string }): Promise<PickedFile | null> => {
