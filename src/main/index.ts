@@ -22,17 +22,27 @@ let mainWindow: BrowserWindow | null = null
 let store: SettingsStore
 /** 窗口显示门控(每个窗口一份;见 services/boot-gate.ts 的说明) */
 let bootGate: BootGate | null = null
+/**
+ * 「whenReady 的启动序已走完」。
+ * 在这之前收到 second-instance / Dock activate(用户在启动途中又点了一次图标)时**不要**建窗 ——
+ * 否则会造出第二扇 show:false 且永不被显示的窗口(第一扇还会被后面的 createWindow 顶掉),
+ * 白白多一个渲染进程。启动序自己会建窗并交给门控显示。
+ */
+let startupDone = false
 
 // dev 自动化验证端口(如 CDP 交互测试);生产不生效
 if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_DEV_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['LAUNCHER_DEV_DEBUG_PORT'])
 }
 
-// dev E2E:隔离 userData(与正在运行的打包版互不争抢单实例锁/缓存);必须在取锁之前设置
+// E2E:隔离 userData(与正在运行的实例互不争抢单实例锁/缓存);必须在取锁之前设置
 // ⚠ 用 LAUNCHER_E2E_USER_DATA 同时隔离设置文件:此前它只隔离 userData,而设置文件仍写真实的
 //   ~/.config/launcher/config.json —— 自动化验证会悄悄改掉用户的配置(本项目真发生过)。
 //   `home` 由 NSHomeDirectory 决定,改 HOME 环境变量对它无效,故只能在这里显式改路径。
-const e2eUserData = process.env['ELECTRON_RENDERER_URL'] ? process.env['LAUNCHER_E2E_USER_DATA'] : undefined
+// ⚠ 打包版**也必须**生效(此前只认 dev):「首次安装后第一次启动」这类场景只能在打包产物上复现,
+//   而它恰恰需要冷 profile(全新 userData = 空的 Code Cache)与不碰用户配置。不设这个环境变量时
+//   一切照旧(走真实路径),故对正常使用无影响。
+const e2eUserData = process.env['LAUNCHER_E2E_USER_DATA']
 if (e2eUserData) {
   app.setPath('userData', e2eUserData)
 }
@@ -57,6 +67,10 @@ function logoDir(): string {
 function broadcast(channel: string, payload?: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
 }
+
+/** 启动打点:每条 [boot] 日志带相对进程启动的毫秒数(排查「首启慢/白屏」时唯一可量化的依据) */
+const bootT0 = Date.now()
+const bootLog = (msg: string): void => console.log(`[boot] +${Date.now() - bootT0}ms ${msg}`)
 
 /** 真正把窗口露出来(唯一实现;门控与常规唤起都走它) */
 function revealMainWindow(): void {
@@ -120,15 +134,15 @@ function createWindow(): void {
       additionalArguments: [`--launcher-initial-settings=${JSON.stringify(store.get())}`]
     }
   })
-  console.log(`[boot] window created`)
+  bootLog('window created')
 
   // 显示门控:窗口何时可以露出来,由渲染层的真实进度决定(rAF → 过渡页已上屏;应用 commit → 直接显示)
   bootGate = createBootGate({
     reveal: (reason) => {
-      console.log(`[boot] reveal reason=${reason}`)
+      bootLog(`reveal reason=${reason}`)
       revealMainWindow()
     },
-    log: (m) => console.log(`[boot] ${m}`)
+    log: (m) => bootLog(m)
   })
   // 双 rAF = 至少有一帧已提交给合成器 —— 这是「马上 show 出去的那一帧里有东西」的唯一证明
   mainWindow.webContents.once('dom-ready', () => {
@@ -182,7 +196,7 @@ function createWindow(): void {
   // 只作诊断:显示时机由 bootGate 决定(ready-to-show 可能在「文档里什么都没有」时也触发,
   // 它是否等于「首帧已绘制」在 Electron 里无法从代码侧证实 —— 而 2026-09-23 的白屏正说明不能赌它)
   mainWindow.on('ready-to-show', () => {
-    console.log('[boot] ready-to-show')
+    bootLog('ready-to-show')
   })
 
   mainWindow.on('closed', () => {
@@ -217,10 +231,15 @@ function showMainWindow(): void {
     revealMainWindow()
     return
   }
-  if (app.isReady()) createWindow() // ready 前 store 尚未初始化,建窗会抛
+  // 启动序尚未走完:窗口马上会被创建并显示,这里什么都不做(见 startupDone 的说明)
+  if (!startupDone) return
+  createWindow()
 }
 
 app.whenReady().then(async () => {
+  // 重复启动(第二次点图标)时 app.quit() 已经在上面调过了 —— 这里直接收手:
+  // 继续往下走会白建一扇窗口、起一遍服务(第二次启动的窗口还会随退出闪一下)
+  if (!gotLock) return
   // 启动序:设置加载 → applier 注册表副作用(themeSource/Tray/Dock/登录项/目录监听) → 建窗 → IPC
   store = createSettingsStore(
     e2eUserData ? join(e2eUserData, 'config.json') : defaultConfigPath(app.getPath('home'))
@@ -294,6 +313,7 @@ app.whenReady().then(async () => {
   })
 
   createWindow()
+  startupDone = true
 
   // MCP 端点起服放在建窗之后:它只影响 MCP 客户端,不该拖慢首屏;
   // 顺带修掉「抛错 → whenReady 回调 unhandled rejection → 整个启动序中断」的隐患

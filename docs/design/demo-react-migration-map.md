@@ -290,7 +290,7 @@
 6. **Tray 菜单/折叠 toast/清空日志**硬编码中文(demo 原样;阶段 5 随双形态接入 i18n)。
 7. 日志 tab 级别 select 为**功能性过滤**(demo 的 select 无功能)——增强,视觉一致。
 8. 抽屉 XML 原文/表单/状态为**全卡片共用 mock**(demo populateDrawerDefaults 原样)。
-9. 窗口 `backgroundColor #0e0e17` + boot-splash 配色由 `#14141f` 调整为 `--bg`(无主题闪烁;差异轻微)。
+9. 窗口 `backgroundColor #0e0e17` + boot-splash 配色由 `#14141f` 调整为 `--bg`(无主题闪烁;差异轻微)。**⚠ 2026-09-23 追加**:这条只覆盖了「设置生效时机」,没覆盖「React 首帧 vs 过渡页摘除时机」——过渡页当时仍写死深色 `#0e0e17`,`html/body` 也没有自己的底色。首次启动白屏即出自这段盲区,见「启动期白屏修复(2026-09-23)」。
 10. **菜单栏角标以 `tray.setTitle(数字)` 呈现**(菜单栏图钉右侧文本,与 template icon 独立渲染层、明暗自适应不受影响);未采用图标内嵌绘制,Dock badge 语义不符 `app.dock.setBadge` 未用。
 11. **打开系统设置真实跳转**(`x-apple.systempreferences:`,main 侧 url-guard 只放行 `com.apple.*` 面板);检查更新文案为应用新增 i18n EXTRA 键(demo 冻结不可改;`toast.upToDate` 旧键保留为冻结镜像不再消费)。
 12. **Agent 列表运行状态筛选**(2026-09-19 用户要求,应用新增):demo 的过滤栏只有类型筛选,缺少「一眼看到正在运行的任务」的入口。应用在类型组之后加第二组(全部状态 / 运行中 / 已载入 / 已停止,竖线分隔两组,文案复用卡片状态标签的 `status.*` 键),状态存 `agents-store.statusFilter`,与类型筛选是「与」关系;**视觉上作次级处理**:`Chip variant='sub'` / `.chip-sub` 不用胶囊,改成方括号包住的纯文本(无描边、无图标、无底色),选中只换文字与括号颜色(`--accent`),与主 chips 形成主次;孤儿横幅(已加载但 plist 已不存在)不属于任何状态分组,仅在状态不限时展示。
@@ -319,6 +319,17 @@
 | menubarBadge → Tray 角标 | **已完成**(setTitle 数字;阶段 1 后计数改由 main 自算) | 5 |
 | APP_VERSION → 设置页/关于 | **已完成**(useAppInfo hook;真实版本三处) | 5 |
 | aiAgents/aiSkills(已生成在 mock) | AI 视图(demo 已改为对话页:`aiAgents` → MCP 接入 modal 数据源;`aiSkills` → 欢迎技能建议卡;新增 `aiChats`/`aiScenes` 场景数据) | 4 |
+
+## 启动期白屏修复(2026-09-23,用户报告「首次安装后第一次启动有一段白屏」)
+
+用户确认的四个事实定了性:**全程没见过那个深色过渡页**、浅色主题、时长「有一定间隔」、通道是 curl/brew/npx 之一(即刚整份落盘的 258MB bundle)。
+
+- **根因①:过渡页在「还没被画出来」时就被删了**。`bootstrap()` 在模块求值第一行就 `remove()` 掉 `#boot-splash`,而 App 模块顶层同步调用它 —— `<script type="module">` 的执行可能早于浏览器首帧(打包产物 `<head>` 里 686KB 的 render-blocking CSS 又把「可以首绘」与「脚本可执行」卡在同一时刻),于是首帧落到「`#root` 为空」的状态。改法:过渡页改由 React 首次 commit 的 `useLayoutEffect` 摘除(`renderer/src/boot/splash.ts`)—— 与应用 DOM **同一帧**,渲染管线不可能产出一帧「过渡页已摘、应用未画」。
+- **根因②:那段空窗在浅色下就是近白**。`index.html` 的 `html`/`body` 都没有底色(只有 `margin:0`),底色来自 `base.css` 的 `--bg`,而 `initSettingsFromMain()` 已经把 `light-theme` 加上了(`#f6f7fb`)。深色主题同路径是 `#0e0e17`、与过渡页同色,所以只有浅色用户看得见。改法:过渡页与 `html` 背景**内联在 `<head>`**,配色走 `prefers-color-scheme`(主进程在建窗**之前**就写了 `nativeTheme.themeSource`,媒体查询拿到的正是应用生效主题,三种设置都正确且不依赖 preload);三处颜色(建窗底色 / 过渡页 / `--bg`)由 `boot-theme.contract.test.ts` 钉死同源。
+- **根因③:窗口显示时机没有门控**。唯一入口是 `ready-to-show`(无兜底),而 `showMainWindow()`(second-instance / Dock / Tray)直接 `show()` —— 启动途中用户再点一次图标就会露出未绘制的窗口底色。改法:新增 `services/boot-gate.ts`(纯状态机,时钟可注入 ⇒ 可单测):渲染层报「过渡页已上屏」(双 rAF = 确实产出了一帧)后留 `SPLASH_GRACE_MS=400` 宽限(热启动的应用先画好就直接显示、过渡页一帧都不出现),应用 commit 立刻显示,用户提前唤起则**挂起**等信号,另有 `BOOT_WATCHDOG_MS=3000` 兜底(窗口绝不永久隐藏);`ready-to-show` 降级为诊断日志。
+- **顺带**:① `App.tsx` 的 `!window.launcher` 分支此前是死代码(preload 缺失时 `bootstrap()` 先抛错 ⇒ 模块求值失败 ⇒ `createRoot().render()` 永不执行,而过渡页已删 = **永久空白页**),现在引导异常被**返回**给组件树、四类分支都会摘除过渡页;② 过渡页加 8s 失败兜底(classic 内联脚本,module bundle 没加载成功时换成可点的「重新加载」);③ 重复启动时 `whenReady` 直接收手,不再白建一扇窗口;④ 浅色下 `.skeleton-row` 用 `--panel`(70% 白)叠在 `#f6f7fb` 上几乎看不见,「过渡页刚摘、数据未到」那屏会被读成白屏 → 浅色单独给一档可见底色。
+- **首启更慢的部分(不可控,只能被覆盖)**:1.9MB JS + 686KB 阻塞 CSS 的冷解析;刚落盘的 258MB bundle 的冷页缓存与系统首轮索引。为此另把 `detectInstallChannel`(brew 冷启动可达数秒)与 `ai.start()` 移出建窗前(改记忆化 promise + 建窗后 `void`),让窗口更早出现、过渡页能覆盖更长时间。
+- **验证**:`boot-gate.test.ts`(含「用户提前唤起不得直接显示」)+ `boot-theme.contract.test.ts`(三处同色、过渡页不再写死深色、上报脚本为 classic 内联);真机冷启(冷 profile + 冷 bundle + 隔离 userData)逐帧抓屏 —— 浅/深两主题首帧主色分别 ≈ `#f6f7fb` / `#0e0e17`、全程 BLANK 帧 0、`[boot] splash painted → app painted → reveal reason=app`;失败路径(module script 404)在宽限期显示**过渡页**(不是空窗)、8s 后换成带「重新加载」的失败提示;重复启动第二个进程零 `[boot]` 输出且自行退出。
 
 ## 打开慢修复(2026-09-11,机制同源开源 AgentStore/BrewManagedSupport)
 
