@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # BeCrafter Launcher 安装脚本
 #
-#   curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/dev/scripts/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --version 0.1.0    # 指定版本
 #   curl -fsSL .../install.sh | bash -s -- --list             # 看有哪些版本
 #   curl -fsSL .../install.sh | bash -s -- --check            # 版本检查（装没装、是不是最新）

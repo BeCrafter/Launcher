@@ -54,7 +54,10 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          # Node 24（当前 LTS）。原来是 20，而依赖树早已要求 ≥22：
+          # electron@44 / @electron/get / @electron/rebuild / node-abi 要 >=22.12.0，
+          # vitest@5 要 ^22.12.0 || ^24.0.0 || >=26.0.0，@earendil-works/* 要 >=22.19.0。
+          node-version: 24
           cache: npm
 
       - name: 解析 dev 版本号

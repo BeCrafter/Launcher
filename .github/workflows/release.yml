@@ -20,12 +20,23 @@ permissions:
   # npm publish --provenance 需要 OIDC 签发供应链证明
   id-token: write
 
+# 同一时间只跑一个正式发布：tag 重跑与手动补发撞上，会有两份 job 同时写 R2 / 推 cask / 发 npm
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     # macos-14 是 arm64 主机；--arch all 会交叉构建 x64，故两种产物由同一 job 产出
     runs-on: macos-14
     # R2 的密钥挂在 r2-publish 环境上（详见 docs/design/distribution.md）
     environment: r2-publish
+    # npm 发布拆成独立 job（NPM_TOKEN 归 npm-publish 环境，而一个 job 只能挂一个 environment）。
+    # job 之间只传 outputs —— $GITHUB_ENV 是不跨 job 的，所以这几个值必须显式导出。
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      is_prerelease: ${{ steps.ver.outputs.is_prerelease }}
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_BUCKET: ${{ secrets.R2_REPO_BUCKET_NAME }}
@@ -36,21 +47,31 @@ jobs:
       CASK_PATH: Casks/launcher.rb
     steps:
       - uses: actions/checkout@v5
+        with:
+          # 手动补发时必须显式跟 inputs.tag：不指定的话 checkout 跟的是 github.ref，
+          # 也就是「你在哪个分支上点的按钮」，会构建出分支 HEAD 而不是那个 tag 指向的 commit。
+          # 顺带：tag 不存在时这里直接失败，好过事后在默认分支上造出一个假 tag。
+          ref: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
 
-      # 放在构建前：secrets 没配好时立刻失败，不必白等一次 macOS 构建
+      # 放在构建前：secrets 没配好时立刻失败，不必白等一次 macOS 构建。
+      # ⚠ 这里只查得到 r2-publish 的密钥 —— NPM_TOKEN 归 npm-publish 环境，
+      #   本 job 看不到它，那个检查放在 npm-publish job 的开头。
       - name: 校验发布配置
         env:
           TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for k in R2_ACCOUNT_ID R2_BUCKET R2_PUBLIC_DOMAIN TAP_TOKEN NPM_TOKEN; do
+          for k in R2_ACCOUNT_ID R2_BUCKET R2_PUBLIC_DOMAIN TAP_TOKEN; do
             [ -n "${!k}" ] ||
-              { echo "::error::$k 为空——检查 r2-publish 环境上的 secrets（含 TAP_GITHUB_TOKEN / NPM_TOKEN）"; exit 1; }
+              { echo "::error::$k 为空——检查 r2-publish 环境上的 secrets（含 TAP_GITHUB_TOKEN）"; exit 1; }
           done
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          # Node 24（当前 LTS）。原来是 20，而依赖树其实早已要求 ≥22：
+          # electron@44 / @electron/get / @electron/rebuild / node-abi 要 >=22.12.0，
+          # vitest@5 要 ^22.12.0 || ^24.0.0 || >=26.0.0，@earendil-works/* 要 >=22.19.0 ——
+          # Node 20 下 npm ci 会为这 10 个包刷一屏 EBADENGINE 警告，等于拿不受支持的 Node 出货。
+          node-version: 24
           cache: npm
           # ⚠ 必须显式给 registry-url：setup-node 才会写出带 `${NODE_AUTH_TOKEN}` 的 .npmrc。
           # 少了它，后面 `npm publish` 读不到 NODE_AUTH_TOKEN，会以 ENEEDAUTH 失败。
@@ -61,8 +82,13 @@ jobs:
         run: npm ci
 
       - name: 校验版本号并判定是否为预发布
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          TAG="${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}"
+          # 输入一律经 env 传入，不把表达式内插进脚本体 —— 否则 tag 名里的元字符会被当命令执行
+          if [ "$REF_TYPE" = "tag" ]; then TAG="$REF_NAME"; else TAG="$INPUT_TAG"; fi
           VERSION="${TAG#v}"
           PKG="$(node -p "require('./package.json').version")"
           echo "package.json=$PKG  tag=$TAG"
@@ -74,7 +100,20 @@ jobs:
           # 并把 IS_PRERELEASE 写进 $GITHUB_ENV 供后续步骤使用。
           # 判定逻辑与本地 `npm run release:check` 共用 release-version.mjs，不在 YAML 里另抄一份。
           node scripts/release-check.mjs --version "$VERSION" --emit
+          # 实际 build 出来的那个 commit：github.sha 是「点的哪个分支」，不是 checkout 到的 ref
+          SHA="$(git rev-parse HEAD)"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+
+      # 单独一步是因为上一步写进的是 $GITHUB_ENV（对后续 step 生效），本步才读得到。
+      # 值只在 job 内共享，跨 job 必须走 outputs（见 jobs.release.outputs）。
+      - name: 导出 job 输出
+        id: ver
+        run: |
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=${IS_PRERELEASE}" >> "$GITHUB_OUTPUT"
 
       - name: 类型检查与测试
         run: |
@@ -219,33 +258,6 @@ jobs:
             git push
           fi
 
-      # npm 包是个**安装器**：只含 cli.mjs / lib.mjs / README.md，不含应用产物。
-      # ⚠ 预发布同样跳过：否则 `npx -y @becrafter/launcher` 会拉到 rc（latest dist-tag 被占）。
-      # 版本号与 app 同步 —— `npx …@0.2.0` 装的就是应用 0.2.0。
-      - name: 发布 npm 包
-        if: env.IS_PRERELEASE != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          mkdir -p pkg
-          cp packaging/npm/package.json packaging/npm/cli.mjs packaging/npm/lib.mjs \
-             packaging/npm/README.md pkg/
-          sed -i '' -e "s|REPLACE_WITH_VERSION|${VERSION}|" pkg/package.json
-          if grep -q "REPLACE_WITH_VERSION" pkg/package.json; then
-            echo "::error::npm 包占位符未被替换"
-            exit 1
-          fi
-          cd pkg
-          # npm 不允许重复发布同一版本 —— 重跑同一 tag 时必须跳过，
-          # 否则「整个流程可重跑」这个性质在 npm 这一步断掉（cask 步骤同理，见上）
-          PKG_NAME="$(node -p "require('./package.json').name")"
-          if npm view "${PKG_NAME}@${VERSION}" version >/dev/null 2>&1; then
-            echo "npm 上已是 ${VERSION}，跳过发布"
-          else
-            # --provenance 走 OIDC 签发供应链证明（需顶层 id-token: write）
-            npm publish --access public --provenance
-          fi
-
       - name: 生成 Release 正文
         run: |
           R2_BASE="${R2_PUBLIC_DOMAIN}/${R2_PREFIX}"
@@ -259,9 +271,11 @@ jobs:
             echo
             echo '```bash'
             if [ "$IS_PRERELEASE" = "true" ]; then
-              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash -s -- --version ${VERSION}"
+              # ⚠ 用 dev 而不是 main：install.sh 日常只存在于 dev（main 至今还停在 Initial commit），
+              # 指向 main 会让用户照抄出 404。与 UPGRADE_COMMAND / CLAUDE.md / distribution.md 保持一致。
+              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/dev/scripts/install.sh | bash -s -- --version ${VERSION}"
             else
-              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/install.sh | bash"
+              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/dev/scripts/install.sh | bash"
               echo
               echo "brew install --cask becrafter/brew/launcher"
               echo
@@ -290,8 +304,10 @@ jobs:
       - name: 发布
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TAG }}
+          # tag 不存在时按实际 checkout 的那个 commit 建；不指定的话 API 会用默认分支 main
+          target_commitish: ${{ env.SHA }}
           # 预发布必须标记：应用内「检查更新」打的是 /releases/latest，
           # 该 API 只返回最新的非 pre-release、非 draft —— 标记后自然不会推给用户
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
@@ -300,3 +316,68 @@ jobs:
             dist/*.zip
             dist/*.dmg
           fail_on_unmatched_files: true
+
+  # ── npm 包（安装器）──
+  # 为什么是独立 job：GitHub 一个 job 只能挂一个 environment，而 NPM_TOKEN 归 npm-publish
+  # 环境（与 R2 的 r2-publish 分开授权）。产物准备只是从仓库拷 4 个文件、不重新构建，
+  # 所以这里用 ubuntu 而不是 macOS runner。
+  # npm 包只含 cli.mjs / lib.mjs / README，不含应用产物。
+  # ⚠ 预发布跳过：否则 `npx -y @becrafter/launcher` 会拉到 rc（latest dist-tag 被占）。
+  # 版本号与 app 同步 —— `npx …@0.2.0` 装的就是应用 0.2.0。
+  npm-publish:
+    needs: release
+    # 显式要求 release 成功：只写 is_prerelease 判断会掩盖「上游失败」这个前提
+    if: needs.release.result == 'success' && needs.release.outputs.is_prerelease != 'true'
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      # npm publish --provenance 需要 OIDC 签发供应链证明
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # 与 release job 构建的必须是同一个 commit
+          ref: ${{ needs.release.outputs.tag }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          # ⚠ 必须显式给 registry-url：setup-node 才会写出带 `${NODE_AUTH_TOKEN}` 的 .npmrc。
+          # 少了它，下面 `npm publish` 读不到 NODE_AUTH_TOKEN，会以 ENEEDAUTH 失败。
+          registry-url: https://registry.npmjs.org
+
+      # 放在最前：NPM_TOKEN 归本 environment，release job 看不到它，这个检查只能在这儿做
+      - name: 校验 npm 配置
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          [ -n "$NPM_TOKEN" ] ||
+            { echo "::error::NPM_TOKEN 为空 —— 检查 npm-publish 环境上的 secrets"; exit 1; }
+
+      - name: 打包并发布 npm 包
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # 经 env 传入，不把表达式内插进脚本体（与 release job 同一约定）
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          mkdir -p pkg
+          cp packaging/npm/package.json packaging/npm/cli.mjs packaging/npm/lib.mjs \
+             packaging/npm/README.md pkg/
+          # -i.bak 是 BSD / GNU 都认的写法；macOS 专用的 `-i ''` 在 Linux runner 上会出错
+          sed -i.bak -e "s|REPLACE_WITH_VERSION|${VERSION}|" pkg/package.json
+          rm -f pkg/package.json.bak
+          if grep -q "REPLACE_WITH_VERSION" pkg/package.json; then
+            echo "::error::npm 包占位符未被替换"
+            exit 1
+          fi
+          cd pkg
+          # npm 不允许重复发布同一版本 —— 重跑同一 tag 时必须跳过，
+          # 否则「整个流程可重跑」这个性质在 npm 这一步断掉（cask 步骤同理，见上）
+          PKG_NAME="$(node -p "require('./package.json').name")"
+          if npm view "${PKG_NAME}@${VERSION}" version >/dev/null 2>&1; then
+            echo "npm 上已是 ${VERSION}，跳过发布"
+          else
+            # --provenance 走 OIDC 签发供应链证明（需本 job 的 id-token: write）
+            npm publish --access public --provenance
+          fi

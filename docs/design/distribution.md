@@ -234,7 +234,12 @@ inode 不同，该判据不成立。
 
 ## 四、发布流程
 
-`.github/workflows/release.yml`：push tag `v*`（或手动 dispatch）→ 校验 tag 与 `package.json` 版本一致（并判定是否预发布）→ typecheck + test → 构建 → 算 sha256 → 传 R2 → 验证公网可达 → 更新 tap 的 cask → 发布 npm 包 → 发 GitHub Release。
+`.github/workflows/release.yml` 分两个 job：
+
+- **`release`**（macOS，挂在 `r2-publish` 环境）：push tag `v*`（或手动 dispatch）→ 校验 tag 与 `package.json` 版本一致（并判定是否预发布）→ typecheck + test → 构建 → 算 sha256 → 传 R2 → 验证公网可达 → 更新 tap 的 cask → 发 GitHub Release。
+- **`npm-publish`**（Linux，挂在 `npm-publish` 环境）：`needs: release`，仅在 release 成功**且非预发布**时运行 → 从仓库拷 `packaging/npm/` 的四个文件、替换版本占位符 → `npm publish`。
+
+> 为什么 npm 要单独一个 job：**GitHub 一个 job 只能挂一个 environment**，而 `NPM_TOKEN` 与 R2 的凭据分环境授权。该 job 不碰构建产物（只拷 4 个文件），所以用 Linux runner。
 
 任何一步失败即中断，且整个流程可重跑（重跑同一 tag 会覆盖同一批对象并重算 sha256）。
 
@@ -249,14 +254,14 @@ inode 不同，该判据不成立。
 
 > install.sh 按 `Launcher-[latest|<版本>]-<架构>.zip` 拼名，cask 用 `arch arm:/intel:` 拼出同名，npm CLI 由 `packaging/npm/lib.mjs` 的 `zipUrl` 拼出——**改产物名、或改 workflow 里的 `R2_PREFIX`（必须与 install.sh 的 `R2_BASE` / cli.mjs 的 `DEFAULT_R2_BASE` 路径一致）会同时打断三条通道**；`versions.txt` 同理，它的路径由「cdn 根 + 固定文件名」拼出，两侧都不能各写一份。
 
-### CI 依赖的 secrets（挂在 `r2-publish` 环境上）
+### CI 依赖的 secrets（分挂在 `r2-publish` 与 `npm-publish` 两个环境上）
 
 | Secret | 用途 |
 |---|---|
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | R2 的 S3 兼容凭据（endpoint = `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`） |
 | `R2_REPO_BUCKET_NAME` / `R2_REPO_PUBLIC_DOMAIN` | bucket 名与自定义域名（**不带末尾斜杠**，如 `https://repo.iskill.site`） |
 | `TAP_GITHUB_TOKEN` | 对本仓库外的 `BeCrafter/homebrew-brew` 有 `contents: write` 的 PAT——`GITHUB_TOKEN` 只能作用于本仓库，跨仓推送必须用 PAT |
-| `NPM_TOKEN` | npmjs.com 的 Automation token，用于发布 `@becrafter/launcher`。⚠ 首次发布前需确认该 scope 属于当前账号（`@becrafter` 现有 `sail` 等包，maintainer `kugouming`） |
+| `NPM_TOKEN` | **归 `npm-publish` 环境**（与上面几项分开授权，`release` job 读不到它）。npmjs.com 的 Automation token，用于发布 `@becrafter/launcher`。⚠ 首次发布前需确认该 scope 属于当前账号（`@becrafter` 现有 `sail` 等包，maintainer `kugouming`） |
 
 R2 侧只需要 bucket + 绑好自定义域名并开启公开访问；`r2.dev` 域名有限流，不要用。
 
