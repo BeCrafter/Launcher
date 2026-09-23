@@ -65,31 +65,6 @@ jobs:
               { echo "::error::$k 为空——检查 r2-publish 环境上的 secrets（含 TAP_GITHUB_TOKEN）"; exit 1; }
           done
 
-      # ⚠ 临时诊断步骤（2026-09-23 连续两次在为 v0.1.1 建 Release 时收到 403
-      #   "not accessible by integration"，而那两次的 token 都明确带 Contents: write）。
-      #   放在构建前：探测失败 1 分钟就知道，不必烧完十几分钟构建才在最后一步发现。
-      #   用临时 tag + draft release 探路，无论成败都清理干净。
-      - name: 预验 GITHUB_TOKEN 能否建 Release（临时诊断）
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -uo pipefail
-          TAG="permcheck-${GITHUB_RUN_ID}"
-          REPO="${GITHUB_REPOSITORY}"
-          cleanup() {
-            gh api -X DELETE "repos/${REPO}/releases/${REL_ID:-0}" >/dev/null 2>&1 || true
-            gh api -X DELETE "repos/${REPO}/git/refs/tags/${TAG}" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-          echo "① 建临时 tag ${TAG}"
-          gh api -X POST "repos/${REPO}/git/refs" -f ref="refs/tags/${TAG}" -f sha="${GITHUB_SHA}" >/dev/null \
-            || { echo "::error::连 tag 都建不了 → contents:write 没真正生效"; exit 1; }
-          echo "② 为它建 draft release"
-          REL_ID="$(gh api -X POST "repos/${REPO}/releases" \
-            -f tag_name="${TAG}" -f name="${TAG}" -F draft=true --jq .id)" \
-            || { echo "::error::能建 tag 但建不了 release → token 对 release 这一路没权限"; exit 1; }
-          echo "✓ 预验通过：GITHUB_TOKEN 可以创建 Release（draft id=${REL_ID}）"
-
       - uses: actions/setup-node@v5
         with:
           # Node 24（当前 LTS）。原来是 20，而依赖树其实早已要求 ≥22：
@@ -360,9 +335,12 @@ jobs:
         with:
           tag_name: ${{ env.TAG }}
           name: ${{ env.TAG }}
-          # 不给 target_commitish：release.yml 只处理**已存在**的 tag（tag 触发或手动补发），
-          # 它在这个场景没有用处；而 tag 若是 annotated 对象，ref 的 SHA 是 tag 对象的、
-          # 不是 commit 的，传 commit SHA 会制造不一致 —— 排查 403 时先去掉观察（2026-09-23）
+          # ⚠ 千万别给 target_commitish：release.yml 处理的**永远是已存在的 tag**（tag 触发或
+          #   手动补发），该参数在此毫无用处；而实测只要加上它，建 Release 就稳定收到
+          #   403 "not accessible by integration" —— 即便 token 明确带 Contents: write、
+          #   且同一个 token 能建 tag、也能建 draft release（2026-09-23 在 v0.1.1/v0.1.2 上
+          #   各踩一次，去掉后一次通过）。dev-release.yml 里它是有用的（那里的 tag 由 action
+          #   自己创建，commitish 与新建的 tag 天然一致）。
           # 预发布必须标记：应用内「检查更新」打的是 /releases/latest，
           # 该 API 只返回最新的非 pre-release、非 draft —— 标记后自然不会推给用户
           prerelease: ${{ env.IS_PRERELEASE == 'true' }}
