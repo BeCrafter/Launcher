@@ -74,6 +74,10 @@ describe('cli 冒烟', () => {
     }
   })
 
+  // status 会调 publishedInfo() 打公网 registry，而 cli.mjs 给那次查询的预算是
+  // AbortSignal.timeout(6000) —— 比 vitest 默认的 5000ms 还长。registry 一慢，代码本打算
+  // 6s 后优雅收场，vitest 却先在 5s 把用例判死（实测约 1/10 概率误报）。
+  // 故凡走 status 的用例都显式给 20s：仍能抓住真正的挂死，只是不再短于代码自己的预算。
   it('status 对空壳 .app 不崩（Info.plist 缺失 → 版本未知）', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'launcher-cli-st-'))
     mkdirSync(join(dir, 'Launcher.app'), { recursive: true })
@@ -85,7 +89,7 @@ describe('cli 冒烟', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 
   it('status 离线也要正常收场（仓库与 npm 都取不到不是错误）', async () => {
     const r = await cli(['status', '--dir', EMPTY_DIR], DEAD)
@@ -94,7 +98,7 @@ describe('cli 冒烟', () => {
     // npm 这条打的是公网 registry，测试环境可能通（→ 尚未发布）也可能不通（→ 未取到），两者都算正常收场
     expect(r.out).toMatch(/npm 包\s+\((未取到|尚未发布)/)
     expect(r.err).not.toMatch(CRASH)
-  })
+  }, 20_000)
 
   it('versions 取不到列表：报错退出 1，且指出用的哪个地址', async () => {
     const r = await cli(['versions'], DEAD)
