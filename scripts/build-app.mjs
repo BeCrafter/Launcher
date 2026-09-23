@@ -292,6 +292,13 @@ async function main() {
     const ebArgs = ['electron-builder', '--mac', `--${arch}`]
     // 默认 --dir 只出解包目录（快、供验证）；--release 时放开为 electron-builder.yml 的 dmg+zip
     if (!release) ebArgs.push('--dir')
+    // ⚠ 必须显式 --publish never：HEAD 上有 git tag 时 electron-builder 会「隐式发布」到
+    //   GitHub Releases（v26 的默认行为，v27 起改为必须显式指定），而 CI 里没有 GH_TOKEN，
+    //   于是打包成功却以「GitHub Personal Access Token is not set」退出 1 —— 2026-09-22
+    //   在 dev 流水线上踩到，正式流水线（release.yml 也是打 tag 触发）同一个雷。
+    //   GitHub Release 由 workflow 的 softprops/action-gh-release 负责，R2 是单独的
+    //   aws s3 cp 步骤，这里再发布一次只会重复、且必然失败。
+    ebArgs.push('--publish', 'never')
     sh('npx', ebArgs)
     const appPath = join(
       ROOT,

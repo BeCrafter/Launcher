@@ -74,7 +74,7 @@ npx -y @becrafter/launcher status     # 已装版本 vs 仓库最新
 | 通道 | 命令 |
 |---|---|
 | Homebrew | `brew install --cask becrafter/brew/launcher` |
-| curl 脚本 | `curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/main/scripts/install.sh \| bash` |
+| curl 脚本 | `curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/dev/scripts/install.sh \| bash` |
 
 三条通道装出来的是同一个应用；区别只在入口与前置依赖（curl 零依赖，Homebrew 需要 Homebrew，
 本包需要 Node 18+）。

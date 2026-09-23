@@ -9,7 +9,7 @@
 //   往 PATH 里放可执行文件是应用之外可见的动作,且那个链接在 brew 装的情况下归 brew 管
 //   (卸载时要靠它清理),应用不该在启动时静默跟包管理器抢所有权。
 
-import { accessSync, constants, lstatSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { accessSync, constants, lstatSync, mkdirSync, realpathSync, symlinkSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { McpLinkState } from '../../shared/ipc'
 
@@ -68,6 +68,16 @@ const writableDir = (dir: string): boolean => {
   }
 }
 
+/** lstat 版的存在性判断:不跟随符号链接,所以「指向已不存在目标的悬空链接」也算在 */
+const linkExists = (p: string): boolean => {
+  try {
+    lstatSync(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 建/修 PATH 上的 launcher-mcp 链接。**只在用户点按钮时调用。**
  *
@@ -97,8 +107,11 @@ export function installMcpLink(expected: string, pathEnv = process.env['PATH'] ?
   const link = join(target, MCP_BIN_NAME)
   try {
     if (target === localBin) mkdirSync(target, { recursive: true })
-    // 就地修复前先移除旧链接:符号链接已存在时 symlinkSync 会 EEXIST
-    if (info.foundAt && dirname(info.foundAt) === target) rmSync(link, { force: true })
+    // 就地修复前先移除旧链接:symlinkSync 在该路径已存在时会 EEXIST。
+    // ⚠ 必须用 unlink,不能用 rmSync(force) —— rmSync 删「悬空链接」的行为在 Node 小版本间
+    //   变过:24.4.0 上它对目标不存在的链接是空操作(静默不删),22.x 与 24.20+ 正常,
+    //   旧链接留下来就会让下面抛 EEXIST。unlink 不跟随符号链接,各版本行为一致。
+    if (info.foundAt && dirname(info.foundAt) === target && linkExists(link)) unlinkSync(link)
     symlinkSync(expected, link)
     return { ok: true, path: link }
   } catch (err) {
