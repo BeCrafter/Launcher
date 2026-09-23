@@ -568,6 +568,32 @@
   color: var(--dim);
 }
 
+/* 扫描失败横幅(应用新增):失败时列表是「上次成功的结果」,必须与「真的没有端口」区分开。
+   视觉沿用 views.css 的 .invalid-plist-row 一族的警告材质(wash + 同色描边) */
+.svc-scan-error {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  margin-bottom: 2px;
+  background: var(--wash-yellow);
+  border: 1px solid var(--yellow);
+  border-radius: 9px;
+  color: var(--yellow);
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+.svc-scan-error i {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.svc-scan-error-hint {
+  font-size: 10px;
+  color: var(--muted);
+}
+
 /* ══════════ AI 对话页新增(应用侧;冻结的 ai.css 不得改动,故落此)══════════ */
 
 /* markdown 渲染(assistant text 块;demo 是裸文本 pre-wrap,真实 LLM 正文带 md)。
