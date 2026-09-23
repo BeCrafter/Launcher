@@ -1,10 +1,11 @@
-import { app, BrowserWindow, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
+import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME } from '../shared/constants'
-import { IPC_EVENTS } from '../shared/ipc'
+import { IPC, IPC_EVENTS, type BootPaintPhase, type InstallChannel } from '../shared/ipc'
 import { createSettingsStore, defaultConfigPath, type SettingsStore } from './settings/store'
 import { applyDockIcon } from './settings/appliers/dock'
-import { windowBgColor } from './settings/appliers/appearance'
+import { applyThemeSource, windowBgColor } from './settings/appliers/appearance'
 import { createTrayController } from './settings/appliers/tray'
 import { createApplierRegistry } from './settings/appliers'
 import { launchdWatchDirs } from './services/dir-watcher'
@@ -12,6 +13,7 @@ import { createShellRunner } from './services/shell-runner'
 import { createElevationExecutor } from './services/elevation'
 import { toServicesPayload } from './services/process-discovery'
 import { detectInstallChannel } from './services/install-channel'
+import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
 import { createAiStack } from './ai'
 import type { ApplyCtx } from './settings/types'
@@ -19,19 +21,41 @@ import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 let store: SettingsStore
+/** 窗口显示门控(每个窗口一份;见 services/boot-gate.ts 的说明) */
+let bootGate: BootGate | null = null
+/**
+ * 「whenReady 的启动序已走完」。
+ * 在这之前收到 second-instance / Dock activate(用户在启动途中又点了一次图标)时**不要**建窗 ——
+ * 否则会造出第二扇 show:false 且永不被显示的窗口(第一扇还会被后面的 createWindow 顶掉),
+ * 白白多一个渲染进程。启动序自己会建窗并交给门控显示。
+ */
+let startupDone = false
+/** 安装来源探测的记忆化 promise(懒发起:第一个消费者来问时才 spawn,避开启动期 I/O 争抢) */
+let channelProbe: Promise<InstallChannel> | null = null
 
 // dev 自动化验证端口(如 CDP 交互测试);生产不生效
 if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_DEV_DEBUG_PORT']) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env['LAUNCHER_DEV_DEBUG_PORT'])
 }
 
-// dev E2E:隔离 userData(与正在运行的打包版互不争抢单实例锁/缓存);必须在取锁之前设置
+// E2E:隔离 userData(与正在运行的实例互不争抢单实例锁/缓存);必须在取锁之前设置
 // ⚠ 用 LAUNCHER_E2E_USER_DATA 同时隔离设置文件:此前它只隔离 userData,而设置文件仍写真实的
 //   ~/.config/launcher/config.json —— 自动化验证会悄悄改掉用户的配置(本项目真发生过)。
 //   `home` 由 NSHomeDirectory 决定,改 HOME 环境变量对它无效,故只能在这里显式改路径。
-const e2eUserData = process.env['ELECTRON_RENDERER_URL'] ? process.env['LAUNCHER_E2E_USER_DATA'] : undefined
+// ⚠ 打包版**也必须**生效(此前只认 dev):「首次安装后第一次启动」这类场景只能在打包产物上复现,
+//   而它恰恰需要冷 profile(全新 userData = 空的 Code Cache)与不碰用户配置。不设这个环境变量时
+//   一切照旧(走真实路径),故对正常使用无影响。
+const e2eUserData = process.env['LAUNCHER_E2E_USER_DATA']
 if (e2eUserData) {
-  app.setPath('userData', e2eUserData)
+  // 目录不存在时先建出来:`app.setPath` 对不存在的路径会抛错,而这一抛发生在模块求值期
+  // ⇒ 一行栈、零窗口、静默不启动(正是本轮要消灭的那类失败形态)
+  try {
+    mkdirSync(e2eUserData, { recursive: true })
+    app.setPath('userData', e2eUserData)
+    console.warn(`[boot] LAUNCHER_E2E_USER_DATA 生效:userData 与设置都改指 ${e2eUserData}`)
+  } catch (err) {
+    console.error('[boot] LAUNCHER_E2E_USER_DATA 无法使用,回退真实路径:', err)
+  }
 }
 
 // 单实例锁：重复启动时唤起既有窗口
@@ -55,6 +79,61 @@ function broadcast(channel: string, payload?: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
 }
 
+/** 启动打点:每条 [boot] 日志带相对进程启动的毫秒数(排查「首启慢/白屏」时唯一可量化的依据) */
+const bootT0 = Date.now()
+const bootLog = (msg: string): void => console.log(`[boot] +${Date.now() - bootT0}ms ${msg}`)
+
+/** 真正把窗口露出来(唯一实现;门控与常规唤起都走它) */
+function revealMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore() // macOS 上 show() 不会取消最小化
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+/**
+ * 启动进度上报(renderer → main):'splash' 过渡页已上屏 / 'app' 应用已 commit。
+ * 注册一次即可 —— 门控是模块级变量,按 sender 认窗口,避免重复注册累积监听器。
+ */
+ipcMain.on(IPC.appBootPainted, (e, phase: BootPaintPhase) => {
+  if (!mainWindow || mainWindow.isDestroyed() || e.sender !== mainWindow.webContents) return
+  if (phase === 'splash') bootGate?.splashPainted()
+  else if (phase === 'app') bootGate?.appPainted()
+})
+
+/**
+ * 问渲染层「屏幕上已经有东西了吗」(过渡页在 DOM 里,或应用已经渲染出内容)。
+ * 用于 watchdog 到期前的最后一探:探到就说明慢的是速度而不是死活,照常显示即可。
+ * 探测自身带超时 —— 渲染层卡死时不能把窗口永远挂在探测上。
+ */
+async function rendererPaintedWithin(timeoutMs: number): Promise<boolean> {
+  const wc = mainWindow?.webContents
+  if (!wc || wc.isDestroyed()) return false
+  try {
+    const probe = wc.executeJavaScript(
+      '!!document.getElementById("boot-splash") || (document.getElementById("root")?.childElementCount ?? 0) > 0'
+    )
+    const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs))
+    return (await Promise.race([probe, timeout])) === true
+  } catch {
+    return false
+  }
+}
+
+/** 加载失败时的兜底页:同样是主题化底色 —— 绝不让「失败」变成一块白 */
+function bootErrorPage(reason: string): string {
+  const bg = windowBgColor()
+  const fg = nativeTheme.shouldUseDarkColors ? '#8e8ea8' : '#6d7489'
+  const safe = reason.replace(/[<&]/g, (c) => (c === '<' ? '&lt;' : '&amp;')).slice(0, 200)
+  const html =
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Launcher</title>` +
+    `<style>html,body{margin:0;height:100%;background:${bg};color:${fg};font-family:system-ui,sans-serif}` +
+    `body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:0 24px}` +
+    `</style></head><body><div style="font-size:13px;font-weight:600">Launcher 启动失败</div>` +
+    `<div style="font-size:12px">界面资源没能加载完成：${safe}</div></body></html>`
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
+}
+
 // 主进程主题(应用内切换或系统外观变化)变化 → 窗口底色 + Dock 图标随明暗切换
 // 窄路径:不重跑 registry(themeSource 重赋值虽幂等,避免潜在 'updated' 回环)
 nativeTheme.on('updated', () => {
@@ -74,6 +153,9 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 20, y: 6 },
     backgroundColor: windowBgColor(), // 依据生效主题(启动序里 themeSource 已先应用)
+    // 显式写出:窗口在隐藏期间仍要产出帧,否则「渲染层真的画出来了」这件事无从观测,
+    // 整个显示门控就只能退回到计时器(见 services/boot-gate.ts)
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
@@ -81,6 +163,47 @@ function createWindow(): void {
       // 首帧前把初始设置带进 preload(免同步 IPC、无主题/语言闪烁)
       additionalArguments: [`--launcher-initial-settings=${JSON.stringify(store.get())}`]
     }
+  })
+  bootLog('window created')
+
+  // 显示门控:窗口何时可以露出来,由渲染层的真实进度决定(rAF → 过渡页已上屏;应用 commit → 直接显示)
+  bootGate = createBootGate({
+    reveal: (reason) => {
+      bootLog(`reveal reason=${reason}`)
+      revealMainWindow()
+    },
+    log: (m) => bootLog(m),
+    // 兜底不是「到点就掀盖子」:先问渲染层一句「你画过东西了吗」——
+    // 冷启动只是慢(而不是坏)时,这一问让窗口显示**过渡页**,而不是本 PR 要消灭的窗口底色
+    onWatchdog: () => {
+      void rendererPaintedWithin(1500).then((painted) => {
+        bootLog(`watchdog: renderer painted=${painted}`)
+        bootGate?.revealNow('watchdog')
+      })
+    }
+  })
+  // 双 rAF = 至少有一帧已提交给合成器 —— 这是「马上 show 出去的那一帧里有东西」的唯一证明
+  mainWindow.webContents.once('dom-ready', () => {
+    void mainWindow?.webContents
+      .executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))')
+      .then(() => bootGate?.splashPainted())
+      .catch(() => {
+        /* 渲染层异常:交给 watchdog 兜底显示 */
+      })
+  })
+  // 加载失败:换成主题化的错误页再显示(绝不让「失败」变成一块白)
+  // ⚠ 两道闸,缺一个都会误伤正在跑的界面:
+  //   · `errorCode === -3`(ERR_ABORTED)是**导航被打断**的常规码 —— 重新加载、HMR、后续 loadURL
+  //     都会带它出现(实测 Electron 44),按失败处理会把用户自己的 reload 换成一页静态错误;
+  //   · 已经显示过窗口就说明界面是好的,任何后续 did-fail-load 都不该接管(否则整页被换掉且没有回退入口)。
+  const ERR_ABORTED = -3
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, desc, validatedURL, isMainFrame) => {
+    if (!isMainFrame || errorCode === ERR_ABORTED || bootGate?.isRevealed()) return
+    bootLog(`did-fail-load code=${errorCode} ${validatedURL}`)
+    void mainWindow?.loadURL(bootErrorPage(desc)).then(
+      () => bootGate?.fail(),
+      () => bootGate?.fail() // 错误页自身也可能被覆盖/中断 —— 不能把 fail() 吞掉(否则只能等 watchdog)
+    )
   })
 
   // menubarOnly:关窗 → 隐藏常驻菜单栏;false 时关窗即退出
@@ -117,11 +240,15 @@ function createWindow(): void {
     })
   }
 
+  // 只作诊断:显示时机由 bootGate 决定(ready-to-show 可能在「文档里什么都没有」时也触发,
+  // 它是否等于「首帧已绘制」在 Electron 里无法从代码侧证实 —— 而 2026-09-23 的白屏正说明不能赌它)
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    bootLog('ready-to-show')
   })
 
   mainWindow.on('closed', () => {
+    bootGate?.dispose()
+    bootGate = null
     mainWindow = null
   })
 
@@ -137,23 +264,35 @@ function createWindow(): void {
  * ⚠ menubarOnly(默认开)下关窗只是 hide —— 窗口对象仍在,`getAllWindows().length` 仍为 1,
  * 用「有没有窗口」判断会漏掉「窗口存在但被隐藏」这一态(Electron 脚手架的 activate 写法即如此,
  * 会让 Dock 点击静默无效)。这里只判窗口对象是否可用,已销毁才重建。
+ *
+ * ⚠ 启动还没就绪时**不能**直接 show:那会在渲染层什么都没画的时候露出窗口底色(浅色主题下
+ * 就是白屏 —— 首次安装后用户在「半天没反应」的几秒里再点一次图标正是这条路径)。
+ * 未就绪则交给门控挂起,等渲染层信号或 watchdog。
  */
 function showMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore() // macOS 上 show() 不会取消最小化
-    mainWindow.show()
-    mainWindow.focus()
+    if (bootGate && !bootGate.isRevealed()) {
+      bootGate.requestReveal()
+      return
+    }
+    revealMainWindow()
     return
   }
-  if (app.isReady()) createWindow() // ready 前 store 尚未初始化,建窗会抛
+  // 启动序尚未走完:窗口马上会被创建并显示,这里什么都不做(见 startupDone 的说明)
+  if (!startupDone) return
+  createWindow()
 }
 
-app.whenReady().then(async () => {
+/**
+ * 启动序主体:设置加载 → 主题落位 → 服务栈装配 → IPC → 建窗 → 其余副作用。
+ * 由 whenReady 包在 try/catch 里调用 —— 任何一步抛错都要留下「能看见失败的窗口」,而不是静默不启动。
+ */
+async function startApp(): Promise<void> {
   // 启动序:设置加载 → applier 注册表副作用(themeSource/Tray/Dock/登录项/目录监听) → 建窗 → IPC
   store = createSettingsStore(
     e2eUserData ? join(e2eUserData, 'config.json') : defaultConfigPath(app.getPath('home'))
   )
-  const trayCtl = createTrayController({ logoDir, getWindow: () => mainWindow })
+  const trayCtl = createTrayController({ logoDir, getWindow: () => mainWindow, revealWindow: showMainWindow })
   const ctx: ApplyCtx = {
     logoDir,
     getWindow: () => mainWindow,
@@ -183,18 +322,10 @@ app.whenReady().then(async () => {
     onServicesChange: (r, polling) => broadcast(IPC_EVENTS.servicesUpdated, toServicesPayload(r, polling)),
     log: (m) => console.log(`[svc] ${m}`)
   })
-  // plist 必须在 registry.apply 之前建好:fsevents applier 的 onDirsChanged 会失效其 scanAll 记忆
-  registry.apply(store.get())
-  // 设置变更(渲染层 patch / reset)→ 重新应用全部副作用
-  store.onChange((s) => registry.apply(s))
+  // 建窗前只需要主题先落位:窗口底色与过渡页配色都读 nativeTheme.themeSource(见 appearance.ts)
+  applyThemeSource(store.get())
 
-  discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
-
-  // 安装来源探测(brew/npm/manual):决定「检查更新」给哪条升级命令。
-  // 约 0.2s(brew list --cask),放在建窗之前;失败/判不出都会回退 manual,不阻断启动
-  const installChannel = await detectInstallChannel({ runner })
-
-  // AI 助手(阶段 4):pi 引擎 + ToolRegistry + 内置会话;MCP HTTP 端点同批启动
+  // AI 助手(阶段 4):pi 引擎 + ToolRegistry + 内置会话 —— 同步装配,不含网络/重磁盘活
   const ai = createAiStack({
     store,
     services: { plists, agents, cron, discovery, termination, docker, launchctl, brew },
@@ -202,14 +333,63 @@ app.whenReady().then(async () => {
     userDataDir: app.getPath('userData'),
     emit: (ev) => broadcast(IPC_EVENTS.aiRunEvent, ev)
   })
-  await ai.start()
 
-  registerIpc({ store, tray: trayCtl, agents, cron, discovery, termination, docker, installChannel, ai })
+  // ⚠ 顺序约束(别顺手调换):
+  //   · 主题必须在建窗**之前**(否则窗口底色跟随系统而不是应用主题);
+  //   · registerIpc() 也必须在建窗**之前** —— 渲染层启动瞬间就会调 settings:get / agents:list;
+  //   · 其余副作用(Dock/Tray/登录项/fs.watch = registry.apply 的剩余部分、服务发现、安装来源
+  //     探测、MCP 起服)一律放到建窗**之后**:它们要 spawn 子进程(brew 冷启动可达数秒),
+  //     与渲染层冷解析抢 I/O,而窗口早出现一秒、过渡页就能多覆盖一秒。
+  registerIpc({
+    store,
+    tray: trayCtl,
+    agents,
+    cron,
+    discovery,
+    termination,
+    docker,
+    // 懒发起 + 记忆化:第一个消费者来问时才 spawn(它在建窗之后,不再和渲染层抢启动期的 I/O)
+    getInstallChannel: () => (channelProbe ??= detectInstallChannel({ runner })),
+    ai
+  })
 
   createWindow()
+  startupDone = true
+
+  // 建窗后才跑:全量 applier(各 applier 幂等;此前只落位过主题)+ 设置变更订阅
+  registry.apply(store.get())
+  store.onChange((s) => registry.apply(s))
+
+  discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
+
+  // MCP 端点起服放在建窗之后:它只影响 MCP 客户端,不该拖慢首屏;
+  // 顺带修掉「抛错 → whenReady 回调 unhandled rejection → 整个启动序中断」的隐患
+  void ai.start().catch((err) => console.error('[mcp] 启动失败', err))
 
   // Dock 图标点击 / 重新打开应用 → 唤起(Dock 点击由 macOS 的 applicationShouldHandleReopen 触发,必发此事件)
   app.on('activate', () => showMainWindow())
+}
+
+app.whenReady().then(async () => {
+  // 重复启动(第二次点图标)时 app.quit() 已经在上面调过了 —— 这里直接收手:
+  // 继续往下走会白建一扇窗口、起一遍服务(第二次启动的窗口还会随退出闪一下)
+  if (!gotLock) return
+  try {
+    await startApp()
+  } catch (err) {
+    // 启动序里任何一处抛错都不能变成「进程活着但永远没有窗口」:兜底建一扇显示失败的窗口,
+    // 并把 startupDone 置位,让 Dock/托盘/第二次启动这些唤起路径仍然可用。
+    console.error('[boot] 启动序失败', err)
+    bootLog(`startup failed: ${String(err)}`)
+    try {
+      if (!mainWindow) createWindow()
+      startupDone = true
+      const fail = (): void => bootGate?.fail()
+      void mainWindow?.loadURL(bootErrorPage(String(err))).then(fail, fail)
+    } catch (inner) {
+      console.error('[boot] 兜底窗口也建不出来', inner)
+    }
+  }
 })
 
 app.on('window-all-closed', () => {

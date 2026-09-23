@@ -14,8 +14,8 @@ let booted = false
 export function bootstrap(): void {
   if (booted) return
   booted = true
-  // 移除「启动中」过渡页(与 index.html #boot-splash 契约)
-  document.getElementById('boot-splash')?.remove()
+  // 过渡页的摘除不在这里(见 boot/splash.ts):模块求值期删会让它在「还没被画出来」时就消失,
+  // 首帧落到空 #root 上 —— 浅色主题下就是白屏。现在由 App 首次 commit 的 useLayoutEffect 负责。
   initSettingsFromMain()
   // 提权/危险确认读取设置(demo localStorage launcher_authCacheMin / launcher_confirmDangerous 语义)
   setAuthCacheMinGetter(() => useSettingsStore.getState().settings?.authCacheMin ?? 5)

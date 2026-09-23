@@ -39,6 +39,8 @@ const api: LauncherApi = {
   pickFile: (opts) => ipcRenderer.invoke(IPC.shellPickFile, opts),
   saveTextFile: (opts) => ipcRenderer.invoke(IPC.shellSaveText, opts),
   reportBadgeCount: (count) => ipcRenderer.invoke(IPC.agentsBadge, count),
+  // 启动进度上报:单向 send(不需要回执),main 据此决定何时显示窗口
+  notifyBootPainted: (phase) => ipcRenderer.send(IPC.appBootPainted, phase),
   checkForUpdate: () => ipcRenderer.invoke(IPC.appCheckUpdates),
   agents: {
     list: () => ipcRenderer.invoke(IPC.agList),
