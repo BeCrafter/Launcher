@@ -86,6 +86,25 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # TS7 的原生编译器拆成了平台专属包（@typescript/typescript-<平台>-<架构>），它挂在
+      # typescript 的 optionalDependencies 下 —— 而 npm 对 optional 依赖的安装失败是**静默的**：
+      # 不报错、退出码仍为 0，只是少装一个包。后果是十几步之后 tsc 才报
+      # "Unable to resolve @typescript/typescript-darwin-arm64 ... missing the package on disk"
+      # （2026-09-23 在 release.yml 上踩到，同一 commit 时好时坏）。装完立刻确认，缺了就重跑一次。
+      - name: 确认 TS 平台包已安装
+        run: |
+          PKG="@typescript/typescript-$(node -p 'process.platform')-$(node -p 'process.arch')"
+          if node -e "require.resolve('${PKG}/package.json')" 2>/dev/null; then
+            echo "✓ ${PKG} 已就位"
+            exit 0
+          fi
+          # 重跑 npm ci 而不是单独补装那一个包：前者严格按 lockfile 还原，后者会把依赖树
+          # 重新解析成与 lockfile 不同的样子（实测多装 120 个包），发布构建不该有这种漂移
+          echo "::warning::${PKG} 缺失（npm 对 optional 依赖的安装失败不报错）—— 重跑一次 npm ci"
+          npm ci
+          node -e "require.resolve('${PKG}/package.json')" ||
+            { echo "::error::${PKG} 仍缺失，tsc 必然失败"; exit 1; }
+
       # ⚠ 必须在 `npm ci` **之后**：npm ci 会校验 package.json 与 package-lock.json 的
       #   版本是否一致，提前改会让安装步骤直接失败。
       # electron-builder 的 artifactName 是 ${version}，取的就是 package.json 的 version，
