@@ -163,14 +163,18 @@ jobs:
           awk -v v="$VERSION" '$1 == v { found = 1 } END { exit !found }' versions.txt ||
             { echo "::error::清单里没有本次版本 $VERSION"; cat versions.txt; exit 1; }
 
-      - name: 配置 AWS 凭据（R2 走 S3 兼容接口）
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          aws-region: auto
-
+      # ⚠ 不要用 aws-actions/configure-aws-credentials —— 它每次运行都会调 STS 验证凭据，
+      #   而 R2 的凭据不是 AWS 凭据、**永远过不了**那一步；aws-region: auto 更会让它去解析
+      #   一个根本不存在的 sts.auto.amazonaws.com，白重试 12 次、约 2.5 分钟才失败
+      #   （2026-09-23 首次真跑踩到）。aws CLI 本来就从环境变量取凭据，直接给即可。
+      #   顺带把凭据只留在真正用它的两个步骤上，不暴露给前面的 npm ci / 构建 / 测试。
       - name: 上传 zip 到 Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # R2 的 S3 兼容接口要求 SigV4 的 region 为 auto（两个都设：CLI 与不同 SDK 取值名不同）
+          AWS_DEFAULT_REGION: auto
+          AWS_REGION: auto
         run: |
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
           for arch in arm64 x64; do
@@ -191,6 +195,11 @@ jobs:
           done
 
       - name: 上传版本清单到 R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          AWS_REGION: auto
         run: |
           # ⚠ 预发布**也要**上传：清单只是「有哪些版本可装」，不是 stable 指针。
           #   三条通道的「列版本」都读它，因此预发布必须出现在列表里；
