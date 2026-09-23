@@ -1,11 +1,12 @@
 // 外观域:theme → nativeTheme.themeSource(唯一写者)+ 窗口底色随动
 
 import { nativeTheme } from 'electron'
+import { BG_DARK, BG_LIGHT } from '../../../shared/constants'
 import type { ApplyCtx, SettingsApplier } from '../types'
 
-// 窗口底色(标题栏随之着色):取 demo --bg 深浅两值
+// 窗口底色(标题栏随之着色):取 demo --bg 深浅两值(同源见 shared/constants 的说明)
 export function windowBgColor(): string {
-  return nativeTheme.shouldUseDarkColors ? '#0e0e17' : '#f6f7fb'
+  return nativeTheme.shouldUseDarkColors ? BG_DARK : BG_LIGHT
 }
 
 function applyWindowBackground(ctx: ApplyCtx): void {

@@ -2,6 +2,7 @@
 
 import type {
   AppInfo,
+  BootPaintPhase,
   ContainerAction,
   MissingAgent,
   PickedFile,
@@ -58,6 +59,11 @@ export interface LauncherApi {
   saveTextFile: (opts: { suggestedName: string; content: string; title?: string }) => Promise<string | null>
   // 运行中 Agent 计数上报(menubarBadge 角标;数据在 renderer,阶段 1 换真实源后由 main 自算)
   reportBadgeCount: (count: number) => Promise<void>
+  /**
+   * 启动进度上报(单向上报,无回执):'splash' = 过渡页已产出第一帧,'app' = 应用已首次 commit。
+   * main 据此决定**何时**把窗口显示出来 —— 详见 main/services/boot-gate.ts。
+   */
+  notifyBootPainted: (phase: BootPaintPhase) => void
   checkForUpdate: () => Promise<UpdateCheckResult>
   // Launch Agents(阶段 1:真实 launchctl/plist)
   agents: {

@@ -1,7 +1,7 @@
-import { app, BrowserWindow, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
 import { APP_NAME } from '../shared/constants'
-import { IPC_EVENTS } from '../shared/ipc'
+import { IPC, IPC_EVENTS, type BootPaintPhase } from '../shared/ipc'
 import { createSettingsStore, defaultConfigPath, type SettingsStore } from './settings/store'
 import { applyDockIcon } from './settings/appliers/dock'
 import { windowBgColor } from './settings/appliers/appearance'
@@ -12,6 +12,7 @@ import { createShellRunner } from './services/shell-runner'
 import { createElevationExecutor } from './services/elevation'
 import { toServicesPayload } from './services/process-discovery'
 import { detectInstallChannel } from './services/install-channel'
+import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
 import { createAiStack } from './ai'
 import type { ApplyCtx } from './settings/types'
@@ -19,6 +20,8 @@ import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 let store: SettingsStore
+/** 窗口显示门控(每个窗口一份;见 services/boot-gate.ts 的说明) */
+let bootGate: BootGate | null = null
 
 // dev 自动化验证端口(如 CDP 交互测试);生产不生效
 if (process.env['ELECTRON_RENDERER_URL'] && process.env['LAUNCHER_DEV_DEBUG_PORT']) {
@@ -55,6 +58,38 @@ function broadcast(channel: string, payload?: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
 }
 
+/** 真正把窗口露出来(唯一实现;门控与常规唤起都走它) */
+function revealMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMinimized()) mainWindow.restore() // macOS 上 show() 不会取消最小化
+  mainWindow.show()
+  mainWindow.focus()
+}
+
+/**
+ * 启动进度上报(renderer → main):'splash' 过渡页已上屏 / 'app' 应用已 commit。
+ * 注册一次即可 —— 门控是模块级变量,按 sender 认窗口,避免重复注册累积监听器。
+ */
+ipcMain.on(IPC.appBootPainted, (e, phase: BootPaintPhase) => {
+  if (!mainWindow || mainWindow.isDestroyed() || e.sender !== mainWindow.webContents) return
+  if (phase === 'splash') bootGate?.splashPainted()
+  else if (phase === 'app') bootGate?.appPainted()
+})
+
+/** 加载失败时的兜底页:同样是主题化底色 —— 绝不让「失败」变成一块白 */
+function bootErrorPage(reason: string): string {
+  const bg = windowBgColor()
+  const fg = nativeTheme.shouldUseDarkColors ? '#8e8ea8' : '#6d7489'
+  const safe = reason.replace(/[<&]/g, (c) => (c === '<' ? '&lt;' : '&amp;')).slice(0, 200)
+  const html =
+    `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>Launcher</title>` +
+    `<style>html,body{margin:0;height:100%;background:${bg};color:${fg};font-family:system-ui,sans-serif}` +
+    `body{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:0 24px}` +
+    `</style></head><body><div style="font-size:13px;font-weight:600">Launcher 启动失败</div>` +
+    `<div style="font-size:12px">界面资源没能加载完成：${safe}</div></body></html>`
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
+}
+
 // 主进程主题(应用内切换或系统外观变化)变化 → 窗口底色 + Dock 图标随明暗切换
 // 窄路径:不重跑 registry(themeSource 重赋值虽幂等,避免潜在 'updated' 回环)
 nativeTheme.on('updated', () => {
@@ -74,6 +109,9 @@ function createWindow(): void {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 20, y: 6 },
     backgroundColor: windowBgColor(), // 依据生效主题(启动序里 themeSource 已先应用)
+    // 显式写出:窗口在隐藏期间仍要产出帧,否则「渲染层真的画出来了」这件事无从观测,
+    // 整个显示门控就只能退回到计时器(见 services/boot-gate.ts)
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
@@ -81,6 +119,30 @@ function createWindow(): void {
       // 首帧前把初始设置带进 preload(免同步 IPC、无主题/语言闪烁)
       additionalArguments: [`--launcher-initial-settings=${JSON.stringify(store.get())}`]
     }
+  })
+  console.log(`[boot] window created`)
+
+  // 显示门控:窗口何时可以露出来,由渲染层的真实进度决定(rAF → 过渡页已上屏;应用 commit → 直接显示)
+  bootGate = createBootGate({
+    reveal: (reason) => {
+      console.log(`[boot] reveal reason=${reason}`)
+      revealMainWindow()
+    },
+    log: (m) => console.log(`[boot] ${m}`)
+  })
+  // 双 rAF = 至少有一帧已提交给合成器 —— 这是「马上 show 出去的那一帧里有东西」的唯一证明
+  mainWindow.webContents.once('dom-ready', () => {
+    void mainWindow?.webContents
+      .executeJavaScript('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))')
+      .then(() => bootGate?.splashPainted())
+      .catch(() => {
+        /* 渲染层异常:交给 watchdog 兜底显示 */
+      })
+  })
+  // 加载失败:换成主题化的错误页再显示(绝不让「失败」变成一块白)
+  mainWindow.webContents.on('did-fail-load', (_e, _code, desc, _url, isMainFrame) => {
+    if (!isMainFrame) return
+    void mainWindow?.loadURL(bootErrorPage(desc)).then(() => bootGate?.fail())
   })
 
   // menubarOnly:关窗 → 隐藏常驻菜单栏;false 时关窗即退出
@@ -117,11 +179,15 @@ function createWindow(): void {
     })
   }
 
+  // 只作诊断:显示时机由 bootGate 决定(ready-to-show 可能在「文档里什么都没有」时也触发,
+  // 它是否等于「首帧已绘制」在 Electron 里无法从代码侧证实 —— 而 2026-09-23 的白屏正说明不能赌它)
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    console.log('[boot] ready-to-show')
   })
 
   mainWindow.on('closed', () => {
+    bootGate?.dispose()
+    bootGate = null
     mainWindow = null
   })
 
@@ -137,12 +203,18 @@ function createWindow(): void {
  * ⚠ menubarOnly(默认开)下关窗只是 hide —— 窗口对象仍在,`getAllWindows().length` 仍为 1,
  * 用「有没有窗口」判断会漏掉「窗口存在但被隐藏」这一态(Electron 脚手架的 activate 写法即如此,
  * 会让 Dock 点击静默无效)。这里只判窗口对象是否可用,已销毁才重建。
+ *
+ * ⚠ 启动还没就绪时**不能**直接 show:那会在渲染层什么都没画的时候露出窗口底色(浅色主题下
+ * 就是白屏 —— 首次安装后用户在「半天没反应」的几秒里再点一次图标正是这条路径)。
+ * 未就绪则交给门控挂起,等渲染层信号或 watchdog。
  */
 function showMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore() // macOS 上 show() 不会取消最小化
-    mainWindow.show()
-    mainWindow.focus()
+    if (bootGate && !bootGate.isRevealed()) {
+      bootGate.requestReveal()
+      return
+    }
+    revealMainWindow()
     return
   }
   if (app.isReady()) createWindow() // ready 前 store 尚未初始化,建窗会抛
@@ -153,10 +225,11 @@ app.whenReady().then(async () => {
   store = createSettingsStore(
     e2eUserData ? join(e2eUserData, 'config.json') : defaultConfigPath(app.getPath('home'))
   )
-  const trayCtl = createTrayController({ logoDir, getWindow: () => mainWindow })
+  const trayCtl = createTrayController({ logoDir, getWindow: () => mainWindow, revealWindow: showMainWindow })
   const ctx: ApplyCtx = {
     logoDir,
     getWindow: () => mainWindow,
+    revealWindow: showMainWindow,
     tray: trayCtl,
     watchDirs: launchdWatchDirs(app.getPath('home')),
     broadcast
