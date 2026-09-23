@@ -14,11 +14,6 @@ export interface TrayController {
 export interface ApplyCtx {
   logoDir(): string
   getWindow(): BrowserWindow | null
-  /**
-   * 唤起主窗口(可选):走 main 的显示门控 —— 启动未就绪时不会露出未绘制的窗口底色。
-   * 缺省(fsevents 等纯逻辑 applier 的测试上下文)回退到 `getWindow()?.show()`。
-   */
-  revealWindow?(): void
   tray: TrayController
   watchDirs: string[]
   broadcast(channel: string, payload?: unknown): void

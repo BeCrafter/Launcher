@@ -4,17 +4,24 @@ import { describe, expect, it } from 'vitest'
 import { createBootGate, type RevealReason } from './boot-gate'
 
 /** 假时钟:手动触发到期的计时器,能断言「谁被清掉了」 */
-function harness(opts: { graceMs?: number; watchdogMs?: number } = {}) {
+function harness(opts: { graceMs?: number; watchdogMs?: number; onWatchdog?: () => void } = {}) {
   const graceMs = opts.graceMs ?? 400
   const watchdogMs = opts.watchdogMs ?? 3000
   const timers: { id: number; fn: () => void; ms: number; cleared: boolean }[] = []
   let nextId = 1
   const revealed: RevealReason[] = []
   const logs: string[] = []
+  let watchdogHookCalls = 0
   const gate = createBootGate({
     reveal: (r) => revealed.push(r),
     graceMs,
     watchdogMs,
+    onWatchdog: opts.onWatchdog
+      ? () => {
+          watchdogHookCalls += 1
+          opts.onWatchdog?.()
+        }
+      : undefined,
     setTimer: (fn, ms) => {
       const id = nextId++
       timers.push({ id, fn, ms, cleared: false })
@@ -34,7 +41,16 @@ function harness(opts: { graceMs?: number; watchdogMs?: number } = {}) {
     }
   }
   const live = (): number[] => timers.filter((t) => !t.cleared).map((t) => t.ms)
-  return { gate, revealed, logs, fireMs, live, graceMs, watchdogMs }
+  return {
+    gate,
+    revealed,
+    logs,
+    fireMs,
+    live,
+    graceMs,
+    watchdogMs,
+    watchdogHookCalls: (): number => watchdogHookCalls
+  }
 }
 
 describe('boot-gate', () => {
@@ -86,6 +102,35 @@ describe('boot-gate', () => {
     h.gate.requestReveal()
     h.fireMs(h.watchdogMs)
     expect(h.revealed).toHaveLength(1)
+  })
+
+  it('watchdog 到期交给宿主接管(宿主探活后再决定显示)', () => {
+    const h = harness({ onWatchdog: () => {} })
+    h.fireMs(h.watchdogMs)
+    expect(h.watchdogHookCalls()).toBe(1)
+    expect(h.revealed).toEqual([]) // 钩子接管后门控自己不显示 —— 由宿主探活后调 revealNow
+    h.gate.revealNow('watchdog')
+    expect(h.revealed).toEqual(['watchdog'])
+  })
+
+  it('fail():加载失败(调用方已换成错误页)时立刻显示,且只显示一次', () => {
+    const h = harness()
+    expect(h.gate.isRevealed()).toBe(false)
+    h.gate.fail()
+    expect(h.revealed).toEqual(['fail'])
+    expect(h.gate.isRevealed()).toBe(true)
+    h.gate.fail()
+    h.gate.appPainted()
+    expect(h.revealed).toEqual(['fail'])
+  })
+
+  it('dispose 幂等(重复调用不炸、不留计时器)', () => {
+    const h = harness()
+    h.gate.dispose()
+    h.gate.dispose()
+    expect(h.live()).toEqual([])
+    h.fireMs(h.watchdogMs)
+    expect(h.revealed).toEqual([])
   })
 
   it('dispose 之后计时器不再触发(窗口销毁后不留活计时器)', () => {

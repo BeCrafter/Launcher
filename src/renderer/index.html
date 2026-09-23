@@ -129,21 +129,40 @@
         requestAnimationFrame(function () {
           requestAnimationFrame(function () {
             notify('splash')
-            // 过渡页被摘除 = 应用已首次 commit(见 renderer/src/boot/splash.ts)
             var splash = document.getElementById('boot-splash')
-            if (!splash || !window.MutationObserver) return
+            // 应用可能已经在这两帧里 commit 并把过渡页摘掉了(渲染层越快越容易发生):
+            // 那就直接按 'app' 上报 —— 否则门控只能退到 400ms 宽限期,热启动白白多等。
+            if (!splash) {
+              notify('app')
+              return
+            }
+            if (!window.MutationObserver) return
             var observer = new MutationObserver(function () {
               if (document.getElementById('boot-splash')) return
               observer.disconnect()
-              notify('app')
+              // 再等一帧:observer 回调是 commit 任务末尾的微任务,这一帧还没被合成器拿到;
+              // 立刻上报会让主进程 show() 出上一帧(过渡页),即「一帧过渡页闪烁」。
+              requestAnimationFrame(function () {
+                notify('app')
+              })
             })
             observer.observe(document.body, { childList: true })
           })
         })
 
-        window.setTimeout(function () {
+        // 失败兜底:8s 后界面还没起来,就把转圈换成可点的重载提示。
+        // ⚠ 只有「资源已加载完(readyState=complete)却始终没 commit」才算坏;仍是 loading 说明只是慢
+        //   (冷启动/磁盘忙),再多等一轮 —— 否则慢会被误报成坏,用户一点重载就把快到手的启动丢掉了。
+        var FAIL_AFTER_MS = 8000
+        function bootCheckFailed(attempt) {
           var splash = document.getElementById('boot-splash')
           if (!splash || splash.dataset.failed === '1') return
+          if (document.readyState !== 'complete' && attempt < 2) {
+            window.setTimeout(function () {
+              bootCheckFailed(attempt + 1)
+            }, FAIL_AFTER_MS)
+            return
+          }
           splash.dataset.failed = '1'
           splash.textContent = ''
           var box = document.createElement('div')
@@ -166,7 +185,10 @@
           box.appendChild(hint)
           box.appendChild(btn)
           splash.appendChild(box)
-        }, 8000)
+        }
+        window.setTimeout(function () {
+          bootCheckFailed(0)
+        }, FAIL_AFTER_MS)
       })()
     </script>
   </body>

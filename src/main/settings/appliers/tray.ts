@@ -10,22 +10,15 @@ import type { SettingsApplier, TrayController } from '../types'
 export function createTrayController(deps: {
   logoDir(): string
   getWindow(): BrowserWindow | null
-  /** 唤起主窗口(走 main 的显示门控);缺省回退 show+focus */
-  revealWindow?(): void
+  /** 唤起主窗口:**必须**走 main 的显示门控(启动未就绪时不会露出未绘制的窗口底色) */
+  revealWindow(): void
 }): TrayController {
   let tray: Tray | null = null
   let count = 0
   let badgeEnabled = true
 
-  // ⚠ 不能直接 show():启动还没就绪时那会露出未绘制的窗口底色(浅色主题下就是白屏)
-  const reveal = (): void => {
-    if (deps.revealWindow) {
-      deps.revealWindow()
-      return
-    }
-    deps.getWindow()?.show()
-    deps.getWindow()?.focus()
-  }
+  // ⚠ 一律走门控:不能直接 show() —— 启动还没就绪时那会露出未绘制的窗口底色(浅色主题下就是白屏)
+  const reveal = (): void => deps.revealWindow()
 
   function syncTitle(): void {
     const title = badgeEnabled && count > 0 ? String(count) : ''

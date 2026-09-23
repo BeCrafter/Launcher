@@ -11,6 +11,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { BG_DARK, BG_LIGHT } from '../shared/constants'
+import { BOOT_WATCHDOG_MS, SPLASH_GRACE_MS } from './services/boot-gate'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const read = (p: string): string => readFileSync(join(ROOT, p), 'utf8')
@@ -23,6 +24,16 @@ describe('启动底色三处同源', () => {
     expect(found).toHaveLength(2) // 第一个是 :root 的浅色默认值,第二个在 prefers-color-scheme:dark 里
     expect(found[0]).toBe(BG_LIGHT)
     expect(found[1]).toBe(BG_DARK)
+  })
+
+  it('深色值确实在 prefers-color-scheme:dark 块里(否则深浅两值就反了)', () => {
+    const media = /@media\s*\(prefers-color-scheme:\s*dark\)\s*\{([\s\S]*?)\n\s*\}/.exec(HTML)?.[1] ?? ''
+    expect(media).toContain(BG_DARK)
+    expect(media).not.toContain(BG_LIGHT)
+    const firstLight = HTML.indexOf(BG_LIGHT)
+    const mediaStart = HTML.search(/@media\s*\(prefers-color-scheme:\s*dark\)/)
+    expect(firstLight).toBeGreaterThan(-1)
+    expect(firstLight).toBeLessThan(mediaStart) // 浅色是 :root 的默认值,必须排在媒体查询之前
   })
 
   it('base.css 的 --bg 深/浅两值与常量一致', () => {
@@ -51,16 +62,25 @@ describe('启动过渡页与启动期契约', () => {
 
   it('启动上报脚本是 classic 内联脚本(不经过打包:module bundle 挂了它还得能跑)', () => {
     const scripts = [...HTML.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g)]
-    const inline = scripts.filter((m) => !m[1].includes('src='))
-    expect(inline.length).toBeGreaterThanOrEqual(1)
-    const boot = inline.map((m) => m[2]).join('\n')
-    // 两个阶段都要上报(preload 的方法名与 shared/ipc 的通道契约一致)
-    expect(boot).toContain('notifyBootPainted')
+    // 上报脚本必须是**不带 src、也不是 module** 的内联 classic:module 会跟着 bundle 一起不执行
+    const bootTag = scripts.find((m) => m[2].includes('notifyBootPainted'))
+    expect(bootTag).toBeTruthy()
+    expect(bootTag![1]).not.toContain('src=')
+    expect(bootTag![1]).not.toContain('module')
+    const boot = bootTag![2]
     expect(boot).toContain("'splash'")
     expect(boot).toContain("'app'")
-    // 失败兜底:8s 仍未上屏就换成可点的重载提示
-    expect(boot).toMatch(/setTimeout\([\s\S]*?8000\)/)
+    // 上报前必须等真实帧(rAF)——「产出了一帧」是门控显示窗口的唯一依据
+    expect(boot).toContain('requestAnimationFrame')
+    // 失败兜底:界面迟迟没起来 → 换成可点的重载提示
     expect(boot).toContain('boot-fail-btn')
+    expect(boot).toMatch(/FAIL_AFTER_MS\s*=\s*(\d+)/)
+  })
+
+  it('渲染层的失败提示必须晚于主进程 watchdog(否则兜底会先于转圈提示出现)', () => {
+    const failAfter = Number(/FAIL_AFTER_MS = (\d+)/.exec(HTML)?.[1] ?? '0')
+    expect(failAfter).toBeGreaterThan(BOOT_WATCHDOG_MS)
+    expect(SPLASH_GRACE_MS).toBeLessThan(BOOT_WATCHDOG_MS) // 宽限必须短于兜底,否则宽限没机会生效
   })
 
   it('过渡页由 React 首次 commit 摘除(而非模块求值期)', () => {

@@ -34,6 +34,8 @@ export interface BootGate {
   requestReveal(): void
   /** 加载失败:调用方负责先换成错误页 */
   fail(): void
+  /** 由宿主决定的揭示(如 watchdog 探活之后再调用) */
+  revealNow(reason: RevealReason): void
   /** 是否已经显示过(调用方据此决定走常规 show/focus 还是交给门控) */
   isRevealed(): boolean
   /** 取消所有计时器(窗口销毁时调用) */
@@ -44,6 +46,12 @@ export interface BootGateDeps {
   reveal(reason: RevealReason): void
   graceMs?: number
   watchdogMs?: number
+  /**
+   * watchdog 到期时的接管点(可选):宿主先探一次「渲染层其实画好了吗」再决定显示 ——
+   * 计时器本身不该制造白屏:冷启动只是慢的时候,这一探能让窗口显示**过渡页**而不是窗口底色。
+   * 宿主最终必须调用 `revealNow('watchdog')`(探测也要有超时),否则窗口会被永久藏住。
+   */
+  onWatchdog?(): void
   /** 注入时钟(测试用) */
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>
   clearTimer?: (t: ReturnType<typeof setTimeout>) => void
@@ -74,7 +82,10 @@ export function createBootGate(deps: BootGateDeps): BootGate {
     deps.reveal(reason)
   }
 
-  watchdogTimer = setTimer(() => reveal('watchdog'), watchdogMs)
+  watchdogTimer = setTimer(() => {
+    if (deps.onWatchdog) deps.onWatchdog()
+    else reveal('watchdog')
+  }, watchdogMs)
 
   return {
     splashPainted(): void {
@@ -105,6 +116,8 @@ export function createBootGate(deps: BootGateDeps): BootGate {
     fail(): void {
       reveal('fail')
     },
+
+    revealNow: (reason) => reveal(reason),
 
     isRevealed: () => revealed,
 
