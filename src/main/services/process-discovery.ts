@@ -4,7 +4,7 @@
 // - brew services list 极慢(实测 11-13s)且低频(10min)刷新,分类交叉用;docker 每 10s(不可用每 15s 重试),静默降级
 
 import { classifyService } from '../domains/service-classify'
-import { dedupeRows, etimeToUptime, parseLsofListen } from '../domains/lsof-parse'
+import { dedupeRows, etimeToUptime, parseLsofListen, type LsofRow } from '../domains/lsof-parse'
 import { portsRawToPort } from '../domains/docker-parse'
 import type { DockerContainer, DockerUnavailableReason, PortService } from '../../shared/models'
 import type { ServicesListPayload } from '../../shared/ipc'
@@ -32,8 +32,40 @@ export function toServicesPayload(r: ScanResult, polling: boolean): ServicesList
     dockerAvailable: r.dockerAvailable,
     dockerReason: r.dockerReason,
     polling,
-    scannedAt: r.scannedAt
+    scannedAt: r.scannedAt,
+    error: r.error
   }
+}
+
+/** lsof 行 × ps 补全 → 卡片模型。pid 不在 ps 里 = 进程已死(lsof 与 ps 之间退出),丢弃 */
+function toPortServices(
+  rows: LsofRow[],
+  psMap: ReadonlyMap<number, { user: string; etime: string; command: string }>,
+  brewServices: ReadonlySet<string>
+): PortService[] {
+  return rows
+    .filter((r) => psMap.has(r.pid))
+    .map((r) => {
+      const ps = psMap.get(r.pid)!
+      const cls = classifyService({ command: r.command, cmd: ps.command || r.command, port: r.port }, brewServices)
+      return {
+        id: `${r.pid}:${r.port}`,
+        port: r.port,
+        name: r.command,
+        pid: r.pid,
+        command: r.command,
+        user: ps.user,
+        cmd: ps.command || r.command,
+        status: 'running' as const,
+        addr: r.addr,
+        proto: r.proto,
+        uptime: etimeToUptime(ps.etime),
+        type: cls.type,
+        kind: cls.kind,
+        evidence: cls.evidence
+      }
+    })
+    .sort((a, b) => a.port - b.port)
 }
 
 export interface ProcessDiscovery {
@@ -57,6 +89,13 @@ const emptyResult = (): ScanResult => ({
   scannedAt: 0,
   error: null
 })
+
+// lsof / ps 的显式超时(不吃用户设置的 cmdTimeout):
+//   - 二者在 macOS 上实测 20-45ms,10s 已是 200× 余量;
+//   - 但不能不给上限:超时被杀时 stdout 只可能是一小段(甚至半行),**按失败处理**才是对的,
+//     而 cmdTimeout 可以被用户调到 3s,那会把一台繁忙机器的正常扫描判成失败;
+//   - 与 docker 的 12s 一样,这个值也是整张表刷新的下限(scanOnce 串行 await),故不取更大。
+const SCAN_CMD_TIMEOUT_MS = 10_000
 
 export function createProcessDiscovery(deps: {
   runner: ShellRunner
@@ -138,52 +177,49 @@ export function createProcessDiscovery(deps: {
     await refreshBrewIfDue().catch(() => {})
     await refreshDockerIfDue()
 
-    const lsof = await deps.runner.run('lsof', ['-iTCP', '-sTCP:LISTEN', '-P', '-n', '-FpcuPn'])
+    const lsof = await deps.runner.run('lsof', ['-iTCP', '-sTCP:LISTEN', '-P', '-n', '-FpcuPn'], {
+      timeoutMs: SCAN_CMD_TIMEOUT_MS
+    })
     let services: PortService[] = []
     let error: string | null = null
 
-    if (lsof.code !== 0 && lsof.stdout.trim() === '') {
-      error = lsof.stderr.trim() || lsof.error || 'lsof failed'
+    // 超时被杀 = 输出只写到一半,不能当完整结果解析(半截表会让整组服务凭空消失)
+    if (lsof.timedOut || (lsof.code !== 0 && lsof.stdout.trim() === '')) {
+      error = lsof.timedOut ? 'lsof timed out' : lsof.stderr.trim() || lsof.error || 'lsof failed'
       services = last.services // 保留上次数据
     } else {
       const rows = dedupeRows(parseLsofListen(lsof.stdout))
       const pids = [...new Set(rows.map((r) => r.pid))]
       const psMap = new Map<number, { user: string; etime: string; command: string }>()
+      let psError: string | null = null
       if (pids.length > 0) {
         // 同 agent-service:macOS 的 `ps -p <pid,...>` 恒定 ~2.5s(`ps -eo` 全量仅 ~0.5s)→ 全量列举后过滤
         const want = new Set(pids)
-        const ps = await deps.runner.run('ps', ['-eo', 'pid=,user=,etime=,command='])
-        for (const line of ps.stdout.split('\n')) {
-          const m = line.match(/^\s*(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/)
-          if (!m) continue
-          const pid = Number.parseInt(m[1], 10)
-          if (want.has(pid)) psMap.set(pid, { user: m[2], etime: m[3], command: m[4] })
+        const ps = await deps.runner.run('ps', ['-eo', 'pid=,user=,etime=,command='], {
+          timeoutMs: SCAN_CMD_TIMEOUT_MS
+        })
+        if (ps.timedOut || ps.code !== 0) {
+          psError = ps.timedOut ? 'ps timed out' : ps.stderr.trim() || ps.error || 'ps failed'
+        } else {
+          for (const line of ps.stdout.split('\n')) {
+            const m = line.match(/^\s*(\d+)\s+(\S+)\s+(\S+)\s+(.*)$/)
+            if (!m) continue
+            const pid = Number.parseInt(m[1], 10)
+            if (want.has(pid)) psMap.set(pid, { user: m[2], etime: m[3], command: m[4] })
+          }
+          // 退出码为 0 却一行都解析不出(lsof 明明有结果):输出不是预期的 BSD 形态
+          // (非 BSD 的 ps / 语言环境差异)。此时拿空 psMap 过筛 = 把整张表清空
+          if (psMap.size === 0) psError = 'ps output not understood'
         }
       }
-      const brewSet = new Set(brewServices)
-      services = rows
-        .filter((r) => psMap.has(r.pid)) // ps 缺失 = 进程已死,丢弃
-        .map((r) => {
-          const ps = psMap.get(r.pid)!
-          const cls = classifyService({ command: r.command, cmd: ps.command || r.command, port: r.port }, brewSet)
-          return {
-            id: `${r.pid}:${r.port}`,
-            port: r.port,
-            name: r.command,
-            pid: r.pid,
-            command: r.command,
-            user: ps.user,
-            cmd: ps.command || r.command,
-            status: 'running' as const,
-            addr: r.addr,
-            proto: r.proto,
-            uptime: etimeToUptime(ps.etime),
-            type: cls.type,
-            kind: cls.kind,
-            evidence: cls.evidence
-          }
-        })
-        .sort((a, b) => a.port - b.port)
+
+      if (psError !== null) {
+        // ⚠ 本次修复的核心:此前 ps 失败 ⇒ psMap 为空 ⇒ 所有行被滤掉 ⇒ 空表推给 UI ⇒ 整页空白
+        error = psError
+        services = last.services // 保留上次数据
+      } else {
+        services = toPortServices(rows, psMap, new Set(brewServices))
+      }
     }
 
     const result: ScanResult = {
@@ -196,17 +232,19 @@ export function createProcessDiscovery(deps: {
       error
     }
 
+    // error 进 diff:失败/恢复各推一次即可 —— 此前失败态每 3s 重复推同一份空表
     const json = JSON.stringify({
       s: result.services,
       c: result.containers,
       d: result.dockerAvailable,
       dr: result.dockerReason,
-      b: result.brewServices
+      b: result.brewServices,
+      e: result.error
     })
     const changed = json !== lastJson
     lastJson = json
     last = result
-    if (changed || error !== null) deps.onChange(result)
+    if (changed) deps.onChange(result)
     return result
   }
 

@@ -13,6 +13,7 @@ import { createLlmClient, type LlmClient } from './llm'
 import { createToolRegistry } from './tools'
 import { createChatService, type ChatService } from './chat-service'
 import { createMcpHttpEndpoint, MCP_HTTP_PORT, type McpHttpEndpoint } from '../mcp/http-endpoint'
+import { devShimPath, writeDevShim } from '../mcp/dev-shim'
 
 export interface AiStack {
   chat: ChatService
@@ -27,32 +28,40 @@ export interface AiStack {
 }
 
 /**
- * 期望被链接到 PATH 的那个脚本 —— 打包后在应用包内(asar 外面)。
+ * 期望被链接到 PATH 的那个脚本。
  *
- * ⚠ dev 下返回空串:仓库里那份脚本假设的是**打包布局**(它去找隔壁的 MacOS/Launcher),
- *   把它链进 PATH 只会造出一条坏命令。空串同时让界面隐藏「安装到 PATH」按钮。
+ * - 打包:应用包内(asar 外面)的 `Contents/Resources/launcher-mcp`,自带定位逻辑;
+ * - 开发:没有那个布局,故用**生成件** —— `<checkout>/node_modules/.cache/launcher-mcp`
+ *   (见 mcp/dev-shim.ts)。两种模式下这个路径都是真实文件,于是「链接是否指向本副本」的
+ *   判据(realpath 相等)对两者一视同仁;开发态每 checkout 一份,天然不会张冠李戴。
+ *
+ * ⚠ 开发态返回的是**将要生成**的 shim 路径:文件还不存在时 inspect 得到 missing(界面照常
+ *   给「安装到 PATH」按钮),写入只发生在用户点按钮时(writeDevShim)。
  */
 function mcpScriptPath(): string {
-  return app.isPackaged ? join(dirname(app.getAppPath()), MCP_BIN_NAME) : ''
+  return app.isPackaged ? join(dirname(app.getAppPath()), MCP_BIN_NAME) : devShimPath(app.getAppPath())
+}
+
+/** 开发态的 stdio 入口(electron-vite 的第二个 main 入口产物) */
+function devEntryPath(): string {
+  return join(app.getAppPath(), 'out', 'main', 'launcher-mcp.js')
 }
 
 /**
  * stdio 形态的挂载命令。
  *
- * 打包产物里 `Contents/Resources/launcher-mcp` 是自带的可执行脚本(内部 exec 应用主程序 +
+ * 打包产物里 `Contents/Resources/launcher-mcp` 是自带可执行脚本(内部 exec 应用主程序 +
  * ELECTRON_RUN_AS_NODE=1),所以命令里只需要**一个**路径,不再是以前那两个(二进制 + 脚本)。
  *
  * 给短形式还是完整路径,判据是 **PATH 上那条链接的真实状态**,不是「安装来源是不是 brew」——
  * 链接可能被删、被挪、指向另一个副本,猜的迟早猜错(猜错的后果是用户拿到一条 command not found)。
- * dev 下没有打包结构,回退成旧的两路径形式。
+ * 链接不在时:打包态给包内脚本路径,开发态给「二进制 + out/main 入口」的两路径形式。
  */
 function stdioCommandOf(linked: boolean): string {
   // 展示的是**要运行的命令本身**(不是某一家客户端的配置语法)
-  if (!app.isPackaged) {
-    const script = join(app.getAppPath(), 'out', 'main', 'launcher-mcp.js')
-    return `env ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${script}"`
-  }
-  return linked ? MCP_BIN_NAME : mcpScriptPath()
+  if (linked) return MCP_BIN_NAME
+  if (!app.isPackaged) return `env ELECTRON_RUN_AS_NODE=1 "${process.execPath}" "${devEntryPath()}"`
+  return mcpScriptPath()
 }
 
 export function createAiStack(deps: {
@@ -102,9 +111,7 @@ export function createAiStack(deps: {
 
   // PATH 检查是只读的,随时可重算;写入只在 installMcpLink() 里发生(用户显式点击才调)
   const mcpInfo = (): AiMcpInfo => {
-    const expected = mcpScriptPath()
-    // dev 下不检查也不提供安装(见 mcpScriptPath 的说明)
-    const link = expected === '' ? { state: 'missing' as const, foundAt: null, expected: '' } : inspectMcpLink(expected)
+    const link = inspectMcpLink(mcpScriptPath())
     return {
       stdioCommand: stdioCommandOf(link.state === 'linked'),
       httpUrl: `http://127.0.0.1:${MCP_HTTP_PORT}/mcp`,
@@ -121,7 +128,11 @@ export function createAiStack(deps: {
     mcp,
     mcpInfo,
     installMcpLink: () => {
-      const r = installMcpLink(mcpScriptPath())
+      const expected = mcpScriptPath()
+      // 开发态:先把转调 shim 写出来(「修复」= 重写一遍,故 checkout 移动后点一下即可重建);
+      // 打包态指向的是包内自带脚本,无需生成任何东西
+      if (!app.isPackaged) writeDevShim(expected, process.execPath, devEntryPath())
+      const r = installMcpLink(expected)
       // 无论成败都回读**真实状态**,界面以它为准(不拿"我以为成功了"当结果)
       return { info: mcpInfo(), error: r.ok ? null : r.reason }
     },

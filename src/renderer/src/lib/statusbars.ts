@@ -58,7 +58,7 @@ export function crontabStatusBar(
 }
 
 export function servicesStatusBar(
-  d: { services: PortService[] },
+  d: { services: PortService[]; error?: string | null },
   t: T,
   fmtFn: FmtFn
 ): StatusBarModel {
@@ -73,7 +73,8 @@ export function servicesStatusBar(
     ],
     pathIcon: 'fa-solid fa-magnifying-glass',
     path: 'lsof -iTCP -sTCP:LISTEN',
-    monitor: t('statusbar.scanEvery3s')
+    // 扫描失败时如实替换(数字此时是上次成功的结果,再写「每 3 秒扫描」就是谎报)
+    monitor: d.error ? t('statusbar.svcScanFailed') : t('statusbar.scanEvery3s')
   }
 }
 

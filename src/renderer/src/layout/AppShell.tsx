@@ -31,6 +31,7 @@ export function AppShell(): React.JSX.Element {
   const agents = useAgentsStore((s) => s.agents)
   const crons = useCronStore((s) => s.crons)
   const services = useServicesStore((s) => s.services)
+  const servicesError = useServicesStore((s) => s.error)
   const theme = useSettingsStore((s) => s.settings?.theme ?? 'system')
   const language = useSettingsStore((s) => s.settings?.language ?? 'zh-CN')
   const info = useAppInfo()
@@ -59,7 +60,7 @@ export function AppShell(): React.JSX.Element {
   let model: StatusBarModel | null = null
   if (module === 'agents') model = agentsStatusBar({ agents }, t, fmt)
   else if (module === 'crontab') model = crontabStatusBar({ crons }, t, fmt)
-  else if (module === 'services') model = servicesStatusBar({ services }, t, fmt)
+  else if (module === 'services') model = servicesStatusBar({ services, error: servicesError }, t, fmt)
   else if (module === 'ai') {
     // 引擎行跟随 AI 配置(demo MODULES.ai.statusbar);调用数 = 当前会话 toolCall 块计数
     // 订阅的是派生标量(计数/长度),流式 token 增量不会引起外壳重渲染

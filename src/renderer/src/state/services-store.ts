@@ -36,7 +36,8 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
 
   async load() {
     const p = await dataSource().services.list()
-    set({ ...p, error: null, loaded: true })
+    // error 由 payload 带出(非空 = 这份 services 是上次成功的结果),不要在这里写死 null
+    set({ ...p, loaded: true })
   },
 
   applyPayload(p) {
@@ -49,7 +50,7 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
 
   async setPolling(enabled) {
     const p = await dataSource().services.setPolling(enabled)
-    set({ ...p, error: null })
+    set({ ...p })
   },
 
   async setActive(active) {
