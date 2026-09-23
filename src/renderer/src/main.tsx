@@ -15,9 +15,13 @@ import './styles/drawer.css'
 import './styles/ai.css'
 import './styles/app-chrome.css'
 import App from './App'
+import { AppErrorBoundary } from './boot/ErrorBoundary'
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    {/* 兜底要在最外层:commit 之后的渲染/副作用异常否则会把整棵树卸掉,留下一扇空窗口 */}
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
   </React.StrictMode>
 )

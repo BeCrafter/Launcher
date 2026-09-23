@@ -16,6 +16,8 @@ export const IPC = {
   shellSaveText: 'shell:saveText',
   shellRevealLog: 'agents:revealLog',
   agentsBadge: 'agents:badgeCount',
+  /** 启动进度上报(renderer → main,单向):决定窗口何时显示,见 main/services/boot-gate.ts */
+  appBootPainted: 'app:bootPainted',
   // ── Launch Agents(阶段 1) ──
   agList: 'agents:list',
   agBrewAction: 'agents:brewAction',
@@ -79,6 +81,12 @@ export const IPC_EVENTS = {
 } as const
 
 export type IpcEventChannel = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]
+
+/**
+ * 启动进度('splash' = 过渡页已产出第一帧;'app' = 应用已首次 commit)。
+ * 这是 main 显示窗口的唯一依据 —— 窗口可见时屏幕上必须是这两者之一,不能是未绘制的底色。
+ */
+export type BootPaintPhase = 'splash' | 'app'
 
 export interface AppInfo {
   arch: string
