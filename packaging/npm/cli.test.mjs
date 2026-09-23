@@ -91,12 +91,14 @@ describe('cli 冒烟', () => {
     }
   }, 20_000)
 
-  it('status 离线也要正常收场（仓库与 npm 都取不到不是错误）', async () => {
+  it('status 离线也要正常收场（cdn 取不到不算错误）', async () => {
     const r = await cli(['status', '--dir', EMPTY_DIR], DEAD)
     expect(r.code).toBe(0)
     expect(r.out).toMatch(/仓库最新\s+\(未取到/)
-    // npm 这条打的是公网 registry，测试环境可能通（→ 尚未发布）也可能不通（→ 未取到），两者都算正常收场
-    expect(r.out).toMatch(/npm 包\s+\((未取到|尚未发布)/)
+    // npm 这条打的是公网 registry，所以三种收场都算正常：已发布（→ 版本号）、未发布（→ 尚未发布）、
+    // 取不到（→ 未取到）。写这个用例时本包还没发布过，只列了后两种；2026-09-23 首次发布
+    // @becrafter/launcher 后才第一次走到「版本号」那一支，断言随即误报
+    expect(r.out).toMatch(/npm 包\s+(\(未取到|\(尚未发布|\d+\.\d+\.\d+)/)
     expect(r.err).not.toMatch(CRASH)
   }, 20_000)
 
