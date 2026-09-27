@@ -107,14 +107,15 @@ export type InstallChannel = 'brew' | 'npm' | 'manual'
 
 /**
  * 各通道的升级命令 —— 界面直接展示给用户照抄。
- * ⚠ 与另两处是同一套入口,改通道文档/地址时一起改:
- *   packaging/homebrew/README.md、packaging/npm/README.md、scripts/install.sh 的 usage。
- *   （`dev` 是当前默认分支;合并回 main 后这里要跟着改,否则 curl 通道拉到的是别的分支）
+ * ⚠ 与另三处是同一套入口,改通道文档/地址时一起改:
+ *   packaging/homebrew/README.md、packaging/npm/README.md、scripts/install.sh 的 usage、
+ *   .github/workflows/publish-install-script.yml(安装脚本由它上传到 R2)。
+ *   curl 那条走的是 R2 上的 `<cdn 根>/install.sh`(不带分支),不再是 GitHub raw。
  */
 export const UPGRADE_COMMAND: Record<InstallChannel, string> = {
   brew: 'brew upgrade --cask becrafter/brew/launcher',
   npm: 'npx -y @becrafter/launcher',
-  manual: 'curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/dev/scripts/install.sh | bash'
+  manual: 'curl -fsSL https://repo.iskill.site/launcher/install.sh | bash'
 }
 
 export interface LatestVersionInfo {
