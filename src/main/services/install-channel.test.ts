@@ -69,10 +69,12 @@ describe('detectInstallChannel', () => {
     expect(await detectInstallChannel(deps(undefined, { _: '/bin/zsh' }).deps)).toBe('manual')
   })
 
-  it('每个通道都有可照抄的升级命令，且指向本仓真实入口', () => {
+  it('每个通道都有可照抄的升级命令，且指向真实入口', () => {
     expect(UPGRADE_COMMAND.brew).toContain('brew upgrade --cask becrafter/brew/launcher')
     expect(UPGRADE_COMMAND.npm).toContain('npx -y @becrafter/launcher')
-    expect(UPGRADE_COMMAND.manual).toContain('BeCrafter/Launcher')
-    expect(UPGRADE_COMMAND.manual).toContain('install.sh')
+    // 安装脚本托管在 R2（由 .github/workflows/publish-install-script.yml 上传），与产物同域 ——
+    // 不再是 GitHub raw（部分网络下不可达），故这里断言的是 cdn 根 + 脚本名
+    expect(UPGRADE_COMMAND.manual).toContain('repo.iskill.site/launcher/install.sh')
+    expect(UPGRADE_COMMAND.manual).toContain('| bash')
   })
 })

@@ -83,15 +83,19 @@ macOS 15 起，「已损坏」这一档的绕过入口被移除——**只对有
 ### 通道 A：curl 安装脚本（`scripts/install.sh`）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BeCrafter/Launcher/dev/scripts/install.sh | bash
+curl -fsSL https://repo.iskill.site/launcher/install.sh | bash
 curl -fsSL .../install.sh | bash -s -- --version 0.1.0    # 指定版本
 curl -fsSL .../install.sh | bash -s -- --check            # 版本检查:装没装、是不是最新
 curl -fsSL .../install.sh | bash -s -- --list             # 有哪些版本可装
 ```
 
-> ⚠ 这条命令里的分支名(`dev`)是**唯一一处硬编码默认分支**——脚本只在打 tag 后才会进 `main`,
-> 日常发版改的是 `dev`,故安装入口指向 `dev`。仓库默认分支或流程变了要同步三处:
-> `src/shared/ipc.ts` 的 `UPGRADE_COMMAND`、`CLAUDE.md`、本文件。
+> **脚本托管在 R2**(`<cdn 根>/install.sh`),由 `.github/workflows/publish-install-script.yml` 上传:
+> 推到 dev 且改到 `scripts/install.sh` 即自动同步,也可 `gh workflow run publish-install-script.yml --ref dev`
+> 手动补传。这样安装入口不依赖 GitHub raw(部分网络下不可达/限速),且与产物、版本清单同域,
+> 用户那条命令只需要一个域名。CDN 不可达时的备用入口是 GitHub raw 上的同一份文件。
+>
+> ⚠ 改 CDN 根或对象前缀要同步四处:`scripts/install.sh` 的 `R2_BASE`、`src/shared/ipc.ts` 的
+> `UPGRADE_COMMAND`、`.github/workflows/publish-install-script.yml`,以及 README / CLAUDE.md / 本文件。
 
 - 探测 `uname -m` 选择 arm64 / x64 产物；支持 `--list` / `--check` / `--version` / `--dir` / `--pre`
 - 直接从 R2 拉取（`LAUNCHER_R2_BASE` 可换镜像），不依赖 GitHub API；只有 `--list` 走 Releases api

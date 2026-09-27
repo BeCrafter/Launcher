@@ -300,11 +300,11 @@ jobs:
             echo
             echo '```bash'
             if [ "$IS_PRERELEASE" = "true" ]; then
-              # ⚠ 用 dev 而不是 main：install.sh 日常只存在于 dev（main 至今还停在 Initial commit），
-              # 指向 main 会让用户照抄出 404。与 UPGRADE_COMMAND / CLAUDE.md / distribution.md 保持一致。
-              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/dev/scripts/install.sh | bash -s -- --version ${VERSION}"
+              # 安装脚本托管在 R2（由 publish-install-script.yml 上传），不带分支、与产物同域；
+              # 与 UPGRADE_COMMAND / CLAUDE.md / distribution.md 保持一致。
+              echo "curl -fsSL ${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/install.sh | bash -s -- --version ${VERSION}"
             else
-              echo "curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/dev/scripts/install.sh | bash"
+              echo "curl -fsSL ${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/install.sh | bash"
               echo
               echo "brew install --cask becrafter/brew/launcher"
               echo

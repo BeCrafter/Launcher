@@ -59,11 +59,11 @@ jobs:
           URL="${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/install.sh"
           for i in 1 2 3 4 5; do
             if curl -fsSL --max-time 20 "$URL" | head -n 1 | grep -q '^#!'; then
-              echo "✓ 公网可读：$URL（$(curl -fsSL --max-time 20 "$URL" | wc -l | tr -d ' ') 行）"
+              echo "✓ 公网可读：${URL}（$(curl -fsSL --max-time 20 "$URL" | wc -l | tr -d ' ') 行）"
               exit 0
             fi
             echo "第 $i 次没读到，3s 后重试…"
             sleep 3
           done
-          echo "::error::公网读不到 $URL（检查 R2_PUBLIC_DOMAIN / 对象前缀 / cdn 是否已生效）"
+          echo "::error::公网读不到 ${URL}（检查 R2_PUBLIC_DOMAIN / 对象前缀 / cdn 是否已生效）"
           exit 1
