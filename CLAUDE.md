@@ -8,7 +8,7 @@ BeCrafter/Launcher 是 macOS 本地服务管理应用（管理 launchd / crontab
 
 - **demo 是 UI/UX 设计基准（冻结）**：`docs/demo/` 的视觉/交互作为验收对照基线，**自 2026-09 起冻结不再改动**（**冻结例外 2026-09-13：AI 助手页整体重设计为对话式 Agent 页**，其余页面继续冻结，逐项说明见 migration-map 文末「AI 对话页重设计」）；demo → React 的逐项映射与已知差异见 `docs/design/demo-react-migration-map.md`（改任一侧时按表核对）
 - **长期方向文档**：`docs/design/refactor-plan.md`（迁移矩阵 + 分阶段计划 + 已确认决策）、`docs/design/ai-capability.md`（AI 引擎/MCP/专家提示词方案，阶段 4 按此落地）、`docs/design/distribution.md`（分发与安装：包体积精简 + 零成本双通道 + CI 发布，2026-09-17 已实施）
-- **用户向文档**（2026-09-27 补齐）：`README.md`（GitHub 门面：功能/安装/MCP/数据与隐私/从源码构建）、`docs/install.md`（安装指南：四条通道逐个枚举 + 参数表 + 版本发现 + 升级卸载 + 故障排查）。改动分发契约时**这两份要跟着改**（命令、产物名、路径都在里面）
+- **用户向文档**（2026-09-27 补齐）：`README.md`（GitHub 门面：功能/安装/MCP/数据与隐私/从源码构建）、`docs/install.md`（安装指南：四条通道逐个枚举 + 参数表 + 版本发现 + 升级卸载 + 故障排查）、`Help.md`（使用帮助：四页导航 / 三个照做任务 / 逐页说明 / 权限与安全 / FAQ / 数据位置 / 术语对照——**应用内左下角「帮助」按钮就打开它** —— 那个地址直接用 demo `urls.help` 的原值 `blob/main/Help.md`，故**文件名必须保持大写 H**，否则链接 404）。改动分发契约时**前两份要跟着改**（命令、产物名、路径都在里面）；改 `Help.md` 的文件名或分支要同步 README/CLAUDE.md 的索引(demo 冻结、地址不可改)
 
 ## 运行方式
 
