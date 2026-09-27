@@ -1,0 +1,67 @@
+name: Publish install script
+
+# 安装脚本托管到 R2（`<cdn 根>/install.sh`），与产物、版本清单同源 —— 用户那条安装命令因此
+# 只依赖一个域名（raw.githubusercontent 在部分网络下不可达/限速），脚本改动也会立刻生效。
+#
+# 触发：
+#   ① 推到 dev 且改动了 scripts/install.sh（日常同步）
+#   ② 手动 workflow_dispatch（首次上传、或补传；可在任意 ref 上跑，见 CLAUDE.md 的 gh workflow run 用法）
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'scripts/install.sh'
+      - '.github/workflows/publish-install-script.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # 两次上传撞上会互相覆盖（内容相同，但验证步骤可能读到中间态）
+  group: publish-install-script
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # 纯 aws cli 上传，与架构无关 ⇒ Linux runner 即可
+    runs-on: ubuntu-latest
+    # R2 凭据挂在 r2-publish 环境上（与 release.yml 同一套）
+    environment: r2-publish
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_REPO_BUCKET_NAME }}
+      R2_PUBLIC_DOMAIN: ${{ secrets.R2_REPO_PUBLIC_DOMAIN }}
+      # ⚠ 与 release.yml 的 R2_PREFIX 必须一致：脚本里的默认下载地址是 `<cdn 根>/…`
+      R2_PREFIX: launcher
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 上传 install.sh 到 R2
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          # R2 的 S3 兼容接口要求 SigV4 的 region 为 auto（CLI 与各 SDK 取值名不同，两个都设）
+          AWS_DEFAULT_REGION: auto
+          AWS_REGION: auto
+        run: |
+          # no-store：脚本是安装入口，改了必须立刻生效（cdn 按文件名缓存）
+          aws s3 cp scripts/install.sh \
+            "s3://${R2_BUCKET}/${R2_PREFIX}/install.sh" \
+            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --content-type "text/plain; charset=utf-8" \
+            --cache-control "no-store"
+
+      - name: 验证公网可达（内容必须是那个脚本）
+        run: |
+          URL="https://${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/install.sh"
+          for i in 1 2 3 4 5; do
+            if curl -fsSL --max-time 20 "$URL" | head -n 1 | grep -q '^#!'; then
+              echo "✓ 公网可读：$URL（$(curl -fsSL --max-time 20 "$URL" | wc -l | tr -d ' ') 行）"
+              exit 0
+            fi
+            echo "第 $i 次没读到，3s 后重试…"
+            sleep 3
+          done
+          echo "::error::公网读不到 $URL（检查 R2_PUBLIC_DOMAIN / 对象前缀 / cdn 是否已生效）"
+          exit 1
