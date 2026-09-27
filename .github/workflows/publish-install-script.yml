@@ -54,7 +54,9 @@ jobs:
 
       - name: 验证公网可达（内容必须是那个脚本）
         run: |
-          URL="https://${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/install.sh"
+          # ⚠ R2_PUBLIC_DOMAIN 自带 scheme（形如 https://repo.iskill.site）——与 release.yml 的用法一致，
+          #   这里不要再补 https://
+          URL="${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/install.sh"
           for i in 1 2 3 4 5; do
             if curl -fsSL --max-time 20 "$URL" | head -n 1 | grep -q '^#!'; then
               echo "✓ 公网可读：$URL（$(curl -fsSL --max-time 20 "$URL" | wc -l | tr -d ' ') 行）"
