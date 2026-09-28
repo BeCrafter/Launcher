@@ -13,3 +13,14 @@ export const APP_VERSION = '0.1.0'
  */
 export const BG_DARK = '#0e0e17'
 export const BG_LIGHT = '#f6f7fb'
+
+/** 仓库地址（设置页「关于」与侧边栏链接用） */
+export const GITHUB_REPO_URL = 'https://github.com/BeCrafter/Launcher'
+
+/**
+ * 使用帮助的地址。
+ *
+ * ⚠️ 路径必须保持大写 `Help.md`、且指向 `main` 分支 —— 应用内左下角「帮助」按钮直接打开它，
+ * GitHub 的 blob 路径区分大小写，改名或改分支都会让这个按钮 404。
+ */
+export const HELP_URL = 'https://github.com/BeCrafter/Launcher/blob/main/Help.md'

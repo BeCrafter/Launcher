@@ -1,4 +1,4 @@
-// XML 编辑器(CodeMirror 6;refactor-plan 已确认决策⑥)
+// XML 编辑器(CodeMirror 6)
 // 高亮 token 色对齐 demo 高亮层(标签青/声明紫/注释 dim,正文 muted);换行行为对齐 demo(textarea pre-wrap)
 // 缩进随设置 xmlIndent(Compartment 动态重配,不必重建编辑器)
 import { useEffect, useRef } from 'react'

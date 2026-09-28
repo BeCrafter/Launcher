@@ -29,7 +29,7 @@ jobs:
   release:
     # macos-14 是 arm64 主机；--arch all 会交叉构建 x64，故两种产物由同一 job 产出
     runs-on: macos-14
-    # R2 的密钥挂在 r2-publish 环境上（详见 docs/design/distribution.md）
+    # R2 的密钥挂在 r2-publish 环境上（详见 docs/install.md）
     environment: r2-publish
     # npm 发布拆成独立 job（NPM_TOKEN 归 npm-publish 环境，而一个 job 只能挂一个 environment）。
     # job 之间只传 outputs —— $GITHUB_ENV 是不跨 job 的，所以这几个值必须显式导出。

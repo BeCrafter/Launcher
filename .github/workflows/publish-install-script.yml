@@ -4,11 +4,11 @@ name: Publish install script
 # 只依赖一个域名（raw.githubusercontent 在部分网络下不可达/限速），脚本改动也会立刻生效。
 #
 # 触发：
-#   ① 推到 dev 且改动了 scripts/install.sh（日常同步）
-#   ② 手动 workflow_dispatch（首次上传、或补传；可在任意 ref 上跑，见 CLAUDE.md 的 gh workflow run 用法）
+#   ① 推到 main 且改动了 scripts/install.sh（日常同步）
+#   ② 手动 workflow_dispatch（首次上传、或补传；可在任意 ref 上跑）
 on:
   push:
-    branches: [dev]
+    branches: [main]
     paths:
       - 'scripts/install.sh'
       - '.github/workflows/publish-install-script.yml'

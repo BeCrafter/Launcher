@@ -7,7 +7,7 @@ files:
   - out/**
   - package.json
 extraResources:
-  # 仅打包 v2 星际火箭（项目唯一图标）；v1 rocketOrbit 仅作仓库备份不进包
+  # 仅打包星际火箭图标（项目唯一图标）
   - from: resources/logo/rocketOrbit2
     to: logo
   # MCP stdio 入口:外部 Agent 挂载用。放在 asar **外面** —— 既绕开「ELECTRON_RUN_AS_NODE

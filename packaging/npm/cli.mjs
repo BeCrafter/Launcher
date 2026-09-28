@@ -16,7 +16,7 @@
 //       破坏 .app 内部签名
 //     · 安装目录 `/Applications`，不可写时回退 `~/Applications`
 //     · 装完 `xattr -dr com.apple.quarantine`（防御性；Node 下载本就不带该标记）
-//   契约原文见 docs/design/distribution.md「安装契约」小节。
+//   契约原文见 docs/install.md「安装契约」小节。
 //
 // ⚠ 设计约束（勿改成 postinstall）：
 //   npm v7+ **没有** uninstall 钩子（官方文档明载 v6 的 uninstall 脚本「will not function」），

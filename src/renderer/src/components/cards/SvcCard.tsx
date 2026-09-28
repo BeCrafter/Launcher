@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/components.js svcCard + services.js svcCardHtml @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 端口服务卡片(demo services.js svcCardHtml + components.js svcCard;meta chips 内联样式逐字)
 // 应用新增:双击名称就地改名、「配置」浮层(alias/host/path 覆写)、地址标签改为可连接 host:port
 import { useRef, useState } from 'react'

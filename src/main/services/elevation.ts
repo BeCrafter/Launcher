@@ -1,6 +1,6 @@
 // 提权执行器:osascript `do shell script … with administrator privileges`(系统原生授权框)
 //
-// 安全模型(2026-09-18 收紧,依据 docs/design/agent-editor-remediation.md P0-1):
+// 安全模型(2026-09-18 收紧):
 //   调用方只提交「command + argv」步骤,本模块负责 POSIX 单引号编码,并把整段脚本写入 0700 私有临时文件,
 //   提权只执行 `sh '<脚本路径>'` —— **用户数据(路径 / Label / 文件名)永远不进入 AppleScript 字符串**。
 //   旧入口「调用方自己拼 shell 串」已删除:仅拒绝双引号/反斜杠/换行挡不住 `;`、`$()`、空白等元字符。

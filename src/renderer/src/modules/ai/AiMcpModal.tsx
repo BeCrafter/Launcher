@@ -1,4 +1,3 @@
-// ported-from: docs/demo/index.html #aiMcpModal + ai.js aiRenderMcpModal/aiToggleMcpPerm @ 06ff9ba — demo UI 基线
 // MCP 接入模态:stdio 命令 + HTTP 端点两种用法并列展示(「用哪套」而非「切到哪套」),各自带复制;
 // 权限开关绑定设置里的 mcpPermission(唯一闸门,设置页无开关)
 import { useEffect, useState } from 'react'

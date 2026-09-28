@@ -1,6 +1,4 @@
-// ported-from: docs/demo/index.html #view-settings + settings.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// 设置页(demo #view-settings + settings.js;六 pane + tab 导航 + 页脚)
-// 各开关接线状态见 docs/design/demo-react-migration-map.md「设置项接线表」
+// 设置页(六 pane + tab 导航 + 页脚)
 import { useState } from 'react'
 import { UPGRADE_COMMAND, type InstallChannel } from '@shared/ipc'
 import { useT, useFmt } from '../../hooks/useT'
@@ -13,7 +11,7 @@ import { ThemeCards } from './ThemeCards'
 import { AiPane } from './AiPane'
 import { useSettingsNav } from '../../state/settings-nav-store'
 import { Toggle } from '../../components/ui/Toggle'
-import { MOCK_DATA } from '../../data/mock/mock-data'
+import { GITHUB_REPO_URL } from '@shared/constants'
 
 // macOS 系统设置「登录项」面板(main 侧 url-guard 白名单放行)
 const MACOS_LOGIN_ITEMS_URL = 'x-apple.systempreferences:com.apple.LoginItems-Settings.extension'
@@ -409,7 +407,7 @@ export function SettingsView(): React.JSX.Element {
                       className="d-btn"
                       type="button"
                       title={t('settings.about.openRepo')}
-                      onClick={() => openExternal(MOCK_DATA.urls.github)}
+                      onClick={() => openExternal(GITHUB_REPO_URL)}
                     >
                       <i className="fa-brands fa-github" />
                       GitHub

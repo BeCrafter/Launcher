@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/ai.js aiCardHtml/aiReportCardHtml/aiCronCardHtml/aiPlistCardHtml/aiApproveCardHtml/aiSuggestHtml @ 06ff9ba — demo UI 基线
 // 内联领域卡(report/cron/plist/approve)+ 追问建议 chips
 // 授权卡与 demo 的机制差异:demo 是内容里的卡自己续播;真实链路是 main 的 beforeToolCall 暂停工具调用,
 // 卡片按钮只负责 respondApproval,执行与状态落定都由 main 的事件驱动

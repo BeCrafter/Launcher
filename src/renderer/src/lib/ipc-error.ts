@@ -1,6 +1,6 @@
 // main 侧业务错误的上浮:Electron invoke 的 rejection 形如
 // "Error invoking remote method 'agents:save': Error: <正文>",而 cronErrorToast 会把一切
-// 非提权错误折成通用文案 —— 表单守卫/同名冲突这类可读原因需要原样露给用户(先例见 migration-map 差异 37)。
+// 非提权错误折成通用文案 —— 表单守卫/同名冲突这类可读原因需要原样露给用户。
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '@shared/ipc'
 import { showToast } from './utils'
 

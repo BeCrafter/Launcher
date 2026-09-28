@@ -304,7 +304,7 @@ Agent：抽屉 → **日志** 标签页 → 导出（或直接给 `StandardOutPa
 ## 12. 还没解决？
 
 1. 先看上面「常见问题」，以及安装相关问题 → [docs/install.md](docs/install.md)（含「已损坏」、架构、升级通道等）
-2. 打包与签名机制 → [docs/design/distribution.md](docs/design/distribution.md)
+2. 打包与签名机制 → [docs/install.md](docs/install.md) 的「为什么会提示已损坏」一节
 3. 提 Issue 时请附上：**应用版本**（设置 → 关于与诊断）、macOS 版本、任务名 / 端口号、相关 plist 或 `crontab -l` 的那一行、以及日志原文 —— 有了这些基本能一次定位
 
 → [提交 Issue](https://github.com/BeCrafter/Launcher/issues)

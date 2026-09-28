@@ -10,7 +10,7 @@ name: Dev Release
 #   · 不发 npm 包
 #   原因是 -dev 不在 Homebrew 的预发布白名单（alpha/beta/pre/rc）里，会被 Version 判为
 #   **比正式版更新**（实测 Version.new('0.2.0-dev') > Version.new('0.2.0')），
-#   详见 scripts/release-version.mjs 与 docs/design/distribution.md「预发布版本」。
+#   详见 scripts/release-version.mjs 与 docs/install.md「预发布版本」。
 #   只要 dev 构建永远不进 cask / latest 别名 / npm 的 latest dist-tag，稳定通道就不会被污染 ——
 #   所以本文件**不引用任何 R2 / TAP / NPM secret**：「没有凭据」是最硬的围栏。
 #   将来若想让它接 R2，必须先解决 -dev 的版本比较问题，而不是顺手加两行 aws s3 cp。

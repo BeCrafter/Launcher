@@ -2,7 +2,7 @@
 //
 // 三条通道的安装逻辑分处三个文件（bash / Node / CI），无法共用代码 —— 只能靠这组测试钉住
 // 最容易漂移的几个常量。任何一侧单独改动都会在这里失败，而不是等到用户装出问题。
-// 契约原文见 docs/design/distribution.md「安装契约」小节。
+// 契约原文见 docs/install.md「安装契约」小节。
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'

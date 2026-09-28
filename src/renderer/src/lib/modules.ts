@@ -1,5 +1,4 @@
-// 模块注册表(demo config.js MODULES 的 React 版;视图显隐/面包屑/顶栏/搜索/状态栏的单一事实来源)
-// 字段与 demo 记录一一对应,便于逐项比对(docs/design/demo-react-migration-map.md)
+// 模块注册表(视图显隐/面包屑/顶栏/搜索/状态栏的单一事实来源)
 import type { ModuleId } from '../state/ui-store'
 
 export type StatusDotTone = 'running' | 'loaded' | 'unloaded'

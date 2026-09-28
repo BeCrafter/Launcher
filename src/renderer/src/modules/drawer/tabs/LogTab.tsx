@@ -1,4 +1,3 @@
-// ported-from: docs/demo/index.html #dft-log + drawer.js addLogLine/clearLog @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 日志 tab(阶段 1:真实日志源——文件 stdout/stderr 尾部 512KB 自动跟随 / 系统日志 log show 15m·2000 行手动刷新)
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../../hooks/useT'

@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/ai.js + index.html #view-ai @ 06ff9ba — demo UI 基线(AI 页为冻结例外,2026-09-13 重设计)
 // AI 助手对话页(逐行为移植 ai.js renderAiChat 的 React 版):
 // 左会话栏(collapsed 持久化 localStorage)+ 右对话画布(贴底滚动/回底浮标)+ 悬浮输入区。
 // 消息模型为 shared/ai.ts 的内容块数组,渲染归组见 AiMessages.tsx。

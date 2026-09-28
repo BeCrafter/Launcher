@@ -1,13 +1,12 @@
-// ported-from: docs/demo/index.html L22-62 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// 侧边栏(demo index.html L22-62 骨架;4 入口 → 本轮 3 入口,AI 未迁移)
-// Logo 用 v2 双主题 Logo 组件(等效 demo logo-dark/light img 对,32px 同款;差异记对照表)
+// 侧边栏(四个入口 + 设置)
+// Logo 用双主题 Logo 组件(深浅两版 dataURL 随主题切换,32px)
 import Logo from '../components/Logo'
 import { useT } from '../hooks/useT'
 import { MODULES, SIDEBAR_MODULES } from '../lib/modules'
 import { useUiStore } from '../state/ui-store'
 import { useSettingsStore } from '../state/settings-store'
 import { toggleSidebarCollapse } from '../hooks/useSidebarLayout'
-import { HELP_URL } from '../data/mock/mock-data'
+import { HELP_URL } from '@shared/constants'
 import { openExternal, showToast } from '../lib/utils'
 
 // demo 侧边栏图标(nav markup 硬编码完整 class;crontab 为 fa-regular)

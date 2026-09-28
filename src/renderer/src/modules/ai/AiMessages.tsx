@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/ai.js aiRenderMessages/aiMsgHtml/aiBotInnerHtml/aiStepsHtml @ 06ff9ba — demo UI 基线
 // 消息流渲染。与 demo 的关键差异:助手消息 = shared/ai.ts 的内容块数组(text/thinking/toolCall/card/suggest
 // 按到达顺序混排),demo 的固定槽位(thinking→steps→text→cards→suggest)不再成立:
 //  - 连续 toolCall 块归入一个可折叠 .ai-steps(视觉同 demo 步骤块);文本打断后另起一个

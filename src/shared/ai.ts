@@ -1,6 +1,6 @@
 // AI 助手契约(main ↔ preload ↔ renderer 单一事实来源)
 //
-// 消息模型按 docs/design/ai-message-model-gap.md 的结论落地:**内容块数组**而非固定槽位——
+// 消息模型落地为**内容块数组**而非固定槽位——
 // pi 的一条助手消息里文本与工具调用可以交替多次(text → toolCall → text → toolCall),
 // 固定槽位(thinking/steps/text/cards)表达不了这种混排,也承载不了 thinking/图片/用量/7 态 stopReason。
 //

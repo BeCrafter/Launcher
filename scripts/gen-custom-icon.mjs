@@ -1,4 +1,4 @@
-// 将用户提供的插画（~/Desktop/IMG_9736.jpg）转为 Launcher 图标资源：
+// 将插画源图转为 Launcher 图标资源：
 //   1. sips: jpg → PNG → 1024
 //   2. 自写 PNG 解码（filter 0-4 完整恢复）→ 近白像素颜色渐隐透明（白色不留色，避免 Dock 白块；
 //      深藏青/青色像素保留，渐变处半透明过渡）
@@ -12,13 +12,13 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-// 源图固定放项目内（默认 app-icon.png；历史版本可用 --src 指定归档源，如 app-icon-v1-source.jpg）
+// 源图固定放项目内（默认 app-icon.png；可用 --src 指定其他源图）
 const srcArgPos = process.argv.indexOf('--src')
 const SRC = srcArgPos >= 0 ? process.argv[srcArgPos + 1] : join(ROOT, '../resources/app-logo-src/app-icon.png')
 const WORK = join(ROOT, '../resources/logo-custom')
-// 产出变体名可指定（不覆盖历史）：node scripts/gen-custom-icon.mjs --name rocketOrbit2
+// 产出变体名可指定：node scripts/gen-custom-icon.mjs --name rocketOrbit2
 const nameArgPos = process.argv.indexOf('--name')
-const VARIANT = (nameArgPos >= 0 && process.argv[nameArgPos + 1]) || 'rocketOrbit'
+const VARIANT = (nameArgPos >= 0 && process.argv[nameArgPos + 1]) || 'rocketOrbit2'
 const OUT = join(ROOT, `../resources/logo/${VARIANT}`)
 const ASSET = join(ROOT, '../src/renderer/src/assets')
 

@@ -1,5 +1,5 @@
 // i18n 运行时:t()/fmt() 语义与 demo i18n.js 一致(t 缺键回退键名;fmt {X} 占位替换)
-// 字典由 scripts/port-demo-i18n.mjs 生成,勿手改。
+// 字典手写维护;中英键集合一致性由 i18n.test.ts 保证。
 import { zhCN } from './dict.zh-CN'
 import { enUS } from './dict.en-US'
 import type { Language } from '@shared/settings'

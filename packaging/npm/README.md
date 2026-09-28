@@ -82,7 +82,7 @@ npx -y @becrafter/launcher status     # 已装版本 vs 仓库最新
 ## 说明
 
 - 应用为 ad-hoc 签名、未公证。三条通道都通过**不带隔离标记**的方式获取产物，
-  因此不会触发 Gatekeeper 的「已损坏」（细节见仓库的 `docs/design/distribution.md`）。
+  因此不会触发 Gatekeeper 的「已损坏」（细节见仓库的 `docs/install.md`）。
 - 本包只发布 JavaScript，应用产物托管在官方 CDN，不随 npm 包分发。
 
 ## License

@@ -1,5 +1,4 @@
-// ported-from: docs/demo/index.html elevationModal/dangerModal + elevation.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// 提权授权 + 危险确认模态(demo elevationModal/dangerModal;密码框按 refactor-plan 移除,记已知差异)
+// 提权授权 + 危险确认模态(走系统原生授权框,应用不碰密码)
 import { useEffect, useState } from 'react'
 import { useT } from '../../hooks/useT'
 import { Modal } from '../Modal'

@@ -1,5 +1,4 @@
-// ported-from: docs/demo/js/crontab.js parseCronExpr @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// Cron 表达式人话解析(逐行为移植 docs/demo/js/crontab.js parseCronExpr,双语分支保留)
+// Cron 表达式人话解析(parseCronExpr,双语分支保留)
 import { fmt } from '../i18n'
 import { nextCronRun } from '@shared/cron-next-run'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '@shared/ipc'

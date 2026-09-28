@@ -1,7 +1,7 @@
 // Agent 身份(Label)校验(纯函数)。
 // Label 同时是文件名与 launchctl 目标串的一部分:允许任意字符会让路径逃逸(save 的 pathFor)
 // 与命令注入(提权 mv/rm)成为可能。只接受 [A-Za-z0-9._-]+。
-// 磁盘上已有的不规范 label 仍可展示(见 migration-map 第 37 条),但不能作为新建/改名的输入。
+// 磁盘上已有的不规范 label 仍可展示,但不能作为新建/改名的输入。
 const LABEL_RE = /^[A-Za-z0-9._-]+$/
 
 /** launchd Label 的实用上限(文件名 + .plist 需落在 255 字节内) */

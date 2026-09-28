@@ -1,6 +1,5 @@
-// ported-from: docs/demo/js/ai.js aiEnsureMentionPop/aiMentionBuild/aiPickMention @ 06ff9ba — demo UI 基线
 // @ 引用弹层:fixed 定位、挂 body(demo createElement 到 body 的 React 等价物,createPortal)
-// 数据源:真实 agents + crons(非 demo MOCK_DATA);过滤规则逐行对应 aiMentionBuild
+// 数据源:真实 agents + crons;过滤规则对应 aiMentionBuild
 import { useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useT } from '../../hooks/useT'

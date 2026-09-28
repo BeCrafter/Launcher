@@ -1,5 +1,4 @@
 // 分组块(demo .cfg-group + drawer.js toggleCfg:头点击切 body display + chevron open 类)
-// ported-from: docs/demo/js/drawer.js toggleCfg + index.html .cfg-group @ 06ff9ba
 // 抽屉编辑页与状态页共用(原为 EditTab 局部组件;StatusTab 曾手写一份不可点的假折叠头)
 import { useState } from 'react'
 

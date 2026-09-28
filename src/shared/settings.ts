@@ -1,6 +1,6 @@
 // LauncherSettings:设置持久化 schema 单一事实来源(main/renderer/测试共用)
 // 物理路径:${HOME}/.config/launcher/config.json(见 src/main/settings/store.ts)
-// 键名承接 demo localStorage(launcherTheme → theme 等),映射关系见 docs/design/demo-react-migration-map.md
+// 键名承接原型 localStorage(launcherTheme → theme 等)
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type Language = 'zh-CN' | 'en-US'
@@ -26,7 +26,7 @@ const OVERRIDE_KEY_MAX = 96
 /** 接入协议 = pi 的线协议适配器(阶段 4 只接两条:anthropic-messages / openai-completions) */
 export type AiProviderId = 'anthropic' | 'openai-compatible'
 
-/** MCP 权限模式:只暴露只读工具 / 兼暴露写工具(仅约束 HTTP 环回连接,见 docs/design/ai-message-model-gap.md) */
+/** MCP 权限模式:只暴露只读工具 / 兼暴露写工具(仅约束 HTTP 环回连接) */
 export type McpPermission = 'readOnly' | 'full'
 
 /**

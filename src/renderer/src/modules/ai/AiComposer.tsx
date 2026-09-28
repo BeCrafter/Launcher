@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/ai.js aiSyncComposer/aiAutoGrow/aiInputKey/aiMention*/aiRenderEngineState/aiRenderConnectCard @ 06ff9ba — demo UI 基线
 // 悬浮输入区:引擎 chip(点击跳设置页 AI 面板)/ 未配置引导卡(pulse)/ @ 引用 chips / 自增高 textarea / 发送↔停止
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '../../hooks/useT'

@@ -1,6 +1,6 @@
 // brew 托管判定纯函数(机制对齐开源 BrewManagedSupport:纯字符串启发式,零 spawn)
-// agents 列表用 isBrewManaged 判标签/过滤/操作路由展示,不再依赖 `brew services list`(11-13s,见
-// docs/design/demo-react-migration-map.md「打开慢修复」);需要 brew 记录本体(如 start/stop 路由)
+// agents 列表用 isBrewManaged 判标签/过滤/操作路由展示,不再依赖 `brew services list`(11-13s);
+// 需要 brew 记录本体(如 start/stop 路由)
 // 时仍走 matchBrewService(有 brew 数据,优先 file 字段精确匹配,启发式仅兜底)。
 
 export const BREW_LABEL_PREFIX = 'homebrew.mxcl.'

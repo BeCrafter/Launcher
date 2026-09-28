@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/services.js + index.html #view-services @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 端口服务视图(阶段 3:真实 lsof 数据 + docker 容器组;分类分组 + kill/重启 + 搜索)
 import { useEffect, useMemo } from 'react'
 import { useT, useFmt } from '../../hooks/useT'

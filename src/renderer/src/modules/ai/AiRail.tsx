@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/ai.js aiRenderRail/aiRailHit/aiNewChat @ 06ff9ba — demo UI 基线
 // 会话栏:搜索(标题优先,正文命中出 ±12/+28 摘要高亮)+ 新对话 + 会话列表
 // 与 demo 的差异:预置会话来自 main 持久化(AiSession),正文按需拉取进 msgCache 供搜索扫描
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'

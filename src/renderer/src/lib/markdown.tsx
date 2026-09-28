@@ -1,5 +1,5 @@
-// 最小安全 Markdown 渲染(应用新增,demo 无此能力 —— 真实 LLM 正文普遍带 md,
-// demo 的 aiEsc + pre-wrap 会把代码块/列表退化成原文;见 docs/design/ai-message-model-gap.md §2.1)
+// 最小安全 Markdown 渲染(真实 LLM 正文普遍带 md,
+// 纯文本渲染会把代码块/列表退化成原文)
 //
 // 安全策略:产 React 节点、**绝不用 dangerouslySetInnerHTML**——React 默认把字符串当文本转义,
 // 因此输入里的 HTML 天然 inert;不需要也不允许「先转义再拼 HTML」的那条路。
