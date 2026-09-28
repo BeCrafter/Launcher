@@ -1,4 +1,4 @@
-// launchd 目录监听:fs.watch + 去抖(0.4s,refactor-plan 阶段 1 既定口径);
+// launchd 目录监听:fs.watch + 去抖(0.4s);
 // 逐目录降级:权限不足/不存在 → 跳过该目录,不影响其余目录与主流程
 
 import { watch, type FSWatcher } from 'node:fs'

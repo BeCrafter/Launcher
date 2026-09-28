@@ -1,6 +1,6 @@
 // Tray 域:trayVisible → 生命周期(原 index.ts 内联代码逐行迁入);
 // menubarBadge + renderer 上报的运行中计数 → setTitle 角标
-// (title 与 template icon 独立渲染层,不破坏明暗自适应;角标形态差异见 demo-react-migration-map)
+// (title 与 template icon 独立渲染层,不破坏明暗自适应)
 
 import { app, BrowserWindow, Menu, Tray, nativeImage } from 'electron'
 import { join } from 'node:path'

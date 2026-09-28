@@ -1,5 +1,5 @@
 // 数据源工厂:整个应用唯一的数据入口
-// 阶段 1 起三域全部真实后端(IPC);mock 数据源已退场(仅 MOCK_DATA.urls 等静态链接仍保留)
+// 三域全部真实后端(IPC);静态链接(仓库地址 / 帮助)在 @shared/constants
 
 import type { DataSource } from './ports'
 import { createIpcAgentRepo } from './ipc/agents-source'

@@ -168,7 +168,7 @@ body.light-theme .skeleton-row {
 }
 
 /* 抽屉加宽(600 → 860):头部控件不再拥挤,编辑表单/XML/日志同步变宽
-   (demo 基线为 600px,此为应用侧调整,已在 migration-map 记录) */
+   (600px) */
 .edit-drawer {
   width: 860px;
 }
@@ -185,7 +185,7 @@ body.light-theme .skeleton-row {
   white-space: nowrap;
 }
 
-/* ── 非任务/损坏 plist 行(应用新增,非 demo 移植;migration-map 记有意分歧)──
+/* ── 非任务/损坏 plist 行(应用新增)──
    管理目录里的每个 .plist 都要在列表里有一行:文件存在却不可见,用户无从区分「不存在」与「被过滤」。
    置灰但**不置灰动作区** —— 编辑是这类行唯一的出路,铅笔必须看起来还能点(所以 opacity 不加在 .acc-actions 上)。 */
 .agent-col-card.not-task,

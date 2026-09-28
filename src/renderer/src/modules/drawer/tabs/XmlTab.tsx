@@ -1,4 +1,3 @@
-// ported-from: docs/demo/index.html #dft-xml + drawer.js validateXml/copyXml @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // XML tab(demo #dft-xml:CodeMirror 6 编辑器 + 验证/复制 + 格式化/保存;初始原文 = per-agent plist 真实读取)
 // 保存 = plutil 校验 → (系统域)提权 → saveXml 落盘,成功后回读刷新守卫状态
 import { useT } from '../../../hooks/useT'

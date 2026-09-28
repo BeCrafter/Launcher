@@ -154,22 +154,14 @@ src/
 Help.md                     # 使用帮助（应用内左下角「帮助」按钮指向它）
 
 docs/
-├── install.md              # 安装指南（本文件的延伸）
-├── design/distribution.md  # 分发：包体积、签名与三条安装通道的完整设计
-├── design/refactor-plan.md # 重构矩阵与分阶段计划
-├── design/ai-capability.md # AI 引擎 / MCP / 专家提示词方案
-├── design/agent-editor-remediation.md  # Agent 编辑器整改记录
-└── demo/                   # UI/UX 设计基线（冻结的原型）
+└── install.md              # 安装指南（本文件的延伸）
 ```
 
 ## 文档
 
 - [使用帮助](Help.md) —— 四个页面各管什么、常见任务、FAQ、术语对照（**应用内左下角「帮助」按钮**指向它）
 - [安装指南](docs/install.md) —— 三条通道逐个枚举、版本发现、升级卸载、故障排查
-- [分发设计](docs/design/distribution.md) —— 为什么「已损坏」、零成本双通道、CI 发布流程、安装契约
-- [重构计划](docs/design/refactor-plan.md) —— 从原型到实现的迁移矩阵与阶段划分
-- [AI 能力](docs/design/ai-capability.md) —— 引擎、工具层、MCP、专家提示词的方案与边界
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 Smartisan
+[MIT](LICENSE) © 2026 BeCrafter

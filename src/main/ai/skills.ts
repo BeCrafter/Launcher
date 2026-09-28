@@ -1,6 +1,6 @@
-// 内置技能 = 任务提示词 + 工具白名单(ai-capability.md「技能 = 任务提示词 + 工具白名单 + 上下文装载器」)
+// 内置技能 = 任务提示词 + 工具白名单 + 上下文装载器
 //
-// 技能的 id / nameKey / descKey / tag / icon 与 demo 的 MOCK_DATA.aiSkills 一致(欢迎态技能卡直出),
+// 技能的 id / nameKey / descKey / tag / icon 与欢迎态技能卡一致,
 // 界面文案走既有 i18n 键(ai.skill.*.name / .desc),不在代码里写死中英文。
 
 export interface SkillDef {

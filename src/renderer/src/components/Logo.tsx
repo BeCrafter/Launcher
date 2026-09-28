@@ -19,8 +19,8 @@ function useLogoTheme(theme?: LogoTheme): LogoTheme {
   return theme ?? auto
 }
 
-// 品牌图标（2026-09 定稿）：v2 星际火箭紫调双主题为项目唯一图标，
-// 深浅两版 dataURL 随主题热切换（v1 rocketOrbit 仅作仓库备份 resources/logo/rocketOrbit/）。
+// 品牌图标：星际火箭紫调双主题（项目唯一图标），
+// 深浅两版 dataURL 随主题热切换。
 export default function Logo({
   size = 48,
   theme

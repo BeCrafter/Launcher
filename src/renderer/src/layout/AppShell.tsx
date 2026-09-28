@@ -1,5 +1,4 @@
-// ported-from: docs/demo/index.html .app-shell + statusbar.js @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
-// 应用外壳(demo .app-shell 布局):侧边栏 + 主内容(顶栏/视图/状态栏)+ Toast
+// 应用外壳:侧边栏 + 主内容(顶栏/视图/状态栏)+ Toast
 // 状态栏显隐由 MODULES[module].showStatusBar 驱动;模型按模块从数据 store 派生
 import { useEffect } from 'react'
 import { Sidebar } from './Sidebar'
@@ -21,7 +20,7 @@ import { useAgentsStore } from '../state/agents-store'
 import { useCronStore } from '../state/cron-store'
 import { useServicesStore } from '../state/services-store'
 import { useAiStore, countToolCalls } from '../state/ai-store'
-import { MOCK_DATA } from '../data/mock/mock-data'
+import { GITHUB_REPO_URL } from '@shared/constants'
 
 export function AppShell(): React.JSX.Element {
   const t = useT()
@@ -85,8 +84,8 @@ export function AppShell(): React.JSX.Element {
         { dot: 'unloaded', textHtml: `${t('statusbar.arch')} <strong>${arch}</strong>` }
       ],
       pathIcon: 'fa-brands fa-github',
-      path: MOCK_DATA.urls.github.replace(/^https?:\/\//, ''),
-      pathHref: MOCK_DATA.urls.github,
+      path: GITHUB_REPO_URL.replace(/^https?:\/\//, ''),
+      pathHref: GITHUB_REPO_URL,
       monitor: t('statusbar.prefsAutoSave')
     }
 

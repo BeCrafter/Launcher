@@ -25,7 +25,7 @@ Homebrew 下载 cask 时会主动给下载物打上 `com.apple.quarantine`（`ca
 ## 首次搭建（一次性）
 
 1. 仓库 `BeCrafter/homebrew-brew` 已建（public；`homebrew-` 前缀是 Homebrew 推导 tap 名所必需的）
-2. 在 `BeCrafter/Launcher` 配好 secrets（详见 `docs/design/distribution.md`）：
+2. 在 `BeCrafter/Launcher` 配好 secrets（详见 `docs/install.md`）：
    - R2 一组：`R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_REPO_BUCKET_NAME` / `R2_REPO_PUBLIC_DOMAIN`（挂在 `r2-publish` 环境上）
    - `TAP_GITHUB_TOKEN`：对 `homebrew-brew` 有 `contents: write` 的 PAT，CI 用它推送 cask
 3. 打 tag 发一次版，CI 会创建 `Casks/launcher.rb` 并填入真实 url 与 sha256
@@ -45,7 +45,7 @@ Homebrew 下载 cask 时会主动给下载物打上 `com.apple.quarantine`（`ca
 > 版本比较只保证老用户不会被 `brew upgrade` 推到 rc，但**新用户 `brew install` 会直接装到 rc**，
 > 故 Homebrew 保持纯稳定通道；预发布只发 zip + GitHub Release（标 pre-release）。
 > 后缀只允许 `alpha` / `beta` / `pre` / `rc`（Homebrew 只认这四个，其余会被判为比正式版更新，
-> 见 `docs/design/distribution.md`）。CI 会直接拒绝非法后缀。
+> 见 `docs/install.md`）。CI 会直接拒绝非法后缀。
 
 需要人工介入的只有一种情况：**cask 结构本身要改**（比如加 `depends_on`、改 `postflight`）——改本目录的模板，提交到本仓库，下次发版自动带到 tap。
 

@@ -1,4 +1,3 @@
-// ported-from: docs/demo/index.html #dft-edit + drawer.js 表单逻辑 @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 编辑 tab(demo #dft-edit:标识/执行/调度触发/I/O 四组 + 底部操作栏;内联样式逐字保留)
 // 2026-09-18:表单兼容守卫横幅 + KeepAlive 三态(移除 AfterInitialDemand)+ ThrottleInterval 未设置态
 //            + UserName(仅 daemon)接线 + 删除未接线的 Disabled/EnableTransactions/Debug 与「存草稿」

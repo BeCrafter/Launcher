@@ -1,5 +1,4 @@
-// 视图宿主(demo switchModule 的视图显隐等价物):module → 视图组件
-// demo 中每个 #view-* 常驻 DOM、display 切换;React 以条件渲染等价(记录对照表)
+// 视图宿主:module → 视图组件(条件渲染)
 import { AgentsView } from '../modules/agents/AgentsView'
 import { CronView } from '../modules/cron/CronView'
 import { ServicesView } from '../modules/services/ServicesView'

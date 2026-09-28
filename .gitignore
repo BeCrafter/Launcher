@@ -9,3 +9,6 @@ resources/logo-custom/
 
 # 本机编辑器工具配置(不随仓库分发)
 .kiro/
+
+# AI 协作指令(仅本地开发用,不随仓库分发)
+CLAUDE.md

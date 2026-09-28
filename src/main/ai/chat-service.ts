@@ -1,6 +1,6 @@
 // AI 对话服务:会话/运行/授权/持久化(renderer 只发意图,事件经 emit 推回)
 //
-// 与 pi 的分工(见 docs/design/ai-message-model-gap.md §3):
+// 与 pi 的分工:
 //  - 运行循环、工具调用、上下文裁剪都交给 pi-agent-core 的 Agent;
 //  - **审批是宿主在 beforeToolCall 里拦下的**,不是消息内容里的一种卡 —— AgentEvent 里没有审批事件;
 //  - 工具**调用**进 assistant 消息的 content(由 pi 的流事件给出),工具**结果**是独立的 toolResult 消息,

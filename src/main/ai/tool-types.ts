@@ -1,4 +1,4 @@
-// ToolRegistry 契约:内置聊天与 MCP 服务共用的唯一工具来源(ai-capability.md「单一工具源」)
+// ToolRegistry 契约:内置聊天与 MCP 服务共用的唯一工具来源(单一工具源)
 //
 // schema 用 **typebox**(pi 的 `Tool.parameters` 就是 typebox/JSON Schema 本身)——不另用 zod:
 // MCP 侧走低层 Server 直接把同一份 JSON Schema 交给 tools/list,零转换、零重复定义。

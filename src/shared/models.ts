@@ -1,5 +1,4 @@
-// 领域模型类型(纯类型,无逻辑;与 demo MOCK_DATA 结构一一对应)
-// 形状来源:docs/demo/js/data.js(迁移基线见 docs/design/demo-react-migration-map.md)
+// 领域模型类型(纯类型,无逻辑)
 
 export type AgentStatus = 'running' | 'loaded' | 'stopped'
 export type AgentScope = 'user' | 'system' | 'daemon'
@@ -314,9 +313,4 @@ export interface DrawerStatusModel {
   plistPath: string
   workDir: string
   scope: string
-}
-
-export interface AppUrls {
-  github: string
-  help: string
 }

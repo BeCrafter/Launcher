@@ -16,7 +16,7 @@
 #
 # ⚠ 安装契约：本文件与 packaging/npm/cli.mjs 是同一套逻辑的两份实现（bash 与 Node 无法
 #   共用代码）。R2 地址 / 产物命名 / 架构判据 / ditto 解压 / 安装目录回落 / xattr / 完整性
-#   校验七条不变式**改任一侧都要同步另一侧**，契约原文见 docs/design/distribution.md。
+#   校验七条不变式**改任一侧都要同步另一侧**，契约原文见 docs/install.md。
 set -euo pipefail
 
 APP_NAME="Launcher.app"

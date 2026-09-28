@@ -10,7 +10,7 @@
 // 正式版与测试版的差别不只是号：
 //   · 正式版会**提交** package.json 的版本号（release.yml 断言 tag 与它一致），随后进三条分发通道
 //   · 测试版**不提交**（版本号由 dev-release.yml 在 CI 里临时写进 package.json），只发 pre-release
-//   为什么 dev 不能进分发通道，见 release-version.mjs 与 docs/design/distribution.md「预发布版本」。
+//   为什么 dev 不能进分发通道，见 release-version.mjs 与 docs/install.md「预发布版本」。
 //
 // 选项：
 //   --base <X.Y.Z>   dev 专用：指定基线

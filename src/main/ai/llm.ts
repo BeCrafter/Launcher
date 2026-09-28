@@ -1,4 +1,4 @@
-// LlmClient 防腐层:**本文件是全仓唯一 import pi-ai 的地方**(ai-capability.md「防腐层」)
+// LlmClient 防腐层:**本文件是全仓唯一 import pi-ai 的地方**(防腐层)
 //
 // 对外只暴露三件事:① 把设置解析成一个可用的模型 ② 给出 pi-agent-core 要的 streamFn ③ 真连一次验活。
 // 换库/升 pi 时只改这里。schema 走 typebox(pi 的原生格式),不为工具定义再引一套 zod。

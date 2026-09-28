@@ -1,4 +1,3 @@
-// ported-from: docs/demo/index.html #dft-status + populateDrawerDefaults @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 状态 tab(demo #dft-status:stat 卡片 + CPU/内存条 + 元信息 chips + 路径信息组;数据 = readStatus)
 // 2026-09-18:路径信息组改用共享 CfgGroup(原手写折叠头无 onClick,是假折叠);
 //            删除与顶栏副标题重复的 Scope 行、恒量的「管理方式」行

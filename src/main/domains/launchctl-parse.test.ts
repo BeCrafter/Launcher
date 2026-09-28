@@ -56,25 +56,25 @@ describe('parsePrintDisabled', () => {
 })
 
 describe('parseLaunchctlPrint', () => {
-  const hermes = `gui/501/ai.hermes.gateway = {
+  const sample = `gui/501/com.example.demo = {
 \tactive count = 1
-\tpath = /Users/tester/Library/LaunchAgents/ai.hermes.gateway.plist
+\tpath = /Users/tester/Library/LaunchAgents/com.example.demo.plist
 \ttype = LaunchAgent
 \tstate = running
 
-\tprogram = /Users/tester/.hermes/hermes-agent/venv/bin/python
+\tprogram = /Users/tester/.venv/bin/python
 \targuments = {
-\t\t/Users/tester/.hermes/hermes-agent/venv/bin/python
+\t\t/Users/tester/.venv/bin/python
 \t\t-m
-\t\thermes_cli.main
+\t\tapp.main
 \t}
 
-\tworking directory = /Users/tester/.hermes
-\tstdout path = /Users/tester/.hermes/logs/gateway.log
-\tstderr path = /Users/tester/.hermes/logs/gateway.error.log
+\tworking directory = /Users/tester
+\tstdout path = /Users/tester/logs/app.log
+\tstderr path = /Users/tester/logs/app.error.log
 \tenvironment = {
-\t\tVIRTUAL_ENV => /Users/tester/.hermes/hermes-agent/venv
-\t\tHERMES_HOME => /Users/tester/.hermes
+\t\tVIRTUAL_ENV => /Users/tester/.venv
+\t\tAPP_HOME => /Users/tester
 \t}
 
 \truns = 3
@@ -83,15 +83,15 @@ describe('parseLaunchctlPrint', () => {
 }`
 
   it('字段行 + arguments/environment 块解析', () => {
-    const info = parseLaunchctlPrint(hermes)
+    const info = parseLaunchctlPrint(sample)
     expect(info.found).toBe(true)
     expect(info.state).toBe('running')
-    expect(info.path).toBe('/Users/tester/Library/LaunchAgents/ai.hermes.gateway.plist')
+    expect(info.path).toBe('/Users/tester/Library/LaunchAgents/com.example.demo.plist')
     expect(info.program).toContain('venv/bin/python')
-    expect(info.arguments).toEqual(['/Users/tester/.hermes/hermes-agent/venv/bin/python', '-m', 'hermes_cli.main'])
-    expect(info.workingDirectory).toBe('/Users/tester/.hermes')
-    expect(info.stdoutPath).toBe('/Users/tester/.hermes/logs/gateway.log')
-    expect(info.environment['HERMES_HOME']).toBe('/Users/tester/.hermes')
+    expect(info.arguments).toEqual(['/Users/tester/.venv/bin/python', '-m', 'app.main'])
+    expect(info.workingDirectory).toBe('/Users/tester')
+    expect(info.stdoutPath).toBe('/Users/tester/logs/app.log')
+    expect(info.environment['APP_HOME']).toBe('/Users/tester')
     expect(info.runs).toBe(3)
     expect(info.pid).toBe(4242)
     expect(info.lastExitCode).toBeNull() // (never exited)

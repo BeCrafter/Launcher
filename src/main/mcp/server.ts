@@ -1,4 +1,4 @@
-// Launcher MCP 服务(内置聊天与外部 Agent 共用同一份 ToolRegistry —— ai-capability.md「单一工具源」)
+// Launcher MCP 服务(内置聊天与外部 Agent 共用同一份 ToolRegistry —— 单一工具源)
 //
 // 传输有两种形态,是「用哪套」而不是「切到哪套」(见 demo 的接入弹窗):
 //  - stdio:外部 Agent 按需拉起 launcher-mcp 子进程,不要求本应用在跑;

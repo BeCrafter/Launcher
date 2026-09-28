@@ -288,7 +288,7 @@ shasum -a 256 ~/Downloads/Launcher-0.1.4-arm64.zip
 ## 附：三条通道共用的安装契约
 
 `scripts/install.sh`（bash）与 `packaging/npm/cli.mjs`（Node）是同一套逻辑的两份实现，
-以下不变式**改任一侧都要同步另一侧**（完整设计见 [`design/distribution.md`](design/distribution.md)）：
+以下不变式**改任一侧都要同步另一侧**（跨文件断言在 `packaging/npm/contract.test.mjs`）：
 
 | 不变式 | 值 |
 |---|---|

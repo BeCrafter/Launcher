@@ -1,4 +1,3 @@
-// ported-from: docs/demo/js/drawer.js addArgTo/addEnvTo/addWatchTo @ 06ff9ba — demo UI 基线(docs/design/demo-react-migration-map.md)
 // 多值行编辑(收口 demo addArgTo/addEnvTo/addWatchTo/delMvRow 三处同构)
 // 行 markup 与内联样式逐字保留(demo 中这些行由 JS createElement 生成)
 // 2026-09-18:Arguments 与 WatchPaths 曾各写一份逐行同构的实现 → 收口为 StringList(仅 idx 符号/占位/按钮文案不同)
