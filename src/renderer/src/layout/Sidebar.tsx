@@ -6,8 +6,7 @@ import { MODULES, SIDEBAR_MODULES } from '../lib/modules'
 import { useUiStore } from '../state/ui-store'
 import { useSettingsStore } from '../state/settings-store'
 import { toggleSidebarCollapse } from '../hooks/useSidebarLayout'
-import { HELP_URL } from '@shared/constants'
-import { openExternal, showToast } from '../lib/utils'
+import { showToast } from '../lib/utils'
 
 // demo 侧边栏图标(nav markup 硬编码完整 class;crontab 为 fa-regular)
 const NAV_ICONS: Record<string, string> = {
@@ -24,6 +23,7 @@ export function Sidebar(): React.JSX.Element {
   const t = useT()
   const module = useUiStore((s) => s.module)
   const switchModule = useUiStore((s) => s.switchModule)
+  const openOverlay = useUiStore((s) => s.openOverlay)
   const collapsed = useSettingsStore((s) => s.settings?.sidebarCollapsed ?? false)
 
   const onToggle = (): void => {
@@ -67,7 +67,7 @@ export function Sidebar(): React.JSX.Element {
       <div className="sidebar-footer">
         <button
           className="sidebar-footer-btn"
-          onClick={() => openExternal(HELP_URL)}
+          onClick={() => openOverlay('helpModal')}
           title={t('nav.helpOpen')}
         >
           <i className="fa-regular fa-circle-question" />

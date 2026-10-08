@@ -617,6 +617,13 @@ body.light-theme .skeleton-row {
   margin-top: 6px;
 }
 
+/* 分隔线(markdown `---`):此前渲染器不认,会退化成一段文字 */
+.md-hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 14px 0;
+}
+
 .md-h {
   font-weight: 700;
   color: var(--text);

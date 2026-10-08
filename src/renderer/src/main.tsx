@@ -14,6 +14,7 @@ import './styles/settings.css'
 import './styles/drawer.css'
 import './styles/ai.css'
 import './styles/app-chrome.css'
+import './styles/help.css'
 import App from './App'
 import { AppErrorBoundary } from './boot/ErrorBoundary'
 

@@ -1,7 +1,7 @@
 # Launcher 使用帮助
 
 这里是**使用**帮助：某个按钮是干什么的、为什么改了没生效、状态为什么长这样。
-安装 / 升级 / 卸载见 [docs/install.md](docs/install.md)，项目概览见 [README](README.md)。
+安装 / 升级 / 卸载见 [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md)，项目概览见 [README](https://github.com/BeCrafter/Launcher/blob/main/README.md)。
 
 > 应用内也有入口：左下角 **帮助** 按钮会打开这一页。
 
@@ -256,7 +256,7 @@
 会。任务归 `launchd` / `cron` 管，应用只是它们的界面。
 
 **Q：我卸载应用，任务会没吗？**
-不会。卸载不会删除你的 plist 与 crontab 条目（清理项见 [docs/install.md](docs/install.md#卸载)）。
+不会。卸载不会删除你的 plist 与 crontab 条目（清理项见 [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md#卸载)）。
 
 **Q：怎么把日志贴给别人排查？**
 Agent：抽屉 → **日志** 标签页 → 导出（或直接给 `StandardOutPath` 的文件）。
@@ -303,8 +303,8 @@ Agent：抽屉 → **日志** 标签页 → 导出（或直接给 `StandardOutPa
 
 ## 12. 还没解决？
 
-1. 先看上面「常见问题」，以及安装相关问题 → [docs/install.md](docs/install.md)（含「已损坏」、架构、升级通道等）
-2. 打包与签名机制 → [docs/install.md](docs/install.md) 的「为什么会提示已损坏」一节
+1. 先看上面「常见问题」，以及安装相关问题 → [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md)（含「已损坏」、架构、升级通道等）
+2. 打包与签名机制 → [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md) 的「为什么会提示已损坏」一节
 3. 提 Issue 时请附上：**应用版本**（设置 → 关于与诊断）、macOS 版本、任务名 / 端口号、相关 plist 或 `crontab -l` 的那一行、以及日志原文 —— 有了这些基本能一次定位
 
 → [提交 Issue](https://github.com/BeCrafter/Launcher/issues)
