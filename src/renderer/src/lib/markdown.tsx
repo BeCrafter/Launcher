@@ -3,8 +3,11 @@
 //
 // 安全策略:产 React 节点、**绝不用 dangerouslySetInnerHTML**——React 默认把字符串当文本转义,
 // 因此输入里的 HTML 天然 inert;不需要也不允许「先转义再拼 HTML」的那条路。
-// 支持面刻意收窄:围栏代码块 / 行内代码 / 粗体 / 标题 #~#### / 无序有序列表 / 引用块 / 链接;
+// 支持面刻意收窄:围栏代码块 / 行内代码 / 粗体 / 标题 #~#### / 无序有序列表 / 引用块 / 链接 / 表格 / 分隔线;
 // 其余一律按纯文本段落透出。链接统一走 openExternal(main 侧 https? 白名单),不渲染裸 URL。
+//
+// `anchors` 选项:开启后标题带 GitHub 风格 id、`#foo` 链接改为应用内滚动 —— 帮助页(内嵌
+// 仓库里的 Help.md / docs/install.md)需要它;AI 消息渲染不开,保持原行为。
 
 import type { ReactNode } from 'react'
 import { openExternal } from './utils'
@@ -30,7 +33,7 @@ function parseInline(src: string, noBold = false): Inline[] {
   return out
 }
 
-function renderInline(parts: Inline[], keyBase: string): ReactNode[] {
+function renderInline(parts: Inline[], keyBase: string, anchors = false): ReactNode[] {
   return parts.map((p, i) => {
     const key = `${keyBase}-${i}`
     if (typeof p === 'string') return p
@@ -42,8 +45,24 @@ function renderInline(parts: Inline[], keyBase: string): ReactNode[] {
       )
     if ('bold' in p)
       return (
-        <strong key={key}>{renderInline(p.bold, key)}</strong>
+        <strong key={key}>{renderInline(p.bold, key, anchors)}</strong>
       )
+    // 应用内锚点(帮助页的目录跳转):滚动到同文档内的标题,不走外链
+    if (anchors && p.url.startsWith('#')) {
+      return (
+        <a
+          key={key}
+          className="md-link md-anchor"
+          href={p.url}
+          onClick={(e) => {
+            e.preventDefault()
+            document.getElementById(p.url.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }}
+        >
+          {p.linkText}
+        </a>
+      )
+    }
     return (
       <a
         key={key}
@@ -65,9 +84,39 @@ const FENCE_RE = /^```(\w*)/
 const HEAD_RE = /^(#{1,4})\s+(.*)$/
 const UL_RE = /^[-*]\s+(.*)$/
 const OL_RE = /^\d+[.)]\s+(.*)$/
+/** 分隔线:三个以上 - / * / _(独占一行,允许前后空白) */
+const HR_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/
+
+/**
+ * GitHub 风格的标题锚点。
+ * 与 Help.md 里手写的目录链接(如 `#1-四个页面各管什么`)对齐:小写 → 去标点 → 空格转连字符。
+ */
+export function slugifyHeading(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+    .trim()
+    .replace(/\s+/g, '-')
+}
+
+/** 抽取 `##` 标题(帮助页左栏目录用;不解析标题里的行内标记) */
+export function extractHeadings(src: string): { text: string; id: string }[] {
+  return src
+    .split('\n')
+    .filter((l) => /^##\s+/.test(l))
+    .map((l) => {
+      const text = l.replace(/^##\s+/, '').trim()
+      return { text, id: slugifyHeading(text) }
+    })
+}
 
 /** 块级解析:行扫描;未识别的连续行合为一段(段内保留换行,交由 pre-wrap 展示) */
-export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
+export function renderMarkdown(
+  src: string,
+  keyPrefix = 'md',
+  opts: { anchors?: boolean } = {}
+): ReactNode[] {
+  const anchors = opts.anchors === true
   const lines = src.split('\n')
   const out: ReactNode[] = []
   let i = 0
@@ -92,12 +141,20 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
       continue
     }
 
+    // 分隔线(必须在表格判断之前:`---` 单独一行是 hr,不是表格分隔行)
+    if (HR_RE.test(line)) {
+      out.push(<hr className="md-hr" key={key()} />)
+      i++
+      continue
+    }
+
     const head = line.match(HEAD_RE)
     if (head) {
       const level = head[1].length
+      const id = anchors ? slugifyHeading(head[2]) : undefined
       out.push(
-        <div className={`md-h md-h${level}`} key={key()}>
-          {renderInline(parseInline(head[2]), key())}
+        <div className={`md-h md-h${level}`} id={id} key={key()}>
+          {renderInline(parseInline(head[2]), key(), anchors)}
         </div>
       )
       i++
@@ -115,7 +172,7 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
       out.push(
         <ul className="md-list" key={key()}>
           {items.map((it, n) => (
-            <li key={n}>{renderInline(parseInline(it), `${keyPrefix}-ul${k}-${n}`)}</li>
+            <li key={n}>{renderInline(parseInline(it), `${keyPrefix}-ul${k}-${n}`, anchors)}</li>
           ))}
         </ul>
       )
@@ -133,7 +190,7 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
       out.push(
         <ol className="md-list" key={key()}>
           {items.map((it, n) => (
-            <li key={n}>{renderInline(parseInline(it), `${keyPrefix}-ol${k}-${n}`)}</li>
+            <li key={n}>{renderInline(parseInline(it), `${keyPrefix}-ol${k}-${n}`, anchors)}</li>
           ))}
         </ol>
       )
@@ -148,7 +205,7 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
       }
       out.push(
         <blockquote className="md-quote" key={key()}>
-          {renderInline(parseInline(body.join('\n')), key())}
+          {renderInline(parseInline(body.join('\n')), key(), anchors)}
         </blockquote>
       )
       continue
@@ -172,7 +229,7 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
             <thead>
               <tr>
                 {header.map((h, n) => (
-                  <th key={n}>{renderInline(parseInline(h), `${keyPrefix}-th${n}`)}</th>
+                  <th key={n}>{renderInline(parseInline(h), `${keyPrefix}-th${n}`, anchors)}</th>
                 ))}
               </tr>
             </thead>
@@ -180,7 +237,7 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
               {rows.map((r, rn) => (
                 <tr key={rn}>
                   {r.map((c, cn) => (
-                    <td key={cn}>{renderInline(parseInline(c), `${keyPrefix}-td${rn}-${cn}`)}</td>
+                    <td key={cn}>{renderInline(parseInline(c), `${keyPrefix}-td${rn}-${cn}`, anchors)}</td>
                   ))}
                 </tr>
               ))}
@@ -197,7 +254,7 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
     while (i < lines.length && lines[i].trim() !== '' && !isBlockStart(lines[i], lines[i + 1])) para.push(lines[i++])
     out.push(
       <p className="md-p" key={key()}>
-        {renderInline(parseInline(para.join('\n')), key())}
+        {renderInline(parseInline(para.join('\n')), key(), anchors)}
       </p>
     )
   }
@@ -207,6 +264,7 @@ export function renderMarkdown(src: string, keyPrefix = 'md'): ReactNode[] {
 function isBlockStart(line: string, next?: string): boolean {
   return (
     FENCE_RE.test(line) ||
+    HR_RE.test(line) ||
     HEAD_RE.test(line) ||
     UL_RE.test(line) ||
     OL_RE.test(line) ||
@@ -223,10 +281,14 @@ function isTableSep(line: string): boolean {
   return /^\s*\|[\s:|-]+\|\s*$/.test(line) && line.includes('-')
 }
 function splitRow(line: string): string[] {
-  return line
-    .trim()
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((c) => c.trim())
+  return (
+    line
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      // 单元格里的字面竖线写作 `\|`(如 `curl ... \| bash`)—— 不能当分隔符,
+      // 否则该行从那里裂开、后面所有列错位(install.md 的表头行就是这种)
+      .split(/(?<!\\)\|/)
+      .map((c) => c.trim().replace(/\\\|/g, '|'))
+  )
 }

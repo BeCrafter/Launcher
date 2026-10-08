@@ -1,0 +1,223 @@
+/* 内嵌帮助浮层(应用新增,非 demo 移植)。
+   复用 base.css 的 .modal-mask/.modal-box 过渡契约,只补尺寸与长文排版。
+   正文由 lib/markdown.tsx 以 anchors 模式渲染 —— 这里的 .md-* 覆盖**只作用于 .help-content 内**,
+   AI 消息那边保持原有的紧凑排版不受影响。 */
+
+.help-box {
+  width: 880px;
+  max-width: calc(100vw - 48px);
+  height: 84vh;
+  max-height: calc(100vh - 64px);
+}
+
+.help-hd {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.help-hd > i {
+  color: var(--accent2);
+  font-size: 14px;
+}
+
+.help-hd-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.help-tabs {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.help-tab {
+  padding: 4px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.help-tab:hover {
+  color: var(--text);
+  border-color: var(--border2);
+}
+
+.help-tab.active {
+  color: var(--accent2);
+  border-color: var(--accent);
+  background: var(--wash-accent);
+}
+
+.help-close {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-left: 4px;
+}
+
+.help-close:hover {
+  background: var(--wash-red);
+  color: var(--red);
+  border-color: var(--red);
+}
+
+/* ── 两栏:左固定目录 + 右正文 ── */
+
+.help-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.help-toc {
+  width: 210px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding: 12px 8px 16px 14px;
+  border-right: 1px solid var(--border);
+}
+
+.help-toc-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 5px 9px;
+  margin-bottom: 1px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.help-toc-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.help-toc-item.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+  font-weight: 600;
+}
+
+.help-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 26px 32px;
+  /* 刻意不写 scroll-behavior: smooth —— 本环境程序化平滑滚动不工作,
+     写了只会让 scrollTop 赋值变成异步、读数与连点都不可靠 */
+}
+
+/* ── 长文排版:比 AI 消息宽松(帮助是阅读,不是聊天流) ── */
+
+.help-content .md-p {
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--text);
+}
+
+.help-content .md-p + .md-p {
+  margin-top: 10px;
+}
+
+.help-content .md-h {
+  margin: 22px 0 8px;
+  line-height: 1.4;
+}
+
+/* 首个标题贴着顶部,不要多出一截空白 */
+.help-content > .md-h:first-child {
+  margin-top: 0;
+}
+
+.help-content .md-h1 { font-size: 19px; }
+.help-content .md-h2 { font-size: 15.5px; }
+.help-content .md-h3 { font-size: 13.5px; }
+.help-content .md-h4 { font-size: 13px; }
+
+/* 锚点跳转的落点留一点余量,别顶到边框上 */
+.help-content .md-h[id] {
+  scroll-margin-top: 12px;
+}
+
+.help-content .md-list {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.help-content .md-list li {
+  font-size: 13px;
+  line-height: 1.8;
+  margin: 3px 0;
+}
+
+.help-content .md-quote {
+  font-size: 12.5px;
+  line-height: 1.75;
+}
+
+.help-content .md-code {
+  font-size: 11.5px;
+  max-height: none;
+}
+
+.help-content .md-table th,
+.help-content .md-table td {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* 文档内的目录跳转:应用内锚点,不带外链图标 */
+.help-content .md-anchor {
+  color: var(--accent2);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+
+.help-content .md-anchor:hover {
+  border-bottom-color: var(--accent2);
+}
+
+/* 窄窗口:目录栏收起(正文优先),标题栏的 tab 收紧 */
+@media (max-width: 760px) {
+  .help-box {
+    width: calc(100vw - 24px);
+    height: 88vh;
+  }
+
+  .help-toc {
+    display: none;
+  }
+
+  .help-content {
+    padding: 16px 16px 24px;
+  }
+
+  .help-tab {
+    padding: 3px 8px;
+    font-size: 11.5px;
+  }
+}

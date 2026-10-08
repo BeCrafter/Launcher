@@ -12,6 +12,7 @@ export type OverlayId =
   | 'newCronModal'
   | 'elevationModal'
   | 'dangerModal'
+  | 'helpModal' // 内嵌帮助(Help.md / docs/install.md,离线可读)
 
 export interface ToastModel {
   msg: string

@@ -21,7 +21,10 @@ export default defineConfig({
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),
-        '@shared': resolve('src/shared')
+        '@shared': resolve('src/shared'),
+        // 仓库根:帮助文档(Help.md / docs/install.md)以 `?raw` 内联进产物 —— 应用内离线可读,
+        // 且与 GitHub 上的是同一份文件,不会分叉
+        '@root': resolve('.')
       }
     },
     plugins: [react()]

@@ -28,7 +28,7 @@ curl -fsSL https://repo.iskill.site/launcher/install.sh | bash
 
 > 脚本托管在 R2（与产物、版本清单同域），地址是 `https://repo.iskill.site/launcher/install.sh`；
 > 改动 `scripts/install.sh` 推到 dev 会由 CI 自动同步上去。
-> 万一 CDN 不可达，可用备用入口 `https://raw.githubusercontent.com/BeCrafter/Launcher/dev/scripts/install.sh`（内容相同）。
+> 万一 CDN 不可达，可用备用入口 `https://raw.githubusercontent.com/BeCrafter/Launcher/main/scripts/install.sh`（内容相同）。
 
 它会：读 CDN 上的版本清单 → 按 `uname -m` 选架构 → 下载 `Launcher-latest-<架构>.zip` →
 **用 `ditto -x -k` 解压**（`unzip` 会丢符号链接与扩展属性、破坏 `.app` 签名）→ 落到 `/Applications`

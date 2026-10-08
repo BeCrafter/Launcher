@@ -151,7 +151,7 @@ src/
 ├── renderer/src/  # React 19 界面（views / drawer / settings / state / i18n / styles）
 └── shared/        # 主进程与渲染层共用：设置 schema、领域类型、IPC 契约
 
-Help.md                     # 使用帮助（应用内左下角「帮助」按钮指向它）
+Help.md / Help.en.md        # 使用帮助（中/英；已内嵌进应用，离线可读）
 
 docs/
 └── install.md              # 安装指南（本文件的延伸）
@@ -159,7 +159,7 @@ docs/
 
 ## 文档
 
-- [使用帮助](Help.md) —— 四个页面各管什么、常见任务、FAQ、术语对照（**应用内左下角「帮助」按钮**指向它）
+- [使用帮助](Help.md) · [User Guide](Help.en.md) —— 四个页面各管什么、常见任务、FAQ、术语对照（**已内嵌进应用**，左下角「帮助」按钮离线可读）
 - [安装指南](docs/install.md) —— 三条通道逐个枚举、版本发现、升级卸载、故障排查
 
 ## 许可证
