@@ -1,4 +1,4 @@
-// 内嵌帮助浮层:把仓库里的 Help.md / docs/install.md 经 Vite `?raw` **内联进产物**。
+// 内嵌帮助浮层:把仓库里的 docs/help.md / docs/install.md 经 Vite `?raw` **内联进产物**。
 //
 // 为什么不是外链:此前是 `openExternal(blob/main/Help.md)` —— 断网、GitHub 不可达、
 // 或仓库还没推上去时,用户点「帮助」什么都看不到。内联后离线可读。
@@ -10,9 +10,9 @@
 //
 // 语言跟随 `settings.language`:切换设置后浮层内容即时切换,无需重开。
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import guideZh from '@root/Help.md?raw'
-import guideEn from '@root/Help.en.md?raw'
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import guideZh from '@root/docs/help.md?raw'
+import guideEn from '@root/docs/help.en.md?raw'
 import installZh from '@root/docs/install.md?raw'
 import installEn from '@root/docs/install.en.md?raw'
 import type { Language } from '@shared/settings'
@@ -105,6 +105,14 @@ export function HelpModal(): React.JSX.Element | null {
     setActiveId(cur)
   }
 
+  // 正文里的锚点链接(如 `§10`)由渲染器负责滚动 —— 但那是**程序化滚动**,
+  // 本环境不派发 scroll 事件,onScroll 不会跑,左栏高亮就会停在原地。
+  // 这里补一次:点击后直接把高亮设到目标章节(滚动本身仍归渲染器)。
+  const onContentClick = (e: MouseEvent): void => {
+    const href = (e.target as HTMLElement).closest('a.md-anchor')?.getAttribute('href') ?? ''
+    if (href.startsWith('#')) setActiveId(href.slice(1))
+  }
+
   return (
     <Modal id="helpModal" open={open} onClose={() => closeOverlay('helpModal')}>
       <div className="modal-box help-box">
@@ -147,7 +155,13 @@ export function HelpModal(): React.JSX.Element | null {
             ))}
           </nav>
           {/* key 带语言与文档:切换时重建正文,避免旧内容的锚点 id 残留 */}
-          <div className="help-content" ref={contentRef} onScroll={onScroll} key={`${language}-${doc}`}>
+          <div
+            className="help-content"
+            ref={contentRef}
+            onScroll={onScroll}
+            onClick={onContentClick}
+            key={`${language}-${doc}`}
+          >
             {renderMarkdown(src, 'help', { anchors: true })}
           </div>
         </div>
