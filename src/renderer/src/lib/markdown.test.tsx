@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { extractHeadings, renderMarkdown, slugifyHeading } from './markdown'
 
-describe('slugifyHeading(与 Help.md 手写的锚点对齐)', () => {
+describe('slugifyHeading(与帮助文档手写的锚点对齐)', () => {
   it('中文标题:去序号点、空格转连字符', () => {
     expect(slugifyHeading('1. 四个页面各管什么')).toBe('1-四个页面各管什么')
   })

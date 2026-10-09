@@ -7,7 +7,7 @@
 // 其余一律按纯文本段落透出。链接统一走 openExternal(main 侧 https? 白名单),不渲染裸 URL。
 //
 // `anchors` 选项:开启后标题带 GitHub 风格 id、`#foo` 链接改为应用内滚动 —— 帮助页(内嵌
-// 仓库里的 Help.md / docs/install.md)需要它;AI 消息渲染不开,保持原行为。
+// 仓库里的 docs/help.md / docs/install.md)需要它;AI 消息渲染不开,保持原行为。
 
 import type { ReactNode } from 'react'
 import { openExternal } from './utils'
@@ -47,7 +47,7 @@ function renderInline(parts: Inline[], keyBase: string, anchors = false): ReactN
       return (
         <strong key={key}>{renderInline(p.bold, key, anchors)}</strong>
       )
-    // 应用内锚点(帮助页的目录跳转):滚动到同文档内的标题,不走外链
+    // 应用内锚点(帮助页正文里的 `§10` 这类交叉引用):滚动到同文档内的标题,不走外链
     if (anchors && p.url.startsWith('#')) {
       return (
         <a
@@ -56,7 +56,11 @@ function renderInline(parts: Inline[], keyBase: string, anchors = false): ReactN
           href={p.url}
           onClick={(e) => {
             e.preventDefault()
-            document.getElementById(p.url.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            // ⚠️ 必须 instant:本环境(Electron 44)程序化平滑滚动不工作(见 HelpModal 的说明)。
+            // 落点余量由 CSS 的 `scroll-margin-top` 给,不在这里减偏移。
+            document
+              .getElementById(p.url.slice(1))
+              ?.scrollIntoView({ behavior: 'instant', block: 'start' })
           }}
         >
           {p.linkText}
@@ -89,7 +93,7 @@ const HR_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/
 
 /**
  * GitHub 风格的标题锚点。
- * 与 Help.md 里手写的目录链接(如 `#1-四个页面各管什么`)对齐:小写 → 去标点 → 空格转连字符。
+ * 与帮助文档里手写的目录链接(如 `#1-四个页面各管什么`)对齐:小写 → 去标点 → 空格转连字符。
  */
 export function slugifyHeading(text: string): string {
   return text
