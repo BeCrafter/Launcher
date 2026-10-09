@@ -105,7 +105,8 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   menubarOnly: true,
   trayVisible: true,
   dockVisible: true,
-  menubarBadge: true,
+  // 默认关:菜单栏图标本身已经占位,计数角标属于附加信息 —— 想要就在设置里打开
+  menubarBadge: false,
   fseventsActive: true,
   cmdTimeout: 5000,
   cronLogRetainDays: 3,

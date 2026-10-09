@@ -15,7 +15,8 @@ export function createTrayController(deps: {
 }): TrayController {
   let tray: Tray | null = null
   let count = 0
-  let badgeEnabled = true
+  // 初值与 DEFAULT_SETTINGS.menubarBadge 对齐(角标默认关);applier 启动时会用设置值刷新
+  let badgeEnabled = false
 
   // ⚠ 一律走门控:不能直接 show() —— 启动还没就绪时那会露出未绘制的窗口底色(浅色主题下就是白屏)
   const reveal = (): void => deps.revealWindow()
