@@ -75,6 +75,12 @@ export function NotesView(): React.JSX.Element {
   const [diagram, setDiagram] = useState<DiagramDialogTarget | null>(null)
   const [embedOpen, setEmbedOpen] = useState(false)
 
+  // 折叠只属于当前编辑会话:切换笔记或切换编辑/分栏/预览模式时清空,
+  // 但不改正文、不清空 CodeMirror history,所以 Cmd+Z 仍只对应用户编辑。
+  useEffect(() => {
+    editorRef.current?.resetFolds()
+  }, [draft?.id, viewMode])
+
   // ── 滚动同步 ──
   //
   // 两把锁记的是「我们自己刚把滚动条设成了多少」。滚动事件是异步派发的,

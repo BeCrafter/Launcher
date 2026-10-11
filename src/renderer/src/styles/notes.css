@@ -996,6 +996,124 @@
   pointer-events: none;
 }
 
+/* ── Markdown 区块操作 ──
+   gutter 与源码内容同高，不给 .cm-line 增加任何纵向空间；插入线用伪元素绘制，
+   所以悬停和拖拽都不会让光标位置、滚动同步或邻近行发生跳动。 */
+.note-editor-host .cm-foldGutter {
+  width: 18px;
+  color: var(--dim);
+}
+.note-editor-host .cm-foldGutter .cm-gutterElement {
+  width: 18px;
+  padding: 0;
+  text-align: center;
+}
+.note-editor-host .cm-foldGutter span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 100%;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10px;
+  opacity: 0;
+}
+.note-editor-host .cm-foldGutter .cm-gutterElement:hover span,
+.note-editor-host .cm-foldGutter .cm-gutterElement.cm-block-tool-active span {
+  opacity: 1;
+}
+.note-editor-host .cm-foldGutter span:hover {
+  color: var(--accent2);
+}
+.note-editor-host .cm-block-gutter {
+  width: 20px;
+  color: var(--dim);
+}
+.note-editor-host .cm-block-gutter .cm-gutterElement {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  padding: 0;
+}
+.note-editor-host .cm-block-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 100%;
+  border-radius: 4px;
+  color: var(--dim);
+  cursor: grab;
+  opacity: 0;
+  user-select: none;
+}
+.note-editor-host .cm-block-gutter .cm-gutterElement:hover .cm-block-handle,
+.note-editor-host .cm-block-gutter .cm-gutterElement.cm-block-tool-active .cm-block-handle,
+.note-editor-host .cm-block-dragging .cm-block-handle {
+  opacity: 1;
+}
+.note-editor-host .cm-block-handle i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  background: var(--surface3);
+  color: var(--muted);
+  font-size: 8.5px;
+  box-shadow: inset 0 0 0 1px var(--editor-bg);
+}
+.note-editor-host .cm-block-handle:hover i {
+  border-color: var(--accent2);
+  background: var(--wash-accent);
+  color: var(--accent2);
+  box-shadow: none;
+}
+.note-editor-host .cm-block-handle:active {
+  cursor: grabbing;
+}
+.note-editor-host .cm-line {
+  position: relative;
+}
+.note-editor-host .cm-line.cm-block-drag-source {
+  background: var(--wash-accent);
+  box-shadow: inset 3px 0 var(--accent2);
+  opacity: 0.68;
+}
+.note-editor-host .cm-line.cm-block-drag-target {
+  background: var(--hover);
+  box-shadow: inset 2px 0 var(--cyan);
+}
+.note-editor-host .cm-line.cm-block-drag-source.cm-block-drag-target {
+  box-shadow: inset 3px 0 var(--accent2);
+}
+
+.note-editor-host .cm-line.cm-block-drop-before::before,
+.note-editor-host .cm-line.cm-block-drop-after::after {
+  position: absolute;
+  right: 22px;
+  left: 22px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent2);
+  content: '';
+  pointer-events: none;
+  box-shadow: 0 0 6px var(--accent2);
+}
+.note-editor-host .cm-line.cm-block-drop-before::before {
+  top: -1px;
+}
+.note-editor-host .cm-line.cm-block-drop-after::after {
+  bottom: -1px;
+}
+.note-editor-host .cm-block-dragging .cm-content {
+  user-select: none;
+}
+
 /* ⚠ 必须覆盖 .notes-pane 的 display:flex —— 两者是同一个元素,而 flex item 会收缩到内容宽度,
    正文区因此不会撑满,代码块看起来只有一小条。预览是滚动容器,本来就该是块级。 */
 .notes-preview {
