@@ -23,7 +23,7 @@ import {
   keymap,
   placeholder as placeholderExt
 } from '@codemirror/view'
-import { indentUnit, syntaxHighlighting } from '@codemirror/language'
+import { indentUnit, syntaxHighlighting, unfoldAll } from '@codemirror/language'
 import { autocompletion } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
@@ -37,6 +37,14 @@ import { toggleTaskLine } from '../../lib/note-task'
 import { showToast } from '../../lib/utils'
 import { getCurrentLang, makeT } from '../../i18n'
 import { calloutCompletion, calloutMarks, syntaxMarks } from './editor-marks'
+import {
+  handleBlockDragEnd,
+  handleBlockDragOver,
+  handleBlockDrop,
+  isBlockDrag,
+  markdownBlockFolding,
+  markdownBlockGutter
+} from '../../lib/editor-blocks'
 
 const t = (): ((k: string) => string) => makeT(getCurrentLang())
 
@@ -62,6 +70,8 @@ export interface NoteEditorHandle {
   topLine(): number
   /** 滚到指定行;小数部分在行内插值,同步时不会一跳一跳 */
   scrollToLine(line: number): void
+  /** 清空当前会话的折叠状态(切换笔记/编辑模式时调用) */
+  resetFolds(): void
   /** 滚动容器的可滚动余量,同步时用来判断「还能不能滚」 */
   scrollMetrics(): { top: number; max: number }
   /**
@@ -105,7 +115,8 @@ const MD_THEME = EditorView.theme({
   '.cm-line': { padding: '0 22px' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent2)', borderLeftWidth: '2px' },
   '&.cm-focused': { outline: 'none' },
-  '.cm-gutters': { display: 'none' },
+  '.cm-gutters': { display: 'flex', backgroundColor: 'transparent', border: 'none' },
+  '.cm-gutter': { backgroundColor: 'transparent' },
   '.cm-activeLine': { backgroundColor: 'var(--wash-accent)' },
   '.cm-selectionLayer .cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
     { backgroundColor: 'var(--wash-accent)' },
@@ -268,6 +279,12 @@ export function NoteEditor({
         view.focus()
       },
 
+      resetFolds() {
+        const view = viewRef.current
+        if (!view) return
+        unfoldAll(view)
+      },
+
       topLine() {
         const view = viewRef.current
         if (!view) return 0
@@ -345,6 +362,8 @@ export function NoteEditor({
         doc: value,
         extensions: [
           MD_EXTENSIONS,
+          markdownBlockFolding(),
+          markdownBlockGutter(),
           indentUnit.of('  '),
           history(),
           drawSelection(),
@@ -359,6 +378,8 @@ export function NoteEditor({
             { key: 'Mod-k', run: (v) => { wrap(v, '[', '](https://)'); return true } }
           ]),
           EditorView.domEventHandlers({
+            dragover: (e, v) => handleBlockDragOver(v, e),
+            dragend: (e, v) => handleBlockDragEnd(v, e),
             paste: (e, v) => {
               const files = imagesOf(e.clipboardData)
               if (files.length === 0) return false // 普通文本粘贴照旧交给 CodeMirror
@@ -367,6 +388,7 @@ export function NoteEditor({
               return true
             },
             drop: (e, v) => {
+              if (isBlockDrag(v)) return handleBlockDrop(v, e)
               const files = imagesOf(e.dataTransfer)
               if (files.length === 0) return false
               e.preventDefault()

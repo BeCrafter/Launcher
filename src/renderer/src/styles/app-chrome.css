@@ -1115,7 +1115,7 @@ body.light-theme .skeleton-row {
   transition: box-shadow 0.15s ease;
 }
 
-/* AI 新会话顶部:语言来源提示(整条可点 → 设置 › 常规与外观) */
+/* AI 新会话顶部:语言来源提示(整条可点 → 设置 › 通用) */
 .ai-welcome-lang {
   display: inline-flex;
   align-items: center;

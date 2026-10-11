@@ -403,7 +403,7 @@ function AiThinking({ block, streaming }: { block: AiThinkingBlock; streaming: b
 
 /**
  * 新会话顶部提示:对话语言来自系统设置(用户要求 —— 否则用户不知道助手为什么说这种语言、
- * 也不知道去哪改)。做成可点的:直接跳到设置 › 常规与外观。
+ * 也不知道去哪改)。做成可点的:直接跳到设置 › 通用。
  */
 function WelcomeLangHint(): React.JSX.Element {
   const t = useT()

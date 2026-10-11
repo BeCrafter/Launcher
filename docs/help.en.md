@@ -34,7 +34,7 @@ Install / upgrade / uninstall live in [docs/install.md](https://github.com/BeCra
 | **Notebook** | Markdown notes about the three above, **linked to specific services** | plain `.md` files (your own folder) |
 | **AI assistant** | Ask about the three above in plain language, or have it make changes (with authorization) | The app's own tool layer (no mock data) |
 
-**Settings** at the bottom-left holds the app's own preferences (theme, language, timeouts, permissions); the last tab, "About & Diagnostics", shows the version and the update check.
+**Settings** at the bottom-left holds the app's own preferences (theme, language, timeouts, permissions); the last tab, "About", shows the version and the update check.
 
 ---
 
@@ -160,7 +160,7 @@ How the app detects and fixes it: a yellow **Needs escaping** warning appears on
 
 ## 6. Notebook
 
-One Markdown file per note, stored by default in `~/.config/launcher/notes/` (**Settings → Notes** lets you point it at an existing Obsidian vault).
+One Markdown file per note, stored by default in `~/.config/launcher/notes/` (**Settings → Notebook** lets you point it at an existing Obsidian vault).
 The files are plain `.md` with a frontmatter block — edit them with Obsidian, iCloud or git and the app will notice and reload.
 
 ### The three panes
@@ -553,7 +553,7 @@ The top of the dialog shows the real state of the PATH link (installed / not ins
 
 | Group | Key | What it does |
 |---|---|---|
-| **General & Appearance** | Theme | Dark / Light / Follow system |
+| **General** | Theme | Dark / Light / Follow system |
 | | Language | Simplified Chinese / English (takes effect immediately) |
 | | Launch at login | Adds this app itself to your login items (on by default) |
 | | Keep in menu bar when window closes | Closing the window doesn't quit; click the Dock or menu bar icon to bring it back |
@@ -564,11 +564,11 @@ The top of the dialog shows the real state of the PATH link (installed / not ins
 | | Scheduled task log retention | Log segments older than this are cleaned up automatically (3 days by default) |
 | **Plist editor** | New task label prefix | Default Label prefix when creating an Agent (`com.user.` by default) |
 | | XML indentation | Indentation used when saving/formatting plists (2 spaces / 4 spaces / Tab) |
-| **Permissions & elevation** | Quiet period | Don't ask again for this long after authorizing (aligned with macOS's ~5 minute authorization cache) |
+| **Security** | Quiet period | Don't ask again for this long after authorizing (aligned with macOS's ~5 minute authorization cache) |
 | | Confirm dangerous actions | When off, deletes and similar stop asking twice (on by default) |
 | **AI assistant** | Protocol / endpoint / key / model | See [§8](#8-ai-assistant) |
 | | Runtime options | Tool-call limit, streaming, request timeout; MCP permission mode (read-only / full) |
-| **About & Diagnostics** | Version / architecture / install source | The "install source" decides which upgrade command the update check gives you |
+| **About** | Version / architecture / install source | The "install source" decides which upgrade command the update check gives you |
 | **Login items** | — | Read-only explainer: how macOS login items relate to this app |
 
 ---
@@ -668,6 +668,6 @@ Only conversations you start go to the model endpoint you configured; the app it
 
 1. Check the FAQ above, and for install-related problems → [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md) (covers "damaged", architecture, upgrade channels, etc.)
 2. Packaging and signing → the "Why does it say damaged" section of [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md)
-3. When filing an issue, include: **app version** (Settings → About & Diagnostics), macOS version, task name / port number, the relevant plist or the `crontab -l` line, and the raw log — with those it's usually a one-shot diagnosis
+3. When filing an issue, include: **app version** (Settings → About), macOS version, task name / port number, the relevant plist or the `crontab -l` line, and the raw log — with those it's usually a one-shot diagnosis
 
 → [File an issue](https://github.com/BeCrafter/Launcher/issues)

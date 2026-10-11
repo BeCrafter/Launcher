@@ -40,7 +40,7 @@ describe('t / fmt', () => {
   })
 
   it('makeT 指定语言,不依赖模块级状态', () => {
-    expect(makeT('en-US')('module.crontab')).toBe('Crontab Tasks')
+    expect(makeT('en-US')('module.crontab')).toBe('Crontab')
     expect(makeT('zh-CN')('module.crontab')).toBe('定时任务')
   })
 
