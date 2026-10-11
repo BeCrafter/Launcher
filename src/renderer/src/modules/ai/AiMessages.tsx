@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useT, useFmt } from '../../hooks/useT'
 import { TagChip } from '../../components/ui/TagChip'
 import { renderMarkdown } from '../../lib/markdown'
+import { mentionIcon } from '../../lib/ai-mention-icon'
 import { getTs } from '../../lib/utils'
 import { isRunningHere, useAiStore } from '../../state/ai-store'
 import { useSettingsStore } from '../../state/settings-store'
@@ -57,9 +58,9 @@ function UserMsg({ msg, mi }: { msg: AiUserMessage; mi: number }): React.JSX.Ele
     <div className="ai-msg user" data-mi={mi}>
       <div className="ai-bubble">
         {(msg.mentions ?? []).map((m) => (
-          <span className="ai-chip-ref" key={m.key}>
-            <i className="fa-solid fa-at" />
-            {m.label}
+          <span className={`ai-chip-ref t-${m.type}`} key={m.key}>
+            <i className={`fa-solid ${mentionIcon(m.type)}`} />
+            {m.quote !== undefined ? `${m.label} · 片段` : m.label}
           </span>
         ))}
         {msg.blocks.map(

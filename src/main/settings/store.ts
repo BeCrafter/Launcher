@@ -4,9 +4,11 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { normalizeSettings, type LauncherSettings } from '../../shared/settings'
+import { LAUNCHER_CONFIG_DIR_SUFFIX } from '../../shared/constants'
 import type { SettingsPatch } from '../../shared/ipc'
 
-export const SETTINGS_DIR = join('.config', 'launcher')
+// 与笔记目录同源(shared/notes.ts 的 resolveNotesDir 也用这个常量拼默认路径)
+export const SETTINGS_DIR = LAUNCHER_CONFIG_DIR_SUFFIX
 export const SETTINGS_FILE = 'config.json'
 
 export function defaultConfigPath(home: string): string {

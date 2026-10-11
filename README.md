@@ -52,10 +52,32 @@ Launcher 把这三件事做成一个原生应用：**读的是真实系统状态
 - **服务覆写**：双击名字就地改名，或「配置」里改别名 / Host / 路径 —— Open / Copy 用完整 URL（键跨进程重启稳定）
 - **按需轮询**：只有停留在本页时才 3 秒一轮，离开即停；扫描失败时**保留上次结果并明确提示**，不会把列表清空成一片白
 
+### 📝 随心手记
+
+- **一笔记一个 `.md` 文件**（默认 `~/.config/launcher/notes/`，设置里可改，能直接指向已有的 Obsidian 库）——
+  文件是普通 Markdown + frontmatter，用 Obsidian / iCloud / git 改都行，应用会发现并重新载入
+- **关联到真实服务**：把笔记挂到某个 Launch Agent / 定时任务 / 端口服务，笔记顶部显示「Launch Agent · com.foo.bar」，点一下跳到那个服务；
+  反过来三个域的卡片菜单里都有「相关笔记」，按该服务筛选
+- 关联记的是**持久身份**：端口服务记「端口 + 程序名」而不是 PID —— **进程重启后关联不会失效**；
+  对象改过（作用域挪了、命令改了）显示成琥珀色可一键更新，真找不到了才显示「已失效」
+- **目录**：文件夹就是磁盘上的真实目录，层级与访达 / Obsidian 一致；可在此新建笔记、重命名、删除（连同笔记进废纸篓）；
+  **拖动即可换位置**（拖到目录上即移入，拖到空白处即移回根层）；每行悬停有置顶与删除；
+  搜索框右边那颗 **+** 建到当前选中的目录，列表末尾另有「新建笔记 / 新建文件夹」两个根层入口；
+  底部工具条有常用排版按钮与字数；
+笔记页不显示顶栏（操作都在左栏），整条高度让给正文；往目录里丢文件或整个 Obsidian 库都会被自动发现并刷新
+- 左列表 / 中编辑（CodeMirror 6）/ 右实时预览（三图标切换：分栏 / 编辑 / 预览）；标题按整条路径显示（`目录/` 与 `.md` 只读）；列表搜索**搜正文**，
+  列表只列名字、按最近更新排序，标签在搜索框里联动（输入命中标签的笔记排到最前并在行尾标出；没有命中就是普通搜索结果）
+- **置顶的笔记永远在列表最顶**，不随排序方式变化
+- 图片直接粘贴或拖入，存到 `assets/`；**预览不发任何网络请求**（外链图片只显示成可点的标签）
+- 任务清单 `- [ ]` 可在预览里勾选，**勾选会改源文件且 ⌘Z 可撤销**
+- **改标题即改文件名**（离开标题框时同步，重名自动加序号）
+- **绝不丢你的内容**：自动保存约 1 秒；外部改动与本地未保存同时发生时出横幅让你选，默认两边都不丢；
+  应用不认识的 frontmatter 键（`aliases` / `cssclasses` …）**原样保留、逐字节不重写**
+
 ### 🤖 AI 助手与 MCP
 
 - 对话式 Agent 页，内置引擎（Anthropic / OpenAI 兼容协议，Key 存系统钥匙串）
-- **14 个内置工具**（9 只读 + 5 写）与应用共用同一套领域服务：读的就是真实 launchctl / crontab / lsof
+- **19 个内置工具**（11 只读 + 8 写）与应用共用同一套领域服务：读的就是真实 launchctl / crontab / lsof
 - 工具调用在界面里逐步可见；**写操作必须经过授权卡确认**，并显示将要执行的命令
 - **可作为 MCP 服务端**供外部 Agent（Claude Code、Claude Desktop 等）挂载 —— 见下节
 
@@ -91,7 +113,7 @@ npx -y @becrafter/launcher
 
 ## 与 AI Agent 集成（MCP）
 
-应用内含一个 MCP stdio 入口 `launcher-mcp`，默认**只读**（9 个只读工具）；
+应用内含一个 MCP stdio 入口 `launcher-mcp`，默认**只读**（11 个只读工具）；
 在「AI 助手 → 接入 MCP」里点一次「安装到 PATH」，外部 Agent 就可以只用命令名挂载：
 
 ```bash
@@ -107,6 +129,7 @@ claude mcp add launcher -- launcher-mcp
 | 路径 | 内容 |
 |---|---|
 | `~/.config/launcher/config.json` | 全部设置 |
+| `~/.config/launcher/notes/` | 笔记（一笔记一个 `.md`，含 frontmatter；附件在 `notes/assets/`）。可在设置里改到任意目录 |
 | `~/Library/Application Support/becrafter-launcher/` | AI 会话（`ai-sessions.json`）与密钥文件（`ai-keys.json`，经系统钥匙串加密；明文 Key 不落磁盘） |
 | `~/Library/Logs/BeCrafter-Launcher/cron/` | 定时任务日志（按小时分段，默认保留 3 天） |
 
@@ -141,15 +164,14 @@ npm run build:app:release # 出发布产物（zip + dmg）
 ```
 src/
 ├── main/          # 主进程（唯一事实来源）
-│   ├── services/  # 执行层：shell-runner / launchctl / plist / crontab / lsof 发现 / docker / 提权
-│   ├── domains/   # 纯函数领域层：launchctl 解析 / plist XML 与补丁 / 表单模型 / crontab / lsof 解析
-│   ├── stores/    # 三域 store（Agent / Cron / Service）
+│   ├── services/  # 执行层：shell-runner / launchctl / plist / crontab / lsof 发现 / docker / 提权 / 笔记服务与附件协议
+│   ├── domains/   # 纯函数领域层：launchctl 解析 / plist XML 与补丁 / 表单模型 / crontab / lsof 解析 / frontmatter
 │   ├── settings/  # 设置存储（原子写）+ 按域副作用 appliers
 │   ├── ai/        # AI 引擎、工具注册表、会话与会话存储
 │   └── mcp/       # MCP stdio 入口 + HTTP 环回端点
 ├── preload/       # contextBridge 白名单 API
-├── renderer/src/  # React 19 界面（views / drawer / settings / state / i18n / styles）
-└── shared/        # 主进程与渲染层共用：设置 schema、领域类型、IPC 契约
+├── renderer/src/  # React 19 界面（modules / layout / state / i18n / styles）
+└── shared/        # 主进程与渲染层共用：设置 schema、领域类型、IPC 契约、笔记类型与身份键
 
 docs/
 ├── help.md / help.en.md    # 使用帮助（中/英；已内嵌进应用，离线可读）
@@ -158,7 +180,7 @@ docs/
 
 ## 文档
 
-- [使用帮助](docs/help.md) · [User Guide](docs/help.en.md) —— 四个页面各管什么、常见任务、FAQ、术语对照（**已内嵌进应用**，左下角「帮助」按钮离线可读）
+- [使用帮助](docs/help.md) · [User Guide](docs/help.en.md) —— 五个页面各管什么、常见任务、FAQ、术语对照（**已内嵌进应用**，左下角「帮助」按钮离线可读）
 - [安装指南](docs/install.md) —— 三条通道逐个枚举、版本发现、升级卸载、故障排查
 
 ## 许可证

@@ -16,9 +16,15 @@ interface ServicesState {
   error: string | null
   filter: SvcFilter
   loaded: boolean
+  /**
+   * 「跳转到这里」的定位键(笔记关联点击时设置)。
+   * 用 cardKey 而不是 svc.id:后者是 pid:port,3s 轮询一刷新就变,定位会落空。
+   */
+  focusKey: string | null
   load(): Promise<void>
   applyPayload(p: ServicesListPayload): void
   setFilter(f: SvcFilter): void
+  setFocusKey(key: string | null): void
   setPolling(enabled: boolean): Promise<void>
   setActive(active: boolean): Promise<void>
 }
@@ -33,6 +39,7 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
   error: null,
   filter: 'all',
   loaded: false,
+  focusKey: null,
 
   async load() {
     const p = await dataSource().services.list()
@@ -42,6 +49,10 @@ export const useServicesStore = create<ServicesState>((set, get) => ({
 
   applyPayload(p) {
     set({ ...p, loaded: true })
+  },
+
+  setFocusKey(key) {
+    set({ focusKey: key })
   },
 
   setFilter(f) {

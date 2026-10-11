@@ -32,6 +32,18 @@ import type {
 } from '@shared/ipc'
 import type { AiEngineState, AiMessage, AiRunEvent, AiSession, AiSkillInfo } from '@shared/ai'
 import type { AiProviderId } from '@shared/settings'
+import type {
+  Note,
+  NoteCreateInput,
+  NoteMeta,
+  NoteRemoveInput,
+  NoteRenameInput,
+  NoteSaveAssetInput,
+  NoteSaveAssetResult,
+  NoteSaveInput,
+  NoteSaveOutcome,
+  NotesListPayload
+} from '@shared/notes'
 
 /** 意图动作(用户语义):顺序逻辑在 main 内部完成 */
 export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
@@ -101,7 +113,35 @@ export interface DataSource {
   agents: AgentRepository
   crons: CronRepository
   services: ServiceRepository
+  notes: NotesRepository
   ai: AiRepository
+}
+
+/**
+ * 笔记仓储(阶段 5:一笔记一 .md 文件,逻辑全在 main)。
+ * 写操作一律带 expectedRevision 做 CAS:冲突回 conflict 而不是静默覆盖 —— 笔记文件是用户
+ * 会在 Obsidian / iCloud / git 里同时改的,这是这个域与其它三域最大的不同。
+ */
+export interface NotesRepository {
+  list(): Promise<NotesListPayload>
+  read(id: string): Promise<Note | null>
+  create(input: NoteCreateInput): Promise<Note>
+  save(input: NoteSaveInput): Promise<NoteSaveOutcome>
+  rename(input: NoteRenameInput): Promise<NoteSaveOutcome>
+  remove(input: NoteRemoveInput): Promise<NoteSaveOutcome>
+  /** 全文检索(含正文) */
+  search(query: string, limit?: number): Promise<NoteMeta[]>
+  dir(): Promise<string>
+  reveal(id?: string): Promise<void>
+  saveAsset(input: NoteSaveAssetInput): Promise<NoteSaveAssetResult>
+  /** 新建目录(目录笔记) */
+  createFolder(input: { parent: string; name: string }): Promise<{ id: string }>
+  /** 删除目录(连同其中的笔记) */
+  removeFolder(id: string): Promise<NoteSaveOutcome>
+  /** 目录改名 */
+  renameFolder(input: { id: string; name: string }): Promise<{ id: string }>
+  /** 移动到另一个目录(笔记与目录共用) */
+  move(input: { id: string; parent: string }): Promise<{ ok: true; id: string; renamed?: { from: string; to: string } } | { ok: false; message: string }>
 }
 
 /**

@@ -50,6 +50,31 @@
   --code-bg: rgba(8, 8, 18, 0.8);
   --code-bar: rgba(0, 0, 0, 0.15);
 
+  /* 笔记编辑区底色：要**明显区别于**文档区（预览）与工具条，让人一眼看出「在这里打字」。
+     为什么不复用 --bg：浅色主题下 --bg(#f6f7fb) 与 --surface(#ffffff) 只差 9 个色阶，
+     整页看上去是同一块白 —— 两个区域因此分不开。所以这个场景单独给一档。 */
+  --editor-bg: #0f0f1a;
+
+  /*
+   * 代码/标记的高亮词表。编辑器(CodeMirror)与预览(自渲染)共用同一组 class
+   * (lib/code-tokens.ts),所以配色只在这两处定义 —— 同一个 `const` 在两边必须是同一个颜色,
+   * 否则一按模式切换就像换了个应用。
+   */
+  --syn-comment: #5d6480;
+  --syn-keyword: #c4a7f7;
+  --syn-string: #8fd694;
+  --syn-number: #eda76a;
+  --syn-atom: #6fd0e0;
+  --syn-fn: #86aaf9;
+  --syn-type: #e8c46e;
+  --syn-prop: #89ddff;
+  --syn-tag: #ef8a90;
+  --syn-op: #89ddff;
+  --syn-meta: #6b7194;
+  --syn-constant: #f2a17a;
+  --syn-code-fg: #c4a7f7;
+  --syn-code-bg: rgba(124, 106, 244, 0.14);
+
   /* accent 家族渐变 wash（按钮/下拉菜单共用同源材质） */
   --accent-wash-grad: linear-gradient(135deg, rgba(124, 106, 244, 0.16), rgba(96, 165, 250, 0.08));
 
@@ -82,6 +107,20 @@
 
 html {
   scroll-behavior: smooth;
+}
+
+/*
+ * 表单控件**默认不继承** font-family:浏览器 UA 样式给 button/input 指定了 Arial。
+ * 于是「同一段文字放进 button 里」字体就悄悄换了一套 —— 中英混排时字面大小差异尤其明显
+ * (Arial 的拉丁 + 系统 CJK 回退,对不上正文的 Tahoma + Noto Sans SC)。
+ * 此前是逐个类写 `font-family: inherit`,新组件一忘就中招(笔记列表就踩过)。
+ * 全局兜底一次,比逐个类补可靠。
+ */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
 }
 
 body {
@@ -805,6 +844,22 @@ textarea.f-input {
 }
 
 body.light-theme {
+  --editor-bg: #e6eaf4;
+  /* 浅色下高亮整体压暗一档:深色主题那套粉紫在浅底上几乎看不见 */
+  --syn-comment: #8a91a8;
+  --syn-keyword: #7c3aed;
+  --syn-string: #2f8f4e;
+  --syn-number: #b35c00;
+  --syn-atom: #0e7490;
+  --syn-fn: #2563eb;
+  --syn-type: #92700a;
+  --syn-prop: #0e7490;
+  --syn-tag: #b91c1c;
+  --syn-op: #0e7490;
+  --syn-meta: #8a91a8;
+  --syn-constant: #b35c00;
+  --syn-code-fg: #6a58e0;
+  --syn-code-bg: rgba(106, 88, 224, 0.10);
   --bg: #f6f7fb;
   --surface: #ffffff;
   --surface2: #fafbfe;

@@ -1,4 +1,4 @@
-// 侧边栏(四个入口 + 设置)
+// 侧边栏(五个入口 + 设置)
 // Logo 用双主题 Logo 组件(深浅两版 dataURL 随主题切换,32px)
 import Logo from '../components/Logo'
 import { useT } from '../hooks/useT'
@@ -13,6 +13,7 @@ const NAV_ICONS: Record<string, string> = {
   agents: 'fa-solid fa-rocket',
   crontab: 'fa-regular fa-clock',
   services: 'fa-solid fa-network-wired',
+  notes: 'fa-solid fa-pen-to-square',
   ai: 'fa-solid fa-wand-magic-sparkles'
 }
 

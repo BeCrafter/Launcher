@@ -28,8 +28,10 @@ import { expertPrompt } from './prompts/expert'
 import { SKILLS, findSkill } from './skills'
 import type { LlmClient } from './llm'
 import type { SecretStore } from './secret-store'
+import type { NotesService } from '../services/notes-service'
 import type { ToolDef, ToolExecResult, ToolRegistry } from './tool-types'
-import { fromPiContent, fromPiToolResult, fromPiUsage, toPiMessages } from './message-map'
+import { fromPiContent, fromPiToolResult, fromPiUsage, toPiMessages, IMAGE_NOT_STORED } from './message-map'
+import { mentionContext, resolveNoteContexts, sanitizeMentions, type NoteContext } from './note-context'
 
 /** 会话与消息的存储上限:对话是只增不减的产物,不设界迟早把 userData 撑爆 */
 const MAX_SESSIONS = 100
@@ -87,6 +89,8 @@ export function createChatService(deps: {
   llm: LlmClient
   secrets: SecretStore
   registry: ToolRegistry
+  /** 引用的笔记正文在这里现读(只在送模型时读,不落库) */
+  notes: NotesService
   getSettings(): LauncherSettings
   /** 会话存储路径(生产:${userData}/ai-sessions.json) */
   storePath: string
@@ -188,8 +192,17 @@ export function createChatService(deps: {
           }
         }
         finalizeToolResult(r, toolCallId, d, result, Date.now() - started)
+        // 图片块直接进 pi 的 transcript(模型当轮看得到);落库那一路由 finalizeToolResult
+        // 换成一行说明 —— 图片不进会话文件(理由见 message-map 的 IMAGE_NOT_STORED)
         return {
-          content: [{ type: 'text' as const, text: linesToText(result.lines) }],
+          content: [
+            { type: 'text' as const, text: linesToText(result.lines) },
+            ...(result.images ?? []).map((i) => ({
+              type: 'image' as const,
+              data: i.data,
+              mimeType: i.mimeType
+            }))
+          ],
           details: { toolCallId }
         }
       }
@@ -393,7 +406,12 @@ export function createChatService(deps: {
       label: def.label,
       blocks: [
         ...result.lines.map((l) => ({ type: 'text' as const, text: l.text })),
-        ...(result.card ? [{ type: 'card' as const, card: result.card }] : [])
+        ...(result.card ? [{ type: 'card' as const, card: result.card }] : []),
+        // 图片只进当轮的模型上下文,不落库(见 IMAGE_NOT_STORED 的理由);
+        // 这里补一行说明,界面与下一轮的历史都还知道「它看过一张图」
+        ...(result.images?.length
+          ? [{ type: 'text' as const, text: `${IMAGE_NOT_STORED}（${result.images.length} 张）` }]
+          : [])
       ],
       isError: !!result.isError,
       // 用户取消不是故障:标 warn 而不是 err,与真正失败在视觉上区分开
@@ -499,6 +517,9 @@ export function createChatService(deps: {
     if (!session) throw new Error('AI_SESSION_MISSING')
     // 最后一条用户消息已入库;送进 agent 的历史不含它(prompt() 会追加)
     const history = session.messages.slice(0, -1)
+    // 引用的笔记正文在这里**一次性**读齐:历史与本轮共用同一份,
+    // 分两处各解析一次的话,同一条消息在历史里和在本轮里会长得不一样
+    const noteCtx = await resolveNoteContexts((id) => deps.notes.readBodyForAi(id), session.messages)
     // 输出语言跟随应用语言(用户要求)
     const base = expertPrompt(settings.language)
     const systemPrompt = skill ? `${base}\n\n---\n\n${skill.task}` : base
@@ -508,7 +529,7 @@ export function createChatService(deps: {
         systemPrompt,
         model: resolved.value.model,
         tools: agentTools,
-        messages: toPiMessages(history)
+        messages: toPiMessages(history, noteCtx)
       },
       streamFn: deps.llm.streamFn(),
       toolExecution: 'sequential',
@@ -530,26 +551,22 @@ export function createChatService(deps: {
 
     const unsubscribe = agent.subscribe((ev) => handleAgentEvent(ev))
     try {
-      await agent.prompt(lastUserText(session))
+      await agent.prompt(lastUserText(session, noteCtx))
       await agent.waitForIdle()
     } finally {
       unsubscribe()
     }
   }
 
-  /** 取最后一条用户消息的文本(含 @ 引用上下文行) */
-  function lastUserText(session: StoredSession): string {
+  /** 取最后一条用户消息的文本(含 @ 引用上下文行;拼接口径与历史回放共用 mentionContext) */
+  function lastUserText(session: StoredSession, notes: Map<string, NoteContext>): string {
     const last = [...session.messages].reverse().find((m) => m.role === 'user') as AiUserMessage | undefined
     if (!last) return ''
     const text = last.blocks
       .filter((b): b is Extract<AiContentBlock, { type: 'text' }> => b.type === 'text')
       .map((b) => b.text)
       .join('\n')
-    if (!last.mentions?.length) return text
-    const parts = last.mentions.map((m) =>
-      m.type === 'agent' ? `${m.label}（LaunchAgent · ${m.scope ?? 'user'}）` : `${m.label}（定时任务）`
-    )
-    return `[用户引用了本机任务：${parts.join('、')}]\n${text}`
+    return mentionContext(last.mentions, notes) + text
   }
 
   return {
@@ -605,11 +622,13 @@ export function createChatService(deps: {
       const resolved = deps.llm.resolve()
       if (!resolved.ok) throw new Error('AI_NOT_CONFIGURED')
 
+      // 引用跨 IPC 进来、还要落进会话文件:在这里收敛一次(条数 / 字段形态 / 片段长度)
+      const mentions = sanitizeMentions(input.mentions)
       const user: AiUserMessage = {
         role: 'user',
         id: uid('u'),
         blocks: [{ type: 'text', text: input.text }],
-        ...(input.mentions?.length ? { mentions: input.mentions } : {}),
+        ...(mentions.length ? { mentions } : {}),
         timestamp: Date.now()
       }
       const isFirst = session.messages.length === 0

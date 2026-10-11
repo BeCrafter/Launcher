@@ -4,8 +4,11 @@ import { useT } from '../../hooks/useT'
 import { useAiStore, isRunningHere } from '../../state/ai-store'
 import { useUiStore } from '../../state/ui-store'
 import { useSettingsNav } from '../../state/settings-nav-store'
+import { mentionIcon } from '../../lib/ai-mention-icon'
+import { fmt } from '../../i18n'
+import { showToast } from '../../lib/utils'
 import { AiMentionPopover } from './AiMentionPopover'
-import type { AiMention } from '@shared/ai'
+import { MAX_MENTIONS, type AiMention } from '@shared/ai'
 
 export function AiComposer({
   showBot,
@@ -42,13 +45,38 @@ export function AiComposer({
   }, [])
 
   // 新对话(currentId → null)清空输入与引用(demo aiNewChat;切会话不清)
+  //
+  // ⚠ 判据必须是**跃迁**(上一个会话 id ≠ 这一个),不能是「currentId === null」:
+  //   · 进 AI 页时 composer 是新挂载的,而下面那条「领走待挂引用」会在挂载时把引用填进来;
+  //   · StrictMode 下 effect 要跑两遍,按「=== null」判的话第二遍正好把刚填进来的引用抹掉 ——
+  //     表现就是「从笔记页点引用进新会话,chip 不见了;已经有会话时却正常」。
+  //   语义上本来也只有「从有会话切到新对话」才需要清:挂载时本地状态必然是空的。
+  const prevId = useRef(currentId)
   useEffect(() => {
-    if (currentId === null) {
-      setText('')
-      setMentions([])
-      setPopOpen(false)
-    }
+    const was = prevId.current
+    prevId.current = currentId
+    if (was === currentId || currentId !== null) return
+    setText('')
+    setMentions([])
+    setPopOpen(false)
   }, [currentId])
+
+  // 笔记页「在 AI 中引用」附上的引用,在这里领走。
+  // ⚠ 必须声明在**上面那条清空 effect 之后**:两条都在挂载时跑,顺序反了的话
+  //   新对话会把刚附上的引用一起清掉(而这条路径恰恰多半发生在欢迎态)。
+  useEffect(() => {
+    const pending = useAiStore.getState().takePendingMentions()
+    if (pending.length === 0) return
+    setMentions((ms) => {
+      const next = ms.slice()
+      for (const p of pending) {
+        if (next.some((x) => x.key === p.key)) continue
+        if (next.length >= MAX_MENTIONS) continue
+        next.push(p)
+      }
+      return next
+    })
+  }, [])
 
   // @ 查询词:最后一个 @ 之后、不含空白;含空白即视为普通文本(弹层关)
   const atIdx = text.lastIndexOf('@')
@@ -100,12 +128,28 @@ export function AiComposer({
   const pickMention = (m: AiMention): void => {
     // 从输入里剪掉「@查询词」(demo aiPickMention)
     if (atIdx !== -1 && queryOk) setText(text.slice(0, atIdx))
-    setMentions((ms) => (ms.some((x) => x.key === m.key) ? ms : [...ms, m]))
+    addMentions([m])
     setPopOpen(false)
     requestAnimationFrame(() => {
       grow()
       taRef.current?.focus()
     })
+  }
+
+  /** 追加引用:同 key 去重;到上限就明说(静默丢弃会让用户以为已经引上了) */
+  const addMentions = (ms: AiMention[]): void => {
+    const next = mentions.slice()
+    let dropped = 0
+    for (const m of ms) {
+      if (next.some((x) => x.key === m.key)) continue
+      if (next.length >= MAX_MENTIONS) {
+        dropped++
+        continue
+      }
+      next.push(m)
+    }
+    if (next.length !== mentions.length) setMentions(next)
+    if (dropped > 0) showToast(fmt(t('ai.mention.tooMany'), { N: String(MAX_MENTIONS) }), '#eec04d', 'fa-at')
   }
 
   const goSettings = (): void => {
@@ -159,9 +203,9 @@ export function AiComposer({
         </div>
         <div className={`ai-composer-chips${mentions.length ? ' show' : ''}`}>
           {mentions.map((m, i) => (
-            <span className="ai-composer-chip" key={m.key}>
-              <i className="fa-solid fa-at" />
-              {m.label}
+            <span className={`ai-composer-chip t-${m.type}`} key={m.key}>
+              <i className={`fa-solid ${mentionIcon(m.type)}`} />
+              {m.quote !== undefined ? `${m.label} · 片段` : m.label}
               <i
                 className="fa-solid fa-xmark"
                 onClick={() => setMentions((ms) => ms.filter((_, n) => n !== i))}
@@ -218,7 +262,9 @@ export function AiComposer({
         btnMode={btnMode}
         query={rawQuery}
         anchorRef={mentionBtnRef}
+        picked={mentions}
         onPick={pickMention}
+        onPickMany={addMentions}
         onClose={() => setPopOpen(false)}
       />
     </div>

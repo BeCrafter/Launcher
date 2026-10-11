@@ -15,6 +15,7 @@ import './styles/drawer.css'
 import './styles/ai.css'
 import './styles/app-chrome.css'
 import './styles/help.css'
+import './styles/notes.css'
 import App from './App'
 import { AppErrorBoundary } from './boot/ErrorBoundary'
 

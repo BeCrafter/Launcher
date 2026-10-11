@@ -133,15 +133,33 @@ export type AiStopReason = 'pending' | 'stop' | 'length' | 'toolUse' | 'error' |
 
 // ── 消息 ──
 
-/** @ 引用的本机对象(随用户消息一起送出,也决定工具上下文) */
+/**
+ * @ 引用的本机对象(随用户消息一起送出,也决定工具上下文)。
+ *
+ * 三类引用的**注入语义不一样**,别当成同一种:
+ *   · agent / cron 是「指路」—— 只给模型一行标签,细节它自己去调工具;
+ *   · note 是「给料」—— 正文由 main 在发送时**现读现拼**进这一轮的消息文本
+ *     (见 main/ai/note-context.ts)。落库的仍只有 text + mentions,正文不进会话文件。
+ */
 export interface AiMention {
   key: string
-  type: 'agent' | 'cron'
+  type: 'agent' | 'cron' | 'note'
   id: string
   label: string
   /** agent 的作用域(cron 无);用于把引用解析成可读上下文 */
   scope?: AgentScope
+  /**
+   * 引用的是**选中片段**而非整篇(仅 note)。
+   * 有它就只注入这段文字,不再读整篇正文 —— 用户选了一段,就是想只说这一段。
+   */
+  quote?: string
 }
+
+/**
+ * 一条消息里最多几个引用。
+ * 不是防呆:每个笔记引用都会把正文带进上下文,而正文**之后每一轮都会重发**。
+ */
+export const MAX_MENTIONS = 10
 
 export interface AiUserMessage {
   role: 'user'

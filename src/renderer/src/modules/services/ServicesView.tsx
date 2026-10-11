@@ -51,6 +51,8 @@ export function ServicesView(): React.JSX.Element {
   const scanError = useServicesStore((s) => s.error)
   const filter = useServicesStore((s) => s.filter)
   const setFilter = useServicesStore((s) => s.setFilter)
+  const focusKey = useServicesStore((s) => s.focusKey)
+  const setFocusKey = useServicesStore((s) => s.setFocusKey)
   const searchQuery = useUiStore((s) => s.searchQuery)
   const overrides = useSettingsStore((s) => s.settings?.serviceOverrides ?? EMPTY_OVERRIDES)
   const openSvcConfig = useSvcConfigStore((s) => s.open)
@@ -58,6 +60,18 @@ export function ServicesView(): React.JSX.Element {
   const loading = !loaded && services.length === 0 && containers.length === 0
 
   // 页面激活门控:进入本页开启 3s 轮询,离开停止(resource 友好)
+  // 「相关笔记」跳过来时的定位:按 data-svc-key 找卡片(不是会变的 svc.id)。
+  // 用属性选择器且**绝不用 CSS.escape** —— 键里含冒号,转义后反而匹配不到(同 HelpModal 的教训)。
+  // 滚动一律 instant:Electron 44 里程序化平滑滚动不工作。
+  useEffect(() => {
+    if (focusKey === null) return
+    const el = document.querySelector(`[data-svc-key="${focusKey}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'instant', block: 'center' })
+      setFocusKey(null)
+    }
+  }, [focusKey, setFocusKey, services])
+
   useEffect(() => {
     const store = useServicesStore.getState()
     void store.setActive(true).catch(() => {})

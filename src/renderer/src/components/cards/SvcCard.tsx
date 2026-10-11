@@ -5,7 +5,7 @@ import { StatusDot } from '../ui/StatusDot'
 import { TagChip } from '../ui/TagChip'
 import { ActBtn } from '../ui/ActBtn'
 import { effectiveType, SVC_GROUP_META } from '../../lib/classify'
-import { displayName, resolveHost, serviceIdentityKey, serviceUrl } from '../../lib/svc-override'
+import { cardKey, displayName, resolveHost, serviceIdentityKey, serviceUrl } from '../../lib/svc-override'
 import { fmt } from '../../i18n'
 import type { PortService } from '@shared/models'
 import type { ServiceOverride } from '@shared/settings'
@@ -59,8 +59,10 @@ export function SvcCard({
     onRename(draft.trim())
   }
 
+  // data-svc-key 用 cardKey(跨 PID 稳定),不是 id(=<pid>:<port>,3s 轮询一刷就变)——
+  // 「相关笔记」跳过来要能定位到卡片,定位键不能跟着 pid 漂
   return (
-    <div className="svc-col-card" id={`svc_${svc.id}`}>
+    <div className="svc-col-card" id={`svc_${svc.id}`} data-svc-key={cardKey(svc)}>
       <div className="svc-r1">
         <StatusDot status={svc.status === 'running' ? 'running' : 'stopped'} />
         {editing ? (
@@ -111,14 +113,14 @@ export function SvcCard({
             />
           )}
           {svc.pid ? (
-            <span className="tag blue" style={{ fontFamily: "'SF Mono',Menlo,monospace;" }}>
+            <span className="tag blue" style={{ fontFamily: "'SF Mono', Menlo, monospace" }}>
               PID {svc.pid}
             </span>
           ) : null}
           {/* 可连接地址(绑定地址 `*` 不可连接);悬停可见打开/复制实际使用的完整 URL */}
           <span
             className="tag cyan"
-            style={{ fontFamily: "'SF Mono',Menlo,monospace;" }}
+            style={{ fontFamily: "'SF Mono', Menlo, monospace" }}
             title={url}
           >
             {host}:{svc.port}

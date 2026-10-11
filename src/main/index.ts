@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
-import { mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME } from '../shared/constants'
+import { resolveNotesDir } from '../shared/notes'
 import { IPC, IPC_EVENTS, type BootPaintPhase, type InstallChannel } from '../shared/ipc'
 import { createSettingsStore, defaultConfigPath, type SettingsStore } from './settings/store'
 import { applyDockIcon } from './settings/appliers/dock'
@@ -15,6 +16,8 @@ import { toServicesPayload } from './services/process-discovery'
 import { detectInstallChannel } from './services/install-channel'
 import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
+import { handleNotesProtocol, registerNotesScheme } from './services/notes-protocol'
+import { otherLang, sampleNoteBody, sampleNoteTitle } from './domains/note-sample'
 import { createAiStack } from './ai'
 import type { ApplyCtx } from './settings/types'
 import { registerIpc } from './ipc'
@@ -52,11 +55,17 @@ if (e2eUserData) {
   try {
     mkdirSync(e2eUserData, { recursive: true })
     app.setPath('userData', e2eUserData)
-    console.warn(`[boot] LAUNCHER_E2E_USER_DATA 生效:userData 与设置都改指 ${e2eUserData}`)
+    console.warn(
+      `[boot] LAUNCHER_E2E_USER_DATA 生效:userData、设置与笔记目录都改指 ${e2eUserData}`
+    )
   } catch (err) {
     console.error('[boot] LAUNCHER_E2E_USER_DATA 无法使用,回退真实路径:', err)
   }
 }
+
+// 附件协议必须在 app ready **之前**登记特权(scheme 的 privileges 只能在那时设)。
+// 放在模块求值期是刻意的:它必须在 whenReady 之前跑完。
+registerNotesScheme()
 
 // 单实例锁：重复启动时唤起既有窗口
 const gotLock = app.requestSingleInstanceLock()
@@ -65,6 +74,34 @@ if (!gotLock) {
 }
 
 app.on('second-instance', () => showMainWindow())
+
+/**
+ * 示例笔记用到的媒体样例(一张图 / 一段视频 / 一段音频 / 一个 PDF / 一个本地网页)。
+ * dev 下从仓库的 resources/ 读;打包后由 electron-builder 的 extraResources 释放到
+ * Contents/Resources/note-sample(与 logo 同一套做法)。
+ */
+function sampleAssetsDir(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'note-sample')
+    : join(__dirname, '../../resources/note-sample/assets')
+}
+
+/** 把示例媒体拷进笔记目录的 assets/。**只在不覆盖的前提下拷** —— 目标已存在就跳过 */
+function seedSampleAssets(notesDir: string): void {
+  const src = sampleAssetsDir()
+  if (!existsSync(src)) return
+  const dst = join(notesDir, 'assets')
+  mkdirSync(dst, { recursive: true })
+  for (const name of readdirSync(src)) {
+    const to = join(dst, name)
+    if (existsSync(to)) continue
+    try {
+      copyFileSync(join(src, name), to)
+    } catch (err) {
+      console.warn(`[notes] 示例素材 ${name} 拷贝失败:`, err)
+    }
+  }
+}
 
 function logoDir(): string {
   // dev：项目根 resources/；打包后：extraResources 释放到 Contents/Resources/logo
@@ -160,6 +197,12 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.mjs'),
       contextIsolation: true,
       sandbox: false,
+      /*
+       * Chromium 里现在只剩一个「插件」:自带的 PDF 阅读器。不开它,
+       * 笔记里嵌的 PDF 就是一个空白框。开它等于把这个阅读器交给渲染层 ——
+       * 而 PDF 只能来自笔记目录的 assets/(附件协议的白名单管着),不是任意来源。
+       */
+      plugins: true,
       // 首帧前把初始设置带进 preload(免同步 IPC、无主题/语言闪烁)
       additionalArguments: [`--launcher-initial-settings=${JSON.stringify(store.get())}`]
     }
@@ -313,22 +356,33 @@ async function startApp(): Promise<void> {
 
   // 核心服务栈(定时任务/Launch Agents/端口服务)——装配单一来源见 core-services.ts
   // (launcher-mcp 独立进程复用同一份,避免两处漂移)
-  const { plists, agents, cron, discovery, termination, docker, launchctl, brew } = createCoreServices({
-    runner,
-    elevate,
-    home: app.getPath('home'),
-    getXmlIndent: xmlIndentOf,
-    getCronRetainDays: () => store.get().cronLogRetainDays,
-    onServicesChange: (r, polling) => broadcast(IPC_EVENTS.servicesUpdated, toServicesPayload(r, polling)),
-    log: (m) => console.log(`[svc] ${m}`)
-  })
+  const { plists, agents, cron, discovery, termination, docker, launchctl, brew, notes } =
+    createCoreServices({
+      runner,
+      elevate,
+      home: app.getPath('home'),
+      getXmlIndent: xmlIndentOf,
+      getCronRetainDays: () => store.get().cronLogRetainDays,
+      getNotesDir: () =>
+        resolveNotesDir({
+          notesDir: store.get().notesDir,
+          home: app.getPath('home'),
+          // E2E 强制覆盖:否则自动化验证会往用户真实笔记目录里写(见 e2eUserData 的说明)
+          e2eUserData
+        }),
+      onServicesChange: (r, polling) => broadcast(IPC_EVENTS.servicesUpdated, toServicesPayload(r, polling)),
+      onNotesChange: (ids) => broadcast(IPC_EVENTS.notesChanged, { ids }),
+      // 应用内删除走系统废纸篓(用户可恢复);独立进程没有 shell,退回 <dir>/.trash/
+      trashNote: (path) => shell.trashItem(path),
+      log: (m) => console.log(`[notes] ${m}`)
+    })
   // 建窗前只需要主题先落位:窗口底色与过渡页配色都读 nativeTheme.themeSource(见 appearance.ts)
   applyThemeSource(store.get())
 
   // AI 助手(阶段 4):pi 引擎 + ToolRegistry + 内置会话 —— 同步装配,不含网络/重磁盘活
   const ai = createAiStack({
     store,
-    services: { plists, agents, cron, discovery, termination, docker, launchctl, brew },
+    services: { plists, agents, cron, discovery, termination, docker, launchctl, brew, notes },
     home: app.getPath('home'),
     userDataDir: app.getPath('userData'),
     emit: (ev) => broadcast(IPC_EVENTS.aiRunEvent, ev)
@@ -350,7 +404,8 @@ async function startApp(): Promise<void> {
     docker,
     // 懒发起 + 记忆化:第一个消费者来问时才 spawn(它在建窗之后,不再和渲染层抢启动期的 I/O)
     getInstallChannel: () => (channelProbe ??= detectInstallChannel({ runner })),
-    ai
+    ai,
+    notes
   })
 
   createWindow()
@@ -360,7 +415,59 @@ async function startApp(): Promise<void> {
   registry.apply(store.get())
   store.onChange((s) => registry.apply(s))
 
+  // 笔记目录换了 → 监听要跟着换。watcher 的目录在 start() 时绑定,不重建就会一直盯着旧目录
+  // (界面照常工作,只是外部改动不再上报 —— 属于「静默失效」,所以要显式处理)。
+  let watchedNotesDir = store.get().notesDir
+  store.onChange((s) => {
+    if (s.notesDir === watchedNotesDir) return
+    watchedNotesDir = s.notesDir
+    notes.stop()
+    notes.start()
+  })
+
   discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
+  // 附件协议:预览加载笔记目录内的图片(唯一入口,三道闸见 services/notes-protocol.ts)
+  handleNotesProtocol(
+    () =>
+      resolveNotesDir({
+        notesDir: store.get().notesDir,
+        home: app.getPath('home'),
+        e2eUserData
+      }),
+    (m) => console.log(`[notes] ${m}`)
+  )
+  notes.start() // 笔记目录 fs.watch(仅上报外部改动;正确性不依赖它 —— list() 每次都 stat)
+
+  // 首次运行:目录完全为空时放一篇「随心手记示例」进去(见 domains/note-sample.ts)。
+  // 不 await —— 它只是个引导,失败了也不该拖住启动。
+  const syncSample = (): void => {
+    const lang = store.get().language
+    void notes
+      .ensureSample({
+        title: sampleNoteTitle(lang),
+        body: sampleNoteBody(lang),
+        onSeed: () =>
+          seedSampleAssets(
+            resolveNotesDir({ notesDir: store.get().notesDir, home: app.getPath('home'), e2eUserData })
+          ),
+        // 另一种语言的版本:用来认出「那篇是我们的示例,而且用户没动过」
+        other: { title: sampleNoteTitle(otherLang(lang)), body: sampleNoteBody(otherLang(lang)) }
+      })
+      .then((r) => {
+        if (r === 'created') console.log('[notes] 已写入示例笔记')
+        else if (r === 'switched') console.log('[notes] 示例笔记已跟随界面语言切换')
+      })
+      .catch((err) => console.error('[notes] 示例笔记失败', err))
+  }
+  syncSample()
+  // 换语言时再对一次:示例若还没被改过,就跟着换过去。
+  // onChange 只给新值,所以上一次的语言自己记 —— 不能靠回调的第二个参数
+  let lastLang = store.get().language
+  store.onChange((s) => {
+    if (s.language === lastLang) return
+    lastLang = s.language
+    syncSample()
+  })
 
   // MCP 端点起服放在建窗之后:它只影响 MCP 客户端,不该拖慢首屏;
   // 顺带修掉「抛错 → whenReady 回调 unhandled rejection → 整个启动序中断」的隐患

@@ -4,7 +4,7 @@
 // MCP 侧走低层 Server 直接把同一份 JSON Schema 交给 tools/list,零转换、零重复定义。
 
 import type { TSchema } from '@earendil-works/pi-ai'
-import type { AiDomainCard } from '../../shared/ai'
+import type { AiDomainCard, AiImageBlock } from '../../shared/ai'
 
 /** 工具输出的一行(与 demo 的 [level, text] 行同形;渲染层复用 log-line 族) */
 export interface ToolOutputLine {
@@ -15,6 +15,12 @@ export interface ToolOutputLine {
 export interface ToolExecResult {
   /** 面向模型与用户的文本行 */
   lines: ToolOutputLine[]
+  /**
+   * 图片(可选;如「读取笔记里的截图」)。
+   * **只在当轮进模型上下文,不落库** —— 会话文件是明文 JSON,一张 2 MB 截图
+   * base64 后 2.7 MB,且之后每一轮都会重发。MCP 侧原样透传为 image 内容块。
+   */
+  images?: AiImageBlock[]
   /** 领域卡(可选;内置聊天渲染成卡片,MCP 侧只取 lines 的文本) */
   card?: AiDomainCard
   /** 是否调用失败(pi 约定:抛异常 → isError=true;此处用于不需要抛的"软失败") */

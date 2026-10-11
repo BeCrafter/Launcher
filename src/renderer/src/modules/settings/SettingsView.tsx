@@ -1,9 +1,11 @@
 // 设置页(六 pane + tab 导航 + 页脚)
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { UPGRADE_COMMAND, type InstallChannel } from '@shared/ipc'
+import { TABLE_BORDERS, type TableBorder } from '@shared/note-table-style'
 import { useT, useFmt } from '../../hooks/useT'
 import { useAppInfo } from '../../hooks/useAppInfo'
 import { useSettingsStore } from '../../state/settings-store'
+import { useNotesStore } from '../../state/notes-store'
 import { showToast } from '../../lib/utils'
 import { openExternal } from '../../lib/utils'
 import { SettingsSection, SettingsRow, SettingsHero } from './SettingsBits'
@@ -27,6 +29,7 @@ const TABS = [
   { id: 'general', icon: 'fa-solid fa-sliders', labelKey: 'settings.tab.general' },
   { id: 'launchd', icon: 'fa-solid fa-rocket', labelKey: 'settings.tab.launchd' },
   { id: 'editor', icon: 'fa-solid fa-code', labelKey: 'settings.tab.editor' },
+  { id: 'notes', icon: 'fa-regular fa-note-sticky', labelKey: 'settings.tab.notes' },
   { id: 'security', icon: 'fa-solid fa-shield-halved', labelKey: 'settings.tab.security' },
   { id: 'about', icon: 'fa-solid fa-circle-info', labelKey: 'settings.tab.about' },
   // AI 助手排在登录项之前(用户要求;登录项是低频只读说明页)
@@ -35,6 +38,37 @@ const TABS = [
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
+
+/** 目录输入:失焦或回车才应用。边打字边应用会在半截路径上反复切目录 + 触发 flush。 */
+function NotesDirInput({
+  value,
+  placeholder,
+  onApply
+}: {
+  value: string
+  placeholder: string
+  onApply: (v: string) => void
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const commit = (): void => {
+    if (draft.trim() !== value.trim()) onApply(draft.trim())
+  }
+  return (
+    <input
+      className="f-input mono"
+      type="text"
+      value={draft}
+      placeholder={placeholder}
+      style={{ maxWidth: 260, fontSize: 11 }}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit()
+      }}
+    />
+  )
+}
 
 export function SettingsView(): React.JSX.Element {
   const t = useT()
@@ -45,6 +79,8 @@ export function SettingsView(): React.JSX.Element {
   const setTab = useSettingsNav((s) => s.setTab)
   const [checking, setChecking] = useState(false)
   const settings = useSettingsStore((s) => s.settings)
+  // 生效目录(设置里为空时是默认路径):由 main 算,渲染层不自己拼 —— 两边算法必须同源
+  const notesDir = useNotesStore((s) => s.dir)
   const set = useSettingsStore((s) => s.set)
 
   if (!settings) return <div className="settings-layout" />
@@ -324,6 +360,120 @@ export function SettingsView(): React.JSX.Element {
             </div>
           )}
 
+          {tab === 'notes' && (
+            <div className="settings-pane active" id="sp-notes">
+              <SettingsHero title={t('settings.notes.title')} subtitle={t('settings.notes.subtitle')} />
+              <SettingsSection
+                icon="fa-regular fa-folder-open"
+                title={t('settings.notes.dir.sectionTitle')}
+                desc={t('settings.notes.dir.sectionDesc')}
+              >
+                <SettingsRow
+                  title={t('settings.notes.dir.rowTitle')}
+                  descKey="settings.notes.dir.rowDesc"
+                  control={
+                    <NotesDirInput
+                      value={settings.notesDir}
+                      placeholder={notesDir}
+                      onApply={(v) => {
+                        void (async () => {
+                          // 先把当前缓冲存到**旧**目录,再切;否则 flush 会打到新目录去
+                          await useNotesStore.getState().flush()
+                          await useNotesStore.getState().close()
+                          set({ notesDir: v })
+                          await useNotesStore.getState().load()
+                          showToast(t('toast.notesDirChanged'), '#60a5fa', 'fa-folder-open')
+                        })()
+                      }}
+                    />
+                  }
+                />
+                <SettingsRow
+                  title={t('settings.notes.effective.rowTitle')}
+                  desc={notesDir}
+                  control={
+                    <>
+                      <button
+                        className="d-btn"
+                        type="button"
+                        onClick={() => set({ notesDir: '' })}
+                        disabled={settings.notesDir === ''}
+                      >
+                        <span>{t('settings.notes.dir.reset')}</span>
+                      </button>
+                      <button
+                        className="d-btn"
+                        type="button"
+                        onClick={() => void window.launcher.notes.reveal()}
+                      >
+                        <span>{t('settings.notes.dir.open')}</span>
+                      </button>
+                    </>
+                  }
+                />
+              </SettingsSection>
+              <SettingsSection
+                icon="fa-solid fa-table"
+                title={t('settings.notes.table.sectionTitle')}
+                desc={t('settings.notes.table.sectionDesc')}
+              >
+                <SettingsRow
+                  title={t('settings.notes.table.border')}
+                  control={
+                    <select
+                      className="settings-select"
+                      value={settings.notesTableBorder}
+                      onChange={(e) => set({ notesTableBorder: e.target.value as TableBorder })}
+                    >
+                      {TABLE_BORDERS.map((b) => (
+                        <option key={b} value={b}>
+                          {t(`settings.notes.table.border.${b}`)}
+                        </option>
+                      ))}
+                    </select>
+                  }
+                />
+                <SettingsRow
+                  title={t('settings.notes.table.color')}
+                  desc={settings.notesTableBorderColor === '' ? t('settings.notes.table.color.follow') : undefined}
+                  control={
+                    <>
+                      {/* 色块是当前值的样子;点它清空 = 回到跟主题 */}
+                      <span
+                        className="settings-swatch"
+                        style={{
+                          background:
+                            settings.notesTableBorderColor === ''
+                              ? 'var(--border)'
+                              : settings.notesTableBorderColor
+                        }}
+                      />
+                      <input
+                        className="settings-color-input"
+                        value={settings.notesTableBorderColor}
+                        placeholder={t('settings.notes.table.color.follow')}
+                        spellCheck={false}
+                        onChange={(e) => set({ notesTableBorderColor: e.target.value })}
+                      />
+                      <button
+                        className="d-btn"
+                        type="button"
+                        disabled={settings.notesTableBorderColor === ''}
+                        onClick={() => set({ notesTableBorderColor: '' })}
+                      >
+                        <span>{t('settings.notes.table.color.follow')}</span>
+                      </button>
+                    </>
+                  }
+                />
+              </SettingsSection>
+              <SettingsSection
+                icon="fa-solid fa-circle-info"
+                title={t('settings.notes.hint.sectionTitle')}
+                desc={t('settings.notes.hint.body')}
+              />
+            </div>
+          )}
           {tab === 'security' && (
             <div className="settings-pane active" id="sp-security">
               <SettingsHero title={t('settings.security.title')} subtitle={t('settings.security.subtitle')} />

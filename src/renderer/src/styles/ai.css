@@ -533,6 +533,14 @@ body.light-theme .ai-main {
   white-space: nowrap;
 }
 
+/* 引用的笔记用绿色:一排 chips 混着任务与笔记时,要一眼看出哪个是笔记 */
+.ai-chip-ref.t-note,
+.ai-composer-chip.t-note {
+  background: var(--wash-green);
+  border-color: rgba(62, 207, 142, 0.35);
+  color: var(--green);
+}
+
 /* 流式光标 */
 .ai-caret {
   display: inline-block;
@@ -1124,6 +1132,46 @@ body.light-theme .ai-main {
   color: var(--accent2);
 }
 
+/* 勾进待选区的那几行:只改底色,不动尺寸(悬停/勾选都不该让行跳) */
+.ai-mention-item.checked {
+  background: var(--wash-accent);
+  color: var(--text);
+}
+
+/* 已经引用上的:留在列表里但不可再选 —— 直接消失会让人以为列表坏了 */
+.ai-mention-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ai-mention-item.disabled:hover {
+  background: none;
+  color: var(--muted);
+}
+
+/*
+ * 行首勾选框:点它 = 攒进待选区(不关弹层),点行本体 = 立刻引用这一项。
+ * 尺寸写死 12px 而不是交给浏览器 —— 各平台默认勾选框不一样大,会把行撑得参差。
+ */
+.ai-mention-check {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent2);
+  cursor: pointer;
+}
+
+.ai-mention-check:disabled {
+  cursor: default;
+}
+
+.ai-mention-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ai-mention-item i {
   width: 13px;
   text-align: center;
@@ -1136,6 +1184,24 @@ body.light-theme .ai-main {
   font-size: 9.5px;
   color: var(--dim);
   font-family: 'SF Mono', Menlo, monospace;
+  white-space: nowrap;
+}
+
+/* 待选区非空时出现的一次性确认条(勾了多项才需要它) */
+.ai-mention-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 6px 2px;
+  margin-top: 4px;
+  background: linear-gradient(to top, var(--surface3) 70%, transparent);
+}
+
+.ai-mention-more {
+  padding: 4px 10px 6px;
+  font-size: 9.5px;
+  color: var(--dim);
 }
 
 .ai-mention-empty {

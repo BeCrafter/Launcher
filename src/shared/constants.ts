@@ -16,3 +16,12 @@ export const BG_LIGHT = '#f6f7fb'
 
 /** 仓库地址（设置页「关于」与侧边栏链接用） */
 export const GITHUB_REPO_URL = 'https://github.com/BeCrafter/Launcher'
+
+/**
+ * 设置与笔记的根目录（相对 `$HOME`）：`config.json` 与 `notes/` 都在它下面。
+ *
+ * 为什么抽到 shared：主进程用 `node:path` 拼（settings/store.ts），shared 侧不能用 `node:*`
+ * （shared 同时被 renderer 打包，见 cron-log.ts 的同类约束），只能模板串拼。
+ * 两处各写一遍迟早漂移 —— 而「笔记目录跟设置文件不在同一层」是个很难排查的怪现象。
+ */
+export const LAUNCHER_CONFIG_DIR_SUFFIX = '.config/launcher'

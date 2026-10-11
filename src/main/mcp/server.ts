@@ -78,8 +78,16 @@ export function createLauncherMcpServer(deps: {
       const text = result.lines
         .map((l) => (l.level === '' || l.level === 'info' ? l.text : `[${l.level}] ${l.text}`))
         .join('\n')
+      const images = (result.images ?? []).map((i) => ({
+        type: 'image' as const,
+        data: i.data,
+        mimeType: i.mimeType
+      }))
       return {
-        content: [{ type: 'text', text: text === '' ? '（无输出）' : text }],
+        content: [
+          { type: 'text', text: text === '' && images.length === 0 ? '（无输出）' : text },
+          ...images
+        ],
         ...(result.isError ? { isError: true } : {})
       }
     } catch (err) {

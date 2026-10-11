@@ -20,7 +20,8 @@ const EVENT_CHANNELS: readonly IpcEventChannel[] = [
   IPC_EVENTS.settingsChanged,
   IPC_EVENTS.agentsDirChanged,
   IPC_EVENTS.servicesUpdated,
-  IPC_EVENTS.aiRunEvent
+  IPC_EVENTS.aiRunEvent,
+  IPC_EVENTS.notesChanged
 ]
 
 const api: LauncherApi = {
@@ -104,6 +105,22 @@ const api: LauncherApi = {
     catalog: (providerId) => ipcRenderer.invoke(IPC.aiCatalog, providerId),
     mcpInfo: () => ipcRenderer.invoke(IPC.aiMcpInfo),
     installMcpLink: () => ipcRenderer.invoke(IPC.aiInstallMcpLink)
+  },
+  notes: {
+    list: () => ipcRenderer.invoke(IPC.notesList),
+    read: (id) => ipcRenderer.invoke(IPC.notesRead, id),
+    create: (input) => ipcRenderer.invoke(IPC.notesCreate, input),
+    save: (input) => ipcRenderer.invoke(IPC.notesSave, input),
+    rename: (input) => ipcRenderer.invoke(IPC.notesRename, input),
+    remove: (input) => ipcRenderer.invoke(IPC.notesRemove, input),
+    search: (query, limit) => ipcRenderer.invoke(IPC.notesSearch, query, limit),
+    dir: () => ipcRenderer.invoke(IPC.notesDir),
+    reveal: (id) => ipcRenderer.invoke(IPC.notesReveal, id),
+    saveAsset: (input) => ipcRenderer.invoke(IPC.notesSaveAsset, input),
+    createFolder: (input) => ipcRenderer.invoke(IPC.notesCreateFolder, input),
+    removeFolder: (id) => ipcRenderer.invoke(IPC.notesRemoveFolder, id),
+    renameFolder: (input) => ipcRenderer.invoke(IPC.notesRenameFolder, input),
+    move: (input) => ipcRenderer.invoke(IPC.notesMove, input)
   }
 }
 

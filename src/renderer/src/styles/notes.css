@@ -1,0 +1,2729 @@
+/* 笔记页(阶段 5,应用新增)。
+   三区:rail(列表) / 编辑(CodeMirror) / 预览。
+   正文排版的 .md-* 基础样式在 app-chrome.css;这里只补笔记特有的部分
+   (标题层级到 h6、任务清单、图片、关联 chip)。 */
+
+.notes-view {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  /* 文档区底色:编辑器(--bg)与预览(--surface)都从这里透出来,再由各自覆盖 */
+  background: var(--bg);
+}
+
+/* ── rail ── */
+.notes-rail {
+  width: 258px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  /* 与应用侧边栏**同色**:两级左栏叠在一起时不该被看成两块不同区域。
+     代价是笔记行不能再靠「白底卡片」区分 —— 见下面的扁平行。 */
+  background: var(--surface);
+  /*
+   * 字体栈刻意换掉全局的 `Tahoma, Arial, "Noto Sans SC"`:
+   * Tahoma 的小写字母 x-height 偏小,而 Noto Sans SC 的汉字是满字身的,
+   * 同一行里「工作」和「nginx」的字面大小会差出一截(这正是列表里最刺眼的地方)。
+   * 换成拉丁优先的系统字体,两者视觉大小才接近。
+   */
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Noto Sans SC', sans-serif;
+}
+
+.notes-rail-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* 顶栏让给内容之后,这里得自己把顶部留白补回来 —— 10px 会让搜索框贴着窗口上沿。
+     与右侧标题行用同一个值,两边首行才对得齐。 */
+  padding: 24px 10px 8px;
+}
+.notes-rail-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  background: var(--surface3);
+}
+.notes-rail-search i {
+  color: var(--dim);
+  font-size: 11px;
+}
+.notes-rail-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.notes-rail-clear {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 2px;
+}
+.notes-rail-clear:hover {
+  color: var(--text);
+}
+
+/* rail 顶部的两个新建动作 */
+
+/* 置顶区:始终在列表最顶,底色比普通行重一点,让「它不属于下面那棵树」一眼可见 */
+.notes-pinned {
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+/* 置顶区表头是按钮(可折叠),重置掉按钮默认样式 */
+.notes-pinned-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 5px;
+  color: var(--accent2);
+  text-align: left;
+}
+/* 悬停不给底色:它是整行宽的按钮,而内容只有「左一个标签、右一个数字」,
+   铺满一层底会像凭空多出一条空带(用户报过这个)。可点性由 caret 与鼠标指针表达。 */
+.notes-pinned-hd > span:first-of-type {
+  flex: 1;
+}
+.notes-pinned .notes-row {
+  margin-bottom: 3px;
+}
+
+/* ── 目录树 ── */
+.notes-folder-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  padding-right: 4px;
+  min-height: 28px;
+}
+.notes-folder-row:hover {
+  background: var(--hover);
+}
+.notes-folder-row.selected {
+  background: var(--surface4);
+}
+
+/* 层级导引线:每层祖先一条,让「谁属于谁」在深嵌套时也追得下去 */
+.notes-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border2);
+  pointer-events: none;
+}
+.notes-folder-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 4px 2px;
+  font-size: 9px;
+  width: 16px;
+  flex-shrink: 0;
+}
+/* ⚠ 目录名要比它装着的笔记标题更重、更亮:之前是 12px/400/--muted,
+   比笔记标题(12.5px/500/--text)还弱 —— 层级读起来是反的。 */
+.notes-folder-name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 5px 2px;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+}
+/* 目录名悬停不变色:悬停只该是背景的事,文字突变看着像跳了一下 */
+.notes-folder-row.selected .notes-folder-name {
+  color: var(--text);
+}
+.notes-folder-name i {
+  color: var(--accent2);
+  font-size: 11px;
+}
+.notes-folder-name span:first-of-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-folder-count {
+  margin-left: auto;
+  min-width: 18px;
+  text-align: right;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-weight: 400;
+}
+.notes-folder-acts {
+  display: none;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.notes-folder-row:hover .notes-folder-acts {
+  display: inline-flex;
+}
+.notes-folder-acts button {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.notes-folder-acts button:hover {
+  background: var(--surface4);
+  color: var(--text);
+}
+.notes-folder-acts button.danger:hover {
+  color: var(--red);
+}
+/* 改名:输入框直接占住名字那一格,而不是另起一行 —— 改哪个就改哪儿 */
+.notes-folder-rename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 2px 2px 2px 0;
+}
+
+.notes-folder-edit {
+  padding: 2px 8px 4px;
+}
+.notes-folder-input {
+  width: 100%;
+  border: 1px solid var(--accent2);
+  border-radius: 5px;
+  background: var(--surface3);
+  color: var(--text);
+  font-size: 11.5px;
+  padding: 4px 7px;
+  outline: none;
+}
+
+
+.notes-rail-active {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 6px 10px 0;
+}
+.notes-rail-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--wash-accent);
+  color: var(--accent2);
+  font-size: 11px;
+}
+.notes-rail-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  font-size: 10px;
+}
+
+
+/* 树末尾的根层新建入口:一对等宽小按钮。
+   它们只负责**根层** —— 子笔记/子目录从目录行 hover 出来的按钮建。 */
+/* 与上方目录树之间一条分隔线 —— 用与置顶区下方那条**完全相同**的样式
+   (1px solid var(--border)),两条分隔线在同一个列表里才是一套语言。
+   它不参与 hover:悬停只该点亮当前那颗按钮,不该动这条线。 */
+.notes-new-row {
+  display: flex;
+  gap: 6px;
+  margin: 10px 6px 0;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+/* 有内容时:压到几乎看不见 —— 它是低频入口,不该跟笔记抢注意力。
+   虚线边框 + 整块降透明度:轮廓还在(找得到),但不会跟实心的笔记行抢眼。 */
+.notes-new-folder {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  opacity: 0.75;
+}
+.notes-new-folder i {
+  font-size: 10px;
+}
+.notes-new-folder:hover {
+  border-style: solid;
+  border-color: var(--border2);
+  background: var(--hover);
+  color: var(--text);
+  opacity: 1;
+}
+
+/* 一篇都没有时反过来:它是此刻唯一的下一步,给足分量(实线 + 实底,不降透明度) */
+/* 空目录时这对按钮是欢迎引导的一部分,上面再来一条线会把引导切成两半 —— 去掉 */
+.notes-new-row.prominent {
+  border-top: 0;
+  padding-top: 0;
+  margin-top: 6px;
+}
+.notes-new-row.prominent .notes-new-folder {
+  border-style: solid;
+  border-color: var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  opacity: 1;
+}
+.notes-new-row.prominent .notes-new-folder:hover {
+  border-color: var(--accent2);
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+
+/* 外层不滚动,只用来给自绘滚动条做定位参照 */
+.notes-rail-listwrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.notes-rail-list {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 6px 10px;
+  /* 原生滚动条整个关掉,由下面的 .notes-rail-scrollbar 代替。
+     标准属性会让 Chromium 忽略 ::-webkit-scrollbar,正好 —— 这里本来也不要它。
+     顺带解决了「滚动条一出现内容就横向抽动」:没有滚动条,自然没有槽位变化。 */
+  scrollbar-width: none;
+}
+.notes-rail-list::-webkit-scrollbar {
+  display: none;
+}
+
+/*
+ * 自绘滚动条:绝对定位,**骑在 rail 右侧那条分割线上**(分割线是 rail 的 border-right,
+ * 所以往右越出 2px 让它跨在线上)。用 transform 位移,不触发重排。
+ */
+.notes-rail-scrollbar {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  width: 4px;
+  border-radius: 2px;
+  background: var(--border2);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  will-change: transform;
+}
+.notes-rail-scrollbar[data-scrolling='true'] {
+  opacity: 1;
+}
+
+.notes-rail-error {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  margin: 6px 4px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: var(--wash-red, rgba(248, 113, 113, 0.12));
+  color: var(--red);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.notes-group {
+  margin-bottom: 6px;
+}
+.notes-group-hd {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 8px 4px;
+  font-size: 10.5px;
+  color: var(--dim);
+  text-transform: none;
+}
+.notes-group-count {
+  color: var(--dim);
+}
+
+/* 笔记行:扁平。rail 现在与侧边栏同色,再铺白底卡片就看不见了 ——
+   层级改由「目录加粗 + 缩进 + 导引线」表达,和访达/编辑器的文件树同一种读法。
+   单行、只放名字:摘要与标签属于正文,列表里重复一遍只会挤掉真正要扫的东西。 */
+.notes-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 6px 9px;
+  cursor: pointer;
+  color: var(--text);
+  margin-bottom: 1px;
+  min-height: 28px;
+}
+.notes-row:hover {
+  background: var(--hover);
+}
+.notes-row.active {
+  background: var(--wash-accent);
+}
+.notes-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font-size: 12.5px;
+}
+/* 标签命中的标记:没有它,「标题与搜索词毫无关系却排在前面」会让人莫名其妙。
+   只在搜索且命中标签时出现,平时不占位置。 */
+.notes-row-tagmatch {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--accent2);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 就地改名:输入框占住标题那一格,与目录行同一套做法 */
+.notes-row-rename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 0 2px 0 0;
+}
+
+.notes-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  font-weight: 500;
+  /* 固定行高:CJK 字形的行盒天生比拉丁高(18px vs 15px),
+     不锁的话中文标题的行会比英文标题的行高 2px,整个列表参差不齐。 */
+  line-height: 16px;
+}
+
+/* 笔记行的悬停动作(与目录行同一套写法) */
+.notes-row-acts {
+  display: none;
+  align-items: center;
+  gap: 1px;
+  flex-shrink: 0;
+}
+.notes-row:hover .notes-row-acts {
+  display: inline-flex;
+}
+/* 行内按钮固定 16px 高 —— 这是「悬停时行高不能变」的关键:
+   行是 min-height:28px + 上下各 6px 内边距 = 内容区 16px,标题行盒约 15px。
+   按钮若高于 16px(原来是 18px),一悬停就把行撑高 2px,整列往下跳。 */
+.notes-row-acts button {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.notes-row-acts button:hover {
+  background: var(--surface4);
+  color: var(--text);
+}
+.notes-row-acts button.danger:hover {
+  color: var(--red);
+}
+
+/* 拖拽反馈:被拖的那行淡出,目标目录描边 */
+.notes-row.dragging,
+.notes-folder-row.dragging {
+  opacity: 0.4;
+}
+
+/* 根层投放条:只在拖拽时出现。明确写出「移到最外层」——
+   以前整片空白都能接住拖拽,从目录里随手一拖就掉到最外层,太容易误触。 */
+.notes-rootdrop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 34px;
+  margin: 8px 6px 0;
+  border: 1px dashed var(--border2);
+  border-radius: 6px;
+  color: var(--dim);
+  font-size: 11.5px;
+  pointer-events: auto;
+}
+.notes-rootdrop.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+/* 投放高亮**只改背景色**:加描边、加阴影之类都会让行看起来在动 */
+.notes-folder-row.drop-target {
+  background: var(--wash-accent);
+}
+/* 悬停只改背景色。这里以前还有一条 `border-color: var(--border2)` ——
+   那是 .notes-row 还是「白底卡片 + 透明描边」时留下的,悬停时改边框色会让行实打实跳 1px。 */
+.notes-row-pin {
+  font-size: 9px;
+  color: var(--accent2);
+}
+/* 标签命中的标记:没有它,「标题与搜索词毫无关系却排在前面」会让人莫名其妙。
+   只在搜索且命中标签时出现,平时不占位置。 */
+.notes-row-tagmatch {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--accent2);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 就地改名:输入框占住标题那一格,与目录行同一套做法 */
+.notes-row-rename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 0 2px 0 0;
+}
+
+.notes-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-row-warn {
+  color: var(--yellow);
+}
+.notes-rail-truncated {
+  padding: 8px;
+  font-size: 10.5px;
+  color: var(--dim);
+  text-align: center;
+}
+
+/* 高度与最左侧边栏的 .sidebar-footer 对齐(38px,内按钮 26px)——
+   两条底栏在同一条水平线上,视觉才是一套 */
+.notes-rail-ft {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 0 8px;
+}
+.notes-rail-dir {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  font-size: 10.5px;
+  cursor: pointer;
+  height: 26px;
+  padding: 0 5px;
+  border-radius: 6px;
+  text-align: left;
+}
+.notes-rail-dir:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-rail-dir span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* 路径长了先省略中间,保住末尾的目录名 */
+}
+
+/* ── 主区 ── */
+.notes-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.notes-main-empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.notes-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* 与 .notes-rail-top 同值:左右两侧的首行要对齐 */
+  padding: 24px 14px 8px;
+  /* 与左侧 rail 同色:顶部这一横条要和它左边的目录栏连成一片,
+     否则同一水平线上两种底色,接缝处很跳。与编辑区的区分交给下面那道边框 + 编辑区自己的底色。 */
+  background: var(--surface);
+}
+.notes-rail-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 3px 5px;
+  border-radius: 5px;
+}
+.notes-rail-toggle:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+/* 空状态里的那个折叠按钮:标题栏不存在时它得自己浮在左上角,
+   否则「折叠了目录树 + 没打开笔记」就再也没有入口把它展开 */
+.notes-rail-toggle.floating {
+  position: absolute;
+  top: 22px;
+  left: 10px;
+  z-index: 5;
+}
+.notes-main-empty {
+  position: relative;
+}
+/* 标题按整条路径读:`工作/` + 名字 + `.md`,前后两段只读(由文件位置决定) */
+.notes-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  overflow: hidden;
+}
+.notes-path-dir,
+.notes-path-ext {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--dim);
+  white-space: pre;
+}
+/* 镜像撑宽 + 输入框铺满:让 `.md` 紧跟在标题后面,而不是被 flex 推到行尾。
+   两层必须共用完全相同的字体与内边距,否则宽度对不上。 */
+.notes-title-wrap {
+  display: inline-grid;
+  min-width: 0;
+  max-width: 100%;
+}
+.notes-title-wrap > * {
+  grid-area: 1 / 1;
+}
+.notes-title-mirror {
+  visibility: hidden;
+  white-space: pre;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 0 1px;
+}
+.notes-title {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 0 1px;
+  outline: none;
+}
+.notes-title::placeholder {
+  color: var(--dim);
+}
+.notes-hd-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.notes-save-state {
+  font-size: 10.5px;
+  color: var(--dim);
+  margin-right: 4px;
+}
+.notes-save-state.dirty {
+  color: var(--yellow);
+}
+.notes-act {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 5px 7px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+.notes-act:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-act.active {
+  color: var(--accent2);
+}
+.notes-act.danger:hover {
+  color: var(--red);
+}
+
+/* 横幅:冲突与降级提示 —— 刻意不用模态,打字中途弹模态是敌意设计 */
+.notes-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 14px 8px;
+  padding: 8px 11px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+.notes-banner.conflict {
+  background: var(--wash-yellow, rgba(251, 191, 36, 0.14));
+  color: var(--yellow);
+}
+.notes-banner.warn {
+  background: var(--wash-yellow, rgba(251, 191, 36, 0.1));
+  color: var(--muted);
+}
+.notes-banner span {
+  flex: 1;
+  min-width: 0;
+}
+.notes-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 元数据行:关联 chip + 标签 */
+/* 标题行 + 这一行构成「工具条」,与 rail 同色(见 .notes-hd 的说明);
+   与编辑区的分界靠这道下边框 + 编辑区自己的底色,不靠工具条变色。 */
+.notes-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border2);
+}
+
+/* 未配置任何关联/标签时,这一行右端会留一大片空 —— 用「更新于」把它填上有用的信息 */
+.notes-meta-time {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+.notes-add-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px dashed var(--border2);
+  background: transparent;
+  color: var(--dim);
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.notes-add-ref:hover {
+  color: var(--accent2);
+  border-color: var(--accent2);
+}
+.notes-tags-edit {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.notes-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--surface3);
+  color: var(--muted);
+  font-size: 11px;
+}
+.notes-tag-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 0;
+  font-size: 9px;
+}
+.notes-tag-input {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  outline: none;
+  width: 96px;
+}
+
+/* 关联 chip:类型 · 名称,色调区分 有效/漂移/失效 */
+.note-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.note-ref {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--surface3);
+  font-size: 11px;
+  overflow: hidden;
+}
+.note-ref-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.note-ref-main:disabled {
+  cursor: default;
+}
+.note-ref-type {
+  color: var(--dim);
+}
+.note-ref-label {
+  color: var(--text);
+}
+.note-ref-ok .note-ref-main:hover {
+  color: var(--accent2);
+}
+.note-ref-changed {
+  background: var(--wash-yellow, rgba(251, 191, 36, 0.14));
+}
+.note-ref-changed .note-ref-main {
+  color: var(--yellow);
+}
+.note-ref-stale {
+  background: var(--surface2);
+}
+.note-ref-stale .note-ref-label {
+  color: var(--dim);
+  text-decoration: line-through;
+}
+.note-ref-flag {
+  color: var(--dim);
+  font-size: 10px;
+}
+.note-ref-act {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  padding: 3px 7px;
+  font-size: 9.5px;
+  border-left: 1px solid var(--border);
+}
+.note-ref-act:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+.note-related-count {
+  margin-left: 5px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--surface3);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+/* 视图切换:三个纯图标按钮,做成一段分段控件。
+   它现在是「元数据行」的最左一段(竖线之后才是关联与标签),所以右侧只有两行。 */
+.notes-modes {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.notes-mode-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 23px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10.5px;
+}
+.notes-mode-btn + .notes-mode-btn {
+  border-left: 1px solid var(--border2);
+}
+.notes-mode-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-mode-btn.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* 视图切换与「关联/标签」之间的那道竖线 */
+.notes-meta-sep {
+  flex-shrink: 0;
+  width: 1px;
+  align-self: stretch;
+  margin: 1px 3px;
+  background: var(--border2);
+}
+
+/* 三区 */
+.notes-shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+.notes-pane {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.notes-divider {
+  width: 7px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--surface3);
+  border-left: 1px solid var(--border2);
+  border-right: 1px solid var(--border2);
+}
+.notes-divider:hover {
+  background: var(--wash-accent);
+}
+/* 编辑器那一栏:整块用 --editor-bg(明显区别于工具条与预览),形成明确的「输入区」 */
+.notes-editor-pane {
+  background: var(--editor-bg);
+  box-shadow: inset 0 1px 0 var(--border);
+}
+
+.note-editor-host {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  position: relative;
+}
+.note-editor-host .cm-editor {
+  height: 100%;
+}
+.note-editor-host .cm-content[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--dim);
+  pointer-events: none;
+}
+
+/* ⚠ 必须覆盖 .notes-pane 的 display:flex —— 两者是同一个元素,而 flex item 会收缩到内容宽度,
+   正文区因此不会撑满,代码块看起来只有一小条。预览是滚动容器,本来就该是块级。 */
+.notes-preview {
+  display: block;
+  overflow-y: auto;
+  /*
+   * 横向也要能滚:被显式放大的图片会超出栏宽(见 .md-media-box.sized)。
+   * 不写这条的话,`.notes-pane` 上的 `overflow: hidden` 会把超出的部分直接裁掉 ——
+   * 用户拖到 473 却只能看到 353,右边那截凭空消失。
+   */
+  overflow-x: auto;
+  padding: 20px 26px 56px;
+  background: var(--surface);
+}
+
+/*
+ * 预览区的滚动条:细到几乎不存在。
+ *
+ * 为什么不用全局那一套(base.css 的 5px + rgba(255,255,255,.1)):那个白色半透明
+ * 是给深色底调的,**浅色主题下等于完全看不见** —— 用户会以为这一栏不能滚。
+ *
+ * 这里三件事一起做:
+ *   ① 槽 10px、滑块四周留 4px 透明边(background-clip: padding-box)→ 实际只有 **2px** 宽;
+ *   ② 平时**完全透明**(但元素还在,鼠标移上去仍然抓得住);
+ *   ③ 滚动中或悬停时才显形,由 NotesView 打 data-scrolling。
+ * 于是「读的时候它不在,要找它的时候它在」。
+ */
+.notes-preview::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.notes-preview::-webkit-scrollbar-track {
+  background: transparent;
+}
+.notes-preview::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.notes-preview[data-scrolling='true']::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  background-clip: padding-box;
+}
+.notes-preview::-webkit-scrollbar-thumb:hover {
+  background: var(--dim);
+  background-clip: padding-box;
+}
+.notes-preview::-webkit-scrollbar-corner {
+  background: transparent;
+}
+.notes-preview-empty {
+  padding: 20px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.notes-preview-body {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text);
+}
+
+/* 预览里的代码块:全局 .md-code 是给 AI 消息那种窄栏用的(10.5px / break-all / 220px 上限),
+   笔记正文是整幅宽度,照搬会显得又小又挤。这里按「长文里的代码」重新定一档。 */
+.notes-preview-body .md-code {
+  font-size: 11.5px;
+  line-height: 1.65;
+  max-height: 460px;
+  /* break-all 会把标识符拦腰截断;改成只在实在放不下时才断,且优先在空白处断 */
+  word-break: normal;
+  overflow-wrap: anywhere;
+  padding: 11px 14px;
+}
+
+/* 预览里的扩展元素(基础 .md-* 在 app-chrome.css) */
+.notes-preview-body .md-h5 {
+  font-size: 12.5px;
+}
+.notes-preview-body .md-h6 {
+  font-size: 12px;
+  color: var(--muted);
+}
+/* 折叠块:与提示块同一套「卡片」观感,只是标题可点 */
+.notes-preview-body .md-details {
+  margin: 10px 0;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface2);
+  /* 同 .md-callout:裁圆角,但给框外的按钮/角柄留余量 */
+  overflow: clip;
+  overflow-clip-margin: 24px;
+}
+.notes-preview-body .md-summary {
+  padding: 9px 14px;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+/* 收起时的三角自己画,免得各平台的原生标记大小不一 */
+.notes-preview-body .md-summary::-webkit-details-marker {
+  display: none;
+}
+.notes-preview-body .md-summary::before {
+  content: '\25B8';
+  color: var(--dim);
+  font-size: 10px;
+  transition: transform 0.12s ease;
+}
+.notes-preview-body .md-details[open] > .md-summary::before {
+  transform: rotate(90deg);
+}
+.notes-preview-body .md-summary:hover {
+  color: var(--accent2);
+}
+/*
+ * ⚠ 内边距加在**这层 wrapper** 上,不要写成 `.md-details > :not(.md-summary)` ——
+ * 那样会把 `.md-list` 自己的 `padding-left: 20px` 覆盖成 12px,
+ * 而列表圆点是画在内容盒左边的(outside),于是它离边框只剩 2px,看着快重叠。
+ */
+.notes-preview-body .md-details-body {
+  padding: 2px 14px 12px;
+}
+/* 块内首尾元素不要顶到边上(它们自己带的上下外边距会顶出来) */
+.notes-preview-body .md-details-body > :first-child {
+  margin-top: 0;
+}
+.notes-preview-body .md-details-body > :last-child {
+  margin-bottom: 0;
+}
+
+/* 上下标:字号压到 0.75em 并把基线抬/压下去 —— 与浏览器默认一致,只是跟着正文字号走 */
+.notes-preview-body sub,
+.notes-preview-body sup {
+  font-size: 0.75em;
+  line-height: 0;
+}
+.notes-preview-body .md-del {
+  color: var(--dim);
+}
+.notes-preview-body .md-list .md-list {
+  margin: 2px 0 2px 4px;
+}
+.notes-preview-body li.md-task {
+  list-style: none;
+  margin-left: -18px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+.notes-preview-body .md-task-box {
+  margin-top: 4px;
+  flex-shrink: 0;
+  accent-color: var(--accent2);
+  cursor: pointer;
+}
+.notes-preview-body .md-task-box:disabled {
+  cursor: default;
+}
+.notes-preview-body .md-img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  display: block;
+  margin: 6px 0;
+}
+.notes-preview-body .md-img-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--surface3);
+  color: var(--dim);
+  font-size: 11.5px;
+  text-decoration: none;
+}
+.notes-preview-body .md-img-chip-alt {
+  color: var(--muted);
+}
+
+/* 关联选择器(根级浮层) */
+.note-ref-picker {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+}
+.note-ref-picker-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.note-ref-picker-hd span {
+  flex: 1;
+}
+.note-ref-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.note-ref-picker-search i {
+  color: var(--dim);
+  font-size: 11px;
+}
+.note-ref-picker-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.note-ref-picker-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+.note-ref-picker-group-title {
+  padding: 7px 8px 3px;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.note-ref-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.note-ref-picker-row:hover {
+  background: var(--hover);
+}
+.note-ref-picker-row.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.note-ref-picker-row i {
+  color: var(--dim);
+  font-size: 11px;
+}
+.note-ref-picker-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+.note-ref-picker-sub {
+  flex-shrink: 0;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.note-ref-picker-ft {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 860px) {
+  .notes-rail {
+    width: 200px;
+  }
+}
+
+/* 服务配置浮层里的「相关笔记」行(反向入口;MENU_H 已把它算进实测高度) */
+.svc-config-related {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+  text-align: left;
+}
+.svc-config-related:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.svc-config-related span:first-of-type {
+  flex: 1;
+}
+
+/* ── 底部工具条 ──
+   顶部两行是「我在哪 + 这篇挂着什么」,排版按钮放底部更像状态栏:常驻、不抢注意力。 */
+.notes-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  /* 与左侧 rail 底栏、最左侧边栏底栏同为 38px:三条底栏落在同一条线上 */
+  height: 38px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--border2);
+}
+.notes-toolbar-fmt {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.notes-fmt-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  border-radius: 5px;
+  font-size: 11px;
+}
+.notes-fmt-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-fmt-btn:active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+/* 分组之间的竖线 */
+.notes-fmt-btn.group-start {
+  margin-left: 9px;
+}
+.notes-fmt-btn.group-start::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--border2);
+}
+/* 带浮层的按钮(表格)要有个容器做定位参照,分隔线因此挪到容器上 */
+.notes-fmt-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+.notes-fmt-group.group-start {
+  margin-left: 9px;
+}
+.notes-fmt-group.group-start::before {
+  content: '';
+  position: absolute;
+  left: -5px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--border2);
+}
+/* 浮层开着时按钮要看得出来是「按下去」的,否则点完不知道发生了什么 */
+.notes-fmt-btn.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* ── 表格尺寸选择器 ──
+   往上开:工具条在窗口最底下,往下开会被窗口边缘切掉。
+   偏移量比「一个 100%」多:100% 是**按钮容器**的高度(24px),而容器在 38px 的
+   工具条里垂直居中 —— 只写 calc(100% + 6px) 会让浮层底边压住工具条顶边。 */
+.notes-table-picker {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: -6px;
+  z-index: 30;
+  padding: 8px 9px 6px;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.notes-table-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.notes-table-grid-row {
+  display: flex;
+  gap: 2px;
+}
+.notes-table-cell {
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.notes-table-cell.on {
+  background: var(--wash-accent);
+  border-color: var(--accent2);
+}
+.notes-table-size {
+  margin-top: 6px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.notes-toolbar-spacer {
+  flex: 1;
+}
+.notes-toolbar-count,
+.notes-toolbar-hint {
+  font-size: 10.5px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── 首次使用(既没有目录也没有笔记)──
+   通用空态只有一行灰字,首启时太单薄;这里给一块完整引导,
+   顺带把「把已有 Obsidian 库放进来也能用」这条最容易被忽略的能力说出来。 */
+.notes-firstrun {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 7px;
+  padding: 26px 18px 10px;
+}
+.notes-firstrun-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 3px;
+  border-radius: 12px;
+  background: var(--wash-accent);
+  color: var(--accent2);
+  font-size: 19px;
+}
+.notes-firstrun-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.notes-firstrun-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.notes-firstrun-sub {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--dim);
+}
+
+/* ── 拖拽期间:关掉一切会改变布局的悬停效果 ──
+   行内按钮是 display:none → inline-flex 才出现的,一出现就挤占同一行的宽度,
+   鼠标拖着扫过每一行时这些按钮此起彼伏,看上去就是内容在抖。
+   拖拽时只保留背景色的变化(投放高亮),其余一律不参与。 */
+.notes-rail-list[data-dragging='true'] .notes-folder-row:hover .notes-folder-acts,
+.notes-rail-list[data-dragging='true'] .notes-row:hover .notes-row-acts {
+  display: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   代码高亮词表 —— 编辑器与预览共用
+   class 名由 lib/code-tokens.ts 定义,同一份词表同时喂给 CodeMirror 的
+   HighlightStyle 和预览的 highlightCode。配色只在这里定义一次。
+   ══════════════════════════════════════════════════════════════════ */
+
+.tk-comment { color: var(--syn-comment); font-style: italic; }
+.tk-keyword { color: var(--syn-keyword); }
+.tk-string { color: var(--syn-string); }
+.tk-number { color: var(--syn-number); }
+.tk-atom { color: var(--syn-atom); }
+.tk-regexp { color: var(--syn-atom); }
+.tk-escape { color: var(--syn-number); }
+.tk-constant { color: var(--syn-constant); }
+.tk-url { color: var(--syn-prop); }
+.tk-prop { color: var(--syn-prop); }
+.tk-attr { color: var(--syn-type); }
+.tk-tag { color: var(--syn-tag); }
+.tk-type { color: var(--syn-type); }
+.tk-label { color: var(--syn-keyword); }
+.tk-op { color: var(--syn-op); }
+.tk-meta { color: var(--syn-meta); }
+.tk-invalid { color: var(--red); text-decoration: underline wavy var(--red); }
+.tk-name { color: var(--text); }
+.tk-fn { color: var(--syn-fn); }
+.tk-builtin { color: var(--syn-type); }
+.tk-local { color: var(--text); }
+
+/* 行内代码只上色,**不套底色块** —— 底色块是「渲染」,不是「着色」。
+   而且它必然要 padding,一旦有了 padding,那一行就比邻居高,整篇行高开始参差。 */
+.tk-code {
+  color: var(--syn-code-fg);
+}
+
+/* 标记语法(`#`、`**`、`-` …)压暗:它们在编辑器里是「语法」,不是内容 */
+.tk-meta,
+.note-editor-host .tk-hr {
+  color: var(--dim);
+}
+.note-editor-host .tk-list { color: var(--accent2); }
+.note-editor-host .tk-quote { color: var(--muted); }
+.note-editor-host .tk-link { color: var(--cyan); }
+.note-editor-host .tk-del { color: var(--dim); text-decoration: line-through; }
+
+/*
+ * 字形层面:加粗 / 斜体真的显示出来,但**不改字号、不改行高**。
+ * 源码编辑器(VS Code、Obsidian 源码模式)都这么做 —— 它只改字形,不动排版。
+ * 等宽字体的粗体与斜体仍然是等宽的,所以列对齐也不会被破坏。
+ */
+.note-editor-host .tk-strong { font-weight: 600; }
+.note-editor-host .tk-em { font-style: italic; }
+
+/*
+ * 标题:**只加粗,不放大、不加上方留白**。
+ * 这一条是编辑区「像源码还是像文档」的分水岭 —— 一旦字号开始变,
+ * 行高就不再统一,读起来立刻变成「一份渲染过的文档」。
+ * 加粗不改变行高,所以它留下,方便扫读层级。
+ */
+.note-editor-host .tk-h1,
+.note-editor-host .tk-h2,
+.note-editor-host .tk-h3,
+.note-editor-host .tk-h4 { font-weight: 600; }
+
+/* ── 语法树没覆盖到的那几处(见 modules/notes/editor-marks.ts)──
+   同样只上色与改字形,不碰排版。 */
+.note-editor-host .tk-th { font-weight: 600; }
+.note-editor-host .tk-task { color: var(--syn-constant); font-weight: 600; }
+
+/* 提示块标记按类型上色。名字由 editor-marks.ts 用模板串拼出来 ——
+   静态扫描看不见,所以 styles.contract.test.ts 里有一份显式清单。 */
+.note-editor-host .tk-callout { font-weight: 600; }
+.note-editor-host .tk-callout-note { color: var(--blue); }
+.note-editor-host .tk-callout-tip { color: var(--green); }
+.note-editor-host .tk-callout-important { color: var(--accent2); }
+.note-editor-host .tk-callout-warning { color: var(--yellow); }
+.note-editor-host .tk-callout-caution { color: var(--red); }
+
+/* ══════════════════════════════════════════════════════════════════
+   编辑器:源码模式(没有块级装饰)
+   ══════════════════════════════════════════════════════════════════
+   这里**刻意什么都没有**。编辑区不做代码块底色、引用竖条、表格底色、标题留白 ——
+   那些都是「渲染」,属于右边预览区。一旦行高开始参差,它读起来就是一份文档而不是源码。
+   如果将来又想加回来:注意 CodeMirror 的行高测量对 .cm-line 上的纵向 padding 不准,
+   留白必须走 ::before / ::after(那个高度它是照实量的)。
+   styles.contract.test.ts 里有一组契约守着这条。 */
+
+/* ══════════════════════════════════════════════════════════════════
+   预览:提示块(GitHub / Obsidian callout)
+   ══════════════════════════════════════════════════════════════════ */
+
+.md-callout {
+  margin: 10px 0;
+  border: 1px solid var(--callout-line);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: var(--callout-bg);
+  /*
+   * 裁掉圆角外的溢出(表头底色、代码块…),但**留一圈余量**:
+   * 表格的行删除按钮定位在表格框**外面** 21px(`right: -21px`),而卡片的内边距只有 12px ——
+   * 用 `overflow: hidden` 会把按钮裁掉一大半(实测 20px),用户根本点不到。
+   * `overflow-clip-margin` 正是干这个的:照常裁圆角,但裁的范围往外让 24px。
+   */
+  overflow: clip;
+  overflow-clip-margin: 24px;
+}
+.md-callout-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px 0;
+  color: var(--callout-fg);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.md-callout-hd i {
+  font-size: 11.5px;
+}
+.md-callout-body {
+  padding: 4px 12px 10px;
+  color: var(--text);
+}
+/* 提示块里的段落不该再带自己的上下留白 —— 那会让块内空一大截 */
+.md-callout-body > :first-child {
+  margin-top: 0;
+}
+.md-callout-body > :last-child {
+  margin-bottom: 0;
+}
+.md-callout-body .md-p {
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+/* 五种类型只差一组变量,配色与图标一一对应(图标在 markdown.tsx 的 CALLOUT_ICON) */
+.md-callout-note {
+  --callout-fg: var(--blue);
+  --callout-bg: var(--wash-blue);
+  --callout-line: color-mix(in srgb, var(--blue) 34%, transparent);
+}
+.md-callout-tip {
+  --callout-fg: var(--green);
+  --callout-bg: var(--wash-green);
+  --callout-line: color-mix(in srgb, var(--green) 34%, transparent);
+}
+.md-callout-important {
+  --callout-fg: var(--accent2);
+  --callout-bg: var(--wash-accent);
+  --callout-line: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.md-callout-warning {
+  --callout-fg: var(--yellow);
+  --callout-bg: var(--wash-yellow);
+  --callout-line: color-mix(in srgb, var(--yellow) 38%, transparent);
+}
+.md-callout-caution {
+  --callout-fg: var(--red);
+  --callout-bg: var(--wash-red);
+  --callout-line: color-mix(in srgb, var(--red) 34%, transparent);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   预览:媒体(视频 / 音频 / PDF)
+   ══════════════════════════════════════════════════════════════════ */
+
+.md-media {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface2);
+}
+video.md-media {
+  max-height: 460px;
+  background: #000;
+}
+/* 音频播放器高度是浏览器定的,别用 width:100% 之外的任何东西去撑它 */
+.md-media-audio {
+  height: 36px;
+  border: 0;
+  background: transparent;
+}
+/* PDF 交给 Chromium 自带的阅读器(需要 webPreferences.plugins) */
+.md-media-pdf {
+  height: 520px;
+  border: 0;
+  background: var(--surface2);
+}
+
+/* ── 可选中、可拖拽缩放的媒体盒子 ──
+   包一层是为了给角柄一个定位参照,同时让「这张图占多宽」有个明确的元素可量。 */
+/*
+ * 媒体盒子:给角柄一个定位参照,同时让「这块占多宽」有个明确的元素可量。
+ *
+ * ⚠ 宽度规则按类型分两档,这不是随手写的 —— 盒子的宽度和里面媒体的宽度**不能互相依赖**,
+ *   否则会转成一个解不开的环:
+ *     · 图片是替换元素,有固有尺寸 → 盒子收缩到内容宽(`inline-block`),天然成立;
+ *     · 视频/音频/PDF 的默认表现是「铺满一栏」,靠 `width: 100%` 实现 ——
+ *       而 100% 需要一个**确定的**参照。盒子若还在收缩,参照就是自己,于是塌成 0
+ *       (实测音频宽度真的是 0,播放器完全看不见)。
+ *   所以后三种的盒子必须是满宽块级;显式定过尺寸时再切回收缩(此时媒体有确定的宽,
+ *   环就断开了)。
+ */
+.md-media-box {
+  position: relative;
+  /* 去掉 inline-block 与图片基线之间的那道缝 */
+  line-height: 0;
+}
+.md-media-box[data-kind='image'] {
+  display: inline-block;
+  max-width: 100%;
+}
+.md-media-box[data-kind='video'],
+.md-media-box[data-kind='audio'],
+.md-media-box[data-kind='pdf'],
+.md-media-box[data-kind='embed'] {
+  display: block;
+}
+/* 用户显式定过宽 → 盒子收缩到那个宽,并解除栏宽限制
+   (超出的部分由预览横向滚动兜着;不解除的话图被放大到 463 而盒子还停在 343,
+   角柄会浮在图片中间)。 */
+.md-media-box.sized {
+  display: block;
+  width: fit-content;
+  max-width: none;
+}
+.md-media-box .md-img {
+  max-width: 100%;
+}
+/* 视频/音频/PDF 默认铺满盒子;定了尺寸的那部分由内联样式覆盖 */
+.md-media-box[data-kind='video'] > .md-media,
+.md-media-box[data-kind='audio'] > .md-media,
+.md-media-box[data-kind='pdf'] > .md-media {
+  width: 100%;
+}
+/*
+ * 悬停态:一圈描边 + 一个角柄。**五种媒体统一**用这一套,没有「点一下选中」。
+ *
+ * 为什么能靠悬停:角柄画在盒子边框之外(-7px),但它仍是盒子的**后代** ——
+ * 指针从盒子里移到角柄上时,盒子依然算 :hover,不会「一离开就消失、抓不到」。
+ */
+.md-media-box.resizable:hover,
+.md-media-box.dragging {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+/* 嵌入的描边画在外层卡片上(见 .md-embed),内层盒子不要再画一遍 ——
+   否则会出现「外面一圈 + 里面一圈没有地址栏的」两个框 */
+.md-embed .md-media-box.resizable:hover,
+.md-embed .md-media-box.dragging {
+  outline: none;
+}
+.md-resize-handle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent2);
+  cursor: nwse-resize;
+  z-index: 2;
+  /* 平时完全透明(元素还在,所以悬停到它上面时盒子依然算 :hover),悬停才显形 */
+  opacity: 0;
+  /* 盒子是 line-height: 0 的,角柄里的图标要自己撑起来 */
+  line-height: 1;
+  touch-action: none;
+}
+
+/*
+ * 这两种的角柄**常驻**:它们的点击会被 iframe 吞掉,没有「先选中」这一步可走。
+ * 平时压到 0.35 不抢眼,悬停到这一块或正在拖时提亮。
+ *
+ * 描边也一样:**悬停即出**,不需要先选中 —— 它们根本没有「选中」这个动作。
+ * 观感与图片「点一下选中」时的那圈描边保持一致。
+ */
+.md-media-box.resizable[data-kind='pdf']:hover,
+.md-media-box.resizable[data-kind='pdf'].dragging {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+/*
+ * 嵌入的描边画在**整张卡片**上,而不是里面那个只裹着 iframe 的盒子 ——
+ * 否则地址栏(「https://…」那一行)露在圈外面,看着像只选中了下半截。
+ */
+.md-embed.resizable:hover,
+.md-embed.resizable:has(.md-media-box.dragging) {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+}
+.md-media-box.resizable:hover .md-resize-handle,
+.md-media-box.dragging .md-resize-handle {
+  opacity: 1;
+}
+.md-media-box.dragging {
+  user-select: none;
+}
+/* 拖拽中不要过渡:跟手才不像在拖一个橡皮筋 */
+.md-media-box.dragging .md-media,
+.md-media-box.dragging .md-img {
+  transition: none;
+}
+
+/* ── 表格边框的两级配置 ──
+   `--md-table-bw` / `--md-table-bc` 由设置页(全局)或 ```table 围栏(单表)给出。
+   没有变量时退回原来的 1px + --border。 */
+.md-table th,
+.md-table td {
+  border-width: var(--md-table-bw, 1px);
+  border-style: solid;
+  border-color: var(--md-table-bc, var(--border));
+}
+/* 围栏壳本身不占额外间距 —— 里面的 .md-table-wrap 已经有 margin */
+.md-table-scope {
+  display: block;
+}
+
+/*
+ * 排版表格(````table layout````):它是一张**网格**,不是数据表 ——
+ * 不带边框,而且第一行**不再当表头**(去掉底色 / 加粗 / 不换行那套)。
+ *
+ * 为什么非要有这个开关:GFM 的表格必须有分隔行,所以「左图右文」这种两格版式
+ * 只能写成「第一行 + 空的数据行」,而第一行默认是按表头渲染的 —— 拿 border=none
+ * 直接排,得到的是一行加粗、不换行、带底色的「表头」。
+ */
+.md-table-scope[data-layout] {
+  --md-table-bw: 0px;
+}
+.md-table-scope[data-layout] .md-table th {
+  background: none;
+  font-weight: inherit;
+  color: inherit;
+  white-space: normal;
+}
+/* 围栏给的宽度下发给表格本身(拖拽中的实时预览走内联 style,优先级更高) */
+.md-table-scope .md-table {
+  width: var(--md-table-w, 100%);
+}
+
+/*
+ * 拖拽光标:悬在列 / 行边界上时,整张表(含每一格)换成拖拽光标。
+ *
+ * ⚠ 必须一路覆盖到**格子**上。格子自带 `.md-cell-host { cursor: text }`,
+ * 而子元素自己的 cursor 会压过祖先继承下来的 —— 只给表格设 cursor 的话,
+ * 指针一进格子就又变回文本光标(踩过:表格的 style 明明设上了,指针还是 I 形)。
+ */
+.md-table-block[data-cursor='col'] .md-table,
+.md-table-block[data-cursor='col'] .md-table td,
+.md-table-block[data-cursor='col'] .md-table th,
+.md-table-block[data-cursor='col'] .md-cell-body {
+  cursor: col-resize;
+}
+.md-table-block[data-cursor='row'] .md-table,
+.md-table-block[data-cursor='row'] .md-table td,
+.md-table-block[data-cursor='row'] .md-table th,
+.md-table-block[data-cursor='row'] .md-cell-body {
+  cursor: row-resize;
+}
+
+/* ── 表格编辑 ──
+   只在预览(笔记页)里出现;帮助页 / AI 消息不传 onEditTable,这些元素根本不渲染。 */
+
+/*
+ * 行删除按钮**在表格框外面**:它挂在最后一个数据格里,但绝对定位到表格右边框之外。
+ * 右侧那 22px 内边距就是它的落脚处 —— 内边距属于滚动盒内部,所以
+ * 既不会被 .md-table-wrap 的 overflow 裁掉,也不必为了它把 overflow 关掉
+ * (宽表格仍然能自己横向滚)。
+ */
+/*
+ * 可编辑的表格**不自己横向滚**,原因有两层:
+ *   ① 行删除按钮(挂在最后一个数据格里,right: -21px)要落在表格右侧那 22px 里 ——
+ *      而表格有**最小内容宽度**(列挤不下去时 width:100% 也拦不住),它会顶进内边距,
+ *      按钮就被 overflow 裁掉。实测有 6 个按钮被裁在框外 18–20px。
+ *   ② 表格的缩放角柄已经挪到外层 .md-table-block 上了,这一层不再需要为它让位。
+ * 代价:比栏还宽的表会把预览撑出横向滚动条(预览本来就有 overflow-x: auto)。
+ */
+/*
+ * 可编辑的表格**不自己横向滚**,也不留右侧内边距:
+ *   · 不留内边距 —— 表格有最小内容宽度(列挤不下去时 width:100% 也拦不住),它会顶进
+ *     内边距,于是「表格右边」到底在哪就说不准了,描边与角柄全跟着飘;
+ *   · 不横向滚 —— 行删除按钮(right: -8px)与角标都在框外,overflow 会把它裁掉。
+ * 代价:比栏还宽的表把**预览**撑出横向滚动条(预览本来就有 overflow-x: auto)。
+ */
+.md-table-wrap.editable {
+  overflow-x: visible;
+}
+/*
+ * 表格的缩放与媒体同一套观感:悬停出框与角柄,横向拖改宽。
+ * 宽度由围栏的 `width=` 给,以 --md-table-w 下发(见 shared/note-table-style.ts)。
+ * 内联 style 优先于这里的变量 —— 拖拽中的实时预览走内联。
+ */
+.md-table-wrap.resizable:hover,
+.md-table-wrap.resizable.dragging {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+/*
+ * 表格的缩放与媒体同一套观感:悬停出框与角柄,横向拖改宽。
+ *
+ * ⚠ 描边必须画在 **.md-table 自己**身上,不能画在外层 .md-table-block 上:
+ * 那个块比表格大一圈 —— 右侧有 22px 内边距(行删除按钮的落脚处)、上下有 8px 外边距,
+ * 画在块上的框会「比表格宽 22px、还往下沉 8px」。用户看到的就是「框在表格下面」。
+ *
+ * 角柄同理:它的位置要减去那 22px 内边距(right: 22 - 7 = 15px),才是表格右侧外 7px。
+ */
+.md-table-block {
+  position: relative;
+  margin: 8px 0;
+}
+/* 定过宽之后,块收缩到表格的实际宽度 —— 框与角柄因此永远贴着表格 */
+.md-table-block.sized {
+  width: fit-content;
+  max-width: none;
+}
+/* 边距挪到块上,wrap 的盒就等于表格 —— 角柄的 bottom 才量得准 */
+.md-table-wrap.editable {
+  margin: 0;
+}
+.md-table-block.resizable:hover .md-table,
+.md-table-block.resizable.dragging .md-table {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+  border-radius: 8px;
+}
+/* 块与表格同宽(见上),所以 -7px 就是「表格右边框外 7px」,与媒体一致 */
+.md-table-block .md-resize-handle {
+  right: -7px;
+  opacity: 0;
+}
+.md-table-block.resizable:hover .md-resize-handle,
+.md-table-block.resizable.dragging .md-resize-handle {
+  opacity: 1;
+}
+.md-table-wrap.editable .md-table td:last-child {
+  position: relative;
+}
+.md-table-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--surface3);
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 8px;
+  /* 平时完全藏起来:表格是拿来读的,一排叉号会把内容淹掉 */
+  opacity: 0;
+}
+/*
+ * 平时完全藏起来,鼠标移到**那一行 / 那一列**时才出现 —— 表格是拿来读的,
+ * 一排叉号会把内容淹掉。
+ * 按钮虽然定位在表格框外(-21px),但它仍是这一行/这一格的后代,
+ * 所以鼠标停在按钮上时 tr:hover / th:hover 依然成立,不会「一移过去就消失」。
+ */
+.md-table-del {
+  opacity: 0;
+}
+.md-table tr:hover .md-table-del.row,
+.md-table th:hover .md-table-del.col {
+  opacity: 1;
+}
+/* 行删除:竖着居中对齐这一行,横向落在表格外 */
+/* 平时压到 0.35 而不是 0:完全看不见会让人以为「这个按钮没有了」 */
+/* 完全落在表格右边框之外(-21px,按钮宽 15px)—— 压到 -8px 会有半颗盖在最后一个格子上 */
+.md-table-del.row {
+  position: absolute;
+  right: -21px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+.md-table-del:hover {
+  background: var(--wash-red);
+  color: var(--red);
+}
+/* 列删除按钮贴在表头格右上角(它删的是整列,位置就该在列上) */
+.md-table th {
+  position: relative;
+}
+.md-table-del.col {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+}
+.md-table th:hover .md-table-del.col {
+  opacity: 1;
+}
+
+/* 单元格:可编辑时给个「能点」的暗示,但只在悬停时 */
+/* 整格都是编辑落点(不是里面那层文字)—— 空单元格同样点得到 */
+.md-cell-host {
+  cursor: text;
+}
+
+/* ── 列边界 / 行边界的可视提示 ──
+   拖它们改列宽与行高,数字写回 ````table 围栏的 `cols=` / `rows=`。
+
+   ⚠ 它们画在表格**上方的一层**里,而且**不吃指针事件** —— 「按下时命中了哪条线」是在
+   表格的 pointerdown 里按坐标算的(见 TableView 的 hitEdge)。这样列边界能横跨整表高度、
+   行边界能横跨整行宽度;塞进格子里就做不到:格子上挂着列删除 / 行删除按钮,那两处都要
+   `position: relative`,抓手会被困在一格宽里(表头行的行边界只剩第一列那么宽)。
+
+   平时完全藏起来,悬停表格时才显形 —— 一张表上挂满线会把内容淹掉。 */
+.md-table-guides {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.1s ease;
+}
+.md-table-block:hover .md-table-guides {
+  opacity: 1;
+}
+.md-col-resize,
+.md-row-resize {
+  position: absolute;
+}
+.md-col-resize {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+}
+.md-row-resize {
+  left: 0;
+  right: 0;
+  height: 6px;
+}
+.md-col-resize::after,
+.md-row-resize::after {
+  content: '';
+  position: absolute;
+  background: var(--accent2);
+  border-radius: 2px;
+}
+.md-col-resize::after {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+}
+.md-row-resize::after {
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+}
+
+/* 单元格:可编辑时给个「能点」的暗示,但只在悬停时 */
+/* 整格都是编辑落点(不是里面那层文字)—— 空单元格同样点得到 */
+.md-cell-host {
+  cursor: text;
+}
+
+/* ── 列边界 / 行边界手柄 ──
+   拖它们改列宽与行高,数字写回 ````table 围栏的 `cols=` / `rows=`。
+   与删除按钮同一套:平时完全藏起来,鼠标移到那一列 / 那一行时才出现 ——
+   一张表上挂满手柄会把内容淹掉。 */
+.md-col-resize,
+.md-row-resize {
+  position: absolute;
+  opacity: 0;
+  z-index: 1;
+  /* 拖拽中不要触发浏览器的滚动/缩放手势 */
+  touch-action: none;
+}
+/* 列边界骑在表头格的右缘上:横向 6px 的抓取带,本体画成中间一条细线 */
+.md-col-resize {
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 6px;
+  cursor: col-resize;
+}
+.md-table th:hover .md-col-resize {
+  opacity: 1;
+}
+/*
+ * 行边界挂在**第一格**里,定位基准是 <tr> —— 所以数据行的手柄横跨整行。
+ * ⚠ 表头行那一格是 `position: relative`(给列删除按钮用的),它被截在一格宽里:
+ * 表头行的抓手只有第一列那么宽。数据行不受影响,而排版表格的内容通常就写在
+ * 第一列(图),所以够用;要更宽可以先把那一列的宽度拖大。
+ */
+.md-table-wrap.editable .md-table tr {
+  position: relative;
+}
+.md-row-resize {
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 6px;
+  cursor: row-resize;
+}
+.md-table tbody tr:hover .md-row-resize {
+  opacity: 1;
+}
+.md-col-resize::after,
+.md-row-resize::after {
+  content: '';
+  position: absolute;
+  background: var(--accent2);
+  border-radius: 2px;
+}
+.md-col-resize::after {
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 2px;
+}
+.md-row-resize::after {
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 2px;
+}
+.md-table td.md-cell-host:hover,
+.md-table th.md-cell-host:hover {
+  background: var(--wash-accent);
+}
+/* 双击后换成的受控 textarea:没有边框、背景透明、贴着格子的内边距 ——
+   看起来就是「直接在这个格子里改」,而不是弹了一个框。
+   高度按行数长(rows 由行数算),所以不出现内部滚动条。 */
+.md-cell-input {
+  display: block;
+  width: 100%;
+  min-width: 40px;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: top;
+}
+
+.md-table-tools {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+}
+.md-table-tools button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 21px;
+  padding: 0 8px;
+  border: 1px dashed var(--border2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10.5px;
+}
+.md-table-tools button:hover {
+  border-style: solid;
+  color: var(--text);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   预览:网页嵌入
+   ══════════════════════════════════════════════════════════════════ */
+
+.md-embed {
+  margin: 10px 0;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  /*
+   * ⚠ 不能写 `overflow: hidden`:角柄定位在媒体右下角外侧(-7px),会被直接裁掉,
+   * 嵌入就变成了「能选中但拖不动」。圆角改由 iframe 自己带(见 .md-embed-frame)。
+   */
+  background: var(--surface2);
+}
+/*
+ * 嵌入被定过宽时,带边框的这一层跟着**内容**收缩。
+ *
+ * ⚠ 不能写 `max-width: 100%`:栏宽比那个宽度窄时,外框会被卡到栏宽,而里面的 iframe
+ * 仍带着自己的宽度 —— 于是「框窄、内容宽」,两者分家(用户报的就是这个)。
+ * 与图片/视频同一套:定了宽就不受栏宽限制,超出的部分由预览横向滚动兜着。
+ */
+.md-embed.sized {
+  width: fit-content;
+  max-width: none;
+}
+.md-embed-bar {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+.md-embed-bar > i {
+  color: var(--dim);
+  font-size: 10px;
+}
+.md-embed-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+.md-embed-open {
+  flex-shrink: 0;
+  color: var(--dim);
+  font-size: 10px;
+}
+.md-embed-open:hover {
+  color: var(--accent2);
+}
+/* 底色给白:多数站点假定白底,透明会让未设背景的页面在深色主题下变成一片糊 */
+.md-embed-frame {
+  display: block;
+  width: 100%;
+  height: 380px;
+  border: 0;
+  /* 圆角自己带(外层不能 overflow: hidden,见 .md-embed 的说明) */
+  border-radius: 0 0 9px 9px;
+  background: #fff;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   预览:代码块外壳、语言角标与复制
+   ══════════════════════════════════════════════════════════════════ */
+
+.md-code-block {
+  position: relative;
+  margin: 8px 0;
+}
+.md-code-block .md-code {
+  margin: 0;
+}
+/* 角标与复制按钮挤在右上角一行。**不占布局高度** —— 给代码块加一条顶栏会让
+   每一段代码都凭空多出 24px,整篇笔记的节奏就散了。 */
+.md-code-bar {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* 平时压暗,鼠标进到这一块才提亮 —— 它是「需要时才找」的东西 */
+  opacity: 0.5;
+  transition: opacity 0.12s ease;
+}
+.md-code-block:hover .md-code-bar {
+  opacity: 1;
+}
+.md-code-lang {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--code-bar);
+  color: var(--dim);
+  font-size: 10px;
+  font-family: 'SF Mono', Menlo, monospace;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+  text-transform: lowercase;
+}
+.md-code-block:hover .md-code-lang {
+  color: var(--muted);
+}
+.md-code-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 18px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--code-bar);
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10px;
+}
+.md-code-copy:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.md-code-copy.done {
+  color: var(--green);
+}
+
+/* 预览里的行内代码:与编辑区同一套配色(全局 .md-code-inline 是给 AI 消息那种窄栏用的) */
+.notes-preview-body .md-code-inline {
+  font-size: 11.5px;
+  color: var(--syn-code-fg);
+  background: var(--syn-code-bg);
+  border-color: transparent;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   图表(mermaid)
+   ══════════════════════════════════════════════════════════════════ */
+
+.md-diagram {
+  margin: 10px 0;
+}
+/* 图表与图片/表格同一套:悬停出框与角柄,横向拖改宽(只拖宽,高度按图自身比例) */
+.md-diagram.resizable {
+  position: relative;
+}
+.md-diagram.resizable:hover,
+.md-diagram.resizable.dragging {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+.md-diagram .md-resize-handle {
+  opacity: 0;
+}
+.md-diagram.resizable:hover .md-resize-handle,
+.md-diagram.resizable.dragging .md-resize-handle {
+  opacity: 1;
+}
+.md-mermaid {
+  position: relative;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--surface2);
+  padding: 12px 14px;
+}
+/* 悬停才浮出的工具条:常驻会在每张图上压一行图标,正文被切碎 */
+.md-mermaid-tools {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.md-mermaid:hover .md-mermaid-tools {
+  opacity: 1;
+}
+.md-mermaid-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10.5px;
+}
+.md-mermaid-tools button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+/* 图比栏宽时横向滚动,而不是把整栏撑破 */
+.md-mermaid-canvas {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.md-mermaid-svg {
+  display: flex;
+  justify-content: center;
+  min-height: 8px;
+}
+/* mermaid 自己会给 svg 一个 max-width;这里放开,让它按容器宽度自适应 */
+.md-mermaid-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-mermaid-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 26px 0;
+  color: var(--dim);
+  font-size: 11.5px;
+}
+.md-mermaid-error {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.md-mermaid-error-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--yellow);
+  font-size: 11.5px;
+}
+.md-mermaid-error-msg {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+  background: var(--wash-red);
+  border-radius: 7px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.md-mermaid-error-src {
+  margin: 0;
+  max-height: 200px;
+}
+
+/* 放大查看:大图在窄栏里挤成一团,需要一个能看全的地方 */
+.md-mermaid-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(2px);
+}
+.md-mermaid-zoom-inner {
+  max-width: 100%;
+  max-height: 100%;
+  overflow: auto;
+  padding: 22px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+.md-mermaid-zoom-svg svg {
+  max-width: none;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   联动滚动开关(元数据行里的一个小按钮)
+   ══════════════════════════════════════════════════════════════════ */
+
+.notes-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 23px;
+  height: 23px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10px;
+}
+.notes-sync-btn.active {
+  background: var(--wash-accent);
+  border-color: transparent;
+  color: var(--accent2);
+}
+.notes-sync-btn:hover {
+  color: var(--text);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   图表对话框
+   ══════════════════════════════════════════════════════════════════ */
+
+.diagram-box {
+  width: 980px;
+  max-width: calc(100vw - 80px);
+  display: flex;
+  flex-direction: column;
+}
+.diagram-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 14px;
+  padding: 14px 16px;
+}
+.diagram-left {
+  width: 440px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+}
+.diagram-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.diagram-label {
+  flex-shrink: 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+.diagram-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.diagram-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.diagram-kind.active {
+  background: var(--wash-accent);
+  border-color: transparent;
+  color: var(--accent2);
+}
+.diagram-kind:hover {
+  color: var(--text);
+}
+.diagram-dirs {
+  display: inline-flex;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.diagram-dir {
+  width: 25px;
+  height: 23px;
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10px;
+}
+.diagram-dir + .diagram-dir {
+  border-left: 1px solid var(--border2);
+}
+.diagram-dir.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+.diagram-dir:hover {
+  color: var(--text);
+}
+.diagram-theme {
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.diagram-src {
+  flex: 1;
+  min-height: 200px;
+  resize: none;
+  padding: 10px 12px;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--code-bg);
+  color: var(--text);
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.7;
+  tab-size: 2;
+}
+.diagram-src:focus {
+  outline: none;
+  border-color: var(--accent2);
+}
+
+.diagram-snippets {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.diagram-snippets-spacer {
+  flex: 1;
+}
+.diagram-snippet {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 23px;
+  padding: 0 9px;
+  border: 1px dashed var(--border2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.diagram-snippet:hover {
+  border-style: solid;
+  color: var(--text);
+}
+
+.diagram-right {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.diagram-preview-hd {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 11px;
+}
+.diagram-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+.diagram-preview .md-mermaid {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.diagram-preview-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 11.5px;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   网页嵌入对话框
+   ══════════════════════════════════════════════════════════════════ */
+
+.embed-box {
+  width: 560px;
+  max-width: calc(100vw - 80px);
+}
+.embed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.embed-label {
+  color: var(--dim);
+  font-size: 11px;
+}
+.embed-input {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text);
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 12px;
+}
+.embed-input:focus {
+  outline: none;
+  border-color: var(--accent2);
+}
+.embed-heights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.embed-height {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.embed-height.active {
+  background: var(--wash-accent);
+  border-color: transparent;
+  color: var(--accent2);
+}
+.embed-height:hover {
+  color: var(--text);
+}
+/* 提示行会随地址类型换色 —— 「会联网」这件事必须一眼看见 */
+.embed-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 3px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.embed-hint > i {
+  margin-top: 2px;
+  color: var(--dim);
+}
+.embed-hint.warn {
+  background: var(--wash-yellow);
+  color: var(--text);
+}
+.embed-hint.warn > i {
+  color: var(--yellow);
+}

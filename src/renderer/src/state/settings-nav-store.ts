@@ -3,7 +3,15 @@
 // 与模块路由/浮层/toast 无关。
 import { create } from 'zustand'
 
-export type SettingsTabId = 'general' | 'launchd' | 'editor' | 'security' | 'about' | 'login' | 'ai'
+export type SettingsTabId =
+  | 'general'
+  | 'launchd'
+  | 'editor'
+  | 'notes'
+  | 'security'
+  | 'about'
+  | 'login'
+  | 'ai'
 
 interface SettingsNavState {
   tab: SettingsTabId

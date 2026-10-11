@@ -5,6 +5,7 @@ import type { DataSource } from './ports'
 import { createIpcAgentRepo } from './ipc/agents-source'
 import { createIpcCronRepo } from './ipc/cron-source'
 import { createIpcServicesRepo } from './ipc/services-source'
+import { createIpcNotesRepo } from './ipc/notes-source'
 import { createIpcAiRepo } from './ipc/ai-source'
 
 let instance: DataSource | null = null
@@ -15,6 +16,7 @@ export function dataSource(): DataSource {
       agents: createIpcAgentRepo(),
       crons: createIpcCronRepo(),
       services: createIpcServicesRepo(),
+      notes: createIpcNotesRepo(),
       ai: createIpcAiRepo()
     }
   }

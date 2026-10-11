@@ -18,11 +18,11 @@ import type {
 import type {
   AiAssistantMessage,
   AiContentBlock,
-  AiMention,
   AiMessage,
   AiToolResultMessage,
   AiUsage
 } from '../../shared/ai'
+import { mentionContext, type NoteContext } from './note-context'
 
 /** 中断产生的合成结果文案(回放时补进 transcript,让后续轮次仍然合法) */
 const ABORTED_TOOL_RESULT = '（本轮已中断，该调用未执行）'
@@ -61,15 +61,6 @@ function blocksToPiContent(
   return out
 }
 
-/** @ 引用转成模型可读的上下文行(引用的是本机真实对象,模型据此知道 "@" 指什么) */
-function mentionLine(mentions: AiMention[] | undefined): string {
-  if (!mentions || mentions.length === 0) return ''
-  const parts = mentions.map((m) =>
-    m.type === 'agent' ? `${m.label}（LaunchAgent · ${m.scope ?? 'user'}）` : `${m.label}（定时任务）`
-  )
-  return `[用户引用了本机任务：${parts.join('、')}]\n`
-}
-
 /** 协议 id → pi 的 api 名(回放历史消息时按原协议标注,跨协议切换也仍然自洽) */
 const API_OF: Record<string, string> = {
   anthropic: 'anthropic-messages',
@@ -79,8 +70,11 @@ const API_OF: Record<string, string> = {
 /**
  * 宿主消息数组 → pi transcript。
  * 会做两处修复:① 用户消息带上引用上下文 ② 补全被中断的 toolCall 的合成结果。
+ *
+ * `notes` 是引用解析结果(见 note-context.ts)。**历史与本轮必须共用同一份**,
+ * 否则同一条消息在历史里和在本轮里长得不一样。
  */
-export function toPiMessages(messages: AiMessage[]): PiMessage[] {
+export function toPiMessages(messages: AiMessage[], notes?: Map<string, NoteContext>): PiMessage[] {
   // 先把「已有哪些 toolCall 得到过结果」一次收齐:assistant 消息出现在结果之前,
   // 逐条向前扫描会误判成"未应答"而重复补合成结果
   const answered = new Set(
@@ -100,7 +94,7 @@ export function toPiMessages(messages: AiMessage[]): PiMessage[] {
       const images = m.blocks
         .filter((b): b is Extract<AiContentBlock, { type: 'image' }> => b.type === 'image')
         .map((b) => ({ type: 'image' as const, data: b.data, mimeType: b.mimeType }))
-      const text = mentionLine(m.mentions) + texts
+      const text = mentionContext(m.mentions, notes) + texts
       const user: PiUserMessage = {
         role: 'user',
         // 只有图片时 content 以空串文本兜底:部分端点不接受纯空内容
@@ -237,23 +231,35 @@ export function fromPiContent(content: AssistantMessage['content']): AiContentBl
   return out
 }
 
+/**
+ * 图片**不落库**:一张 2 MB 的截图 base64 后是 2.7 MB,而会话文件是明文 JSON,
+ * 且之后每一轮都会重发。模型当轮已经看过图了(内容直接进 pi 的 transcript),
+ * 需要再看时重新调一次工具即可 —— 本地读文件,几乎免费。
+ *
+ * 落库的是这一行,所以界面上也看得到「它看过哪张图」。
+ */
+export const IMAGE_NOT_STORED = '（图片已读取，仅本轮可见，未存入历史；需要再看请重新调用该工具）'
+
 /** pi 工具结果 → 宿主工具结果(isError 布尔 → 三态 status:中断/错误都算 err,中断归 warn) */
 export function fromPiToolResult(
   r: PiToolResultMessage,
   extra: { label?: string; durationMs: number; write?: boolean }
 ): AiToolResultMessage {
   const aborted = r.content.some((c) => c.type === 'text' && c.text.includes(ABORTED_TOOL_RESULT))
+  const blocks: AiContentBlock[] = []
+  let images = 0
+  for (const c of r.content) {
+    if (c.type === 'text') blocks.push({ type: 'text', text: c.text })
+    else images += 1
+  }
+  if (images > 0) blocks.push({ type: 'text', text: `${IMAGE_NOT_STORED}（${images} 张）` })
   return {
     role: 'toolResult',
     id: `tr-${r.toolCallId}`,
     toolCallId: r.toolCallId,
     toolName: r.toolName,
     ...(extra.label ? { label: extra.label } : {}),
-    blocks: r.content.map((c) =>
-      c.type === 'text'
-        ? ({ type: 'text', text: c.text } as AiContentBlock)
-        : ({ type: 'image', data: c.data, mimeType: c.mimeType } as AiContentBlock)
-    ),
+    blocks,
     isError: r.isError,
     status: r.isError ? (aborted ? 'warn' : 'err') : 'ok',
     durationMs: extra.durationMs,
