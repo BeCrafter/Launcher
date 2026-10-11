@@ -9,6 +9,7 @@ import { ChoiceModal } from './components/overlays/ChoiceModal'
 import { ElevationModal, DangerModal } from './components/overlays/ElevationModal'
 import { ImportModal } from './components/overlays/ImportModal'
 import { HelpModal } from './components/overlays/HelpModal'
+import { NoteRefPicker } from './modules/notes/NoteRefPicker'
 
 /**
  * 引导必须发生在**模块顶层**(同步),因为 `initSettingsFromMain()` 要在首次 commit 之前把主题等
@@ -63,6 +64,7 @@ export default function App(): React.JSX.Element {
       <ChoiceModal />
       <ImportModal />
       <HelpModal />
+      <NoteRefPicker />
       <ElevationModal />
       <DangerModal />
     </>

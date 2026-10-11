@@ -1,9 +1,16 @@
-// 工具层契约与边界的回归:14 个工具(9 只读 + 5 写)、写工具必备授权摘要、
-// 以及最容易出错的几类目标(跨作用域同名 / 非任务文件 / 损坏 plist / 找不到)
+// 工具层契约与边界的回归:20 个工具(12 只读 + 8 写)、写工具必备授权摘要、
+// 以及最容易出错的几类目标(跨作用域同名 / 非任务文件 / 损坏 plist / 找不到 / 附件路径闸门)
 import { describe, expect, it } from 'vitest'
 import { parsePlistXml } from '../../domains/plist-xml'
 import { createToolRegistry } from './index'
-import type { Agent } from '../../../shared/models'
+import type { Agent, PortService } from '../../../shared/models'
+import type {
+  Note,
+  NoteCreateInput,
+  NoteMeta,
+  NoteRemoveInput,
+  NoteSaveInput
+} from '../../../shared/notes'
 import type { ToolDef } from '../tool-types'
 
 const HOME = '/Users/tester'
@@ -39,9 +46,124 @@ const FILES = [
   { path: `${HOME}/Library/LaunchAgents/broken.plist`, scope: 'user' as const, fileName: 'broken.plist', label: '', isTask: false }
 ]
 
-function makeRegistry() {
+
+function noteOf(patch: Partial<Note> & { id: string }): Note {
+  return {
+    title: patch.id,
+    created: '2026-10-09T10:00:00+08:00',
+    updated: '2026-10-09T10:00:00+08:00',
+    tags: [],
+    pinned: false,
+    refs: [],
+    excerpt: '',
+    mtimeMs: 0,
+    size: 0,
+    frontmatterIssues: [],
+    refsUnparsed: false,
+    opaque: false,
+    body: '',
+    revision: 'r0',
+    ...patch
+  }
+}
+
+const toMeta = (n: Note): NoteMeta => ({
+  id: n.id,
+  title: n.title,
+  created: n.created,
+  updated: n.updated,
+  tags: n.tags,
+  pinned: n.pinned,
+  refs: n.refs,
+  excerpt: n.excerpt,
+  mtimeMs: n.mtimeMs,
+  size: n.size,
+  frontmatterIssues: n.frontmatterIssues,
+  refsUnparsed: n.refsUnparsed,
+  opaque: n.opaque
+})
+
+/**
+ * read_note_image 的几种结论(真实实现在 notes-service.readAssetForAi)。
+ * 这里把「必须继续拒绝」的几类逐条点名 —— 它们才是扩白名单时真正要盯的。
+ */
+const ASSET_REPLIES: Record<string, { ok: true; data: string; mimeType: string; bytes: number; path: string } | { ok: false; reason: 'invalid' | 'not-image' | 'too-large'; size?: number }> = {
+  'assets/a.png': { ok: true, data: 'QUJD', mimeType: 'image/png', bytes: 3, path: '/notes/assets/a.png' },
+  // 应用自己写附件时是 %20 编码的,工具必须两种写法都收
+  'assets/Pasted%20image.png': { ok: true, data: 'QUJD', mimeType: 'image/png', bytes: 3, path: '/notes/assets/Pasted image.png' },
+  'assets/big.png': { ok: false, reason: 'too-large', size: 8 * 1024 * 1024 },
+  'assets/movie.mp4': { ok: false, reason: 'not-image' },
+  'assets/x.svg': { ok: false, reason: 'invalid' },
+  '../secret.png': { ok: false, reason: 'invalid' },
+  'notes/secret.png': { ok: false, reason: 'invalid' }
+}
+
+/** 内存版 NotesService:记录每次写,便于断言「解析失败时零写入」 */
+function makeNotesFake(initial: Note[] = []) {
+  const store = new Map<string, Note>(initial.map((n) => [n.id, n]))
+  const created: NoteCreateInput[] = []
+  const saved: NoteSaveInput[] = []
+  const removed: string[] = []
+  let seq = 100
+  const nextRev = (): string => `r${seq++}`
+  return {
+    store,
+    created,
+    saved,
+    removed,
+    list: async () => ({ notes: [...store.values()].map(toMeta), dir: '/notes', truncated: 0, error: null }),
+    search: async (q: string) =>
+      [...store.values()].filter((n) => n.title.includes(q) || n.body.includes(q)).map(toMeta),
+    readBodyForAi: async (id: string) => {
+      const n = store.get(id)
+      return n ? { note: n, body: n.body, truncated: false } : null
+    },
+    // 附件读取:真的三道闸在 domains/note-asset.ts(单测钉住),这里只回放它的几种结论
+    readAssetForAi: async (rel: string) =>
+      ASSET_REPLIES[rel] ?? ({ ok: false, reason: 'invalid' } as const),
+    create: async (input: NoteCreateInput) => {
+      created.push(input)
+      const id = input.id ?? input.title ?? 'note'
+      const n = noteOf({
+        id,
+        title: input.title ?? id,
+        body: input.body ?? '',
+        refs: input.refs ?? [],
+        tags: input.tags ?? [],
+        revision: nextRev()
+      })
+      store.set(id, n)
+      return n
+    },
+    save: async (input: NoteSaveInput) => {
+      saved.push(input)
+      const cur = store.get(input.id)
+      if (!cur) return { ok: false as const, kind: 'not-found' as const, message: 'not found' }
+      if (cur.revision !== input.expectedRevision) {
+        return { ok: false as const, kind: 'conflict' as const, latest: cur }
+      }
+      const next = noteOf({
+        ...cur,
+        body: input.body,
+        revision: nextRev(),
+        ...(input.meta?.title !== undefined ? { title: input.meta.title } : {}),
+        ...(input.meta?.refs !== undefined ? { refs: input.meta.refs } : {})
+      })
+      store.set(input.id, next)
+      return { ok: true as const, note: next }
+    },
+    remove: async (input: NoteRemoveInput) => {
+      removed.push(input.id)
+      store.delete(input.id)
+      return { ok: true as const, removed: true as const }
+    }
+  }
+}
+
+function makeRegistry(portServices: PortService[] = []) {
   const written: { path: string; xml: string }[] = []
   const opsCalls: { id: string; action: string }[] = []
+  const notesFake = makeNotesFake()
   const services = {
     agents: {
       list: async () => ({ agents: AGENTS }),
@@ -62,7 +184,7 @@ function makeRegistry() {
       remove: async () => {},
       readLog: async () => []
     },
-    discovery: { scanOnce: async () => ({ services: [], brewServices: [], containers: [], dockerAvailable: true, dockerReason: null, polling: false, scannedAt: 0 }) },
+    discovery: { scanOnce: async () => ({ services: portServices, brewServices: [], containers: [], dockerAvailable: true, dockerReason: null, polling: false, scannedAt: 0 }) },
     plists: {
       dirs: () => [
         { scope: 'user' as const, dir: `${HOME}/Library/LaunchAgents`, privileged: false },
@@ -83,10 +205,11 @@ function makeRegistry() {
     launchctl: {
       list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set<string>(), system: new Set<string>() } })
     },
-    brew: {}
+    brew: {},
+    notes: notesFake
   }
   const registry = createToolRegistry({ ...services, home: HOME } as never)
-  return { registry, written, opsCalls }
+  return { registry, written, opsCalls, notes: notesFake }
 }
 
 const byName = (registry: ReturnType<typeof makeRegistry>['registry'], n: string): ToolDef => {
@@ -96,19 +219,20 @@ const byName = (registry: ReturnType<typeof makeRegistry>['registry'], n: string
 }
 
 describe('ToolRegistry 契约', () => {
-  it('恰好 14 个工具:9 只读 + 5 写', () => {
+  it('恰好 20 个工具:12 只读 + 8 写', () => {
     const { registry } = makeRegistry()
-    expect(registry.all()).toHaveLength(14)
-    expect(registry.readOnly()).toHaveLength(9)
-    expect(registry.writable()).toHaveLength(5)
+    expect(registry.all()).toHaveLength(20)
+    expect(registry.readOnly()).toHaveLength(12)
+    expect(registry.writable()).toHaveLength(8)
   })
 
   it('工具名是模型看到的稳定契约', () => {
     const { registry } = makeRegistry()
     expect(registry.all().map((t) => t.name).sort()).toEqual([
-      'add_cron', 'check_port', 'collect_diagnostic_context', 'generate_plist', 'get_service_status',
-      'list_services', 'load_plist', 'read_plist', 'remove_cron', 'search_services', 'tail_log',
-      'unload_plist', 'validate_plist', 'write_plist'
+      'add_cron', 'check_port', 'collect_diagnostic_context', 'delete_note', 'generate_plist',
+      'get_service_status', 'link_note', 'list_notes', 'list_services', 'load_plist', 'read_note',
+      'read_note_image', 'read_plist', 'remove_cron', 'search_services', 'tail_log', 'unload_plist',
+      'validate_plist', 'write_note', 'write_plist'
     ])
   })
 
@@ -365,3 +489,228 @@ function ctx() {
 function savedText(r: { lines: { text: string }[] }): string {
   return r.lines.map((l) => l.text).join('\n')
 }
+
+describe('笔记工具', () => {
+  const ctx = { sessionId: 's1', signal: new AbortController().signal }
+
+  const SVC: PortService = {
+    id: '1234:8080',
+    port: 8080,
+    name: 'node',
+    command: 'node',
+    user: 'tester',
+    cmd: 'node server.js',
+    status: 'running',
+    addr: '*',
+    proto: 'TCP',
+    uptime: '2h'
+  }
+
+  it('list_notes 打印关联的持久键(供后续 link_note 复用)', async () => {
+    const { registry } = makeRegistry()
+    const t = byName(registry, 'list_notes')
+    const r = await t.execute({}, ctx)
+    // 空目录也不报错,只是明说没有
+    expect(savedText(r)).toContain('没有匹配的笔记')
+  })
+
+  it('read_note_image 返回图片块(模型真的看得到图)', async () => {
+    const { registry } = makeRegistry()
+    const t = byName(registry, 'read_note_image')
+    const r = await t.execute({ note_id: 'a', path: 'assets/a.png' }, ctx)
+    expect(r.isError).toBeFalsy()
+    expect(r.images).toHaveLength(1)
+    expect(r.images?.[0]).toMatchObject({ type: 'image', mimeType: 'image/png', data: 'QUJD' })
+    expect(savedText(r)).toContain('assets/a.png')
+  })
+
+  it('read_note_image 收下 %20 编码的路径(应用自己写附件时就是这种)', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'read_note_image').execute(
+      { note_id: 'a', path: 'assets/Pasted%20image.png' },
+      ctx
+    )
+    expect(r.isError).toBeFalsy()
+    expect(r.images).toHaveLength(1)
+  })
+
+  it.each([
+    ['越界路径', '../secret.png', 'assets/'],
+    ['不在 assets/ 下', 'notes/secret.png', 'assets/'],
+    ['白名单外(svg)', 'assets/x.svg', 'assets/'],
+    ['不是图片', 'assets/movie.mp4', '不是图片'],
+    ['超过上限', 'assets/big.png', '上限'],
+    ['不存在', 'assets/nope.png', 'assets/']
+  ])('read_note_image 拒绝%s:给可读原因且不返回图片', async (_name, path, hint) => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'read_note_image').execute({ note_id: 'a', path }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.images).toBeUndefined()
+    expect(savedText(r)).toContain(hint)
+  })
+
+  it('read_note_image 缺 path → 直接拒绝(不去猜一张图)', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'read_note_image').execute({ note_id: 'a' }, ctx)
+    expect(r.isError).toBe(true)
+    expect(r.images).toBeUndefined()
+  })
+
+  it('write_note 新建:挂上 agent 关联(键取自实时服务,不是模型编的)', async () => {
+    const { registry, notes } = makeRegistry()
+    const t = byName(registry, 'write_note')
+    // com.user.beta 只在 user 域存在 → 无歧义
+    const r = await t.execute(
+      { title: '排查 redis', body: '正文', refs: [{ type: 'agent', label: 'com.user.beta' }] },
+      ctx
+    )
+    expect(r.isError).toBeFalsy()
+    expect(notes.created).toHaveLength(1)
+    expect(notes.created[0].refs).toEqual([
+      { type: 'agent', key: 'user:com.user.beta', label: 'com.user.beta', detail: 'scope=user' }
+    ])
+  })
+
+  it('agent 跨作用域同名 → 列候选且**零写入**', async () => {
+    const { registry, notes } = makeRegistry()
+    const t = byName(registry, 'write_note')
+    const r = await t.execute(
+      { title: 'x', body: 'y', refs: [{ type: 'agent', label: 'com.user.alpha' }] },
+      ctx
+    )
+    // com.user.alpha 在 user 与 daemon 都存在 → 歧义
+    expect(r.isError).toBe(true)
+    expect(savedText(r)).toContain('多个作用域')
+    expect(notes.created).toHaveLength(0)
+  })
+
+  it('显式 scope 后歧义消解', async () => {
+    const { registry, notes } = makeRegistry()
+    const t = byName(registry, 'write_note')
+    const r = await t.execute(
+      { title: 'x', body: 'y', refs: [{ type: 'agent', label: 'com.user.alpha', scope: 'daemon' }] },
+      ctx
+    )
+    expect(r.isError).toBeFalsy()
+    expect(notes.created[0].refs?.[0].key).toBe('daemon:com.user.alpha')
+  })
+
+  it('service 关联解析成**跨重启稳定**的身份键,不是 pid:port', async () => {
+    const { registry, notes } = makeRegistry([SVC])
+    const t = byName(registry, 'write_note')
+    const r = await t.execute({ title: 'x', body: 'y', refs: [{ type: 'service', port: 8080 }] }, ctx)
+    expect(r.isError).toBeFalsy()
+    expect(notes.created[0].refs?.[0].key).toBe('8080:node')
+    expect(notes.created[0].refs?.[0].key).not.toBe(SVC.id)
+  })
+
+  it('端口上没有服务 → 整次失败且零写入', async () => {
+    const { registry, notes } = makeRegistry()
+    const t = byName(registry, 'write_note')
+    const r = await t.execute({ title: 'x', body: 'y', refs: [{ type: 'service', port: 9999 }] }, ctx)
+    expect(r.isError).toBe(true)
+    expect(notes.created).toHaveLength(0)
+  })
+
+  it('未知关联类型 → 零写入', async () => {
+    const { registry, notes } = makeRegistry()
+    const t = byName(registry, 'write_note')
+    const r = await t.execute({ title: 'x', body: 'y', refs: [{ type: 'sorcery' }] }, ctx)
+    expect(r.isError).toBe(true)
+    expect(notes.created).toHaveLength(0)
+  })
+
+  it('改写既有笔记前必须先 read_note —— 冷调 write_note 被拒且零写入', async () => {
+    const { registry, notes } = makeRegistry()
+    const existing = noteOf({ id: 'old', title: '旧', body: '旧正文' })
+    notes.store.set('old', existing)
+
+    const w = byName(registry, 'write_note')
+    const cold = await w.execute({ id: 'old', title: '新', body: '新正文' }, ctx)
+    expect(cold.isError).toBe(true)
+    expect(savedText(cold)).toContain('read_note')
+    expect(notes.saved).toHaveLength(0)
+    expect(notes.store.get('old')?.body).toBe('旧正文')
+
+    // 先读再写就通过
+    await byName(registry, 'read_note').execute({ id: 'old' }, ctx)
+    const warm = await w.execute({ id: 'old', title: '新', body: '新正文' }, ctx)
+    expect(warm.isError).toBeFalsy()
+    expect(notes.store.get('old')?.body).toBe('新正文')
+  })
+
+  it('read_note 之后磁盘被改 → conflict,不覆盖', async () => {
+    const { registry, notes } = makeRegistry()
+    notes.store.set('old', noteOf({ id: 'old', title: '旧', body: '旧正文', revision: 'r1' }))
+    await byName(registry, 'read_note').execute({ id: 'old' }, ctx)
+    // 模拟外部改动
+    notes.store.set('old', noteOf({ id: 'old', title: '旧', body: '别人改的', revision: 'r2' }))
+
+    const r = await byName(registry, 'write_note').execute({ id: 'old', title: 'x', body: 'y' }, ctx)
+    expect(r.isError).toBe(true)
+    expect(notes.store.get('old')?.body).toBe('别人改的')
+  })
+
+  it('append 保留原正文', async () => {
+    const { registry, notes } = makeRegistry()
+    notes.store.set('old', noteOf({ id: 'old', title: '旧', body: '原有内容', revision: 'r1' }))
+    await byName(registry, 'read_note').execute({ id: 'old' }, ctx)
+    await byName(registry, 'write_note').execute({ id: 'old', title: '旧', body: '追加段', mode: 'append' }, ctx)
+    expect(notes.store.get('old')?.body).toBe('原有内容\n\n追加段')
+  })
+
+  it('refsUnparsed 的笔记拒绝 link_note(不改写用户原文)', async () => {
+    const { registry, notes } = makeRegistry()
+    notes.store.set('flow', noteOf({ id: 'flow', title: 'f', refsUnparsed: true, revision: 'r1' }))
+    const r = await byName(registry, 'link_note').execute(
+      { id: 'flow', refs: [{ type: 'service', port: 8080 }] },
+      ctx
+    )
+    expect(r.isError).toBe(true)
+    expect(notes.saved).toHaveLength(0)
+  })
+
+  it('link_note 增删关联', async () => {
+    const { registry, notes } = makeRegistry([SVC])
+    notes.store.set('n', noteOf({ id: 'n', title: 'n', revision: 'r1' }))
+    await byName(registry, 'link_note').execute({ id: 'n', refs: [{ type: 'service', port: 8080 }] }, ctx)
+    expect(notes.store.get('n')?.refs.map((r) => r.key)).toEqual(['8080:node'])
+
+    await byName(registry, 'link_note').execute(
+      { id: 'n', refs: [{ type: 'service', port: 8080 }], remove: true },
+      ctx
+    )
+    expect(notes.store.get('n')?.refs).toEqual([])
+  })
+
+  it('link_note 重复添加不堆两条', async () => {
+    const { registry, notes } = makeRegistry([SVC])
+    notes.store.set('n', noteOf({ id: 'n', title: 'n', revision: 'r1' }))
+    await byName(registry, 'link_note').execute({ id: 'n', refs: [{ type: 'service', port: 8080 }] }, ctx)
+    await byName(registry, 'link_note').execute({ id: 'n', refs: [{ type: 'service', port: 8080 }] }, ctx)
+    expect(notes.store.get('n')?.refs).toHaveLength(1)
+  })
+
+  it('delete_note 删除并记录', async () => {
+    const { registry, notes } = makeRegistry()
+    notes.store.set('gone', noteOf({ id: 'gone', title: 'g', revision: 'r1' }))
+    const r = await byName(registry, 'delete_note').execute({ id: 'gone' }, ctx)
+    expect(r.isError).toBeFalsy()
+    expect(notes.removed).toEqual(['gone'])
+  })
+
+  it('不存在的笔记:read / delete 都报错而不是静默成功', async () => {
+    const { registry } = makeRegistry()
+    expect((await byName(registry, 'read_note').execute({ id: 'nope' }, ctx)).isError).toBe(true)
+    expect((await byName(registry, 'delete_note').execute({ id: 'nope' }, ctx)).isError).toBe(true)
+  })
+
+  it('write_note 的授权摘要:replace 标 dangerous,create 不标', () => {
+    const { registry } = makeRegistry()
+    const t = byName(registry, 'write_note')
+    expect(t.summarize?.({ title: 'a', body: 'b' }).dangerous).toBeFalsy()
+    expect(t.summarize?.({ id: 'x', title: 'a', body: 'b' }).dangerous).toBe(true)
+    // 摘要要能说清「写去哪、多少字」
+    expect(t.summarize?.({ title: 'a', body: 'bcd' }).detail).toContain('3 字')
+  })
+})

@@ -96,7 +96,8 @@ export function AppShell(): React.JSX.Element {
       <div className="app-shell">
         <Sidebar />
         <div className="main-content">
-          <Topbar />
+          {/* 顶栏由注册表决定显隐:笔记页把它整条让给内容(操作都在 rail 里) */}
+          {!rec.hideTopbar && <Topbar />}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
             <ViewHost module={module} />
           </div>

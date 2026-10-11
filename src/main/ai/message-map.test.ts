@@ -63,6 +63,30 @@ describe('toPiMessages', () => {
     expect((toPiMessages([m])[0] as { content: string }).content).toContain('每日备份（定时任务）')
   })
 
+  it('笔记引用把正文注入用户消息(引用是指路,正文不落进 blocks)', () => {
+    const m: AiUserMessage = {
+      ...userMsg('按这篇继续'),
+      mentions: [{ key: 'note:a', type: 'note', id: 'a', label: '排障' }]
+    }
+    const ctx = new Map([
+      ['note:a', { key: 'note:a', id: 'a', title: '排障', tags: [], refs: [], body: '8080 被占用' }]
+    ])
+    const content = (toPiMessages([m], ctx)[0] as { content: string }).content
+    expect(content).toContain('8080 被占用')
+    expect(content).toContain('按这篇继续')
+    expect(m.blocks).toHaveLength(1)
+  })
+
+  it('没带解析结果时笔记引用降级成一行标签(旧会话里的引用不该炸)', () => {
+    const m: AiUserMessage = {
+      ...userMsg('x'),
+      mentions: [{ key: 'note:a', type: 'note', id: 'a', label: '排障' }]
+    }
+    const content = (toPiMessages([m])[0] as { content: string }).content
+    expect(content).toContain('排障')
+    expect(content).toContain('id=a')
+  })
+
   it('已配对的 toolCall 不会被重复补合成结果', () => {
     const msgs: AiMessage[] = [
       userMsg('查一下'),
@@ -203,6 +227,26 @@ describe('fromPi*', () => {
     expect(mk('ok', false).status).toBe('ok')
     expect(mk('boom', true).status).toBe('err')
     expect(mk('（本轮已中断，该调用未执行）', true).status).toBe('warn')
+  })
+
+  it('fromPiToolResult 把图片换成一行说明(图片不进会话文件)', () => {
+    const r = fromPiToolResult(
+      {
+        role: 'toolResult',
+        toolCallId: 'tc',
+        toolName: 'read_note_image',
+        content: [
+          { type: 'text', text: '已读取 assets/a.png' },
+          { type: 'image', data: 'QUJD', mimeType: 'image/png' }
+        ],
+        isError: false,
+        timestamp: 1
+      } as never,
+      { durationMs: 10 }
+    )
+    expect(r.blocks.some((b) => b.type === 'image')).toBe(false)
+    expect(r.blocks.some((b) => b.type === 'text' && b.text.includes('未存入历史'))).toBe(true)
+    expect(r.blocks.some((b) => b.type === 'text' && b.text.includes('assets/a.png'))).toBe(true)
   })
 
   it('fromPiUsage 缺失时返回 null,存在时补全 cost', () => {

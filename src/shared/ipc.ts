@@ -68,7 +68,29 @@ export const IPC = {
   aiSkills: 'ai:skills',
   aiInstallMcpLink: 'ai:installMcpLink',
   aiCatalog: 'ai:catalog',
-  aiMcpInfo: 'ai:mcpInfo'
+  aiMcpInfo: 'ai:mcpInfo',
+  // ── 笔记(阶段 5)──
+  notesList: 'notes:list',
+  notesRead: 'notes:read',
+  notesCreate: 'notes:create',
+  notesSave: 'notes:save',
+  notesRename: 'notes:rename',
+  notesRemove: 'notes:remove',
+  notesSearch: 'notes:search',
+  /** 生效目录(设置里为空时是默认路径) */
+  notesDir: 'notes:dir',
+  /** 在访达中显示(id 省略 → 打开目录本身) */
+  notesReveal: 'notes:reveal',
+  /** 图片/附件落盘,返回相对笔记目录的路径 */
+  notesSaveAsset: 'notes:saveAsset',
+  /** 新建目录(目录笔记) */
+  notesCreateFolder: 'notes:createFolder',
+  /** 删除目录(连同其中的笔记进废纸篓) */
+  notesRemoveFolder: 'notes:removeFolder',
+  /** 目录改名 */
+  notesRenameFolder: 'notes:renameFolder',
+  /** 跨目录移动(笔记与目录共用) */
+  notesMove: 'notes:move'
 } as const
 
 // ── main → renderer 推送事件(preload onEvent 白名单) ──
@@ -77,7 +99,9 @@ export const IPC_EVENTS = {
   agentsDirChanged: 'agents:dirChanged',
   servicesUpdated: 'services:updated',
   /** AI 运行事件流(AiRunEvent;高频,只在会话运行期间推送) */
-  aiRunEvent: 'ai:runEvent'
+  aiRunEvent: 'ai:runEvent',
+  /** 笔记目录被外部改动(去抖命中;ids = 内容真的变了的那些) */
+  notesChanged: 'notes:changed'
 } as const
 
 export type IpcEventChannel = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]

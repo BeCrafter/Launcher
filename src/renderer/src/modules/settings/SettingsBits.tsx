@@ -10,7 +10,8 @@ export function SettingsSection({
   icon: string
   title?: string
   desc?: string
-  children: React.ReactNode
+  /** 纯说明段可以没有子节点 */
+  children?: React.ReactNode
 }): React.JSX.Element {
   const t = useT()
   return (

@@ -14,6 +14,7 @@ import { createTermination, type TerminationService } from './services/terminati
 import { createPlistService, type PlistService } from './services/plist-service'
 import { createLaunchctlService, type LaunchctlService } from './services/launchctl-service'
 import { createBrewAgentService, type BrewAgentService } from './services/brew-agent-service'
+import { createNotesService, type NotesService } from './services/notes-service'
 import type { ElevationExecutor } from './services/elevation'
 
 export interface CoreServices {
@@ -26,6 +27,8 @@ export interface CoreServices {
   /** AI 工具层需要直接下 launchctl 动词(载入/卸载/诊断),故连同底层门面一起给出 */
   launchctl: LaunchctlService
   brew: BrewAgentService
+  /** 笔记(阶段 5):应用与 launcher-mcp 进程共用同一份实现 */
+  notes: NotesService
 }
 
 export function createCoreServices(opts: {
@@ -35,8 +38,14 @@ export function createCoreServices(opts: {
   /** xmlIndent 设置('2' | '4' | 'tab');独立进程里给固定值即可 */
   getXmlIndent(): string
   getCronRetainDays(): number
+  /** 生效的笔记目录(设置里的 notesDir 经 shared/notes.resolveNotesDir 解析) */
+  getNotesDir(): string
   /** 服务发现结果变化(应用内推给渲染层;独立进程不需要) */
   onServicesChange?(r: ScanResult, polling: boolean): void
+  /** 笔记目录被外部改动(不传 = 独立进程:不启监听、不上报) */
+  onNotesChange?(ids: string[]): void
+  /** 删除笔记的落点(应用传 shell.trashItem;不传则移到 <dir>/.trash/) */
+  trashNote?(path: string): Promise<void>
   log?(msg: string): void
 }): CoreServices {
   const log = opts.log ?? ((): void => {})
@@ -75,5 +84,14 @@ export function createCoreServices(opts: {
     onChange: (r) => opts.onServicesChange?.(r, discovery.polling)
   })
 
-  return { plists, agents, cron, discovery, termination, docker, launchctl, brew }
+  // 笔记:不在这里 start() 监听 —— 应用侧要等建窗之后再启(同 discovery.start() 的理由),
+  // 独立进程则根本不启。构造本身是廉价的(不碰 fs)。
+  const notes = createNotesService({
+    getDir: opts.getNotesDir,
+    onExternalChange: opts.onNotesChange,
+    trash: opts.trashNote,
+    log
+  })
+
+  return { plists, agents, cron, discovery, termination, docker, launchctl, brew, notes }
 }

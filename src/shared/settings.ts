@@ -2,9 +2,14 @@
 // 物理路径:${HOME}/.config/launcher/config.json(见 src/main/settings/store.ts)
 // 键名承接原型 localStorage(launcherTheme → theme 等)
 
+import { TABLE_BORDERS, type TableBorder } from './note-table-style'
+
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type Language = 'zh-CN' | 'en-US'
 export type XmlIndent = '2' | '4' | 'tab'
+
+/** 表格边框颜色的合法形态:十六进制或颜色关键字。它会被写进 style,不能放任意串过去 */
+const TABLE_COLOR_RE = /^(?:#(?:[0-9a-f]{3}|[0-9a-f]{6})|[a-z]{3,20})$/i
 
 /** 单个端口服务的用户覆写(应用新增;UI-only、可逆,不影响 main 的发现管线) */
 export interface ServiceOverride {
@@ -76,6 +81,22 @@ export interface LauncherSettings {
   // ── 编辑器 ──
   labelPrefix: string
   xmlIndent: XmlIndent
+  /**
+   * 笔记目录。**空串 = 走默认路径**(`$HOME/.config/launcher/notes`)。
+   *
+   * 为什么默认值留空而不是写死绝对路径:normalizeSettings 在 preload 里也会跑
+   * (src/preload/index.ts),那里拿不到 homedir(),必须保持纯函数。
+   * 真正解析成绝对路径的是 shared/notes.ts 的 resolveNotesDir()。
+   */
+  notesDir: string
+  /**
+   * 笔记里表格的默认边框。单张表可以用 ```` ```table border=none ```` 围栏覆盖 ——
+   * 之所以要有全局默认:GFM 的表格语法没有属性位,不给默认值的话每张表都得包一层围栏,
+   * 文件就不再是标准 markdown 了。
+   */
+  notesTableBorder: TableBorder
+  /** 表格边框颜色;**空串 = 跟主题**(用 --border) */
+  notesTableBorderColor: string
   // ── 安全 ──
   authCacheMin: number
   confirmDangerous: boolean
@@ -112,6 +133,11 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   cronLogRetainDays: 3,
   labelPrefix: 'com.user.',
   xmlIndent: '2',
+  // 空串 = 默认目录($HOME/.config/launcher/notes),由 shared/notes.ts 的 resolveNotesDir 解析
+  notesDir: '',
+  notesTableBorder: 'thin',
+  // 空串 = 跟主题
+  notesTableBorderColor: '',
   authCacheMin: 5,
   confirmDangerous: true,
   // ⚠ schema 里唯一的引用型默认值:normalizeServiceOverrides 始终返回新对象,
@@ -153,12 +179,15 @@ const AI_BASE_URL_MAX = 400
 export const HEADER_MAX_ENTRIES = 16
 const HEADER_NAME_MAX = 64
 const HEADER_VALUE_MAX = 400
+/** 笔记目录路径上限:防损坏文件塞进超长串(正常路径数十字符) */
+const NOTES_DIR_MAX = 500
 
 function boolOr(v: unknown, fallback: boolean): boolean {
   return typeof v === 'boolean' ? v : fallback
 }
 
-function enumOr<T extends string>(v: unknown, allowed: T[], fallback: T): T {
+// 收 readonly:调用方常拿 `as const` 的常量表来传,不该逼它们复制一份可变数组
+function enumOr<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
   return allowed.includes(v as T) ? (v as T) : fallback
 }
 
@@ -294,6 +323,14 @@ export function normalizeSettings(raw: unknown): LauncherSettings {
     // 编辑器
     labelPrefix: typeof r.labelPrefix === 'string' && r.labelPrefix.length > 0 ? r.labelPrefix : d.labelPrefix,
     xmlIndent: enumOr(r.xmlIndent, XML_INDENT_VALUES, d.xmlIndent),
+    // 空串 = 默认目录(见 LauncherSettings.notesDir 的说明)
+    notesDir: typeof r.notesDir === 'string' ? r.notesDir.trim().slice(0, NOTES_DIR_MAX) : d.notesDir,
+    notesTableBorder: enumOr(r.notesTableBorder, TABLE_BORDERS, d.notesTableBorder),
+    // 只收十六进制与颜色关键字 —— 它会被写进 style,不能让任意字符串过去
+    notesTableBorderColor:
+      typeof r.notesTableBorderColor === 'string' && TABLE_COLOR_RE.test(r.notesTableBorderColor.trim())
+        ? r.notesTableBorderColor.trim()
+        : d.notesTableBorderColor,
     // 安全
     authCacheMin: enumNumberOr(r.authCacheMin, AUTH_CACHE_VALUES, d.authCacheMin),
     confirmDangerous: boolOr(r.confirmDangerous, d.confirmDangerous),

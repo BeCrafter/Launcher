@@ -26,6 +26,14 @@ import type { TerminationService } from './services/termination'
 import type { SettingsStore } from './settings/store'
 import type { TrayController } from './settings/types'
 import type { AiStack } from './ai'
+import type { NotesService } from './services/notes-service'
+import type {
+  NoteCreateInput,
+  NoteRemoveInput,
+  NoteRenameInput,
+  NoteSaveAssetInput,
+  NoteSaveInput
+} from '../shared/notes'
 import type { AiApprovalInput, AiSendInput } from '../shared/ipc'
 import type { AiProviderId } from '../shared/settings'
 
@@ -46,6 +54,8 @@ export interface IpcDeps {
   getInstallChannel: () => Promise<InstallChannel>
   /** AI 助手(阶段 4):会话/引擎/授权;MCP 端点由它一并管着 */
   ai: AiStack
+  /** 笔记(阶段 5) */
+  notes: NotesService
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -234,4 +244,39 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.aiCatalog, (_e, providerId: AiProviderId) => deps.ai.chat.catalog(providerId))
   ipcMain.handle(IPC.aiMcpInfo, () => deps.ai.mcpInfo())
   ipcMain.handle(IPC.aiInstallMcpLink, () => deps.ai.installMcpLink())
+
+  // ── 笔记(阶段 5) ──
+  // 薄转发:逻辑全在 NotesService,与应用外(MCP stdio)共用同一份实现
+  ipcMain.handle(IPC.notesList, () => deps.notes.list())
+  ipcMain.handle(IPC.notesRead, (_e, id: string) => deps.notes.read(String(id)))
+  ipcMain.handle(IPC.notesCreate, (_e, input: NoteCreateInput) => deps.notes.create(input))
+  ipcMain.handle(IPC.notesSave, (_e, input: NoteSaveInput) => deps.notes.save(input))
+  ipcMain.handle(IPC.notesRename, (_e, input: NoteRenameInput) => deps.notes.rename(input))
+  ipcMain.handle(IPC.notesRemove, (_e, input: NoteRemoveInput) => deps.notes.remove(input))
+  ipcMain.handle(IPC.notesSearch, (_e, query: string, limit?: number) =>
+    deps.notes.search(String(query ?? ''), limit)
+  )
+  ipcMain.handle(IPC.notesDir, () => deps.notes.dir())
+  ipcMain.handle(IPC.notesSaveAsset, (_e, input: NoteSaveAssetInput) => deps.notes.saveAsset(input))
+  ipcMain.handle(IPC.notesCreateFolder, (_e, input: { parent: string; name: string }) =>
+    deps.notes.createFolder({ parent: String(input?.parent ?? ''), name: String(input?.name ?? '') })
+  )
+  ipcMain.handle(IPC.notesRemoveFolder, (_e, id: string) => deps.notes.removeFolder({ id: String(id) }))
+  ipcMain.handle(IPC.notesRenameFolder, (_e, input: { id: string; name: string }) =>
+    deps.notes.renameFolder({ id: String(input?.id ?? ''), name: String(input?.name ?? '') })
+  )
+  ipcMain.handle(IPC.notesMove, (_e, input: { id: string; parent: string }) =>
+    deps.notes.move({ id: String(input?.id ?? ''), parent: String(input?.parent ?? '') })
+  )
+  ipcMain.handle(IPC.notesReveal, async (_e, id?: string) => {
+    if (typeof id === 'string' && id !== '') {
+      const note = await deps.notes.read(id)
+      if (note) {
+        const file = join(deps.notes.dir(), `${id}.md`)
+        shell.showItemInFolder(file)
+        return
+      }
+    }
+    await shell.openPath(deps.notes.dir())
+  })
 }

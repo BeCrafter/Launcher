@@ -2,10 +2,12 @@
 import { IPC_EVENTS } from '@shared/ipc'
 import type { ServicesListPayload } from '@shared/ipc'
 import type { Agent } from '@shared/models'
+import type { NotesChangedPayload } from '@shared/notes'
 import { initSettingsFromMain } from './settings-store'
 import { useAgentsStore } from './agents-store'
 import { useCronStore } from './cron-store'
 import { useServicesStore } from './services-store'
+import { useNotesStore } from './notes-store'
 import { useSettingsStore } from './settings-store'
 import { setAuthCacheMinGetter, setConfirmDangerousGetter } from '../lib/elevation'
 
@@ -31,6 +33,12 @@ export function bootstrap(): void {
     if (payload) useServicesStore.getState().applyPayload(payload as ServicesListPayload)
   })
 
+  // 笔记:目录被外部改动(Obsidian / iCloud / git)时刷新列表,并让当前打开的那篇走冲突流程
+  window.launcher.onEvent(IPC_EVENTS.notesChanged, (payload) => {
+    const ids = (payload as NotesChangedPayload | undefined)?.ids ?? []
+    void useNotesStore.getState().onExternalChange(ids)
+  })
+
   // menubarBadge:运行中 Agent 计数上报(去重;main 渲染 Tray 角标)
   let lastBadge = -1
   const pushBadge = (agents: Agent[]): void => {
@@ -48,4 +56,6 @@ export function bootstrap(): void {
   void useAgentsStore.getState().load().catch((e) => console.error('[bootstrap] agents', e))
   void useCronStore.getState().load().catch((e) => console.error('[bootstrap] crons', e))
   void useServicesStore.getState().load().catch((e) => console.error('[bootstrap] services', e))
+  // 笔记列表也常驻:三个域的卡片菜单要显示「相关笔记 (N)」,不能等进了笔记页才加载
+  void useNotesStore.getState().load().catch((e) => console.error('[bootstrap] notes', e))
 }

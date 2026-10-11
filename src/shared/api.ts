@@ -38,6 +38,18 @@ import type {
 } from './models'
 import type { LauncherSettings, AiProviderId } from './settings'
 import type { AiEngineState, AiMessage, AiSession, AiSkillInfo } from './ai'
+import type {
+  Note,
+  NoteCreateInput,
+  NoteMeta,
+  NoteRemoveInput,
+  NoteRenameInput,
+  NoteSaveAssetInput,
+  NoteSaveAssetResult,
+  NoteSaveInput,
+  NoteSaveOutcome,
+  NotesListPayload
+} from './notes'
 
 export interface LauncherApi {
   appName: string
@@ -145,5 +157,33 @@ export interface LauncherApi {
     mcpInfo: () => Promise<AiMcpInfo>
     /** 把 launcher-mcp 安装到 PATH(用户显式点击才调用);error 非空时如实带回原因 */
     installMcpLink: () => Promise<{ info: AiMcpInfo; error: string | null }>
+  }
+  // 笔记(阶段 5:一笔记一 .md + frontmatter,外部可编辑)
+  notes: {
+    list: () => Promise<NotesListPayload>
+    read: (id: string) => Promise<Note | null>
+    create: (input: NoteCreateInput) => Promise<Note>
+    /** 写正文/元数据;带 expectedRevision 做 CAS,冲突回 conflict 而不是静默覆盖 */
+    save: (input: NoteSaveInput) => Promise<NoteSaveOutcome>
+    /** 改标题并重命名文件(显式动作;改标题本身不会自动改文件名) */
+    rename: (input: NoteRenameInput) => Promise<NoteSaveOutcome>
+    /** 删除:应用内走系统废纸篓,可恢复 */
+    remove: (input: NoteRemoveInput) => Promise<NoteSaveOutcome>
+    /** 全文检索(main 侧扫正文,含标题/标签/关联名) */
+    search: (query: string, limit?: number) => Promise<NoteMeta[]>
+    /** 生效目录(设置里为空时是默认路径) */
+    dir: () => Promise<string>
+    /** 在访达中显示(id 省略 → 打开目录本身) */
+    reveal: (id?: string) => Promise<void>
+    /** 图片/附件落盘,返回相对笔记目录的路径(如 assets/xxx.png) */
+    saveAsset: (input: NoteSaveAssetInput) => Promise<NoteSaveAssetResult>
+    /** 新建目录;返回目录 id(相对路径) */
+    createFolder: (input: { parent: string; name: string }) => Promise<{ id: string }>
+    /** 删除目录(连同其中的笔记进废纸篓) */
+    removeFolder: (id: string) => Promise<NoteSaveOutcome>
+    /** 目录改名 */
+    renameFolder: (input: { id: string; name: string }) => Promise<{ id: string }>
+    /** 移动到另一个目录(笔记与目录共用);parent 为空串 = 根层 */
+    move: (input: { id: string; parent: string }) => Promise<{ ok: true; id: string; renamed?: { from: string; to: string } } | { ok: false; message: string }>
   }
 }

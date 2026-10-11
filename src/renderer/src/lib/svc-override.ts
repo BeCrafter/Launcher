@@ -1,27 +1,11 @@
 // 端口服务覆写:别名 / Host / 路径 → 展示名、可连接 host 与完整 URL(应用新增,非 demo 移植)
-// 身份键仿开源 LaunchManager 的 ServiceNameStore.identityKey(<port>:<小写可执行名> / <port>:docker:<容器名>),
-// 刻意不用 PortService.id(=<pid>:<port>,重启即变)。
 
 import type { ServiceOverride } from '@shared/settings'
 import type { PortService } from '@shared/models'
 
-/** 键里可用的程序名片段上限:保证整键远低于 shared/settings OVERRIDE_KEY_MAX(96),否则会被 normalize 丢弃 */
-const KEY_STEM_MAX = 64
-
-type SvcKeyFields = Pick<PortService, 'port' | 'command' | 'name' | 'cmd' | 'containerId'>
-
-/**
- * 身份键(跨进程重启稳定):容器 = `<port>:docker:<容器名小写>`;进程 = `<port>:<程序名小写>`。
- * command 取自 lsof 的 c 字段(可执行文件名),实测最长 31 字符、超出截断;同前缀的长命令名
- * 理论上会碰撞,概率极低。command/name 同时为空时回退 cmd(几乎不会发生,但仍收窄长度)。
- */
-export function serviceIdentityKey(svc: SvcKeyFields): string {
-  if (svc.containerId !== undefined) {
-    return `${svc.port}:docker:${svc.name.toLowerCase().slice(0, KEY_STEM_MAX)}`
-  }
-  const stem = svc.command || svc.name || svc.cmd
-  return `${svc.port}:${stem.toLowerCase().slice(0, KEY_STEM_MAX)}`
-}
+// 身份键已搬到 @shared/service-identity:笔记的「关联服务」在主进程(AI 工具的松散目标解析)
+// 与渲染层(chip 解析)都要用它,两边必须是同一份实现。这里转出,既有消费方与测试无需改动。
+export { serviceIdentityKey } from '@shared/service-identity'
 
 /**
  * 卡片 React key(应用新增):**跨进程重启稳定** —— 端口 / 程序名 / 绑定地址都不随 PID 变。

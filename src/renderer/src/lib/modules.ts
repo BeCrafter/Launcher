@@ -20,6 +20,11 @@ export interface ModuleRecord {
   breadcrumbKey?: string // i18n 键
   searchPlaceholderKey?: string
   showStatusBar: boolean
+  /**
+   * 不渲染顶栏。笔记页用它:该页的操作(新建、目录)都在 rail 里,顶栏只剩一个面包屑 ——
+   * 而侧边栏本来就高亮了当前模块,再占 44px 说一遍是纯浪费,不如整条让给内容。
+   */
+  hideTopbar?: boolean
 }
 
 export const MODULES: Record<ModuleId, ModuleRecord> = {
@@ -44,6 +49,15 @@ export const MODULES: Record<ModuleId, ModuleRecord> = {
     searchPlaceholderKey: 'topbar.phServices',
     showStatusBar: true
   },
+  // 笔记页:搜索框在 rail 内(同 AI 页的先例),故**不设** searchPlaceholderKey。
+  // 状态栏也不给:笔记目录与篇数放在 rail 底部常驻,比缩在窗口最下一行更好用。
+  notes: {
+    viewId: 'view-notes',
+    icon: 'fa-pen-to-square',
+    breadcrumbKey: 'module.notes',
+    showStatusBar: false,
+    hideTopbar: true
+  },
   // AI 对话页:无顶栏搜索(demo MODULES.ai 有意省略 searchPlaceholderKey);操作区仅「接入 MCP」
   ai: {
     viewId: 'view-ai',
@@ -59,5 +73,5 @@ export const MODULES: Record<ModuleId, ModuleRecord> = {
   }
 }
 
-// demo 侧边栏入口顺序(4 项:Agents / 定时任务 / 端口服务 / AI 助手;设置页是底部按钮,不在此列)
-export const SIDEBAR_MODULES: ModuleId[] = ['agents', 'crontab', 'services', 'ai']
+// 侧边栏入口顺序:三个系统域在前,笔记与 AI 两个「工作台」在后(设置页是底部按钮,不在此列)
+export const SIDEBAR_MODULES: ModuleId[] = ['agents', 'crontab', 'services', 'notes', 'ai']

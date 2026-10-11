@@ -10,6 +10,7 @@ import { DEFAULT_SETTINGS, type LauncherSettings } from '../../shared/settings'
 import type { AiRunEvent } from '../../shared/ai'
 import { createChatService, type ChatService } from './chat-service'
 import type { LlmClient } from './llm'
+import type { NotesService } from '../services/notes-service'
 import type { SecretStore } from './secret-store'
 import type { ToolDef, ToolRegistry } from './tool-types'
 
@@ -35,11 +36,43 @@ function stubRegistry(tools: ToolDef[]): ToolRegistry {
   }
 }
 
+/** 内存版笔记读取(chat-service 只用得到 readBodyForAi) */
+function stubNotes(bodies: Record<string, { title: string; body: string }> = {}): NotesService {
+  return {
+    readBodyForAi: async (id: string) => {
+      const n = bodies[id]
+      if (!n) return null
+      return {
+        note: {
+          id,
+          title: n.title,
+          body: n.body,
+          tags: [],
+          refs: [],
+          created: '',
+          updated: '',
+          pinned: false,
+          excerpt: '',
+          mtimeMs: 0,
+          size: n.body.length,
+          frontmatterIssues: [],
+          refsUnparsed: false,
+          opaque: false,
+          revision: 'r1'
+        },
+        body: n.body,
+        truncated: false
+      }
+    }
+  } as unknown as NotesService
+}
+
 function build(opts: {
   faux: ReturnType<typeof fauxProvider>
   tools: ToolDef[]
   settings?: Partial<LauncherSettings>
   secrets?: SecretStore
+  notes?: Record<string, { title: string; body: string }>
 }): ChatService {
   const settings: LauncherSettings = { ...DEFAULT_SETTINGS, ...opts.settings }
   const secrets = opts.secrets ?? stubSecrets()
@@ -58,6 +91,7 @@ function build(opts: {
     llm,
     secrets,
     registry: stubRegistry(opts.tools),
+    notes: stubNotes(opts.notes),
     getSettings: () => settings,
     storePath: join(dir, 'ai-sessions.json'),
     emit: (e) => events.push(e)
@@ -71,6 +105,13 @@ const readonlyTool: ToolDef = {
   parameters: Type.Object({}),
   write: false,
   execute: async () => ({ lines: [{ level: 'ok', text: '服务 3 项' }] })
+}
+
+/** 取一条 transcript 消息的文本(内容可能是字符串,也可能是块数组) */
+function transcriptText(m: { content: unknown }): string {
+  if (typeof m.content === 'string') return m.content
+  if (!Array.isArray(m.content)) return ''
+  return m.content.map((c) => (c?.type === 'text' ? String(c.text) : '')).join('')
 }
 
 let ran = 0
@@ -268,5 +309,91 @@ describe('ChatService 运行链路', () => {
   it('环境缺失的会话 id 会拒绝(不静默新建)', async () => {
     const svc = build({ faux: fauxProvider(), tools: [readonlyTool] })
     await expect(svc.send({ sessionId: 'nope', text: 'x' })).rejects.toThrow(/AI_SESSION_MISSING/)
+  })
+
+  it('@ 引用的笔记:正文在发送时注入 prompt,但不进落库的消息本身', async () => {
+    const faux = fauxProvider()
+    let seen = ''
+    faux.setResponses([
+      (ctx) => {
+        seen = transcriptText(ctx.messages[ctx.messages.length - 1])
+        return fauxAssistantMessage([fauxText('好的')])
+      }
+    ])
+    const svc = build({
+      faux,
+      tools: [readonlyTool],
+      notes: { '工作/nginx': { title: 'nginx 排障', body: '8080 端口被占用，先 lsof' } }
+    })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '按这篇继续',
+      mentions: [{ key: 'note:工作/nginx', type: 'note', id: '工作/nginx', label: 'nginx 排障' }]
+    })
+
+    expect(seen).toContain('8080 端口被占用')
+    expect(seen).toContain('笔记「nginx 排障」')
+    expect(seen).toContain('id=工作/nginx')
+    expect(seen).toContain('按这篇继续')
+
+    const user = svc.getMessages(s.id)[0]
+    if (user.role !== 'user') throw new Error('unreachable')
+    // 引用只是「指路」:正文不落进消息内容(否则会话文件会被笔记正文灌满)
+    expect(user.blocks).toEqual([{ type: 'text', text: '按这篇继续' }])
+    expect(user.mentions?.[0]?.id).toBe('工作/nginx')
+  })
+
+  it('引用的笔记被删掉后仍能发送:注入一行「已不存在」而不是报错', async () => {
+    const faux = fauxProvider()
+    let seen = ''
+    faux.setResponses([
+      (ctx) => {
+        seen = transcriptText(ctx.messages[ctx.messages.length - 1])
+        return fauxAssistantMessage([fauxText('好的')])
+      }
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '看这篇',
+      mentions: [{ key: 'note:gone', type: 'note', id: 'gone', label: '没了' }]
+    })
+    expect(seen).toContain('已不存在')
+  })
+
+  it('工具返回的图片只进当轮上下文,落库换成一行说明(会话文件不会被 base64 灌满)', async () => {
+    const faux = fauxProvider()
+    let sawImage = false
+    const imageTool: ToolDef = {
+      name: 'read_note_image',
+      label: '查看笔记里的图片',
+      description: '看图',
+      parameters: Type.Object({}),
+      write: false,
+      execute: async () => ({
+        lines: [{ level: 'ok', text: '已读取图片 assets/a.png' }],
+        images: [{ type: 'image', data: 'QUJD', mimeType: 'image/png' }]
+      })
+    }
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('read_note_image', {})]),
+      (ctx) => {
+        sawImage = ctx.messages.some(
+          (m) => Array.isArray(m.content) && m.content.some((c) => c.type === 'image')
+        )
+        return fauxAssistantMessage([fauxText('看到了')])
+      }
+    ])
+    const svc = build({ faux, tools: [imageTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '看看图' })
+
+    expect(sawImage).toBe(true)
+    const tr = svc.getMessages(s.id).find((m) => m.role === 'toolResult')
+    if (tr?.role !== 'toolResult') throw new Error('unreachable')
+    expect(tr.blocks.some((b) => b.type === 'image')).toBe(false)
+    expect(tr.blocks.some((b) => b.type === 'text' && b.text.includes('未存入历史'))).toBe(true)
   })
 })

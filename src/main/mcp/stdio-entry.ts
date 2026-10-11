@@ -12,21 +12,23 @@ import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { normalizeSettings, type Language, type McpPermission } from '../../shared/settings'
+import { resolveNotesDir } from '../../shared/notes'
 import { createShellRunner } from '../services/shell-runner'
 import { createElevationExecutor } from '../services/elevation'
 import { createCoreServices } from '../core-services'
 import { createToolRegistry } from '../ai/tools'
 import { createLauncherMcpServer } from './server'
 
-function readConfig(): { permission: McpPermission; language: Language } {
+function readConfig(): { permission: McpPermission; language: Language; notesDir: string } {
   const home = homedir()
   const path = process.env['LAUNCHER_CONFIG_PATH'] ?? join(home, '.config', 'launcher', 'config.json')
   try {
     const s = normalizeSettings(JSON.parse(readFileSync(path, 'utf8')))
-    return { permission: s.mcpPermission, language: s.language }
+    // notesDir 顺带读出来:笔记目录是设置项,独立进程白拿配置就能与应用指同一个目录
+    return { permission: s.mcpPermission, language: s.language, notesDir: s.notesDir }
   } catch {
-    // 没有设置文件 / 读不动 → 回只读 + 中文:外部 Agent 的默认姿态就是不给写
-    return { permission: 'readOnly', language: 'zh-CN' }
+    // 没有设置文件 / 读不动 → 回只读 + 中文 + 默认笔记目录:外部 Agent 的默认姿态就是不给写
+    return { permission: 'readOnly', language: 'zh-CN', notesDir: '' }
   }
 }
 
@@ -41,6 +43,12 @@ async function main(): Promise<void> {
     // 独立进程没有设置存储:取与默认设置一致的固定值即可(xmlIndent 只影响新建草稿的排版)
     getXmlIndent: () => '  ',
     getCronRetainDays: () => 3,
+    getNotesDir: () =>
+      resolveNotesDir({
+        notesDir: readConfig().notesDir,
+        home,
+        e2eUserData: process.env['LAUNCHER_E2E_USER_DATA']
+      }),
     log: (m) => console.error(`[launcher-mcp] ${m}`)
   })
   const registry = createToolRegistry({
@@ -50,6 +58,7 @@ async function main(): Promise<void> {
     plists: services.plists,
     launchctl: services.launchctl,
     brew: services.brew,
+    notes: services.notes,
     home
   })
 

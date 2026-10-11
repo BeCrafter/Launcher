@@ -1,0 +1,2924 @@
+/* ============================================================
+   chezmoi 配置同步页 —— 页面专属样式
+   色值/间距全部取自 base.css 的 :root 变量，深浅主题自动跟随
+   ============================================================ */
+
+/* ── 概览条 ── */
+.cz-overview {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin: 12px 18px 0;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.cz-ov-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 9px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-right: 1px solid var(--border);
+}
+
+.cz-ov-cell:last-child {
+  border-right: none;
+}
+
+.cz-ov-cell.clickable {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.cz-ov-cell.clickable:hover {
+  background: var(--hover);
+}
+
+.cz-ov-label {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cz-ov-label i {
+  font-size: 9px;
+}
+
+.cz-ov-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  font-family: 'SF Mono', Menlo, monospace;
+  line-height: 1.2;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cz-ov-value.safe {
+  color: var(--green);
+}
+
+.cz-ov-value.warn {
+  color: var(--yellow);
+}
+
+.cz-ov-value.danger {
+  color: var(--red);
+}
+
+.cz-ov-value.na {
+  color: var(--dim);
+}
+
+.cz-ov-value small {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  font-family: inherit;
+}
+
+.cz-ov-sub {
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cz-ov-sub .add {
+  color: var(--green);
+}
+
+.cz-ov-sub .del {
+  color: var(--red);
+}
+
+/* ── 横幅 ── */
+.cz-banner {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: 10px 18px 0;
+  padding: 9px 13px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  border: 1px solid var(--border2);
+  background: var(--panel);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.cz-banner i {
+  font-size: 12px;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.cz-banner b {
+  color: var(--text);
+}
+
+.cz-banner.warn {
+  border-color: rgba(238, 192, 77, 0.4);
+  background: var(--wash-yellow);
+  color: var(--yellow);
+}
+
+.cz-banner.err {
+  border-color: rgba(239, 128, 128, 0.4);
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.cz-banner.info {
+  border-color: rgba(106, 167, 240, 0.35);
+  background: var(--wash-blue);
+  color: var(--blue);
+}
+
+.cz-banner .cz-banner-body {
+  min-width: 0;
+}
+
+.cz-banner .cz-banner-body b {
+  color: inherit;
+}
+
+/* ── 主体：列表 + diff 双栏 ── */
+.cz-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  gap: 0;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.cz-list {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 12px 14px 56px 18px;
+}
+
+/* 与右侧详情面板并排时，列表的**视口**本身要收在让位线上。
+   只用 padding-bottom 不够 —— 那只在滚动内容末尾留白，视口仍延伸到状态栏底下，
+   行会钻到半透明状态栏后面，而且底线和右侧对不齐。 */
+.cz-body .cz-list {
+  padding-bottom: 12px;
+  margin-bottom: 56px;
+}
+
+.cz-diff {
+  flex: 0 0 52%;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  background: var(--code-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── 变更行 ── */
+.cz-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.cz-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 9px 5px 7px;
+  border-radius: 7px;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+  min-width: 0;
+}
+
+.cz-row:hover {
+  background: var(--hover);
+}
+
+.cz-row.active {
+  background: var(--wash-accent);
+  border-left-color: var(--accent);
+}
+
+.cz-row.danger {
+  border-left-color: var(--red);
+}
+
+.cz-row.warn {
+  border-left-color: var(--yellow);
+}
+
+.cz-row.safe {
+  border-left-color: transparent;
+}
+
+.cz-row.muted {
+  opacity: 0.75;
+}
+
+.cz-row-path {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+
+.cz-row-dir {
+  color: var(--dim);
+}
+
+.cz-row.danger .cz-row-path {
+  color: var(--red);
+}
+
+.cz-row-actions {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.cz-row:hover .cz-row-actions,
+.cz-row.active .cz-row-actions {
+  opacity: 1;
+}
+
+/* 原型专用：让相邻两行的按钮组同时可见，便于对比「分流」的差异。
+   真实实现里按钮只在 hover / 选中时出现，不要带这个类。 */
+.cz-row.peek .cz-row-actions {
+  opacity: 1;
+}
+
+/* 状态码 pill（chezmoi status 的两列） */
+.cz-code {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+}
+
+.cz-code.add {
+  background: var(--wash-green);
+  color: var(--green);
+}
+
+.cz-code.over {
+  background: var(--wash-yellow);
+  color: var(--yellow);
+}
+
+.cz-code.del {
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.cz-code.script {
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.cz-code.drift {
+  background: var(--wash-blue);
+  color: var(--blue);
+}
+
+.cz-code.blank {
+  color: var(--dim);
+}
+
+/* 第二列为空 = apply 不会动这一项（本地已改，只能收进源） */
+.cz-code.none {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--dim);
+  font-weight: 500;
+}
+
+.cz-code-empty {
+  color: var(--dim);
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  padding: 0 4px;
+}
+
+/* 「本地已改」灰徽章：不参与拦截 */
+.cz-tag {
+  font-size: 9.5px;
+  padding: 1.5px 6px;
+  border-radius: 99px;
+  font-weight: 600;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--dim);
+}
+
+.cz-tag.drift {
+  background: var(--wash-blue);
+  color: var(--blue);
+}
+
+.cz-tag.tpl {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* ── diff 面板 ── */
+.cz-diff-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--code-bar);
+  flex-shrink: 0;
+}
+
+.cz-diff-head i.cz-file {
+  color: var(--accent2);
+  font-size: 11px;
+}
+
+.cz-diff-path {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.cz-diff-stat {
+  margin-left: auto;
+  display: flex;
+  gap: 7px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.cz-diff-stat .add {
+  color: var(--green);
+}
+
+.cz-diff-stat .del {
+  color: var(--red);
+}
+
+/* 双栏来源说明：这是本页最重要的认知锚点 */
+.cz-diff-legend {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--code-bar);
+  flex-shrink: 0;
+}
+
+.cz-diff-legend>div {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 12px;
+  font-size: 10px;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cz-diff-legend>div:first-child {
+  border-right: 1px solid var(--border);
+}
+
+.cz-diff-legend b {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.cz-diff-body {
+  flex: 1;
+  overflow: auto;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.cz-diff-grid {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) 36px minmax(0, 1fr);
+  min-width: 100%;
+  width: max-content;
+}
+
+.cz-g {
+  text-align: right;
+  padding-right: 8px;
+  color: var(--dim);
+  font-size: 10px;
+  user-select: none;
+  border-right: 1px solid var(--border);
+  background: var(--code-bar);
+}
+
+.cz-g.right {
+  border-left: 1px solid var(--border);
+}
+
+.cz-t {
+  padding: 0 10px;
+  white-space: pre;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.cz-t.add {
+  background: var(--wash-green);
+  color: var(--green);
+}
+
+.cz-t.del {
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.cz-t.empty {
+  background: repeating-linear-gradient(45deg,
+      transparent,
+      transparent 4px,
+      rgba(255, 255, 255, 0.025) 4px,
+      rgba(255, 255, 255, 0.025) 8px);
+}
+
+.cz-t.hl {
+  color: var(--accent2);
+}
+
+/* 折叠的未改动区域 */
+.cz-diff-collapse {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  background: var(--code-bar);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.cz-diff-collapse:hover {
+  color: var(--accent2);
+}
+
+.cz-diff-collapse i {
+  font-size: 9px;
+}
+
+/* ══════════ 添加文件（add）流程 ══════════ */
+
+/* 顶栏按钮里的计数（「应用全部 972」） */
+.topbar-count {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--muted);
+}
+
+.cz-add-step {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cz-add-step-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cz-add-step-hd .num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  background: var(--wash-accent);
+  color: var(--accent2);
+  border: 1px solid rgba(124, 106, 244, 0.4);
+}
+
+/* 来源切换（选择文件 / 从未托管挑） */
+.cz-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.cz-tab {
+  padding: 7px 13px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+}
+
+.cz-tab:hover {
+  color: var(--text);
+}
+
+.cz-tab.active {
+  color: var(--accent2);
+  border-bottom-color: var(--accent);
+}
+
+.cz-tab .badge {
+  font-size: 9.5px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.cz-tab.active .badge {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* 拖入区 */
+.cz-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 16px;
+  border: 1px dashed var(--border2);
+  border-radius: 10px;
+  background: var(--panel);
+  text-align: center;
+}
+
+.cz-drop i.big {
+  font-size: 20px;
+  color: var(--dim);
+}
+
+.cz-drop .t {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.cz-drop .row {
+  display: flex;
+  gap: 6px;
+}
+
+/* 已选条目 */
+.cz-picked {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
+
+.cz-picked-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--text);
+}
+
+.cz-picked-item>i {
+  color: var(--accent2);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.cz-picked-item .path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cz-picked-item .note {
+  font-family: Tahoma, Arial, "Noto Sans SC", sans-serif;
+  font-size: 10px;
+  color: var(--dim);
+  flex-shrink: 0;
+}
+
+.cz-picked-item .rm {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: none;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 10px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cz-picked-item .rm:hover {
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+/* 未托管浏览器 */
+.cz-unmanaged-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 5px 10px;
+}
+
+.cz-unmanaged-search i {
+  color: var(--dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.cz-unmanaged-search input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 11.5px;
+  width: 100%;
+  font-family: inherit;
+}
+
+.cz-unmanaged-search input::placeholder {
+  color: var(--dim);
+}
+
+.cz-unmanaged-list {
+  max-height: 210px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--code-bg);
+  padding: 4px;
+}
+
+.cz-unmanaged-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+
+.cz-unmanaged-row:hover {
+  background: var(--hover);
+}
+
+.cz-unmanaged-row.on {
+  background: var(--wash-accent);
+}
+
+.cz-unmanaged-row input {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.cz-unmanaged-row .path {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cz-unmanaged-row .dir {
+  color: var(--dim);
+}
+
+.cz-unmanaged-row .sz {
+  font-size: 10px;
+  color: var(--dim);
+  flex-shrink: 0;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+.cz-unmanaged-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--dim);
+  padding: 2px 2px 0;
+}
+
+/* 选项：单选组 */
+.cz-radio-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cz-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.cz-radio:hover {
+  border-color: var(--border2);
+}
+
+.cz-radio.on {
+  border-color: rgba(124, 106, 244, 0.45);
+  background: var(--wash-accent);
+}
+
+.cz-radio input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+.cz-radio .t {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.cz-radio .d {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* 选项：开关行 */
+.cz-opt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.cz-opt-row .t {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cz-opt-row .d {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.cz-opt-row.off {
+  opacity: 0.5;
+}
+
+/* ══════════ 版本更新提示 ══════════ */
+
+/* 零高锚点：浮层挂在它下面，不占布局、把下面的列表盖住（真实实现里
+   由概览条那格的 getBoundingClientRect 定位，见 components/overlays/ 的锚点浮层模式） */
+.cz-update-anchor {
+  position: relative;
+  height: 0;
+  z-index: 60;
+}
+
+.cz-update-anchor .cz-update-pop {
+  position: absolute;
+  right: 18px;
+  top: 6px;
+}
+
+/* 锚点浮层：挂在概览条「chezmoi」那格的右下角，不打断操作 */
+.cz-update-pop {
+  position: fixed;
+  width: 360px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 11px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  z-index: 60;
+  overflow: hidden;
+}
+
+.cz-update-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--accent-wash-grad);
+}
+
+.cz-update-hd i {
+  color: var(--accent2);
+  font-size: 12px;
+}
+
+.cz-update-hd .t {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cz-update-hd .x {
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.cz-update-hd .x:hover {
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.cz-update-body {
+  padding: 12px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+/* 版本对比 */
+.cz-ver-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cz-ver-row .now {
+  color: var(--muted);
+}
+
+.cz-ver-row .arrow {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.cz-ver-row .next {
+  color: var(--green);
+}
+
+.cz-ver-row .tag-new {
+  font-family: Tahoma, Arial, "Noto Sans SC", sans-serif;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--wash-green);
+  color: var(--green);
+}
+
+.cz-update-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.cz-update-kv .r {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.cz-update-kv .k {
+  color: var(--dim);
+  width: 62px;
+  flex-shrink: 0;
+}
+
+.cz-update-kv .v {
+  color: var(--muted);
+  min-width: 0;
+  flex: 1;
+}
+
+.cz-update-kv .v code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text);
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.cz-update-note {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  line-height: 1.55;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.cz-update-note i {
+  color: var(--dim);
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+.cz-update-foot {
+  padding: 10px 13px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.cz-update-foot .rollback {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.cz-update-foot .rollback:hover {
+  color: var(--muted);
+}
+
+/* 概览条上「有新版本」的角标 */
+.cz-ov-value .dot-new {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* 解析器降级告警：版本升级后输出格式可能变 */
+.cz-banner.parser {
+  border-color: rgba(239, 128, 128, 0.45);
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+/* 分组标题里放的是文件系统路径，不能走 .group-block-label 的 uppercase ——
+   `~/.CONFIG` 在大小写敏感的文件系统上是另一个路径 */
+.cz-list .group-block-label {
+  text-transform: none;
+}
+
+/* ══════════ 列表 / 已托管 / 未托管 三向分段 ══════════ */
+
+.cz-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  flex-shrink: 0;
+}
+
+.cz-seg-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 7px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+
+.cz-seg-btn:hover {
+  color: var(--text);
+}
+
+.cz-seg-btn.on {
+  background: var(--wash-accent);
+  color: var(--accent2);
+  font-weight: 600;
+}
+
+.cz-seg-btn .n {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 9.5px;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--dim);
+}
+
+.cz-seg-btn.on .n {
+  background: rgba(124, 106, 244, 0.25);
+  color: var(--accent2);
+}
+
+/* 行上的属性小标（模板 / 加密 / 私有 / 精确 / 脚本 / 外部） */
+.cz-attrs {
+  display: flex;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.cz-attr {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--dim);
+}
+
+.cz-attr.t {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+.cz-attr.e {
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.cz-attr.p {
+  background: var(--wash-yellow);
+  color: var(--yellow);
+}
+
+.cz-attr.x {
+  background: var(--wash-green);
+  color: var(--green);
+}
+
+.cz-attr.s {
+  background: var(--wash-blue);
+  color: var(--blue);
+}
+
+/* ══════════ 文件详情面板（右侧，带标签） ══════════ */
+
+.cz-detail {
+  flex: 0 0 52%;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  background: var(--code-bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cz-detail-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--code-bar);
+  flex-shrink: 0;
+}
+
+.cz-detail-hd i.cz-file {
+  color: var(--accent2);
+  font-size: 11px;
+}
+
+.cz-detail-path {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.cz-detail-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--code-bar);
+  flex-shrink: 0;
+}
+
+.cz-detail-tab {
+  padding: 7px 13px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: -1px;
+}
+
+.cz-detail-tab:hover {
+  color: var(--text);
+}
+
+.cz-detail-tab.on {
+  color: var(--accent2);
+  border-bottom-color: var(--accent);
+}
+
+.cz-detail-tab .n {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--dim);
+}
+
+.cz-detail-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+
+.cz-pane {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cz-pane-hint {
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.6;
+  display: flex;
+  gap: 7px;
+}
+
+.cz-pane-hint i {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+/* ── 只读代码块（源文件预览） ── */
+.cz-code-block {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 0;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+
+.cz-code-block .ln {
+  display: flex;
+  gap: 10px;
+  padding: 0 10px;
+  white-space: pre;
+  color: var(--muted);
+}
+
+.cz-code-block .ln.hl {
+  background: rgba(124, 106, 244, 0.09);
+}
+
+.cz-code-block .g {
+  color: var(--dim);
+  text-align: right;
+  min-width: 20px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.cz-code-block .tpl {
+  color: var(--accent2);
+}
+
+/* ── 属性（chattr） ── */
+.cz-attr-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cz-attr-group-hd {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 4px 2px 6px;
+}
+
+.cz-attr-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.cz-attr-row:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+}
+
+.cz-attr-row.on {
+  border-color: rgba(124, 106, 244, 0.4);
+  background: var(--wash-accent);
+}
+
+.cz-attr-row.off {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cz-attr-row .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.cz-attr-row .t {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.cz-attr-row .d {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* chattr 的 modifier 缩写，等宽显示便于和命令对照 */
+.cz-attr-row .mod {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--dim);
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* ── 危险操作区 ── */
+.cz-danger-zone {
+  margin-top: 4px;
+  padding: 11px 12px;
+  border: 1px solid rgba(239, 128, 128, 0.28);
+  border-radius: 9px;
+  background: rgba(239, 128, 128, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.cz-danger-zone .hd {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--red);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cz-danger-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cz-danger-row .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.cz-danger-row .t {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.cz-danger-row .d {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── 历史 ── */
+.cz-commit {
+  display: flex;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.cz-commit:hover {
+  border-color: var(--border2);
+  background: var(--hover);
+}
+
+.cz-commit.on {
+  border-color: rgba(124, 106, 244, 0.4);
+  background: var(--wash-accent);
+}
+
+.cz-commit .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dim);
+  margin-top: 5px;
+  flex-shrink: 0;
+}
+
+.cz-commit.on .dot {
+  background: var(--accent2);
+  box-shadow: 0 0 6px var(--accent2);
+}
+
+.cz-commit .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.cz-commit .msg {
+  font-size: 11.5px;
+  color: var(--text);
+  margin-bottom: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cz-commit .meta {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--dim);
+  display: flex;
+  gap: 8px;
+}
+
+.cz-commit .sha {
+  color: var(--accent2);
+}
+
+/* ══════════ 冲突解决（三方合并） ══════════ */
+
+.cz-conflict-block {
+  border: 1px solid rgba(239, 128, 128, 0.35);
+  border-radius: 9px;
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.cz-conflict-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  background: var(--wash-red);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--red);
+}
+
+.cz-conflict-hd .n {
+  margin-left: auto;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+}
+
+/* 三方：本机 / 源目录 / 合并结果 */
+.cz-three {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid var(--border);
+}
+
+.cz-three>div {
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.cz-three>div:first-child {
+  border-right: 1px solid var(--border);
+}
+
+.cz-three .lbl {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cz-three pre {
+  margin: 0;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.65;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cz-three .mine pre {
+  color: var(--blue);
+}
+
+.cz-three .theirs pre {
+  color: var(--green);
+}
+
+.cz-conflict-actions {
+  display: flex;
+  gap: 5px;
+  padding: 8px 11px;
+  background: var(--code-bar);
+  flex-wrap: wrap;
+}
+
+/* 页面级贴底操作条（和冲突块内部的 .cz-conflict-actions 不是一回事）。
+   底部状态栏是 position:fixed 的 38px，会盖住视图最底部 ——
+   主视图靠 .cz-list 的 padding-bottom 让开，贴底条得自己让 */
+.cz-action-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--statusbar-bg);
+  flex-shrink: 0;
+  margin-bottom: 38px;
+}
+
+/* ══════════ 批量多选 ══════════ */
+
+/* 复选框平时隐藏，hover / 已选中 / 批量模式下才出现 —— 单文件操作仍是主路径 */
+.cz-row-check {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s;
+  cursor: pointer;
+}
+
+.cz-row:hover .cz-row-check,
+.cz-row.checked .cz-row-check,
+.cz-list.selecting .cz-row-check {
+  opacity: 1;
+}
+
+.cz-row.checked {
+  background: var(--wash-accent);
+}
+
+/* 批量操作条：出现在列表上方，只在有选中项时显示 */
+.cz-bulkbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 18px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  background: var(--wash-accent);
+  border: 1px solid rgba(124, 106, 244, 0.4);
+  flex-shrink: 0;
+}
+
+.cz-bulkbar .n {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent2);
+}
+
+.cz-bulkbar .sep {
+  color: var(--border2);
+}
+
+/* ══════════ 路径中间省略 ══════════ */
+
+/* 目录段可压缩并省略，文件名永不截断 ——
+   尾部省略会把用户最需要的文件名吃掉（`…/find-ski…` 等于没显示） */
+.cz-row-path {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+}
+
+.cz-row-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+}
+
+.cz-row-name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* ══════════ 右键菜单 ══════════ */
+
+.cz-ctx {
+  position: fixed;
+  min-width: 178px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  padding: 4px;
+  z-index: 200;
+}
+
+.cz-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.14s;
+}
+
+.cz-ctx-item:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.cz-ctx-item i {
+  width: 12px;
+  font-size: 10px;
+  color: var(--dim);
+  flex-shrink: 0;
+}
+
+.cz-ctx-item:hover i {
+  color: var(--accent2);
+}
+
+.cz-ctx-item .key {
+  margin-left: auto;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--dim);
+  padding-left: 14px;
+}
+
+.cz-ctx-item.danger:hover {
+  background: var(--wash-red);
+  color: var(--red);
+}
+
+.cz-ctx-item.danger:hover i {
+  color: var(--red);
+}
+
+.cz-ctx-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+/* ══════════ 长任务：进度与取消 ══════════ */
+
+.cz-task {
+  margin: 0 18px 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(124, 106, 244, 0.35);
+  background: var(--accent-wash-grad);
+  flex-shrink: 0;
+}
+
+.cz-task-hd {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+
+.cz-task-hd .t {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cz-task-hd .elapsed {
+  margin-left: auto;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.cz-task-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.cz-task-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 30%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent2), transparent);
+  animation: cz-slide 1.4s ease-in-out infinite;
+}
+
+.cz-task-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.cz-task-meta code {
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--text);
+}
+
+/* ══════════ 撤销条 ══════════ */
+
+.cz-undo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 18px 10px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(62, 207, 142, 0.35);
+  background: var(--wash-green);
+  flex-shrink: 0;
+}
+
+.cz-undo .ico {
+  color: var(--green);
+  font-size: 13px;
+}
+
+.cz-undo .body {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--green);
+  line-height: 1.5;
+}
+
+.cz-undo .body b {
+  color: var(--green);
+}
+
+.cz-undo .keep {
+  background: none;
+  border: none;
+  color: var(--dim);
+  font-size: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ══════════ 空态合集 ══════════ */
+
+.cz-empty-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 16px 18px 60px;
+  overflow-y: auto;
+}
+
+.cz-empty-card {
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--panel);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.cz-empty-card .cap {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+  background: var(--code-bar);
+}
+
+.cz-empty-card .stage {
+  flex: 1;
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px 16px;
+  text-align: center;
+}
+
+.cz-empty-card .stage i.big {
+  font-size: 24px;
+  color: var(--dim);
+  opacity: 0.55;
+}
+
+.cz-empty-card .stage .t {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cz-empty-card .stage .d {
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.55;
+  max-width: 240px;
+}
+
+/* ══════════ 快捷键表 ══════════ */
+
+.cz-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.cz-key-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--panel);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.cz-key-row .k {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 2px 7px;
+  min-width: 46px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.cz-key-row .d {
+  color: var(--dim);
+  margin-left: auto;
+  font-size: 10.5px;
+}
+
+/* ══════════ 首次应用：972 拆成两块 ══════════ */
+
+.cz-ratio {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cz-ratio .bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.06);
+  gap: 2px;
+}
+
+.cz-ratio .seg {
+  height: 100%;
+}
+
+.cz-ratio .seg.safe {
+  background: var(--green);
+}
+
+.cz-ratio .seg.danger {
+  background: var(--yellow);
+  min-width: 6px;
+}
+
+.cz-ratio .lg {
+  display: flex;
+  gap: 18px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.cz-ratio .lg span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.cz-ratio .lg b {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 12.5px;
+}
+
+.cz-ratio .lg .safe b {
+  color: var(--green);
+}
+
+.cz-ratio .lg .danger b {
+  color: var(--yellow);
+}
+
+.cz-ratio .lg .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cz-ratio .lg .safe .dot {
+  background: var(--green);
+}
+
+.cz-ratio .lg .danger .dot {
+  background: var(--yellow);
+}
+
+/* ══════════ 源文件标签：预览 / 编辑两态 ══════════ */
+
+/* 状态挂在 .cz-detail 上（不是整个视图）—— 否则切到「差异」标签时编辑底栏也会跟着显示 */
+
+/* 预览态是纯查看 —— 一个按钮都不出现，靠点击代码块进入编辑 */
+.cz-src-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--dim);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.preview-only,
+.edit-only {
+  display: none;
+}
+
+.cz-detail[data-src="preview"] .preview-only {
+  display: flex;
+}
+
+.cz-detail[data-src="edit"] .edit-only {
+  display: flex;
+}
+
+.cz-detail[data-src="preview"] .cz-code-block {
+  cursor: text;
+  transition: border-color 0.16s;
+}
+
+.cz-detail[data-src="preview"] .cz-code-block:hover {
+  border-color: rgba(124, 106, 244, 0.4);
+}
+
+.cz-detail[data-src="edit"] .cz-code-block {
+  border-color: rgba(124, 106, 244, 0.5);
+  box-shadow: 0 0 0 3px rgba(124, 106, 244, 0.08);
+}
+
+/* 右侧正文与左侧 .cz-list 一样，底部让开固定状态栏 */
+.cz-detail-body {
+  padding-bottom: 56px;
+}
+
+/* 编辑态有底栏了，正文不用再让位 —— 让位交给底栏的 margin-bottom */
+.cz-detail[data-src="edit"] .cz-detail-body {
+  padding-bottom: 0;
+}
+
+/* 编辑器底栏：只在编辑态出现。
+   底部留 56px，与左侧 .cz-list 的 padding-bottom 一致（56 = 状态栏 38 + 18 呼吸），
+   两栏的内容底线落在同一水平线上 */
+.cz-editor-bar {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--code-bar);
+  flex-shrink: 0;
+  margin-bottom: 56px;
+}
+
+.cz-detail[data-src="edit"] .cz-editor-bar {
+  display: flex;
+}
+
+.cz-editor-bar .label {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cz-editor-bar .label i {
+  color: var(--accent2);
+  font-size: 11px;
+}
+
+.cz-editor-bar .label code {
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--text);
+  font-size: 10.5px;
+}
+
+/* ══════════ 提交并推送（源目录的 git 层） ══════════ */
+
+/* 源目录层面的 diff —— 和「应用差异」不是一回事：
+   这里比的是「上次提交 vs 现在」，那边比的是「源 vs 本机」 */
+.cz-src-changes {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.cz-src-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 11px;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cz-src-row:last-child {
+  border-bottom: none;
+}
+
+.cz-src-row .st {
+  width: 14px;
+  text-align: center;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-weight: 700;
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.cz-src-row .st.m {
+  color: var(--yellow);
+}
+
+.cz-src-row .st.a {
+  color: var(--green);
+}
+
+.cz-src-row .st.d {
+  color: var(--red);
+}
+
+.cz-src-row .p {
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cz-src-row .n {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.cz-src-row .n .add {
+  color: var(--green);
+}
+
+.cz-src-row .n .del {
+  color: var(--red);
+}
+
+.cz-src-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  background: var(--code-bar);
+  font-size: 10.5px;
+  color: var(--dim);
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+/* 提交信息输入 */
+.cz-commit-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cz-commit-msg input {
+  background: var(--code-bg);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.16s;
+}
+
+.cz-commit-msg input:focus {
+  border-color: rgba(124, 106, 244, 0.5);
+}
+
+.cz-commit-msg input::placeholder {
+  color: var(--dim);
+}
+
+/* 推送目标 */
+.cz-push-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.cz-push-target i {
+  color: var(--accent2);
+  font-size: 11px;
+}
+
+.cz-push-target code {
+  font-family: 'SF Mono', Menlo, monospace;
+  color: var(--text);
+  font-size: 10.5px;
+}
+
+.cz-push-target .ahead {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--yellow);
+  font-family: 'SF Mono', Menlo, monospace;
+  white-space: nowrap;
+}
+
+/* ══════════ 模板变量面板（编辑态） ══════════ */
+
+.cz-tpl-vars {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px dashed var(--border2);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.cz-tpl-vars .lb {
+  font-size: 10px;
+  color: var(--dim);
+  margin-right: 3px;
+}
+
+.cz-tpl-vars .v {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  padding: 2.5px 7px;
+  border-radius: 5px;
+  border: 1px solid rgba(124, 106, 244, 0.3);
+  background: var(--wash-accent);
+  color: var(--accent2);
+  cursor: pointer;
+  transition: all 0.16s;
+}
+
+.cz-tpl-vars .v:hover {
+  background: rgba(124, 106, 244, 0.3);
+}
+
+/* ══════════ 小工具（verify / cd / edit-config / ignored） ══════════ */
+
+.cz-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.cz-tool {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 12px;
+  background: var(--panel);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.cz-tool:hover {
+  background: var(--hover);
+}
+
+.cz-tool>i {
+  width: 14px;
+  font-size: 11px;
+  color: var(--accent2);
+  flex-shrink: 0;
+}
+
+.cz-tool .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.cz-tool .t {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.cz-tool .d {
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+.cz-tool .cmd {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 9.5px;
+  color: var(--dim);
+  background: var(--code-bg);
+  padding: 1.5px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+/* 概览条上的一致性指示 */
+.cz-ov-value .ok-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+  flex-shrink: 0;
+  align-self: center;
+}
+
+/* ══════════ 依赖检查（chezmoi / git） ══════════ */
+
+/* chezmoi 的安装脚本只下载二进制，不需要 git。但下一步 init 要克隆仓库 ——
+   所以「安装完成」之后、进接入向导之前，是检查 git 的正确时机 */
+.cz-deps {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.cz-dep {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: var(--panel);
+}
+
+.cz-dep>i {
+  font-size: 12px;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.cz-dep.ok>i {
+  color: var(--green);
+}
+
+.cz-dep.warn>i {
+  color: var(--yellow);
+}
+
+.cz-dep .body {
+  flex: 1;
+  min-width: 0;
+}
+
+.cz-dep .t {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cz-dep .t .ver {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.cz-dep .d {
+  font-size: 10.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.cz-dep .d code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10px;
+  color: var(--accent2);
+}
+
+.cz-dep.warn {
+  background: rgba(238, 192, 77, 0.06);
+}
+
+.cz-dep.warn .t {
+  color: var(--yellow);
+}
+
+/* 依赖缺失时的安装选项 */
+.cz-dep-install {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cz-dep-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--code-bg);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.cz-dep-opt code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+}
+
+.cz-dep-opt .why {
+  color: var(--dim);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+/* ── 空态 / 骨架 ── */
+.cz-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 60px 20px;
+  color: var(--dim);
+  text-align: center;
+}
+
+.cz-empty i {
+  font-size: 30px;
+  color: var(--dim);
+  opacity: 0.5;
+}
+
+.cz-empty p {
+  font-size: 12px;
+  margin: 0;
+}
+
+/* ── 自动安装 chezmoi ── */
+.cz-onboard-col {
+  width: 560px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 原型用：切换安装的三种态 */
+.cz-state-switch {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.cz-install-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.cz-install-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.cz-install-step .ico {
+  width: 16px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  font-size: 11px;
+  padding-top: 1px;
+}
+
+.cz-install-step.done .ico {
+  color: var(--green);
+}
+
+.cz-install-step.running .ico {
+  color: var(--accent2);
+}
+
+.cz-install-step.pending .ico {
+  color: var(--dim);
+}
+
+.cz-install-step.pending .body {
+  color: var(--dim);
+}
+
+.cz-install-step .body {
+  min-width: 0;
+  flex: 1;
+}
+
+.cz-install-step .sub {
+  font-size: 10.5px;
+  color: var(--dim);
+  margin-top: 2px;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+/* 转圈：只在安装中那一步出现 */
+.cz-spin {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid rgba(124, 106, 244, 0.3);
+  border-top-color: var(--accent2);
+  border-radius: 50%;
+  animation: cz-spin 0.7s linear infinite;
+}
+
+@keyframes cz-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 进度条：安装脚本只在结束时输出，所以做成不确定进度 */
+.cz-progress {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  position: relative;
+}
+
+.cz-progress::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: cz-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes cz-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(340%);
+  }
+}
+
+/* ── 命令框（安装/终端逃生通道） ── */
+.cz-cmd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--code-bg);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 8px 10px 8px 12px;
+}
+
+.cz-cmd code {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  /* 长命令换行而不是横向截断：PATH 那类命令超过一行，
+     截断后用户根本没法核对要粘贴什么 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cz-cmd code .flag {
+  color: var(--accent2);
+}
+
+.cz-cmd code .arg {
+  color: var(--cyan);
+}
+
+/* ── 首次接入向导 ── */
+.cz-onboard {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow-y: auto;
+  padding: 34px 18px 56px;
+}
+
+.cz-onboard-card {
+  width: 560px;
+  max-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.cz-onboard-head {
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.cz-onboard-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  flex-shrink: 0;
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+.cz-onboard-icon.warn {
+  background: var(--wash-yellow);
+  color: var(--yellow);
+}
+
+.cz-onboard-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.cz-onboard-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.cz-onboard-body {
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cz-onboard-foot {
+  padding: 14px 22px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.cz-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cz-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cz-field-hint {
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.5;
+}
+
+.cz-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  counter-reset: czstep;
+}
+
+.cz-step {
+  display: flex;
+  gap: 11px;
+  padding-bottom: 16px;
+  position: relative;
+}
+
+.cz-step:last-child {
+  padding-bottom: 0;
+}
+
+.cz-step::before {
+  counter-increment: czstep;
+  content: counter(czstep);
+  width: 21px;
+  height: 21px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--wash-accent);
+  color: var(--accent2);
+  border: 1px solid rgba(124, 106, 244, 0.4);
+  z-index: 1;
+}
+
+.cz-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 21px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border2);
+}
+
+.cz-step-body {
+  min-width: 0;
+  flex: 1;
+  padding-top: 1px;
+}
+
+.cz-step-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.cz-step-desc {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* 复选行 */
+.cz-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.cz-check input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+
+/* ── 拦截弹窗内部 ── */
+.cz-guard-summary {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cz-guard-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  border: 1px solid var(--border2);
+}
+
+.cz-guard-pill.over {
+  background: var(--wash-yellow);
+  border-color: rgba(238, 192, 77, 0.4);
+  color: var(--yellow);
+}
+
+.cz-guard-pill.del {
+  background: var(--wash-red);
+  border-color: rgba(239, 128, 128, 0.4);
+  color: var(--red);
+}
+
+.cz-guard-pill.script {
+  background: var(--wash-red);
+  border-color: rgba(239, 128, 128, 0.4);
+  color: var(--red);
+}
+
+/* 计数为 0 的危险类别退回中性：红色只留给真实存在的问题，
+   否则「删除 0」会和「覆盖 25」抢注意力 */
+.cz-guard-pill.zero {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--border);
+  color: var(--dim);
+  font-weight: 500;
+}
+
+.cz-guard-pill.zero b {
+  color: var(--dim);
+}
+
+.cz-guard-pill b {
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 13px;
+}
+
+.cz-guard-list {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 4px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.cz-guard-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  font-family: 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+}
+
+.cz-guard-item.over {
+  color: var(--yellow);
+}
+
+.cz-guard-item.del,
+.cz-guard-item.script {
+  color: var(--red);
+}
+
+.cz-guard-more {
+  padding: 5px 10px 1px;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+.cz-guard-note {
+  display: flex;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.55;
+  background: var(--wash-red);
+  border: 1px solid rgba(239, 128, 128, 0.35);
+  color: var(--red);
+}
+
+.cz-guard-note i {
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+/* ── 状态栏专用点色 ── */
+.launch-status-dot.cz-add {
+  background: var(--green);
+  box-shadow: 0 0 7px var(--green);
+}
+
+.launch-status-dot.cz-over {
+  background: var(--yellow);
+  box-shadow: 0 0 6px var(--yellow);
+}
+
+.launch-status-dot.cz-none {
+  background: var(--dim);
+}
+
+/* ── 设置页 chezmoi tab ── */
+.cz-path-input {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.cz-path-input .f-input {
+  width: 260px;
+}

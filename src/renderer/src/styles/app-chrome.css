@@ -689,7 +689,11 @@ body.light-theme .skeleton-row {
 
 .md-quote {
   margin: 6px 0;
-  padding: 4px 12px;
+  /*
+   * 左右 14px:引用的正文与**列表圆点**都要离那条 3px 竖条有呼吸的余地。
+   * 圆点是画在内容盒**左边**的(outside),内边距太小时它整颗落在竖条边上,看着快重叠。
+   */
+  padding: 8px 14px;
   border-left: 3px solid rgba(124, 106, 244, 0.45);
   background: var(--hover);
   border-radius: 0 8px 8px 0;
@@ -697,6 +701,34 @@ body.light-theme .skeleton-row {
   line-height: 1.7;
   color: var(--muted);
   white-space: pre-wrap;
+}
+
+/*
+ * 引用里的块级内容跟着引用本身走。
+ * `.md-list` / `.md-h` 的字号与颜色是给整篇正文定的,照搬进来会变成
+ * 「引用正文是灰的、里面的列表是白的、标题比正文还大」—— 一个块里三种调子。
+ */
+.md-quote .md-list,
+.md-quote .md-h {
+  font-size: inherit;
+  color: inherit;
+}
+
+/* 首尾块不要把自己的上下外边距顶到内边距外面(与 .md-callout-body 同一套) */
+.md-quote > :first-child {
+  margin-top: 0;
+}
+.md-quote > :last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * 嵌套引用:外面那层已经有底色与竖条了,再叠一层一模一样的看不出层次 ——
+ * 里面这层只留一条更淡的竖条,底色透上去。
+ */
+.md-quote .md-quote {
+  background: none;
+  border-left-color: var(--border2);
 }
 
 .md-link {
@@ -787,6 +819,8 @@ body.light-theme .skeleton-row {
 .md-table-wrap {
   overflow-x: auto;
   margin: 8px 0;
+  /* 列 / 行边界的提示层挂在这一层里(见 notes.css 的 .md-table-guides) */
+  position: relative;
 }
 .md-table {
   border-collapse: collapse;
@@ -805,6 +839,91 @@ body.light-theme .skeleton-row {
   font-weight: 600;
   color: var(--muted);
   white-space: nowrap;
+}
+
+/*
+ * 单元格内容的外壳。
+ *
+ * 单元格在源文里只有一行,里面的块级内容是拿 `<br>` 分隔出来的(见 markdown.tsx 的
+ * renderCellContent)—— 首尾块的外边距必须归零,否则格子会被自己的第一块顶开、
+ * 最后一块下面再多出一截。
+ *
+ * 外壳这一层是**必须**的:格子后面还跟着绝对定位的删除按钮,直接写在格子上时
+ * `:last-child` 匹配到的是那个按钮,选不中「最后一块内容」。
+ */
+.md-cell-body > :first-child {
+  margin-top: 0;
+}
+.md-cell-body > :last-child {
+  margin-bottom: 0;
+}
+
+/*
+ * 格子里的块跟着格子走:`.md-list` / `.md-h` 的字号与颜色是给整篇正文定的,
+ * 照搬进来会比旁边没写块的格子大一号、亮一档。
+ */
+.md-cell-body .md-list,
+.md-cell-body .md-h {
+  font-size: inherit;
+  color: inherit;
+}
+
+/* 嵌套表格不自己横向滚:格子本来就窄,让它把外层表格撑开、由外层去滚 */
+.md-cell-body .md-table-wrap {
+  overflow-x: visible;
+}
+
+/*
+ * 格子里的**嵌套表格**宽度怎么定 —— 分两种情况,取决于**外层表**的布局方式。
+ *
+ * ⚠ 默认(auto 布局)不能让它 `width: 100%`:那是个解不开的环 ——
+ *   表格宽度 = 格子宽度,而格子宽度又由表格决定。浏览器只能按内容的「最大宽度」硬撑,
+ *   实测一个 `| a | b |` 的小表把格子顶到 1208px、外层表涨到 2541px(预览才 754px)——
+ *   表现就是「嵌在里面的表格特别特别宽」,角柄还被推到屏幕外,看着像没法调。
+ *   (更糟的是这时候一拖,坏尺寸会被写进围栏永久化。)
+ *   所以 auto 布局下**按内容收缩**:格子跟着内容走,外面那张表就正常了。
+ *
+ * ✅ 外层有 `cols=` 时是 `table-layout: fixed` —— 列宽写死了,**格子宽度是确定的**,
+ *   环根本不存在。这时候嵌套表**跟着格子走**(`width: 100%`),也就是「嵌在里面的表格
+ *   遵循单元格的宽度」。拖外层的列宽,里面那张表跟着变。
+ */
+.md-cell-body .md-table-wrap .md-table {
+  width: auto;
+}
+.md-table.md-table-fixed .md-cell-body .md-table {
+  width: 100%;
+}
+/* 格子里那张表**自己**带了 ````table width=` 围栏时,仍然听它自己的 */
+.md-cell-body .md-table-scope .md-table-wrap .md-table {
+  width: var(--md-table-w, auto);
+}
+/*
+ * ⚠ `--md-table-w` 是会**继承**的:外面那张表的宽度变量会一路传进格子里,
+ * 让嵌套表莫名其妙地变成外层表的宽度。这里把它掐断,让 var() 用回自己的兜底值。
+ */
+.md-cell-body {
+  --md-table-w: initial;
+}
+
+/*
+ * 格子里的内容跟着格子缩放 —— 这是「排版表格」成立的前提:
+ * 拖宽一列,里面的图 / 视频 / PDF / 嵌套表格跟着变宽,拖窄就收。
+ * 图片本来就有 max-width: 100%;图表(mermaid 出的 svg)此前不跟,这里补上。
+ *
+ * 想要图**铺满**格子就别写尺寸(`![](…)`);写了 `![|80]` 就是定死 80 ——
+ * 尺寸写在正文里,那是作者的意思,不该被列宽悄悄改掉。
+ */
+.md-cell-body img,
+.md-cell-body video,
+.md-cell-body audio,
+.md-cell-body iframe,
+.md-cell-body svg,
+.md-cell-body .md-diagram,
+.md-cell-body .md-media-box {
+  max-width: 100%;
+}
+.md-cell-body .md-diagram svg {
+  height: auto;
 }
 
 /* ── 设置页 › AI 助手:模型快捷填入 (2026-09-22 用户要求两点改动) ──

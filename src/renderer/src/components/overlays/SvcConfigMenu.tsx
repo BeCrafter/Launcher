@@ -6,10 +6,13 @@ import { useSvcConfigStore } from '../../state/svc-config-store'
 import { useSettingsStore } from '../../state/settings-store'
 import { connectHost, serviceIdentityKey } from '../../lib/svc-override'
 import { saveServiceOverride } from '../../lib/svc-override-actions'
+import { EMPTY_OVERRIDES, refForService, useNoteCountForRef } from '../../lib/note-refs'
+import { openNotesFor } from '../../lib/notes-nav'
 
 const MENU_W = 268
-// 实测高度(三字段 + hint + 按钮行);用于判断向下是否放得下,宁可略大不可略小
-const MENU_H = 244
+// 实测高度(三字段 + hint + 相关笔记行 + 按钮行);用于判断向下是否放得下,宁可略大不可略小。
+// ⚠ 加行就要跟着改:翻转定位的算式全靠它,写小了菜单会顶出窗口下沿。
+const MENU_H = 278
 
 export function SvcConfigMenu(): React.JSX.Element | null {
   const t = useT()
@@ -22,6 +25,12 @@ export function SvcConfigMenu(): React.JSX.Element | null {
   const [alias, setAlias] = useState('')
   const [host, setHost] = useState('')
   const [path, setPath] = useState('')
+
+  const overrides = useSettingsStore((s) => s.settings?.serviceOverrides ?? EMPTY_OVERRIDES)
+  // svc 为 null 时给一个空键(计数自然是 0);hook 不能条件调用
+  const noteCount = useNoteCountForRef(
+    svc ? refForService(svc, overrides[serviceIdentityKey(svc)]) : { type: 'service', key: '', label: '' }
+  )
 
   // 打开/切换目标时把当前覆写载入草稿(同一次打开内自由编辑)
   useEffect(() => {
@@ -119,6 +128,19 @@ export function SvcConfigMenu(): React.JSX.Element | null {
         />
       </div>
       <div className="svc-config-hint">{t('svc.configure.hint')}</div>
+      {/* 反向入口:从这个端口服务找到与它相关的笔记 */}
+      <button
+        className="svc-config-related"
+        type="button"
+        onClick={() => {
+          close()
+          openNotesFor(refForService(svc, overrides[serviceIdentityKey(svc)]))
+        }}
+      >
+        <i className="fa-regular fa-note-sticky" />
+        <span>{t('notes.ref.related')}</span>
+        <span className="note-related-count">{noteCount}</span>
+      </button>
       <div className="svc-config-actions">
         <button className="svc-config-btn" type="button" onClick={reset}>
           {t('svc.configure.reset')}

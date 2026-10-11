@@ -17,6 +17,7 @@ import type {
   AiToolResultMessage,
   AiUserMessage
 } from '@shared/ai'
+import { MAX_MENTIONS } from '@shared/ai'
 import { dataSource } from '../data'
 import { t, fmt } from '../i18n'
 import { showToast, truncate } from '../lib/utils'
@@ -40,6 +41,18 @@ interface AiState {
   connectPulse: number // 未配置引导卡的脉冲计数(发送/技能卡被拦时 +1;卡片重挂载重启动画)
   mcpOpen: boolean
   mcpInfo: AiMcpInfo | null
+  /**
+   * 别处(笔记页)附上的引用,等 composer 挂载时领走。
+   *
+   * 为什么走队列而不是直接把状态提到 store:composer 的输入框内容与引用是**会话级**的
+   * 临时状态,提到 store 会让「新对话清空输入」这类规则散到两个地方。
+   * 切模块会卸载 AI 视图(ViewHost 条件渲染),所以进 AI 页时 composer 一定是新挂载的。
+   */
+  pendingMentions: AiMention[]
+  /** 把引用挂到下一次进入 AI 页的输入框上(同 key 去重,超出上限的丢掉并回报数量) */
+  attachMentions(ms: AiMention[]): { added: number; dropped: number }
+  /** 领走待挂引用(领完即清;composer 挂载时调一次) */
+  takePendingMentions(): AiMention[]
   init(): void
   loadEngine(): Promise<void>
   loadSkills(): Promise<void>
@@ -78,6 +91,31 @@ export const useAiStore = create<AiState>((set, get) => ({
   connectPulse: 0,
   mcpOpen: false,
   mcpInfo: null,
+  pendingMentions: [],
+
+  attachMentions(ms) {
+    const cur = get().pendingMentions
+    const next = cur.slice()
+    let added = 0
+    let dropped = 0
+    for (const m of ms) {
+      if (next.some((x) => x.key === m.key)) continue
+      if (next.length >= MAX_MENTIONS) {
+        dropped++
+        continue
+      }
+      next.push(m)
+      added++
+    }
+    if (added > 0) set({ pendingMentions: next })
+    return { added, dropped }
+  },
+
+  takePendingMentions() {
+    const cur = get().pendingMentions
+    if (cur.length > 0) set({ pendingMentions: [] })
+    return cur
+  },
 
   // 未配置拦截(demo aiSend 分支:toast + 引导卡脉冲;技能卡/体检卡同样走这里 —— demo 场景不需要
   // 引擎、真实运行需要,故收敛为同一闸门)

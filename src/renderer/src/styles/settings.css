@@ -294,6 +294,32 @@
   background: var(--surface2);
 }
 
+/* 表格边框颜色:一个当前值色块 + 一个自由输入。
+   不做取色器 —— 原生 <input type="color"> 在 Electron 里会弹系统取色面板,
+   与「写一个十六进制」这个高频动作相比太重。 */
+.settings-swatch {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+}
+.settings-color-input {
+  width: 110px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 6px 9px;
+  outline: none;
+  font: inherit;
+  font-size: 11px;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+.settings-color-input:focus {
+  border-color: var(--accent2);
+}
+
 .settings-footer {
   display: flex;
   align-items: center;

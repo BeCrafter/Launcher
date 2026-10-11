@@ -5,6 +5,8 @@ import { useT } from '../../hooks/useT'
 import { StatusDot } from '../../components/ui/StatusDot'
 import { TagChip } from '../../components/ui/TagChip'
 import { ActBtn } from '../../components/ui/ActBtn'
+import { refForCron } from '../../lib/note-refs'
+import { openNotesFor } from '../../lib/notes-nav'
 import { Toggle } from '../../components/ui/Toggle'
 import { parseCronExpr, formatNextRun, cronErrorToast } from '../../lib/cron'
 import { CRON_PRESETS } from '../../lib/cron-presets'
@@ -177,6 +179,14 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
           </span>
           <div className="row-actions" onClick={(e) => e.stopPropagation()}>
             <ActBtn icon={isEditing ? 'fa-solid fa-xmark' : 'fa-solid fa-pen'} opts={{ cls: 'accent', title: t('cron.edit'), onPress: openEdit }} />
+            {/* 反向入口:从这个定时任务找到与它相关的笔记 */}
+            <ActBtn
+              icon="fa-regular fa-note-sticky"
+              opts={{
+                title: t('notes.ref.related'),
+                onPress: () => openNotesFor(refForCron(job))
+              }}
+            />
             <ActBtn icon="fa-solid fa-trash-can" opts={{ cls: 'red', title: t('cron.delete'), onPress: () => void onDelete() }} />
           </div>
         </div>

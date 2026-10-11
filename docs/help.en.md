@@ -12,13 +12,15 @@ Install / upgrade / uninstall live in [docs/install.md](https://github.com/BeCra
 - [3. Agents (launchd)](#3-agents-launchd)
 - [4. Scheduled tasks (crontab)](#4-scheduled-tasks-crontab)
 - [5. Port services](#5-port-services)
-- [6. AI assistant](#6-ai-assistant)
-- [7. Settings reference](#7-settings-reference)
-- [8. Permissions and security](#8-permissions-and-security)
-- [9. FAQ](#9-faq)
-- [10. Where your data lives](#10-where-your-data-lives)
-- [11. Glossary](#11-glossary)
-- [12. Still stuck?](#12-still-stuck)
+- [6. Notebook](#6-notebook)
+- [7. Editor guide](#7-editor-guide)
+- [8. AI assistant](#8-ai-assistant)
+- [9. Settings reference](#9-settings-reference)
+- [10. Permissions and security](#10-permissions-and-security)
+- [11. FAQ](#11-faq)
+- [12. Where your data lives](#12-where-your-data-lives)
+- [13. Glossary](#13-glossary)
+- [14. Still stuck?](#14-still-stuck)
 
 ---
 
@@ -29,6 +31,7 @@ Install / upgrade / uninstall live in [docs/install.md](https://github.com/BeCra
 | **Agents** | Long-running / background tasks: services and daemons that start at login | `launchd` (plist files + `launchctl`) |
 | **Scheduled tasks** | Jobs that run on a timetable (the 3am backup kind) | `crontab` (per-user) / `/etc/crontab` (system-wide) |
 | **Port services** | Who is listening on which port right now: what's holding 3000, can it be stopped | `lsof -iTCP -sTCP:LISTEN` |
+| **Notebook** | Markdown notes about the three above, **linked to specific services** | plain `.md` files (your own folder) |
 | **AI assistant** | Ask about the three above in plain language, or have it make changes (with authorization) | The app's own tool layer (no mock data) |
 
 **Settings** at the bottom-left holds the app's own preferences (theme, language, timeouts, permissions); the last tab, "About & Diagnostics", shows the version and the update check.
@@ -56,7 +59,7 @@ Install / upgrade / uninstall live in [docs/install.md](https://github.com/BeCra
 1. Open **Scheduled tasks** → toolbar **New Task**
 2. Pick a preset (daily / hourly / weekly…) or type the five-field expression; the field below translates it into plain language and shows the **next run time**
 3. Use **absolute paths** in the command (`cron`'s `PATH` is minimal — `node foo.js` often can't find node)
-4. For logs, turn on **Record log** — the app funnels output into a fixed directory (see [§10](#10-where-your-data-lives))
+4. For logs, turn on **Record log** — the app funnels output into a fixed directory (see [§12](#12-where-your-data-lives))
 5. **System-wide** tasks (writing `/etc/crontab`) require authorization when saving; if that file doesn't exist the system scope is unavailable (macOS protects it — the app won't create it for you)
 
 ### 2.3 Find and kill whatever is holding a port
@@ -64,7 +67,7 @@ Install / upgrade / uninstall live in [docs/install.md](https://github.com/BeCra
 1. Open **Port services** (auto-refreshes every 3 seconds while you're on the page)
 2. Type the port number into the toolbar search, or find the grouped card
 3. On the right of a card: **↗** opens `http://host:port` in your browser; **Copy** copies the full URL; **Restart** kills then relaunches with the recorded command line; **Stop** ends the process
-4. Killing someone **else's** process (root, another user) pops the system authorization dialog first — see [§8](#8-permissions-and-security)
+4. Killing someone **else's** process (root, another user) pops the system authorization dialog first — see [§10](#10-permissions-and-security)
 
 ---
 
@@ -155,7 +158,367 @@ How the app detects and fixes it: a yellow **Needs escaping** warning appears on
 
 ---
 
-## 6. AI assistant
+## 6. Notebook
+
+One Markdown file per note, stored by default in `~/.config/launcher/notes/` (**Settings → Notes** lets you point it at an existing Obsidian vault).
+The files are plain `.md` with a frontmatter block — edit them with Obsidian, iCloud or git and the app will notice and reload.
+
+### The three panes
+
+The left pane is the list (its search box looks at the **body**, not just titles). Write in the middle, preview on the right.
+The title is shown as a whole path: the `folder/` prefix and the `.md` suffix are greyed out (they follow the file's
+location and are not editable) — the middle part is the name you can change, and the file follows it when you leave the field.
+
+There are only two rows up top: the title, and one row of "view switcher | links and tags". The switcher is three icon
+buttons (split / edit-only / preview-only, with tooltips); the vertical bar separates it from the service links and tags,
+which wrap onto more lines only when there are many. At the right end of the title row sit this note's actions:
+**reference in AI** (✨, see "Referencing notes in the AI"), pin, delete. The list shows names only and is always sorted by most
+recently updated — no sort control to set each time. Tags are no longer listed as a row of their own (they get
+numerous and unreadable). Instead they work **through the search box**: if what you type matches a tag, notes carrying
+that tag are **ranked first** and marked `#tag` at the end of the row so you can see why they matched. When nothing
+matches a tag, you get the ordinary content results in exactly the same order as before.
+
+While searching, results are shown **flat** rather than nested under folders — matches tend to be scattered across
+folders and a flat list is easier to scan. The row's tooltip still shows the full path.
+
+### Folders
+
+**A folder is a real directory on disk** and the notes sit directly inside it, so the hierarchy you see in Finder or
+Obsidian is exactly this one. Hovering a folder reveals four small buttons: new note here, new subfolder here, rename,
+and delete (notes inside go to the Trash with it and can be recovered).
+The Notebook page has no top bar: everything you need is in the left column, so the whole strip goes to the text.
+
+There are exactly two creation entry points, each with one job:
+- **the buttons on a folder row** → create **inside that folder** (a note or a subfolder)
+- **the pair at the bottom of the list, "New note / New folder"** → create at the **top level**
+
+So: use the row when you want it inside a folder, the bottom pair when you want it at the outermost level.
+
+**Drag** a note or a folder to move it: drop it on a folder to move it inside, or on the empty area to move it back to
+the top level. A folder cannot be dropped into itself (that would detach the whole subtree) — the app refuses.
+
+Hover any row and two buttons appear on the right: **pin** and **delete**. Deleting goes to the system Trash as well.
+Pinning does not touch the "updated" time — otherwise unpinning would make the note jump to the top of the
+most-recently-updated order.
+
+**Pinned notes always sit at the very top** of the list regardless of the sort order, and are not repeated inside the
+folder tree — they live in the "Pinned" section. Click that row to collapse it (the state is remembered).
+
+Drop an existing folder (an entire Obsidian vault, say) into the notes folder, or create directories and `.md` files
+there directly: the app notices and refreshes on its own, no restart needed.
+
+### Linking to a service
+
+This is what makes it different from a plain notebook. "Link service" attaches a note to:
+
+- a **Launch Agent** (by Label)
+- a **cron job**
+- a **port service**
+
+The note then shows a chip like "Launch Agent · com.foo.bar", and **clicking it jumps straight to that service**.
+The other direction works too: the "More" menu on an Agents card, a port service's "Configure" panel and a cron job's action row all offer "Related notes", which opens the list filtered to that service.
+
+**A port-service link survives process restarts** — it records "port + program name", not the PID.
+If the object changed but the link is still resolvable (scope moved, command edited) the chip turns amber with a button to update it; only a genuinely missing object shows as stale.
+
+### Autosave and conflicts
+
+While editing, a toolbar sits along the bottom: on the left the usual formatting buttons (bold / italic / inline code /
+link | heading / list / task / quote | code block / image / **table** / **page embed** / **diagram**), on the right a
+character count — or a short hint while the note is empty. `⌘B` / `⌘I` / `⌘K` map to bold, italic and link.
+**Switching to preview-only folds the whole bar away** — formatting buttons only make sense while editing, and the
+preview gets that height back.
+
+The editor is a **source editor**: monospace, every line exactly the same height. Headings do not grow, code
+blocks get no background panel, quotes get no bar — it does two things only: **colour** (markers dimmed,
+keywords / strings / comments / links coloured, table delimiters dimmed, header row bold, task `[ ]` coloured,
+callout markers coloured by type) and **glyph shape** (bold really looks bold, italic really slants). For
+typeset output, look at the preview pane. Code colours are **the same set** on both sides — a `const` is one
+colour either way.
+
+In split view the two panes **scroll together** — scroll either one and the other follows. That works off "which
+source line is this block", not off height ratios (the two panes are almost never the same height, and ratios drift
+further apart the longer the note). The 🔗 button on the metadata row turns it off.
+
+Saving happens about a second after you stop typing — there is no save button. **Renaming the title renames the
+file too**: when you leave the title field the file follows the title (if the name is taken the app asks whether to
+cancel or keep both).
+
+Three things worth knowing:
+
+- **The file is edited outside the app**: the app reloads it and tells you. If you had unsaved changes at that moment, a banner asks whether to use the disk version or keep yours — **neither side is lost by default**.
+- **Frontmatter keys the app does not recognise** (Obsidian's `aliases`, `cssclasses`, …) are **preserved verbatim** and never rewritten. If the whole frontmatter block is in a shape it cannot parse (e.g. an unclosed fence), the app treats the file as plain body and only warns.
+
+### Diagrams (Mermaid)
+
+The rightmost toolbar button inserts a diagram. Pick a type (flowchart / mindmap / sequence / class / state / ER /
+pie / gantt), choose a direction and theme, watch the live preview, then hit Insert. Hovering a rendered diagram
+reveals **copy source / zoom / edit** — the pencil reopens that diagram's settings, and Update replaces just that
+block, leaving the rest of the note untouched.
+
+Diagrams are plain Mermaid fenced blocks (```` ```mermaid ````) and the **settings live in the source** (direction on
+the `flowchart LR` line, theme in a `%%{init: …}%%` directive), so the file looks the same in Obsidian or on GitHub.
+"Follow app" is the one exception: it writes **nothing** into the file and instead colours the diagram from the
+current theme, so diagrams follow light/dark switches.
+
+A syntax error does not vanish silently — that block shows Mermaid's error message next to your source.
+
+### Callouts
+
+Start a quote with `> [!NOTE]` and the whole block renders as a card with an icon and its own colour:
+
+```markdown
+> [!WARNING] Back up before changing ports
+> Edit the plist without a backup and you are retyping it from memory.
+```
+
+Five types: `NOTE` (blue) · `TIP` (green) · `IMPORTANT` (purple) · `WARNING` (amber) · `CAUTION` (red).
+The marker may be followed by a custom title; without one the type name is used. The body takes lists, code
+blocks, images — anything.
+
+**Typing `> [` in the editor pops up the five types**, Enter inserts the whole skeleton, and what you type next
+is the body. Callout markers are colour-coded in the editor too, so a warning reads as a warning at a glance.
+
+This syntax is **native to Obsidian and understood by GitHub** — the file does not turn into plain text elsewhere.
+
+### Tables
+
+The toolbar's table button opens an **8×8 grid**; drag to the size you want and click. You get an empty table with
+a header row — the header cells are filled with placeholder names, because a fully blank header is a field of
+borders with no visible top row.
+
+### Page embeds
+
+The globe button: paste an address, pick a height, insert. Two kinds of address:
+
+- **Relative path** (`assets/report.html`) → a local page inside the notes folder, **no network request at all**;
+- **URL** (`https://…`) → the preview **fetches that page over the network**.
+
+⚠ The second one goes online — remote images (next section) take the same path. Those are the only two places
+in the app that touch the network. The dialog changes colour to say so. The embedded page runs in a
+**sandboxed iframe** and cannot reach the app itself.
+
+The source looks like this, and can be written by hand:
+
+````markdown
+```embed
+https://example.com
+height: 420
+```
+````
+
+Height is optional (380px default). If a site refuses to be framed the box stays blank — the address bar above it
+has an "open in browser" button.
+
+### Documents, video and audio
+
+Same syntax as images; the extension picks the control:
+
+```markdown
+![](assets/screencast.mp4)
+![](assets/recording.m4a)
+![](assets/manual.pdf)
+```
+
+- **Video / audio**: played inline, and the scrubber works (the attachment protocol supports range requests, so
+  it does not wait for the whole file);
+- **PDF**: read inline using Chromium's built-in viewer;
+- Supported extensions: `mp4` `webm` `mov` `m4v` `ogv` / `mp3` `m4a` `wav` `ogg` `flac` `aac` / `pdf`.
+
+Everything lives in `assets/` inside the notes folder, next to your images.
+
+### Images
+
+Paste or drop a screenshot into the editor: it is stored under `assets/` in the notes folder and a `![](assets/…)` reference is inserted.
+
+**Remote images (`https://…`) are displayed directly.** That means opening the note fires one request at that
+address — the same online behaviour as page embeds (previous section). The rendered `<img>` carries
+`no-referrer`, so at least "which note you came from" is not sent along. If the host blocks hotlinking or the
+address is dead, that spot degrades to a clickable chip instead of a broken-image icon.
+
+The attachment protocol only serves whitelisted types under `assets/` in the notes folder, and path traversal is
+blocked in the protocol handler.
+
+### Task lists
+
+`- [ ]` / `- [x]` are checkable in the preview, and toggling one edits the source file — **⌘Z undoes it**.
+
+### Letting the AI write notes
+
+The assistant has six note tools (list / read / view image / write / link / delete). Try "write up the troubleshooting we just did for port 8080 as a note" —
+it attaches the service link itself. Writes still go through the approval card, which turns red when existing body text would be overwritten.
+
+### Referencing notes in the AI
+
+Three ways in, and all of them read the **body as it is on disk right now**:
+
+- **Type `@` in the AI input** → pick from the "Notes" group. The checkbox at the start of a row lets you
+  collect several and attach them all with one click at the bottom; clicking the row itself references just
+  that one and closes the popover. Typing two or more characters also searches note bodies.
+- **Click the ✨ button in the note header** → jumps to the AI page with that note attached.
+- **Select a passage in the editor first, then click that button** → only the **selected passage** is
+  referenced, not the whole note. Handy for "just this log excerpt, take a look".
+
+Each reference becomes a chip above the input (green for notes); click ✕ to drop it. Up to 10 per message.
+
+Worth knowing:
+
+- **A reference is not a paste**: the body is read once, at send time, and folded into that turn. It is
+  **not written into the conversation record** and does not appear in the bubble — so if you edit the note
+  afterwards, the next turn sees the new version.
+- **The body stays in context**: a referenced note is re-sent to the model on every following turn (that is
+  how it avoids "forgetting" the note). That costs tokens — think twice before referencing a huge note.
+  64 KiB per note, 128 KiB of references per message; anything over that is reported by name.
+- **Images are fetched on demand**: screenshots inside a note are not pushed to the model automatically
+  (that would bloat the request). When the body mentions one, the assistant knows and calls
+  `read_note_image` itself. An image it looked at is **visible for that turn only** and is not written into
+  the conversation record — ask again and it re-reads the local file, which is nearly free.
+- **Deleted or renamed notes**: the model is told "no longer exists" instead of being handed stale text.
+- Referencing is not the same as having read: when asked to **rewrite** a note the assistant still calls
+  `read_note` first, so it never overwrites your text based on a possibly truncated reference.
+
+---
+
+## 7. Editor guide
+
+This chapter is a **reference** for the things you would not find by poking around. To see them live,
+open the **Notes feature tour** note in your notes folder (generated on first run when the folder is
+empty) and edit it.
+
+### The editor is a source editor
+
+The left pane is the **source**, the right pane is the **output**. The editor does exactly two
+things: **colour** (markers dimmed, syntax coloured) and **glyph shape** (bold looks bold, italic
+slants). Headings do not grow, code blocks get no background panel — so every line is exactly the
+same height and it reads like source you can edit.
+
+That is deliberate: the moment headings grow or code blocks get a background, line heights stop
+matching and it reads like a **rendered document** rather than source you are editing. **Typesetting
+is the preview pane's job.**
+
+### Size: written in the brackets, or dragged out
+
+Images, video, audio and PDF carry their size in the alt text — Obsidian's syntax, which Obsidian
+understands natively:
+
+| Syntax | Meaning |
+|---|---|
+| `![cover\|300](assets/a.png)` | width 300px |
+| `![cover\|300x200](assets/a.png)` | 300 × 200 (stretches) |
+| `![\|x400](assets/a.pdf)` | height only (a PDF is always full width) |
+
+**Click a media block in the preview** and a handle appears in its bottom-right corner; drag it to
+resize, and the syntax above is rewritten on release. Images / video / audio drag width (height
+follows the aspect ratio); **a PDF or a page embed** drags height. Clamped to 40–2400px.
+**All four media types plus page embeds resize this way**, not just images.
+
+If the same image appears more than once in the note the app may not be able to pin down which one —
+it says so and **changes nothing**, rather than picking one at random.
+
+### Tables are editable in place
+
+**Double-click a cell** in the preview to edit it (Enter commits, Escape cancels), and the table
+re-aligns itself. Hover the table and `×` buttons appear in the row gutter and on the header cells
+(delete that row / column); below the table sit "add row" and "add column".
+
+What changes is the **source**: re-aligning only touches whitespace, never cell content. Deleting the
+last remaining column is refused — a table with no columns is not a table.
+
+**A cell can hold block content too**: use `<br>` as the line separator inside that one line of source
+— lists, code blocks, diagrams, nested tables, images / video / PDF all fit (write a literal pipe as
+`\|`, otherwise it splits the column). Task lists, tables and diagrams inside a cell are **read-only**:
+they all come from that same line of source, and writing back by line number would corrupt the row.
+Images / video / diagrams inside a cell scale with the cell.
+
+**Column widths and row heights** live in the ````table fence (`cols=200,100,auto`, `rows=80,40`), or
+you can **drag a column / row boundary** in the preview and the number is written back on release. For
+"image left, text right" layouts, add `layout` to the fence — the table becomes a grid: no borders,
+and the first row stops being a header.
+
+For live examples, open the **Notes feature tour** note in your notes folder.
+
+### Table borders: a global default plus per-table overrides
+
+GFM's table syntax has nowhere to put attributes, so borders work in two levels:
+
+- **Global**: Settings › Notebook › Table style — border weight (none / thin / medium / thick) and colour.
+- **Per table**: wrap the table in a `table` fence and override only what you name:
+
+````markdown
+```table border=none
+| Borderless | Still readable via alignment |
+|---|---|
+| A | B |
+```
+````
+
+Only two keys are recognised: `border=none|thin|medium|thick` and `color=#8b5cf6` (or a colour name).
+Unknown keys are ignored — one misspelled word should not turn a table into an error message.
+
+The trade-off is that this fence shows up as a code block in Obsidian / GitHub. So use it for the
+**occasional** table; the default lives in Settings, and a note with no fences at all still gets
+consistent, good-looking tables.
+
+### Code blocks
+
+Name the language inside the fence and you get syntax highlighting. **Hover a code block** and a
+language badge plus a copy button appear in its top-right corner. It copies the **raw code**, with no
+highlight markup — paste it straight into a terminal.
+
+40+ languages are covered: `js` `ts` `jsx` `tsx` `json` `html` `css` `scss` `xml` **`plist`**
+`markdown` `sh` `bash` `zsh` `py` `yaml` `toml` `ini` `sql` `go` `rust` `c` `c++` `java` `kotlin`
+`swift` `ruby` `lua` `perl` `diff` `dockerfile` `nginx` `powershell` … Anything unrecognised is
+shown as plain text rather than mis-coloured.
+
+### Callouts
+
+`> [!TYPE]`, five of them: `NOTE` (blue) `TIP` (green) `IMPORTANT` (purple) `WARNING` (amber)
+`CAUTION` (red). Whatever follows the marker becomes a custom title. **Typing `> [` in the editor
+pops up the five types.**
+
+**A plain quote (a line starting with `> `, no `[!TYPE]`) is rendered block by block too** — it
+takes lists, code blocks, tables and nested quotes.
+
+This syntax is native to Obsidian and understood by GitHub — the file does not turn into plain text
+elsewhere.
+
+### Page embeds
+
+The globe button on the toolbar: paste an address, pick a height. A relative path
+(`assets/report.html`) points at a local page inside the notes folder and makes **no network
+request**; a URL (`https://…`) makes the preview **fetch that page**.
+
+### Diagrams
+
+The rightmost toolbar button inserts a Mermaid diagram (flowchart / mindmap / sequence / class /
+state / ER / pie / gantt) with visual direction and theme controls. Hovering a rendered diagram
+reveals copy-source and edit. Settings are written back as **standard Mermaid source**, so the file
+looks the same in Obsidian or on GitHub.
+
+### Linked scrolling
+
+In split view both panes scroll together, driven by "which source line is this block" rather than by
+height ratio — the two panes are almost never the same height, and ratios drift apart. The 🔗 button
+on the metadata row turns it off.
+
+### One-line reference
+
+| Want | Write |
+|---|---|
+| Callout | `> [!WARNING]` |
+| Task list | `- [ ] something` |
+| Table | `\| a \| b \|` then `\|---\|---\|` |
+| Borderless table | wrap in ` ```table border=none ` |
+| Code block | ` ```bash ` |
+| Image size | `![cover\|300](assets/a.png)` |
+| Video / audio / PDF | `![](assets/a.mp4)` (the extension picks the control) |
+| Page embed | ` ```embed ` plus a line with the address |
+| Diagram | ` ```mermaid ` |
+| Horizontal rule | `---` |
+
+---
+
+## 8. AI assistant
 
 ### Configure it first
 
@@ -166,12 +529,12 @@ How the app detects and fixes it: a yellow **Needs escaping** warning appears on
 
 ### What it can do
 
-It calls the app's own tool layer (**reading real system state**, not mock data) — 14 tools in total:
+It calls the app's own tool layer (**reading real system state**, not mock data) — 20 tools in total:
 
-- **9 read-only**: list/query agents, scheduled tasks, port services; read raw plist source, read logs, check a task's run state…
-- **5 requiring authorization**: edit plists, write files, perform write operations — each execution pops an **authorization card** stating **the exact command about to run**; it only runs once you hit "Allow"
+- **12 read-only**: list/query agents, scheduled tasks, port services; read raw plist source, read logs, check a task's run state, read notes (including screenshots inside them)…
+- **8 requiring authorization**: edit plists, write files, perform write operations — each execution pops an **authorization card** stating **the exact command about to run**; it only runs once you hit "Allow"
 
-Whether write tools are **visible** is decided by the **MCP permission mode** (default `readOnly` exposes only the 9 read-only tools); but **even when visible, execution still needs your per-call authorization**.
+Whether write tools are **visible** is decided by the **MCP permission mode** (default `readOnly` exposes only the 12 read-only tools); but **even when visible, execution still needs your per-call authorization**.
 
 ### Connecting external agents (MCP)
 
@@ -186,7 +549,7 @@ The top of the dialog shows the real state of the PATH link (installed / not ins
 
 ---
 
-## 7. Settings reference
+## 9. Settings reference
 
 | Group | Key | What it does |
 |---|---|---|
@@ -203,14 +566,14 @@ The top of the dialog shows the real state of the PATH link (installed / not ins
 | | XML indentation | Indentation used when saving/formatting plists (2 spaces / 4 spaces / Tab) |
 | **Permissions & elevation** | Quiet period | Don't ask again for this long after authorizing (aligned with macOS's ~5 minute authorization cache) |
 | | Confirm dangerous actions | When off, deletes and similar stop asking twice (on by default) |
-| **AI assistant** | Protocol / endpoint / key / model | See [§6](#6-ai-assistant) |
+| **AI assistant** | Protocol / endpoint / key / model | See [§8](#8-ai-assistant) |
 | | Runtime options | Tool-call limit, streaming, request timeout; MCP permission mode (read-only / full) |
 | **About & Diagnostics** | Version / architecture / install source | The "install source" decides which upgrade command the update check gives you |
 | **Login items** | — | Read-only explainer: how macOS login items relate to this app |
 
 ---
 
-## 8. Permissions and security
+## 10. Permissions and security
 
 **When the system authorization dialog appears** (app explains intent → native system dialog → you enter your password → the app continues):
 
@@ -232,7 +595,7 @@ The top of the dialog shows the real state of the PATH link (installed / not ins
 
 ---
 
-## 9. FAQ
+## 11. FAQ
 
 **Q: I clicked "Start", why does the status change a few seconds later?**
 `launchctl`'s state propagation has roughly a 2-second lag, and restarts (`kickstart -k`) are throttled by the system. The app refreshes automatically afterwards — just wait a moment.
@@ -267,7 +630,7 @@ Only conversations you start go to the model endpoint you configured; the app it
 
 ---
 
-## 10. Where your data lives
+## 12. Where your data lives
 
 | Path | Contents |
 |---|---|
@@ -279,7 +642,7 @@ Only conversations you start go to the model endpoint you configured; the app it
 
 ---
 
-## 11. Glossary
+## 13. Glossary
 
 | System term | In plain language |
 |---|---|
@@ -301,7 +664,7 @@ Only conversations you start go to the model endpoint you configured; the app it
 
 ---
 
-## 12. Still stuck?
+## 14. Still stuck?
 
 1. Check the FAQ above, and for install-related problems → [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md) (covers "damaged", architecture, upgrade channels, etc.)
 2. Packaging and signing → the "Why does it say damaged" section of [docs/install.md](https://github.com/BeCrafter/Launcher/blob/main/docs/install.md)

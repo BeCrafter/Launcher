@@ -89,6 +89,7 @@ export function createAiStack(deps: {
     discovery: deps.services.discovery,
     plists: deps.services.plists,
     launchctl: deps.services.launchctl,
+    notes: deps.services.notes,
     brew: deps.services.brew,
     home: deps.home
   })
@@ -97,6 +98,8 @@ export function createAiStack(deps: {
     llm,
     secrets,
     registry,
+    // 引用的笔记正文由 chat-service 在发送时现读(不进会话文件)
+    notes: deps.services.notes,
     getSettings: get,
     storePath: join(deps.userDataDir, 'ai-sessions.json'),
     emit: deps.emit
