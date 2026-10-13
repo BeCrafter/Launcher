@@ -84,6 +84,14 @@ describe('parseMarkdownBlocks', () => {
     expect(special.filter(isMarkdownBlockDraggable).map((block) => block.kind)).toEqual(['fence', 'table'])
   })
 
+  it('recognizes tables with short (2-dash) GFM alignment delimiters', () => {
+    // GFM 只要求「冒号 + 一个以上破折号」;`:--` 是合法的左对齐分隔行
+    const text = '| 端口 | 进程 |\n|:--|--:|\n| 8080 | node |'
+    const blocks = parseMarkdownBlocks(text)
+    expect(blocks.map((b) => b.kind)).toEqual(['table'])
+    expect(blocks[0].contentTo).toBe(3)
+  })
+
   it('does not allow ordinary paragraphs to be moved', () => {
     const text = 'paragraph\n\n```\ncode\n```\n'
     const blocks = parseMarkdownBlocks(text)

@@ -60,7 +60,9 @@ function fenceOf(line: string): { char: '`' | '~'; length: number } | null {
 }
 
 function tableDelimiter(line: string): boolean {
-  return /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line)
+  // GFM 只要求「冒号 + 一个以上破折号」;写死 {3,} 会漏掉 `:--` 这类 2 破折号对齐行
+  // (预览渲染器认、块解析器不认 → 数据行 hover 出的是 Paragraph 手柄而非表格)
+  return /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(line)
 }
 
 function tableRow(line: string): boolean {
