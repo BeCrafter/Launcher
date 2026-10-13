@@ -83,6 +83,10 @@ interface RunState {
   /** 已落库的 toolCallId(被 beforeToolCall 拦下的调用不会走 execute,需从 pi 事件补记) */
   finalized: Set<string>
   turnCount: number
+  /** 本轮 load_plist 成功的 {label, scope} —— agent 自然停止时宿主据此注入自动验证轮 */
+  verifyQueue: { label: string; scope?: string }[]
+  /** 已注入的自动验证轮数(封顶 2,防止「修了又坏、坏了又修」无限续跑) */
+  verifyRound: number
 }
 
 export function createChatService(deps: {
@@ -192,6 +196,14 @@ export function createChatService(deps: {
           }
         }
         finalizeToolResult(r, toolCallId, d, result, Date.now() - started)
+        // load_plist 成功 → 记入自动验证队列(agent 自然停止时宿主注入验证轮)
+        if (d.name === 'load_plist' && !result.isError) {
+          const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
+          const scopeRaw = (params as Record<string, unknown>)['scope']
+          if (label !== '') {
+            r.verifyQueue.push({ label, ...(typeof scopeRaw === 'string' ? { scope: scopeRaw } : {}) })
+          }
+        }
         // 图片块直接进 pi 的 transcript(模型当轮看得到);落库那一路由 finalizeToolResult
         // 换成一行说明 —— 图片不进会话文件(理由见 message-map 的 IMAGE_NOT_STORED)
         return {
@@ -501,6 +513,56 @@ export function createChatService(deps: {
     return undefined
   }
 
+  /**
+   * 框架层自动验证兜底:模型收尾(本轮无工具调用)且本轮 load 过任务时,
+   * 宿主查完状态与日志,把读数经 agent.followUp() 注入下一轮 ——
+   * pi 的 Agent 会用自己的 followUpQueue.drain() 覆盖配置里的 getFollowUpMessages,
+   * 唯一的注入入口是公开的 followUp();且 finishTurn 返回 end 会短路 follow-up 检查,
+   * 所以刚注入过的这轮不能返回 end。注入轮同样计 turn,靠 verifyRound < 2 封顶。
+   */
+  async function maybeInjectVerify(r: RunState): Promise<boolean> {
+    if (r.abort.signal.aborted) return false
+    if (r.verifyRound >= 2 || r.verifyQueue.length === 0) return false
+    const targets = [...r.verifyQueue]
+    r.verifyQueue = []
+    r.verifyRound += 1
+    const ctx = { sessionId: r.sessionId, signal: r.abort.signal }
+    const sections: string[] = []
+    for (const target of targets) {
+      const status = deps.registry.get('get_service_status')
+      const logs = deps.registry.get('tail_log')
+      const statusRes = status
+        ? await status.execute({ label: target.label, ...(target.scope ? { scope: target.scope } : {}) }, ctx)
+        : { lines: [{ level: 'err' as const, text: 'get_service_status 工具不存在' }] }
+      const logRes = logs
+        ? await logs.execute({ label: target.label, lines: 20 }, ctx)
+        : { lines: [{ level: 'err' as const, text: 'tail_log 工具不存在' }] }
+      sections.push(
+        `### ${target.label}\n` +
+          `【状态】\n${linesToText(statusRes.lines)}\n\n` +
+          `【日志】\n${linesToText(logRes.lines)}`
+      )
+    }
+    const text =
+      `【自动验证】你刚载入了下面这些任务,宿主已代你查过状态与日志。请核对读数:\n\n` +
+      `${sections.join('\n\n')}\n\n` +
+      `- 若状态显示未在运行、退出码非 0 或日志里有报错 → 诊断根因并修复(可再 write_plist / load_plist),修复后会再次自动验证(最多 2 轮);\n` +
+      `- 若一切正常 → 给出最终交付说明,引用上面的真实读数(pid / exit code / 日志行),不要凭印象写。`
+    const s = currentSession()
+    if (!s) return false
+    const msg: AiUserMessage = {
+      role: 'user',
+      id: uid('u'),
+      blocks: [{ type: 'text', text }],
+      timestamp: Date.now()
+    }
+    s.messages.push(msg)
+    save()
+    emit({ type: 'user_message', sessionId: r.sessionId, runId: r.runId, messageId: msg.id, text })
+    r.agent.followUp({ role: 'user', content: text, timestamp: msg.timestamp })
+    return true
+  }
+
   // ── 运行 ──
 
   async function runAgent(r: RunState, skillId?: string): Promise<void> {
@@ -541,10 +603,21 @@ export function createChatService(deps: {
           (ctx.args ?? {}) as Record<string, unknown>,
           signal
         ),
-      // pi 没有内置轮数上限:超出设置的上限就结束本轮,把控制权交回用户
-      finishTurn: () => {
+      // pi 没有内置轮数上限:超出设置的上限就结束本轮,把控制权交回用户。
+      // 闭环类技能(生成→写入→载入→验证)需要更多轮:取 Math.max(全局设置, skill.turnLimit),
+      // 只抬高下限,不压过用户更高的全局设置。
+      //
+      // 框架层自动验证兜底也挂在这里:模型收尾(本轮无工具调用)且本轮 load 过任务时,
+      // 宿主查完状态与日志,把读数经 agent.followUp() 注入下一轮 ——
+      // pi 的 Agent 会用自己的 followUpQueue.drain() 覆盖配置里的 getFollowUpMessages,
+      // 唯一的注入入口是公开的 followUp();且 finishTurn 返回 end 会短路 follow-up 检查,
+      // 所以刚注入过的这轮不能返回 end。注入轮同样计 turn,靠 verifyRound < 2 封顶。
+      finishTurn: async (turn) => {
         r.turnCount += 1
-        return r.turnCount >= settings.aiToolCallLimit ? { action: 'end' } : undefined
+        const limit = skill?.turnLimit ? Math.max(settings.aiToolCallLimit, skill.turnLimit) : settings.aiToolCallLimit
+        const injected = await maybeInjectVerify(r)
+        if (r.turnCount >= limit && !injected) return { action: 'end' }
+        return undefined
       }
     })
     r.agent = agent
@@ -647,7 +720,9 @@ export function createChatService(deps: {
         toolCallOwner: new Map(),
         approvals: new Map(),
         finalized: new Set(),
-        turnCount: 0
+        turnCount: 0,
+        verifyQueue: [],
+        verifyRound: 0
       }
       run = r
       emit({ type: 'run_start', sessionId: r.sessionId, runId: r.runId })

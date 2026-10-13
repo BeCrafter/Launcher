@@ -381,6 +381,19 @@ export const useAiStore = create<AiState>((set, get) => ({
           pendingApprovals: { ...sw.pendingApprovals, [e.toolCallId]: { runId: e.runId, toolName: e.toolName } }
         }))
         break
+      case 'user_message': {
+        // 宿主注入的用户消息(自动验证轮):main 已落库,这里补进当前列表;重复事件按 id 去重
+        const exists = get().messages.some((m) => m.role === 'user' && m.id === e.messageId)
+        if (exists) break
+        const msg: AiUserMessage = {
+          role: 'user',
+          id: e.messageId,
+          blocks: [{ type: 'text', text: e.text }],
+          timestamp: Date.now()
+        }
+        set((sw) => ({ messages: [...sw.messages, msg] }))
+        break
+      }
       case 'run_end':
         if (e.runId === get().runId) set({ runId: null, runSessionId: null })
         break

@@ -244,6 +244,8 @@ export type AiRunEvent =
       provider?: string
     })
   | (AiRunEventBase & { type: 'approval_request'; toolCallId: string; toolName: string; detail: string; command: string; dangerous: boolean })
+  /** 宿主注入的用户消息(如载入后的自动验证轮)—— main 已落库,renderer 只需补进列表 */
+  | (AiRunEventBase & { type: 'user_message'; messageId: string; text: string })
   | (AiRunEventBase & { type: 'run_end'; stopReason: AiStopReason })
   | (AiRunEventBase & { type: 'run_error'; message: string })
 

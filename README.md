@@ -113,7 +113,7 @@ npx -y @becrafter/launcher
 
 ## 与 AI Agent 集成（MCP）
 
-应用内含一个 MCP stdio 入口 `launcher-mcp`，默认**只读**（11 个只读工具）；
+应用内含一个 MCP stdio 入口 `launcher-mcp`，默认**只读**（12 个只读工具）；
 在「AI 助手 → 接入 MCP」里点一次「安装到 PATH」，外部 Agent 就可以只用命令名挂载：
 
 ```bash

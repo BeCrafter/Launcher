@@ -30,6 +30,13 @@ describe('expertPrompt', () => {
     expect(zh).not.toBe(en)
   })
 
+  it('带 PATH 硬规则:launchd 不加载 shell 配置,必须显式写 EnvironmentVariables.PATH', () => {
+    const p = expertPrompt('zh-CN')
+    expect(p).toContain('launchd 不加载')
+    expect(p).toContain('EnvironmentVariables.PATH')
+    expect(p).toContain('不要猜')
+  })
+
   it('占位符已被替换(不留 {{OUTPUT}})', () => {
     expect(expertPrompt('zh-CN')).not.toContain('{{OUTPUT}}')
     expect(expertPrompt('en-US')).not.toContain('{{OUTPUT}}')
