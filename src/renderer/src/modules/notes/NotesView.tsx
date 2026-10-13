@@ -30,6 +30,8 @@ import { DiagramDialog, type DiagramDialogTarget } from './DiagramDialog'
 import { EmbedDialog } from './EmbedDialog'
 import { MermaidBlock } from './MermaidBlock'
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor'
+import { NoteBlockMenu, NoteInsertMenu } from './NoteBlockMenus'
+import type { MarkdownBlock } from '../../lib/markdown-blocks'
 import { NoteRefChips } from './NoteRefChips'
 import { NoteRefPicker } from './NoteRefPicker'
 import { NotesRail } from './NotesRail'
@@ -74,12 +76,32 @@ export function NotesView(): React.JSX.Element {
   const [tagInput, setTagInput] = useState('')
   const [diagram, setDiagram] = useState<DiagramDialogTarget | null>(null)
   const [embedOpen, setEmbedOpen] = useState(false)
+  const [blockMenu, setBlockMenu] = useState<{ block: MarkdownBlock; anchor: DOMRect; line: number } | null>(null)
+  const [insertMenu, setInsertMenu] = useState<{ line: number; anchor: DOMRect } | null>(null)
+  const insertLineRef = useRef<number | null>(null)
 
   // 折叠只属于当前编辑会话:切换笔记或切换编辑/分栏/预览模式时清空,
   // 但不改正文、不清空 CodeMirror history,所以 Cmd+Z 仍只对应用户编辑。
   useEffect(() => {
     editorRef.current?.resetFolds()
   }, [draft?.id, viewMode])
+
+  const openBlockMenu = useCallback((block: MarkdownBlock, anchor: DOMRect, line: number) => {
+    setInsertMenu(null)
+    setBlockMenu({ block, anchor, line })
+  }, [])
+  const openInsertMenu = useCallback((line: number, anchor: DOMRect) => {
+    setBlockMenu(null)
+    setInsertMenu({ line, anchor })
+  }, [])
+  const openDiagramAt = useCallback((line: number | null) => {
+    insertLineRef.current = line
+    setDiagram({ code: null, from: 0, to: 0 })
+  }, [])
+  const openEmbedAt = useCallback((line: number | null) => {
+    insertLineRef.current = line
+    setEmbedOpen(true)
+  }, [])
 
   // ── 滚动同步 ──
   //
@@ -648,6 +670,8 @@ export function NotesView(): React.JSX.Element {
               handleRef={editorRef}
               placeholder={t('notes.field.bodyPlaceholder')}
               onScroll={onEditorScroll}
+              onBlockMenu={openBlockMenu}
+              onEmptyMenu={openInsertMenu}
             />
           </div>
           {viewMode === 'split' && (
@@ -690,17 +714,65 @@ export function NotesView(): React.JSX.Element {
           <NoteToolbar
             handleRef={editorRef}
             body={draft.body}
-            onDiagram={() => setDiagram({ code: null, from: 0, to: 0 })}
-            onEmbed={() => setEmbedOpen(true)}
+            onDiagram={() => openDiagramAt(null)}
+            onEmbed={() => openEmbedAt(null)}
           />
         )}
-      </div>
-
+      {blockMenu !== null && (
+        <NoteBlockMenu
+          block={blockMenu.block}
+          line={blockMenu.line}
+          body={draft.body}
+          anchor={blockMenu.anchor}
+          handleRef={editorRef}
+          onClose={() => setBlockMenu(null)}
+          onInsertBelow={(line) => {
+            setBlockMenu(null)
+            setInsertMenu({ line, anchor: blockMenu.anchor })
+          }}
+          onDiagram={(line) => {
+            setBlockMenu(null)
+            openDiagramAt(line)
+          }}
+          onEmbed={(line) => {
+            setBlockMenu(null)
+            openEmbedAt(line)
+          }}
+        />
+      )}
+      {insertMenu !== null && (
+        <NoteInsertMenu
+          line={insertMenu.line}
+          anchor={insertMenu.anchor}
+          handleRef={editorRef}
+          onClose={() => setInsertMenu(null)}
+          onDiagram={(line) => {
+            setInsertMenu(null)
+            openDiagramAt(line)
+          }}
+          onEmbed={(line) => {
+            setInsertMenu(null)
+            openEmbedAt(line)
+          }}
+        />
+      )}
       <NoteRefPicker />
       <DiagramDialog
         target={diagram}
-        onClose={() => setDiagram(null)}
-        onInsert={(source) => editorRef.current?.insertFence('mermaid', source)}
+        onClose={() => {
+          insertLineRef.current = null
+          setDiagram(null)
+        }}
+        onInsert={(source) => {
+          const line = insertLineRef.current
+          if (line === null) {
+            editorRef.current?.insertFence('mermaid', source)
+          } else {
+            const block = '```mermaid\n' + source + '\n```'
+            editorRef.current?.insertAtLine(line, block, block.length)
+            insertLineRef.current = null
+          }
+        }}
         onUpdate={(from, to, source) => {
           /*
            * ⚠ 换掉的那几行要**带上前缀**。
@@ -717,11 +789,23 @@ export function NotesView(): React.JSX.Element {
       />
       <EmbedDialog
         open={embedOpen}
-        onClose={() => setEmbedOpen(false)}
-        onInsert={({ url, height }) =>
-          editorRef.current?.insertFence('embed', height === null ? url : `${url}\nheight: ${height}`)
-        }
+        onClose={() => {
+          insertLineRef.current = null
+          setEmbedOpen(false)
+        }}
+        onInsert={({ url, height }) => {
+          const body = height === null ? url : `${url}\nheight: ${height}`
+          const line = insertLineRef.current
+          if (line === null) {
+            editorRef.current?.insertFence('embed', body)
+          } else {
+            const block = `\`\`\`embed ${body}\n\`\`\``
+            editorRef.current?.insertAtLine(line, block, block.length)
+            insertLineRef.current = null
+          }
+        }}
       />
+      </div>
     </div>
   )
 }

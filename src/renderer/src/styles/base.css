@@ -42,6 +42,10 @@
   --toast-border: rgba(124, 106, 244, 0.35);
   --toast-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 
+  /* 菜单/弹层背景：浮在正文上方的层不能用 --panel(3%/70% 太透，
+     底下文字透出来看不清)。0.99 接近实色，透字色差 ≤2 */
+  --menu-bg: rgba(22, 22, 36, 0.99);
+
   /* 开关关闭态轨道：中性表面，需足够对比使"未启用"清晰可见 */
   --toggle-off-track: rgba(255, 255, 255, 0.15);
   --toggle-off-border: rgba(255, 255, 255, 0.13);
@@ -916,6 +920,9 @@ body.light-theme {
   --toast-bg: rgba(255, 255, 255, 0.96);
   --toast-border: rgba(106, 88, 224, 0.22);
   --toast-shadow: 0 8px 28px rgba(30, 40, 80, 0.14);
+
+  /* 浅色菜单/弹层：--panel 是 70% 白，浮在正文上会透字；0.99 接近实色 */
+  --menu-bg: rgba(255, 255, 255, 0.99);
 }
 
 body.light-theme .f-input,
