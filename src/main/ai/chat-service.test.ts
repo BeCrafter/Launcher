@@ -306,6 +306,159 @@ describe('ChatService 运行链路', () => {
     expect(faux.state.callCount).toBe(1)
   })
 
+  /** 轮询应答所有出现的授权卡(自动验证链路里可能连续出现多张) */
+  async function approveAll(svc: ChatService, sending: Promise<void>): Promise<void> {
+    const responded = new Set<string>()
+    const t = setInterval(() => {
+      for (const e of events) {
+        if (e.type === 'approval_request' && !responded.has(e.toolCallId)) {
+          responded.add(e.toolCallId)
+          svc.respondApproval({ runId: e.runId, toolCallId: e.toolCallId, decision: 'approve' })
+        }
+      }
+    }, 10)
+    try {
+      await sending
+    } finally {
+      clearInterval(t)
+    }
+  }
+
+  it('load_plist 成功后宿主注入自动验证轮(状态与日志真实读数进消息)', async () => {
+    const loadTool: ToolDef = {
+      name: 'load_plist',
+      label: '载入任务',
+      description: '载入任务',
+      parameters: Type.Object({ label: Type.String() }),
+      write: true,
+      summarize: (a) => ({ detail: `载入 ${a['label']}`, command: 'launchctl bootstrap' }),
+      execute: async () => ({ lines: [{ level: 'ok', text: '已载入 com.user.x' }] })
+    }
+    const statusTool: ToolDef = {
+      name: 'get_service_status',
+      label: '查看状态',
+      description: '查看状态',
+      parameters: Type.Object({ label: Type.String() }),
+      write: false,
+      execute: async () => ({ lines: [{ level: '', text: 'pid=456 running' }] })
+    }
+    const logTool: ToolDef = {
+      name: 'tail_log',
+      label: '查看日志',
+      description: '查看日志',
+      parameters: Type.Object({ label: Type.String() }),
+      write: false,
+      execute: async () => ({ lines: [{ level: '', text: 'Started com.user.x' }] })
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('load_plist', { label: 'com.user.x' })]),
+      fauxAssistantMessage([fauxText('已载入 com.user.x')]),
+      fauxAssistantMessage([fauxText('验证通过,pid=456,交付完成')])
+    ])
+    const svc = build({ faux, tools: [loadTool, statusTool, logTool] })
+    const s = svc.createSession()
+    await approveAll(svc, svc.send({ sessionId: s.id, text: '建个任务并载入' }))
+
+    const injected = events.filter((e) => e.type === 'user_message')
+    expect(injected).toHaveLength(1)
+    const first = injected[0]
+    if (!first || first.type !== 'user_message') throw new Error('unreachable')
+    expect(first.text).toContain('【自动验证】')
+    expect(first.text).toContain('pid=456 running')
+    expect(first.text).toContain('Started com.user.x')
+
+    // 落库一致:session 里能按 id 找到这条注入消息(重载后不丢)
+    const stored = svc.getMessages(s.id).find((m) => m.role === 'user' && m.id === first.messageId)
+    expect(stored).toBeTruthy()
+    // 模型对注入消息的回复也已落库(排在注入消息之后)
+    const msgs = svc.getMessages(s.id)
+    expect(msgs[msgs.length - 1]).toMatchObject({ role: 'assistant' })
+  })
+
+  it('自动验证最多注入 2 轮(修了又载也不会无限续跑)', async () => {
+    const loadTool: ToolDef = {
+      name: 'load_plist',
+      label: '载入任务',
+      description: '载入任务',
+      parameters: Type.Object({ label: Type.String() }),
+      write: true,
+      summarize: (a) => ({ detail: `载入 ${a['label']}`, command: 'launchctl bootstrap' }),
+      execute: async () => ({ lines: [{ level: 'ok', text: '已载入' }] })
+    }
+    const statusTool: ToolDef = {
+      name: 'get_service_status',
+      label: '查看状态',
+      description: '查看状态',
+      parameters: Type.Object({ label: Type.String() }),
+      write: false,
+      execute: async () => ({ lines: [{ level: '', text: 'running' }] })
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('load_plist', { label: 'com.user.a' })]),
+      fauxAssistantMessage([fauxToolCall('load_plist', { label: 'com.user.b' })]),
+      fauxAssistantMessage([fauxText('两轮载入完成,等待宿主验证')]),
+      fauxAssistantMessage([fauxText('第一条注入消息收到,已确认')]),
+      fauxAssistantMessage([fauxText('第二条注入消息收到,注入额度已用完,先汇报')])
+    ])
+    const svc = build({ faux, tools: [loadTool, statusTool] })
+    const s = svc.createSession()
+    await approveAll(svc, svc.send({ sessionId: s.id, text: '反复载入' }))
+
+    expect(events.filter((e) => e.type === 'user_message')).toHaveLength(2)
+  })
+
+  it('只 write 不 load:不注入自动验证(用户可能只要落盘)', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('write_plist', { label: 'com.user.y' })]),
+      fauxAssistantMessage([fauxText('已写入,未载入')])
+    ])
+    const svc = build({ faux, tools: [writeTool] })
+    const s = svc.createSession()
+    await approveAll(svc, svc.send({ sessionId: s.id, text: '只写入' }))
+    expect(events.some((e) => e.type === 'user_message')).toBe(false)
+  })
+
+  it('skill.turnLimit 抬高轮数下限:全局 4 轮时 sk-plist 仍能跑到第 5+ 轮', async () => {
+    let listCount = 0
+    const listTool: ToolDef = {
+      name: 'list_services',
+      label: '列出服务',
+      description: '列出服务',
+      parameters: Type.Object({}),
+      write: false,
+      execute: async () => {
+        listCount++
+        return { lines: [{ level: 'ok', text: `第 ${listCount} 次` }] }
+      }
+    }
+    const toolTurn = () => fauxAssistantMessage([fauxToolCall('list_services', {})])
+    // sk-plist 白名单里的工具名才可见:list_services 在白名单内
+    const tools = [listTool]
+
+    // 对照:无 skill 时 4 轮封顶(第 4 轮工具执行完就 end,第 5 条响应不会被消费)
+    const fauxA = fauxProvider()
+    fauxA.setResponses([toolTurn(), toolTurn(), toolTurn(), toolTurn(), toolTurn(), fauxAssistantMessage([fauxText('done')])])
+    listCount = 0
+    const svcA = build({ faux: fauxA, tools, settings: { aiToolCallLimit: 4 } })
+    const sA = svcA.createSession()
+    await svcA.send({ sessionId: sA.id, text: '跑几轮' })
+    expect(listCount).toBe(4)
+    expect(fauxA.state.callCount).toBe(4)
+
+    // sk-plist:turnLimit 16 → max(4, 16) = 16,第 5 次工具与收尾文本都能跑完
+    const fauxB = fauxProvider()
+    fauxB.setResponses([toolTurn(), toolTurn(), toolTurn(), toolTurn(), toolTurn(), fauxAssistantMessage([fauxText('done')])])
+    listCount = 0
+    const svcB = build({ faux: fauxB, tools, settings: { aiToolCallLimit: 4 } })
+    const sB = svcB.createSession()
+    await svcB.send({ sessionId: sB.id, text: '跑几轮', skillId: 'sk-plist' })
+    expect(listCount).toBe(5)
+    expect(fauxB.state.callCount).toBe(6)
+  })
+
   it('环境缺失的会话 id 会拒绝(不静默新建)', async () => {
     const svc = build({ faux: fauxProvider(), tools: [readonlyTool] })
     await expect(svc.send({ sessionId: 'nope', text: 'x' })).rejects.toThrow(/AI_SESSION_MISSING/)

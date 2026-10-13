@@ -176,7 +176,12 @@ export function createPlistTools(deps: {
         workingDirectory: Type.Optional(Type.String()),
         stdout: Type.Optional(Type.String({ description: '标准输出重定向到的文件路径' })),
         stderr: Type.Optional(Type.String()),
-        env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: '环境变量' })),
+        env: Type.Optional(
+          Type.Record(Type.String(), Type.String(), {
+            description:
+              '环境变量。launchd 不加载 shell 配置(~/.zshrc 等):程序内部会调用外部命令(node/go 等)时,必须在此显式写入 PATH,否则找不到命令'
+          })
+        ),
         processType: Type.Optional(Type.String({ description: 'Background / Standard / Interactive / Adaptive' })),
         throttleInterval: Type.Optional(Type.Number({ description: '两次启动的最小间隔秒数' }))
       }),

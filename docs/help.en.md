@@ -49,6 +49,7 @@ Install / upgrade / uninstall live in [docs/install.md](https://github.com/BeCra
    - **Label**: the unique identifier, conventionally reverse-DNS (e.g. `com.me.backup`); **don't change it later** (it *is* the identity)
    - **Program**: the **absolute path** of the executable to run (`/usr/local/bin/myscript.sh`); remember `chmod +x` on scripts
    - **Arguments**: one per line (**never** as a single string)
+   - **Environment variables**: if your script also invokes external commands like `node` / `go` / `python3`, you **must** set `PATH` explicitly in the environment variables — launchd **does not read** `~/.zshrc` and other shell configs; the default PATH is only `/usr/bin:/bin:/usr/sbin:/sbin`, so the task fails silently with "command not found" (works in the terminal but not after loading — this is usually why)
 3. Expand the **Lifetime** card → turn on **Load at login** (= writes a `RunAtLoad` or `KeepAlive` policy)
 4. Save → back in the list, hit **Start** on the card
 
@@ -114,6 +115,7 @@ Other keys the form **doesn't know** (e.g. `MachServices`, `Umask`) do **not** l
 
 ### Other notes
 
+- **PATH must be set explicitly**: launchd **does not load** `~/.zshrc` / `~/.zprofile` and other shell configs; the default PATH is only `/usr/bin:/bin:/usr/sbin:/sbin`. Use absolute paths for the program; if the script internally invokes external commands like `node` / `go`, you **must** write your login shell's PATH into the plist's environment variables (`EnvironmentVariables.PATH` — see it with `echo $PATH`). This is mandatory, not an optional optimization — without it the task fails silently with `command not found`
 - **Homebrew services**: entries managed by `brew services` carry a Homebrew badge, and start/stop go through brew's own routing (otherwise the two sides fight)
 - **"Loaded but the plist is gone"**: still registered in launchd but the file is missing (usually deleted by hand). An orange banner appears on the card — hit **Remove** to clear it out of launchd
 - **XML tab**: edit the raw source directly; a syntax check runs before saving (equivalent to `plutil -lint`)
@@ -535,6 +537,8 @@ It calls the app's own tool layer (**reading real system state**, not mock data)
 - **8 requiring authorization**: edit plists, write files, perform write operations — each execution pops an **authorization card** stating **the exact command about to run**; it only runs once you hit "Allow"
 
 Whether write tools are **visible** is decided by the **MCP permission mode** (default `readOnly` exposes only the 12 read-only tools); but **even when visible, execution still needs your per-call authorization**.
+
+The built-in skills (generate a LaunchAgent, diagnose a job, …) **automatically verify after loading a task**: once the AI loads a plist, the app re-checks the run state and logs and hands the real readings back to the AI — if the job isn't running or the log shows errors, it keeps diagnosing and fixing instead of just reporting "done".
 
 ### Connecting external agents (MCP)
 
