@@ -510,8 +510,8 @@ function defaultCalloutLabel(kind: CalloutKind): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1)
 }
 
-/** 提示块图标 —— 与 CSS 里的配色一一对应 */
-const CALLOUT_ICON: Record<CalloutKind, string> = {
+/** 提示块图标 —— 与 CSS 里的配色一一对应(块菜单的样式变体也用它) */
+export const CALLOUT_ICON: Record<CalloutKind, string> = {
   note: 'fa-circle-info',
   tip: 'fa-lightbulb',
   important: 'fa-circle-exclamation',

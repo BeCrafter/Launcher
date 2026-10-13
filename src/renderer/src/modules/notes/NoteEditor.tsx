@@ -45,6 +45,8 @@ import {
   markdownBlockFolding,
   markdownBlockGutter
 } from '../../lib/editor-blocks'
+import type { MarkdownBlock } from '../../lib/markdown-blocks'
+import type { CalloutKind } from '../../lib/markdown'
 
 const t = (): ((k: string) => string) => makeT(getCurrentLang())
 
@@ -57,6 +59,28 @@ export interface NoteEditorHandle {
   prefixLines(prefix: string): void
   /** 在光标处插入整段文本,并把光标放到 `caretOffset` 处 */
   insertBlock(text: string, caretOffset?: number): void
+  /** 在指定源码行插入文本并把光标放到插入内容内 */
+  insertAtLine(line: number, text: string, caretOffset?: number): void
+  /** 将光标放到指定源码行 */
+  focusLine(line: number): void
+  /** 选中指定源码行范围(0 起,含首尾)。块菜单的格式化按钮先选中块再套用 */
+  selectLines(from: number, to: number): void
+  /** 删除包含首尾的源码行范围 */
+  deleteLines(from: number, to: number): void
+  /** 复制包含首尾的源码行范围 */
+  duplicateLines(from: number, to: number): void
+  /** 将指定行转换成 ATX 标题级别 */
+  setHeadingLevel(line: number, level: 1 | 2 | 3): void
+  /**
+   * 把 `line` 所在的引用块首行换成指定样式:普通引用 ↔ 提示块。
+   * `kind` 为 null 是普通引用;提示块换类型只换标记,普通引用升级时标记独占一行。
+   * 作用于**块首行** —— 解析器只认块的第一行。
+   */
+  setQuoteStyle(line: number, kind: CalloutKind | null): void
+  /** 把 `line` 行设成指定列表标记;已是该标记则取消(变回普通行),不同标记直接替换 */
+  setListMarker(line: number, marker: '- ' | '1. ' | '- [ ] '): void
+  /** 整行缩进/反缩进 2 空格(列表嵌套) */
+  indentLine(line: number, dir: 'in' | 'out'): void
   /** 插入一个围栏块(图表 / 网页嵌入)。自动补围栏与前后空行 —— 光标在哪都不会和上一段粘在一起 */
   insertFence(lang: string, body: string): void
   /** 整段替换若干行(含首尾)。图表的「编辑」走这里 —— 定点替换,能进撤销栈 */
@@ -81,6 +105,11 @@ export interface NoteEditorHandle {
    */
   selectionText(): string
   focus(): void
+}
+
+export interface NoteEditorBlockCallbacks {
+  onBlockMenu?: (block: MarkdownBlock, anchor: DOMRect, line: number) => void
+  onEmptyMenu?: (line: number, anchor: DOMRect) => void
 }
 
 // ── 主题 ──
@@ -157,7 +186,9 @@ export function NoteEditor({
   onChange,
   handleRef,
   placeholder,
-  onScroll
+  onScroll,
+  onBlockMenu,
+  onEmptyMenu
 }: {
   value: string
   onChange: (v: string) => void
@@ -165,6 +196,8 @@ export function NoteEditor({
   placeholder?: string
   /** 编辑器滚动。滚动同步由调用方接,编辑器本身不知道预览的存在 */
   onScroll?: () => void
+  onBlockMenu?: (block: MarkdownBlock, anchor: DOMRect, line: number) => void
+  onEmptyMenu?: (line: number, anchor: DOMRect) => void
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -174,6 +207,10 @@ export function NoteEditor({
   onChangeRef.current = onChange
   const onScrollRef = useRef(onScroll)
   onScrollRef.current = onScroll
+  const onBlockMenuRef = useRef(onBlockMenu)
+  onBlockMenuRef.current = onBlockMenu
+  const onEmptyMenuRef = useRef(onEmptyMenu)
+  onEmptyMenuRef.current = onEmptyMenu
 
   useImperativeHandle(
     handleRef,
@@ -234,6 +271,150 @@ export function NoteEditor({
           changes: { from: at, insert: text },
           selection: { anchor: at + (caretOffset ?? text.length) }
         })
+        view.focus()
+      },
+
+      insertAtLine(line, text, caretOffset) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const n = Math.min(Math.max(line, 0), doc.lines - 1)
+        const at = doc.line(n + 1).from
+        view.dispatch({
+          changes: { from: at, insert: text },
+          selection: { anchor: at + Math.min(caretOffset ?? text.length, text.length) }
+        })
+        view.focus()
+      },
+
+      focusLine(line) {
+        const view = viewRef.current
+        if (!view) return
+        const n = Math.min(Math.max(line, 0), view.state.doc.lines - 1)
+        view.dispatch({ selection: { anchor: view.state.doc.line(n + 1).from } })
+        view.focus()
+      },
+
+      selectLines(from, to) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const a = Math.min(Math.max(from, 0), doc.lines - 1)
+        const b = Math.min(Math.max(to, a), doc.lines - 1)
+        const anchor = doc.line(a + 1).from
+        const head = doc.line(b + 1).to
+        view.dispatch({ selection: { anchor, head } })
+        view.focus()
+      },
+
+      deleteLines(from, to) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const a = Math.min(Math.max(from, 0), doc.lines - 1)
+        const b = Math.min(Math.max(to, a), doc.lines - 1)
+        const start = doc.line(a + 1).from
+        const end = b < doc.lines - 1 ? doc.line(b + 2).from : doc.length
+        view.dispatch({ changes: { from: start, to: end, insert: '' }, selection: { anchor: start } })
+        view.focus()
+      },
+
+      duplicateLines(from, to) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const a = Math.min(Math.max(from, 0), doc.lines - 1)
+        const b = Math.min(Math.max(to, a), doc.lines - 1)
+        const start = doc.line(a + 1).from
+        const end = doc.line(b + 1).to
+        const source = doc.sliceString(start, end)
+        view.dispatch({
+          changes: { from: end, insert: `\n${source}` },
+          selection: { anchor: end + source.length + 1 }
+        })
+        view.focus()
+      },
+
+      setHeadingLevel(line, level) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const n = Math.min(Math.max(line, 0), doc.lines - 1)
+        const current = doc.line(n + 1)
+        const match = /^( {0,3})#{1,6}(?:[ \t]+|$)/.exec(current.text)
+        const indent = match?.[1] ?? ''
+        const content = match === null ? current.text : current.text.slice(match[0].length)
+        const next = `${indent}${'#'.repeat(level)} ${content}`
+        view.dispatch({ changes: { from: current.from, to: current.to, insert: next }, selection: { anchor: current.from + next.length } })
+        view.focus()
+      },
+
+      setQuoteStyle(line, kind) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const n = Math.min(Math.max(line, 0), doc.lines - 1)
+        const cur = doc.line(n + 1)
+        const m = /^(\s*)>\s?(.*)$/.exec(cur.text)
+        if (m === null) return
+        const indent = m[1]
+        const cm = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i.exec(m[2])
+        const hasCallout = cm !== null
+        const rest = cm !== null ? cm[2] : m[2]
+        // 提示块标记只认块首行,调用方传的就是 block.from
+        if (kind === null) {
+          if (!hasCallout) return
+          if (rest.trim() === '') {
+            // 标记独占一行 → 整行删掉(含换行),后面的 > 行自然成为新块首
+            if (n + 1 >= doc.lines) {
+              view.dispatch({ changes: { from: cur.from, to: cur.to, insert: `${indent}>`.trimEnd() || '>' } })
+            } else {
+              view.dispatch({ changes: { from: cur.from, to: doc.line(n + 2).from, insert: '' } })
+            }
+          } else {
+            view.dispatch({ changes: { from: cur.from, to: cur.to, insert: `${indent}> ${rest}` } })
+          }
+        } else {
+          const tag = `> [!${kind.toUpperCase()}]`
+          if (hasCallout) {
+            view.dispatch({ changes: { from: cur.from, to: cur.to, insert: `${indent}${tag}${rest === '' ? '' : ` ${rest}`}` } })
+          } else if (rest.trim() === '') {
+            view.dispatch({ changes: { from: cur.from, to: cur.to, insert: `${indent}${tag}` } })
+          } else {
+            // 普通引用升级:标记独占一行,原文本下移一行 —— 与示例笔记的写法一致
+            view.dispatch({ changes: { from: cur.from, to: cur.to, insert: `${indent}${tag}\n${indent}> ${rest}` } })
+          }
+        }
+        view.focus()
+      },
+
+      setListMarker(line, marker) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const n = Math.min(Math.max(line, 0), doc.lines - 1)
+        const cur = doc.line(n + 1)
+        const m = /^(\s*)(?:[-+*] |\d+[.)] |[-+*] \[[ xX]\] )?/.exec(cur.text)
+        const indent = m?.[1] ?? ''
+        const current = m?.[0].slice(indent.length) ?? ''
+        const rest = cur.text.slice(indent.length + current.length)
+        const insert = current === marker ? `${indent}${rest}` : `${indent}${marker}${rest}`
+        view.dispatch({ changes: { from: cur.from, to: cur.to, insert } })
+        view.focus()
+      },
+
+      indentLine(line, dir) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        const n = Math.min(Math.max(line, 0), doc.lines - 1)
+        const cur = doc.line(n + 1)
+        if (dir === 'in') {
+          view.dispatch({ changes: { from: cur.from, to: cur.from, insert: '  ' } })
+        } else {
+          const m = /^(?: {1,2}|\t)/.exec(cur.text)
+          if (m !== null) view.dispatch({ changes: { from: cur.from, to: cur.from + m[0].length, insert: '' } })
+        }
         view.focus()
       },
 
@@ -362,8 +543,12 @@ export function NoteEditor({
         doc: value,
         extensions: [
           MD_EXTENSIONS,
+          // gutter 顺序 = 视觉左右顺序：拖动手柄在左，折叠箭头在右（飞书风格）
+          markdownBlockGutter({
+            onBlockMenu: (block, anchor, line) => onBlockMenuRef.current?.(block, anchor, line),
+            onEmptyMenu: (line, anchor) => onEmptyMenuRef.current?.(line, anchor)
+          }),
           markdownBlockFolding(),
-          markdownBlockGutter(),
           indentUnit.of('  '),
           history(),
           drawSelection(),
