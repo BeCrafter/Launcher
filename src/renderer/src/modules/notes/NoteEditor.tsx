@@ -37,13 +37,16 @@ import { toggleTaskLine } from '../../lib/note-task'
 import { showToast } from '../../lib/utils'
 import { getCurrentLang, makeT } from '../../i18n'
 import { calloutCompletion, calloutMarks, syntaxMarks } from './editor-marks'
+import { applyWrap, suppressSelectionBubble } from '../../lib/note-marks'
+import { markdownSelectionBubble } from '../../lib/editor-bubble'
 import {
   handleBlockDragEnd,
   handleBlockDragOver,
   handleBlockDrop,
   isBlockDrag,
   markdownBlockFolding,
-  markdownBlockGutter
+  markdownBlockHandles,
+  setPinnedLine
 } from '../../lib/editor-blocks'
 import type { MarkdownBlock } from '../../lib/markdown-blocks'
 import type { CalloutKind } from '../../lib/markdown'
@@ -141,7 +144,9 @@ const MD_THEME = EditorView.theme({
     lineHeight: '1.6',
     caretColor: 'var(--accent2)'
   },
-  '.cm-line': { padding: '0 22px' },
+  // 左边留出块手柄的位置:手柄是浮层、不占布局,所以这段留白全由这里的内边距撑着。
+  // 60px = 胶囊 42 + 折叠三角 16 + 2px 间隙(飞书实测值),正文左边界对所有块恒定。
+  '.cm-line': { padding: '0 22px 0 60px' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent2)', borderLeftWidth: '2px' },
   '&.cm-focused': { outline: 'none' },
   '.cm-gutters': { display: 'flex', backgroundColor: 'transparent', border: 'none' },
@@ -151,20 +156,6 @@ const MD_THEME = EditorView.theme({
     { backgroundColor: 'var(--wash-accent)' },
   '.cm-placeholder': { color: 'var(--dim)', fontStyle: 'normal' }
 })
-
-/** 快捷键与按钮共用同一套包裹逻辑 */
-function wrap(view: EditorView, before: string, after?: string): void {
-  const tail = after ?? before
-  const { from, to } = view.state.selection.main
-  const sel = view.state.sliceDoc(from, to)
-  view.dispatch({
-    changes: { from, to, insert: `${before}${sel}${tail}` },
-    selection:
-      sel === ''
-        ? { anchor: from + before.length }
-        : { anchor: from, head: from + before.length + sel.length + tail.length }
-  })
-}
 
 const MD_EXTENSIONS: Extension[] = [
   // `base: markdownLanguage` 才带 GFM(表格 / 任务清单 / 删除线)。
@@ -188,7 +179,8 @@ export function NoteEditor({
   placeholder,
   onScroll,
   onBlockMenu,
-  onEmptyMenu
+  onEmptyMenu,
+  pinnedLine
 }: {
   value: string
   onChange: (v: string) => void
@@ -198,6 +190,11 @@ export function NoteEditor({
   onScroll?: () => void
   onBlockMenu?: (block: MarkdownBlock, anchor: DOMRect, line: number) => void
   onEmptyMenu?: (line: number, anchor: DOMRect) => void
+  /**
+   * 块菜单开着时把它钉在那一行:手柄**常显**、鼠标移进菜单也不收。
+   * 菜单关闭（变回 null）后手柄交还给悬停控制。
+   */
+  pinnedLine?: number | null
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -229,18 +226,7 @@ export function NoteEditor({
 
       wrapSelection(before, after) {
         const view = viewRef.current
-        if (!view) return
-        const tail = after ?? before
-        const { from, to } = view.state.selection.main
-        const sel = view.state.sliceDoc(from, to)
-        view.dispatch({
-          changes: { from, to, insert: `${before}${sel}${tail}` },
-          selection:
-            sel === ''
-              ? { anchor: from + before.length } // 空选区:光标停在标记中间,直接接着打
-              : { anchor: from, head: from + before.length + sel.length + tail.length }
-        })
-        view.focus()
+        if (view !== null) applyWrap(view, before, after)
       },
 
       prefixLines(prefix) {
@@ -303,7 +289,9 @@ export function NoteEditor({
         const b = Math.min(Math.max(to, a), doc.lines - 1)
         const anchor = doc.line(a + 1).from
         const head = doc.line(b + 1).to
-        view.dispatch({ selection: { anchor, head } })
+        // 块菜单「先选中整块再套格式」走这里 —— 这条 dispatch 会造出非空选区，
+        // 打上注解免得菜单一关就弹出一条选区浮条
+        view.dispatch({ selection: { anchor, head }, annotations: suppressSelectionBubble.of(true) })
         view.focus()
       },
 
@@ -543,12 +531,14 @@ export function NoteEditor({
         doc: value,
         extensions: [
           MD_EXTENSIONS,
-          // gutter 顺序 = 视觉左右顺序：拖动手柄在左，折叠箭头在右（飞书风格）
-          markdownBlockGutter({
+          // 块手柄是一个**浮动浮层**（不是 gutter）：整区只有一个，鼠标换行时它会滑过去
+          markdownBlockHandles({
             onBlockMenu: (block, anchor, line) => onBlockMenuRef.current?.(block, anchor, line),
             onEmptyMenu: (line, anchor) => onEmptyMenuRef.current?.(line, anchor)
           }),
           markdownBlockFolding(),
+          // 选中文字时浮出的小工具条（有选区时块手柄自己让位）
+          markdownSelectionBubble(),
           indentUnit.of('  '),
           history(),
           drawSelection(),
@@ -558,9 +548,9 @@ export function NoteEditor({
           // 排版快捷键:与底部工具条按钮的 tooltip 一一对应。
           // 只挑三个不会与系统/CodeMirror 默认键位打架的(Mod-e 是 macOS 的「用所选内容查找」,不碰)
           keymap.of([
-            { key: 'Mod-b', run: (v) => { wrap(v, '**'); return true } },
-            { key: 'Mod-i', run: (v) => { wrap(v, '*'); return true } },
-            { key: 'Mod-k', run: (v) => { wrap(v, '[', '](https://)'); return true } }
+            { key: 'Mod-b', run: (v) => { applyWrap(v, '**'); return true } },
+            { key: 'Mod-i', run: (v) => { applyWrap(v, '*'); return true } },
+            { key: 'Mod-k', run: (v) => { applyWrap(v, '[', '](https://)'); return true } }
           ]),
           EditorView.domEventHandlers({
             dragover: (e, v) => handleBlockDragOver(v, e),
@@ -628,6 +618,12 @@ export function NoteEditor({
       view.scrollDOM.scrollTop = prevTop
     }
   }, [value])
+
+  // 块菜单开着 → 手柄钉在那一行（菜单不关，它就不收）
+  useEffect(() => {
+    const view = viewRef.current
+    if (view !== null) setPinnedLine(view, pinnedLine ?? null)
+  }, [pinnedLine])
 
   return <div className="note-editor-host" ref={hostRef} />
 }

@@ -997,94 +997,141 @@
   pointer-events: none;
 }
 
-/* ── Markdown 区块操作 ──
-   gutter 与源码内容同高，不给 .cm-line 增加任何纵向空间；插入线用伪元素绘制，
-   所以悬停和拖拽都不会让光标位置、滚动同步或邻近行发生跳动。 */
-.note-editor-host .cm-foldGutter {
-  width: 18px;
-  color: var(--dim);
-}
-.note-editor-host .cm-foldGutter .cm-gutterElement {
-  width: 18px;
-  padding: 0;
-  text-align: center;
-}
-.note-editor-host .cm-foldGutter span {
-  display: inline-flex;
+/* ── Markdown 区块手柄（浮层） ──
+   整区只有**一个**手柄，绝对定位挂在编辑器上，位置由 JS 写成 `transform: translateY()`。
+   配一段短过渡 —— 鼠标换行时它是从上一行**滑**过去的，而不是「这行没了、那行出现」。
+   左侧那 60px 的留白由 .cm-line 的内边距撑着（见 NoteEditor 的 MD_THEME），手柄不占布局，
+   所以悬停与拖拽都不会让光标位置、滚动同步或邻近行发生跳动。
+   尺寸照飞书实测：胶囊 42×26 + 折叠三角槽 16 + 2px 间隙。 */
+.note-editor-host .cm-block-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 8;
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 100%;
-  color: var(--dim);
-  cursor: pointer;
-  font-size: 10px;
+  transition: transform 90ms cubic-bezier(0.2, 0.7, 0.3, 1), opacity 120ms ease;
+  will-change: transform;
+}
+.note-editor-host .cm-block-handle-hidden {
   opacity: 0;
+  pointer-events: none;
 }
-.note-editor-host .cm-foldGutter .cm-gutterElement:hover span,
-.note-editor-host .cm-foldGutter .cm-gutterElement.cm-block-tool-active span {
-  opacity: 1;
-}
-.note-editor-host .cm-foldGutter span:hover {
-  color: var(--accent2);
-}
-.note-editor-host .cm-block-gutter {
-  width: 44px;
-  color: var(--dim);
-}
-.note-editor-host .cm-block-gutter .cm-gutterElement {
+.note-editor-host .cm-block-pill {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  padding: 0;
-}
-.note-editor-host .cm-block-handle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
+  gap: 2px;
   width: 42px;
-  height: 20px;
+  height: 26px;
   border: 1px solid var(--border2);
-  border-radius: 5px;
+  border-radius: 6px;
   background: var(--surface3);
   color: var(--muted);
-  cursor: default;
-  opacity: 0;
+  cursor: grab;
   user-select: none;
+}
+.note-editor-host .cm-block-pill:active {
+  cursor: grabbing;
+}
+.note-editor-host .cm-block-pill:hover {
+  border-color: var(--accent2);
 }
 .note-editor-host .cm-block-type {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
+  width: 18px;
   height: 18px;
   color: var(--accent2);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
 }
-.note-editor-host .cm-block-type i {
-  font-size: 10px;
-}
+/* 折叠三角的槽位对所有块都保留 —— 胶囊的 x 因此恒定，正文左边界也恒定 */
 .note-editor-host .cm-block-grip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: 14px;
   height: 18px;
-  border-left: 1px solid var(--border2);
   color: var(--dim);
-  cursor: grab;
-  font-size: 8px;
 }
-.note-editor-host .cm-block-grip:hover {
+.note-editor-host .cm-block-caret-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 26px;
+}
+.note-editor-host .cm-block-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+.note-editor-host .cm-block-caret:hover {
+  background: var(--hover);
   color: var(--accent2);
 }
-.note-editor-host .cm-block-gutter .cm-gutterElement:hover .cm-block-handle,
-.note-editor-host .cm-block-gutter .cm-gutterElement.cm-block-tool-active .cm-block-handle,
-.note-editor-host .cm-block-dragging .cm-block-handle {
-  opacity: 1;
+/* ── 选中文字浮条 ──
+   与块手柄同一套浮层做法：绝对定位挂在编辑器上、位置写成 transform、隐藏用透明度
+   （保留布局，第一次显示之前才量得到宽度来夹边界）。
+   ⚠ 状态类只挂在这个自己建的节点上 —— CM 会重写 view.dom 上的 class。 */
+.note-editor-host .cm-selection-bubble {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 9;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 3px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--menu-bg);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  transition: opacity 100ms ease;
+  user-select: none;
+  will-change: transform;
+}
+.note-editor-host .cm-selection-bubble-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.note-editor-host .cm-bubble-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+}
+.note-editor-host .cm-bubble-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.note-editor-host .cm-bubble-btn:active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* 鼠标停在哪一块，那一块就加一层极淡底色 —— 一眼看出手柄属于谁。
+   只改背景色、不动行高，符合「源码模式」那条契约。 */
+.note-editor-host .cm-line.cm-block-hovered {
+  background: var(--hover);
 }
 .note-editor-host .cm-empty-insert {
   position: absolute;
@@ -1110,39 +1157,39 @@
 .note-editor-host .cm-line {
   position: relative;
 }
+/* 拖拽中的视觉换位:同父兄弟互换是一次**置换**,位移后各家仍严丝合缝铺满同一段纵向空间。
+   z-index 必须有 —— 下移的块会经过别的行,不给层叠上下文就会被盖住。 */
+.note-editor-host .cm-line.cm-block-permuted {
+  z-index: 1;
+  /* 180ms：比手柄的 90ms 慢，因为「整块滑到目标行」要看得清 —— 太快就读成跳变了 */
+  transition: transform 180ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
 .note-editor-host .cm-line.cm-block-drag-source {
   background: var(--wash-accent);
   box-shadow: inset 3px 0 var(--accent2);
   opacity: 0.68;
 }
-.note-editor-host .cm-line.cm-block-drag-target {
-  background: var(--hover);
-  box-shadow: inset 2px 0 var(--cyan);
-}
-.note-editor-host .cm-line.cm-block-drag-source.cm-block-drag-target {
-  box-shadow: inset 3px 0 var(--accent2);
-}
-
-.note-editor-host .cm-line.cm-block-drop-before::before,
-.note-editor-host .cm-line.cm-block-drop-after::after {
-  position: absolute;
-  right: 22px;
-  left: 22px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent2);
-  content: '';
-  pointer-events: none;
-  box-shadow: 0 0 6px var(--accent2);
-}
-.note-editor-host .cm-line.cm-block-drop-before::before {
-  top: -1px;
-}
-.note-editor-host .cm-line.cm-block-drop-after::after {
-  bottom: -1px;
-}
-.note-editor-host .cm-block-dragging .cm-content {
+.note-editor-host.cm-block-dragging .cm-content {
   user-select: none;
+}
+/* 跟手浮层:只给 setDragImage 拍快照用 —— 挂在 body 上、放在屏幕外(不能藏,藏了拍出来是空白) */
+.cm-block-drag-ghost {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  max-width: 360px;
+  padding: 6px 10px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: var(--surface3);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 30%);
+  color: var(--text);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Noto Sans SC', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .notes-block-menu,

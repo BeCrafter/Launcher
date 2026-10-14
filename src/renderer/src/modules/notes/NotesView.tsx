@@ -672,6 +672,8 @@ export function NotesView(): React.JSX.Element {
               onScroll={onEditorScroll}
               onBlockMenu={openBlockMenu}
               onEmptyMenu={openInsertMenu}
+              // 菜单开着时把块手柄钉在那一行（按钮与弹框一起消失，一起留下）
+              pinnedLine={blockMenu?.line ?? null}
             />
           </div>
           {viewMode === 'split' && (
