@@ -38,12 +38,9 @@ export const ICON_SHAPES: Record<string, readonly IconShape[]> = {
     { tag: 'path', attrs: {"d":"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"} },
     { tag: 'path', attrs: {"d":"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"} }
   ],
-  'remove-formatting': [
-    { tag: 'path', attrs: {"d":"M4 7V4h16v3"} },
-    { tag: 'path', attrs: {"d":"M5 20h6"} },
-    { tag: 'path', attrs: {"d":"M13 4 8 20"} },
-    { tag: 'path', attrs: {"d":"m15 15 5 5"} },
-    { tag: 'path', attrs: {"d":"m20 15-5 5"} }
+  'eraser': [
+    { tag: 'path', attrs: {"d":"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21"} },
+    { tag: 'path', attrs: {"d":"m5.082 11.09 8.828 8.828"} }
   ],
   'subscript': [
     { tag: 'path', attrs: {"d":"m4 5 8 8"} },
@@ -143,6 +140,23 @@ export const ICON_SHAPES: Record<string, readonly IconShape[]> = {
   ],
   'minus': [
     { tag: 'path', attrs: {"d":"M5 12h14"} }
+  ],
+  'file-video': [
+    { tag: 'path', attrs: {"d":"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"} },
+    { tag: 'path', attrs: {"d":"M14 2v5a1 1 0 0 0 1 1h5"} },
+    { tag: 'path', attrs: {"d":"M15.033 13.44a.647.647 0 0 1 0 1.12l-4.065 2.352a.645.645 0 0 1-.968-.56v-4.704a.645.645 0 0 1 .967-.56z"} }
+  ],
+  'file-audio': [
+    { tag: 'path', attrs: {"d":"M4 6.835V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-.343"} },
+    { tag: 'path', attrs: {"d":"M14 2v5a1 1 0 0 0 1 1h5"} },
+    { tag: 'path', attrs: {"d":"M2 19a2 2 0 0 1 4 0v1a2 2 0 0 1-4 0v-4a6 6 0 0 1 12 0v4a2 2 0 0 1-4 0v-1a2 2 0 0 1 4 0"} }
+  ],
+  'file-text': [
+    { tag: 'path', attrs: {"d":"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"} },
+    { tag: 'path', attrs: {"d":"M14 2v5a1 1 0 0 0 1 1h5"} },
+    { tag: 'path', attrs: {"d":"M10 9H8"} },
+    { tag: 'path', attrs: {"d":"M16 13H8"} },
+    { tag: 'path', attrs: {"d":"M16 17H8"} }
   ],
   'lightbulb': [
     { tag: 'path', attrs: {"d":"M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"} },

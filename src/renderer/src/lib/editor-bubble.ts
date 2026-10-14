@@ -36,7 +36,7 @@ const ACTIONS: BubbleAction[] = [
   { id: 'strike', icon: 'strikethrough', labelKey: 'notes.fmt.strike', before: '~~' },
   { id: 'code', icon: 'code', labelKey: 'notes.fmt.code', before: '`' },
   { id: 'link', icon: 'link', labelKey: 'notes.fmt.link', before: '[', after: '](https://)' },
-  { id: 'clear', icon: 'remove-formatting', labelKey: 'notes.fmt.clear' }
+  { id: 'clear', icon: 'eraser', labelKey: 'notes.fmt.clear' }
 ]
 
 interface BubbleView {
