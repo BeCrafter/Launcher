@@ -3,7 +3,10 @@ import { useT } from '../../hooks/useT'
 import { tableSkeleton } from '../../lib/note-table'
 import { showToast } from '../../lib/utils'
 import type { MarkdownBlock } from '../../lib/markdown-blocks'
-import { CALLOUT_ICON, CALLOUT_KINDS, parseCallout, type CalloutKind } from '../../lib/markdown'
+import { CALLOUT_KINDS, parseCallout, type CalloutKind } from '../../lib/markdown'
+import { Icon } from '../../components/ui/Icon'
+import { blockIconName, CALLOUT_ICON_NAMES } from '../../lib/block-icons'
+import type { IconName } from '../../lib/icon-paths'
 import type { NoteEditorHandle } from './NoteEditor'
 
 interface MenuAnchor {
@@ -20,20 +23,6 @@ function menuStyle(anchor: MenuAnchor, width: number, height: number): React.CSS
   }
 }
 
-function iconOf(block: MarkdownBlock): { icon?: string; text?: string } {
-  if (block.kind === 'heading') return { text: `H${block.level}` }
-  switch (block.kind) {
-    case 'fence': return { icon: 'fa-code' }
-    case 'table': return { icon: 'fa-table' }
-    case 'list': return { icon: 'fa-list-ul' }
-    case 'quote': return { icon: 'fa-quote-left' }
-    case 'callout': return { icon: 'fa-comment-dots' }
-    case 'details': return { icon: 'fa-caret-square-down' }
-    case 'thematicBreak': return { icon: 'fa-minus' }
-    case 'paragraph': return { icon: 'fa-paragraph' }
-    default: return { icon: 'fa-align-left' }
-  }
-}
 
 function useDismiss(onClose: () => void, ref: RefObject<HTMLElement | null>): void {
   useEffect(() => {
@@ -54,21 +43,21 @@ function useDismiss(onClose: () => void, ref: RefObject<HTMLElement | null>): vo
 
 interface FormatAction {
   id: string
-  icon: string
+  icon: IconName
   labelKey: string
   run: (h: NoteEditorHandle) => void
 }
 
 /** 与底部工具栏同源的排版动作 —— 点击时先选中块内容再套用 */
 const BLOCK_FORMATS: FormatAction[] = [
-  { id: 'bold', icon: 'fa-bold', labelKey: 'notes.fmt.bold', run: (h) => h.wrapSelection('**') },
-  { id: 'italic', icon: 'fa-italic', labelKey: 'notes.fmt.italic', run: (h) => h.wrapSelection('*') },
-  { id: 'code', icon: 'fa-code', labelKey: 'notes.fmt.code', run: (h) => h.wrapSelection('`') },
-  { id: 'link', icon: 'fa-link', labelKey: 'notes.fmt.link', run: (h) => h.wrapSelection('[', '](https://)') },
-  { id: 'heading', icon: 'fa-heading', labelKey: 'notes.fmt.heading', run: (h) => h.prefixLines('## ') },
-  { id: 'list', icon: 'fa-list-ul', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },
-  { id: 'task', icon: 'fa-square-check', labelKey: 'notes.fmt.task', run: (h) => h.prefixLines('- [ ] ') },
-  { id: 'quote', icon: 'fa-quote-left', labelKey: 'notes.fmt.quote', run: (h) => h.prefixLines('> ') }
+  { id: 'bold', icon: 'bold', labelKey: 'notes.fmt.bold', run: (h) => h.wrapSelection('**') },
+  { id: 'italic', icon: 'italic', labelKey: 'notes.fmt.italic', run: (h) => h.wrapSelection('*') },
+  { id: 'code', icon: 'code', labelKey: 'notes.fmt.code', run: (h) => h.wrapSelection('`') },
+  { id: 'link', icon: 'link', labelKey: 'notes.fmt.link', run: (h) => h.wrapSelection('[', '](https://)') },
+  { id: 'heading', icon: 'heading', labelKey: 'notes.fmt.heading', run: (h) => h.prefixLines('## ') },
+  { id: 'list', icon: 'list', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },
+  { id: 'task', icon: 'square-check-big', labelKey: 'notes.fmt.task', run: (h) => h.prefixLines('- [ ] ') },
+  { id: 'quote', icon: 'text-quote', labelKey: 'notes.fmt.quote', run: (h) => h.prefixLines('> ') }
 ]
 
 export function NoteBlockMenu({
@@ -96,7 +85,6 @@ export function NoteBlockMenu({
   const t = useT()
   const ref = useRef<HTMLDivElement | null>(null)
   useDismiss(onClose, ref)
-  const icon = iconOf(block)
   const lines = body.split('\n')
   // 当前引用样式:块首行剥掉 `> ` 后认提示块标记;认不出就是普通引用
   const quoteFirst = (lines[block.from] ?? '').replace(/^\s*>\s?/, '')
@@ -119,9 +107,9 @@ export function NoteBlockMenu({
   const applyFormat = (run: (h: NoteEditorHandle) => void): void => {
     const handle = handleRef.current
     if (handle === null) return
-    // 标题块的 contentTo 覆盖整棵子树,只取标题行本身;列表按「当前行」——用户针对某一行改样式
-    const end = block.kind === 'heading' ? block.from : block.kind === 'list' ? line : block.contentTo - 1
-    handle.selectLines(block.kind === 'list' ? line : block.from, end)
+    // 只取**自有正文**（bodyTo 不含子块）：标题选自己那一行，列表项选它自己的几行，
+    // 不会顺手把子项一起改掉
+    handle.selectLines(block.from, block.bodyTo - 1)
     run(handle)
     onClose()
   }
@@ -130,7 +118,7 @@ export function NoteBlockMenu({
     <div ref={ref} className="notes-block-menu" style={menuStyle(anchor, 250, 520)} role="menu">
       <div className="notes-block-menu-head">
         <span className="notes-block-menu-type">
-          {icon.text !== undefined ? icon.text : <i className={`fa-solid ${icon.icon}`} />}
+          {block.kind === 'heading' ? `H${block.level}` : <Icon name={blockIconName(block.kind)} />}
         </span>
         <span>{t(`notes.blockMenu.type.${block.kind}`)}</span>
       </div>
@@ -157,7 +145,7 @@ export function NoteBlockMenu({
               className={currentCallout === null ? 'active' : ''}
               onClick={() => action(() => handleRef.current?.setQuoteStyle(block.from, null))}
             >
-              <i className="fa-solid fa-quote-left" />
+              <Icon name="text-quote" />
             </button>
             {CALLOUT_KINDS.map((kind) => {
               const label = t(`notes.callout.${kind}`)
@@ -170,14 +158,14 @@ export function NoteBlockMenu({
                   className={currentCallout === kind ? 'active' : ''}
                   onClick={() => action(() => handleRef.current?.setQuoteStyle(block.from, kind))}
                 >
-                  <i className={`fa-solid ${CALLOUT_ICON[kind]}`} />
+                  <Icon name={CALLOUT_ICON_NAMES[kind]} />
                 </button>
               )
             })}
           </div>
         </>
       )}
-      {block.kind === 'list' && (
+      {block.kind === 'listItem' && (
         <>
           <div className="notes-block-menu-sep" />
           <div className="notes-block-menu-grid notes-block-fmt-grid notes-block-list-styles" title={t('notes.blockMenu.listStyle')}>
@@ -188,7 +176,7 @@ export function NoteBlockMenu({
               className={currentMarker === '- ' ? 'active' : ''}
               onClick={() => action(() => handleRef.current?.setListMarker(line, '- '))}
             >
-              <i className="fa-solid fa-list-ul" />
+              <Icon name="list" />
             </button>
             <button
               type="button"
@@ -197,7 +185,7 @@ export function NoteBlockMenu({
               className={currentMarker === '1. ' ? 'active' : ''}
               onClick={() => action(() => handleRef.current?.setListMarker(line, '1. '))}
             >
-              <i className="fa-solid fa-list-ol" />
+              <Icon name="list-ordered" />
             </button>
             <button
               type="button"
@@ -206,15 +194,15 @@ export function NoteBlockMenu({
               className={currentMarker === '- [ ] ' ? 'active' : ''}
               onClick={() => action(() => handleRef.current?.setListMarker(line, '- [ ] '))}
             >
-              <i className="fa-solid fa-square-check" />
+              <Icon name="square-check-big" />
             </button>
           </div>
           <div className="notes-block-menu-grid">
             <button type="button" title={t('notes.blockMenu.indent')} aria-label={t('notes.blockMenu.indent')} onClick={() => action(() => handleRef.current?.indentLine(line, 'in'))}>
-              <i className="fa-solid fa-indent" />
+              <Icon name="indent-increase" />
             </button>
             <button type="button" title={t('notes.blockMenu.outdent')} aria-label={t('notes.blockMenu.outdent')} onClick={() => action(() => handleRef.current?.indentLine(line, 'out'))}>
-              <i className="fa-solid fa-outdent" />
+              <Icon name="indent-decrease" />
             </button>
           </div>
         </>
@@ -229,34 +217,34 @@ export function NoteBlockMenu({
             aria-label={t(a.labelKey)}
             onClick={() => applyFormat(a.run)}
           >
-            <i className={`fa-solid ${a.icon}`} />
+            <Icon name={a.icon} />
           </button>
         ))}
       </div>
       <div className="notes-block-menu-sep" />
       <button type="button" className="notes-block-menu-item" onClick={() => action(() => onInsertBelow(block.to))}>
-        <i className="fa-solid fa-plus" />
+        <Icon name="plus" />
         <span>{t('notes.blockMenu.insertBelow')}</span>
       </button>
       <button type="button" className="notes-block-menu-item" onClick={() => action(() => handleRef.current?.duplicateLines(block.from, block.to - 1))}>
-        <i className="fa-regular fa-clone" />
+        <Icon name="copy-plus" />
         <span>{t('notes.blockMenu.duplicate')}</span>
       </button>
       <button type="button" className="notes-block-menu-item" onClick={copy}>
-        <i className="fa-regular fa-copy" />
+        <Icon name="copy" />
         <span>{t('common.copy')}</span>
       </button>
       <button type="button" className="notes-block-menu-item danger" onClick={() => action(() => handleRef.current?.deleteLines(block.from, block.to - 1))}>
-        <i className="fa-regular fa-trash-can" />
+        <Icon name="trash-2" />
         <span>{t('common.delete')}</span>
       </button>
       <div className="notes-block-menu-sep" />
       <button type="button" className="notes-block-menu-item" onClick={() => action(() => onDiagram(block.to))}>
-        <i className="fa-solid fa-diagram-project" />
+        <Icon name="workflow" />
         <span>{t('notes.blockMenu.diagram')}</span>
       </button>
       <button type="button" className="notes-block-menu-item" onClick={() => action(() => onEmbed(block.to))}>
-        <i className="fa-solid fa-globe" />
+        <Icon name="globe" />
         <span>{t('notes.blockMenu.embed')}</span>
       </button>
     </div>
@@ -265,7 +253,7 @@ export function NoteBlockMenu({
 
 interface InsertAction {
   id: string
-  icon: string
+  icon: IconName
   label: string
   run: (handle: NoteEditorHandle, line: number) => void
 }
@@ -289,17 +277,17 @@ export function NoteInsertMenu({
   const ref = useRef<HTMLDivElement | null>(null)
   useDismiss(onClose, ref)
   const actions: InsertAction[] = [
-    { id: 'text', icon: 'fa-paragraph', label: t('notes.insert.text'), run: (h, n) => h.focusLine(n) },
-    { id: 'h1', icon: 'fa-heading', label: t('notes.insert.heading1'), run: (h, n) => h.insertAtLine(n, '# ', 2) },
-    { id: 'h2', icon: 'fa-heading', label: t('notes.insert.heading2'), run: (h, n) => h.insertAtLine(n, '## ', 3) },
-    { id: 'h3', icon: 'fa-heading', label: t('notes.insert.heading3'), run: (h, n) => h.insertAtLine(n, '### ', 4) },
-    { id: 'list', icon: 'fa-list-ul', label: t('notes.fmt.list'), run: (h, n) => h.insertAtLine(n, '- ', 2) },
-    { id: 'task', icon: 'fa-square-check', label: t('notes.fmt.task'), run: (h, n) => h.insertAtLine(n, '- [ ] ', 6) },
-    { id: 'quote', icon: 'fa-quote-left', label: t('notes.fmt.quote'), run: (h, n) => h.insertAtLine(n, '> ', 2) },
-    { id: 'code', icon: 'fa-file-code', label: t('notes.fmt.codeBlock'), run: (h, n) => h.insertAtLine(n, '```\n\n```', 4) },
-    { id: 'table', icon: 'fa-table', label: t('notes.fmt.table'), run: (h, n) => h.insertAtLine(n, tableSkeleton(3, 3, (i) => t('notes.table.col').replace('{N}', String(i)))) },
-    { id: 'image', icon: 'fa-image', label: t('notes.fmt.image'), run: (h, n) => h.insertAtLine(n, '![]()', 3) },
-    { id: 'details', icon: 'fa-caret-square-down', label: t('notes.fmt.details'), run: (h, n) => h.insertAtLine(n, '<details>\n<summary>标题</summary>\n\n内容\n\n</details>', 18) }
+    { id: 'text', icon: 'pilcrow', label: t('notes.insert.text'), run: (h, n) => h.focusLine(n) },
+    { id: 'h1', icon: 'heading', label: t('notes.insert.heading1'), run: (h, n) => h.insertAtLine(n, '# ', 2) },
+    { id: 'h2', icon: 'heading', label: t('notes.insert.heading2'), run: (h, n) => h.insertAtLine(n, '## ', 3) },
+    { id: 'h3', icon: 'heading', label: t('notes.insert.heading3'), run: (h, n) => h.insertAtLine(n, '### ', 4) },
+    { id: 'list', icon: 'list', label: t('notes.fmt.list'), run: (h, n) => h.insertAtLine(n, '- ', 2) },
+    { id: 'task', icon: 'square-check-big', label: t('notes.fmt.task'), run: (h, n) => h.insertAtLine(n, '- [ ] ', 6) },
+    { id: 'quote', icon: 'text-quote', label: t('notes.fmt.quote'), run: (h, n) => h.insertAtLine(n, '> ', 2) },
+    { id: 'code', icon: 'square-code', label: t('notes.fmt.codeBlock'), run: (h, n) => h.insertAtLine(n, '```\n\n```', 4) },
+    { id: 'table', icon: 'table', label: t('notes.fmt.table'), run: (h, n) => h.insertAtLine(n, tableSkeleton(3, 3, (i) => t('notes.table.col').replace('{N}', String(i)))) },
+    { id: 'image', icon: 'image', label: t('notes.fmt.image'), run: (h, n) => h.insertAtLine(n, '![]()', 3) },
+    { id: 'details', icon: 'square-chevron-down', label: t('notes.fmt.details'), run: (h, n) => h.insertAtLine(n, '<details>\n<summary>标题</summary>\n\n内容\n\n</details>', 18) }
   ]
   const run = (action: InsertAction): void => {
     const handle = handleRef.current
@@ -310,22 +298,22 @@ export function NoteInsertMenu({
   return (
     <div ref={ref} className="notes-insert-menu" style={menuStyle(anchor, 290, 300)} role="menu">
       <div className="notes-block-menu-head">
-        <span className="notes-block-menu-type"><i className="fa-solid fa-plus" /></span>
+        <span className="notes-block-menu-type"><Icon name="plus" /></span>
         <span>{t('notes.insert.title')}</span>
       </div>
       <div className="notes-insert-grid">
         {actions.map((action) => (
           <button key={action.id} type="button" onClick={() => run(action)} title={action.label}>
-            <i className={`fa-solid ${action.icon}`} />
+            <Icon name={action.icon} />
             <span>{action.label}</span>
           </button>
         ))}
         <button type="button" onClick={() => { onDiagram(line); onClose() }}>
-          <i className="fa-solid fa-diagram-project" />
+          <Icon name="workflow" />
           <span>{t('notes.blockMenu.diagram')}</span>
         </button>
         <button type="button" onClick={() => { onEmbed(line); onClose() }}>
-          <i className="fa-solid fa-globe" />
+          <Icon name="globe" />
           <span>{t('notes.blockMenu.embed')}</span>
         </button>
       </div>

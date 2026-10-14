@@ -10,12 +10,14 @@
 
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { useT } from '../../hooks/useT'
+import { Icon } from '../../components/ui/Icon'
+import type { IconName } from '../../lib/icon-paths'
 import { tableSkeleton } from '../../lib/note-table'
 import type { NoteEditorHandle } from './NoteEditor'
 
 interface FormatAction {
   id: string
-  icon: string
+  icon: IconName
   labelKey: string
   /** 显示在 tooltip 里的快捷键;没有就不显示 */
   shortcut?: string
@@ -25,25 +27,25 @@ interface FormatAction {
 }
 
 const FORMATS: FormatAction[] = [
-  { id: 'bold', icon: 'fa-bold', labelKey: 'notes.fmt.bold', shortcut: '⌘B', run: (h) => h.wrapSelection('**') },
-  { id: 'italic', icon: 'fa-italic', labelKey: 'notes.fmt.italic', shortcut: '⌘I', run: (h) => h.wrapSelection('*') },
-  { id: 'code', icon: 'fa-code', labelKey: 'notes.fmt.code', run: (h) => h.wrapSelection('`') },
-  { id: 'link', icon: 'fa-link', labelKey: 'notes.fmt.link', shortcut: '⌘K', run: (h) => h.wrapSelection('[', '](https://)') },
-  { id: 'heading', icon: 'fa-heading', labelKey: 'notes.fmt.heading', groupStart: true, run: (h) => h.prefixLines('## ') },
-  { id: 'list', icon: 'fa-list-ul', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },
-  { id: 'task', icon: 'fa-square-check', labelKey: 'notes.fmt.task', run: (h) => h.prefixLines('- [ ] ') },
-  { id: 'quote', icon: 'fa-quote-left', labelKey: 'notes.fmt.quote', run: (h) => h.prefixLines('> ') },
-  { id: 'codeBlock', icon: 'fa-file-code', labelKey: 'notes.fmt.codeBlock', groupStart: true, run: (h) => h.insertBlock('```\n\n```', 4) },
-  { id: 'image', icon: 'fa-image', labelKey: 'notes.fmt.image', run: (h) => h.wrapSelection('![', '](assets/)') },
+  { id: 'bold', icon: 'bold', labelKey: 'notes.fmt.bold', shortcut: '⌘B', run: (h) => h.wrapSelection('**') },
+  { id: 'italic', icon: 'italic', labelKey: 'notes.fmt.italic', shortcut: '⌘I', run: (h) => h.wrapSelection('*') },
+  { id: 'code', icon: 'code', labelKey: 'notes.fmt.code', run: (h) => h.wrapSelection('`') },
+  { id: 'link', icon: 'link', labelKey: 'notes.fmt.link', shortcut: '⌘K', run: (h) => h.wrapSelection('[', '](https://)') },
+  { id: 'heading', icon: 'heading', labelKey: 'notes.fmt.heading', groupStart: true, run: (h) => h.prefixLines('## ') },
+  { id: 'list', icon: 'list', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },
+  { id: 'task', icon: 'square-check-big', labelKey: 'notes.fmt.task', run: (h) => h.prefixLines('- [ ] ') },
+  { id: 'quote', icon: 'text-quote', labelKey: 'notes.fmt.quote', run: (h) => h.prefixLines('> ') },
+  { id: 'codeBlock', icon: 'square-code', labelKey: 'notes.fmt.codeBlock', groupStart: true, run: (h) => h.insertBlock('```\n\n```', 4) },
+  { id: 'image', icon: 'image', labelKey: 'notes.fmt.image', run: (h) => h.wrapSelection('![', '](assets/)') },
   {
     id: 'details',
-    icon: 'fa-caret-square-down',
+    icon: 'square-chevron-down',
     labelKey: 'notes.fmt.details',
     groupStart: true,
     run: (h) => h.insertBlock('<details>\n<summary>标题</summary>\n\n内容\n\n</details>', 18)
   },
-  { id: 'sub', icon: 'fa-subscript', labelKey: 'notes.fmt.sub', groupStart: true, run: (h) => h.wrapSelection('~') },
-  { id: 'sup', icon: 'fa-superscript', labelKey: 'notes.fmt.sup', run: (h) => h.wrapSelection('^') }
+  { id: 'sub', icon: 'subscript', labelKey: 'notes.fmt.sub', groupStart: true, run: (h) => h.wrapSelection('~') },
+  { id: 'sup', icon: 'superscript', labelKey: 'notes.fmt.sup', run: (h) => h.wrapSelection('^') }
 ]
 
 /**
@@ -51,10 +53,10 @@ const FORMATS: FormatAction[] = [
  * (Obsidian/GitHub 都只能写 HTML,而本项目的渲染器刻意不解析 HTML),
  * 唯一标准且可移植的对齐就是表格分隔行里的 `:--` / `:-:` / `--:`。
  */
-const ALIGNS: { id: 'left' | 'center' | 'right'; icon: string; labelKey: string }[] = [
-  { id: 'left', icon: 'fa-align-left', labelKey: 'notes.fmt.alignLeft' },
-  { id: 'center', icon: 'fa-align-center', labelKey: 'notes.fmt.alignCenter' },
-  { id: 'right', icon: 'fa-align-right', labelKey: 'notes.fmt.alignRight' }
+const ALIGNS: { id: 'left' | 'center' | 'right'; icon: IconName; labelKey: string }[] = [
+  { id: 'left', icon: 'align-left', labelKey: 'notes.fmt.alignLeft' },
+  { id: 'center', icon: 'align-center', labelKey: 'notes.fmt.alignCenter' },
+  { id: 'right', icon: 'align-right', labelKey: 'notes.fmt.alignRight' }
 ]
 
 const TABLE_MAX = 8
@@ -150,7 +152,7 @@ export function NoteToolbar({
             aria-label={t(a.labelKey)}
             onClick={() => run(a)}
           >
-            <i className={`fa-solid ${a.icon}`} />
+            <Icon name={a.icon} />
           </button>
         ))}
         {ALIGNS.map((a, i) => (
@@ -162,7 +164,7 @@ export function NoteToolbar({
             aria-label={t(a.labelKey)}
             onClick={() => run({ id: a.id, icon: a.icon, labelKey: a.labelKey, run: (h) => h.alignBlock(a.id) })}
           >
-            <i className={`fa-solid ${a.icon}`} />
+            <Icon name={a.icon} />
           </button>
         ))}
         <div className="notes-fmt-group group-start">
@@ -174,7 +176,7 @@ export function NoteToolbar({
             aria-expanded={tableOpen}
             onClick={() => setTableOpen((v) => !v)}
           >
-            <i className="fa-solid fa-table" />
+            <Icon name="table" />
           </button>
           {tableOpen && <TablePicker onPick={insertTable} onClose={() => setTableOpen(false)} />}
         </div>
@@ -186,7 +188,7 @@ export function NoteToolbar({
             aria-label={t('notes.fmt.embed')}
             onClick={onEmbed}
           >
-            <i className="fa-solid fa-globe" />
+            <Icon name="globe" />
           </button>
           <button
             type="button"
@@ -195,7 +197,7 @@ export function NoteToolbar({
             aria-label={t('notes.fmt.diagram')}
             onClick={onDiagram}
           >
-            <i className="fa-solid fa-diagram-project" />
+            <Icon name="workflow" />
           </button>
         </div>
       </div>
