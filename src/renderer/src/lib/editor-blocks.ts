@@ -220,10 +220,13 @@ function planHandle(view: EditorView): HandlePlan | null {
   // 折叠三角只画在**块的首行**：多行块首行有（点它折整块），其余行与单行块都没有。
   // 以前每行都出三角，一个 10 行代码块就是十个一模一样的箭头，纯噪音。
   const foldFrom = line === block.from ? (foldRangeOf(view.state, block)?.from ?? null) : null
+  // 折行时行元素有好几行高，胶囊要贴**第一行**（不然会浮在两行之间）——
+  // 行高从计算样式读（一行的高度），别用元素高度。
+  const rowHeight = Number.parseFloat(window.getComputedStyle(el).lineHeight) || lineRect.height
   return {
     line,
     block,
-    top: lineRect.top - hostRect.top + (lineRect.height - PILL_HEIGHT) / 2,
+    top: lineRect.top - hostRect.top + (rowHeight - PILL_HEIGHT) / 2,
     foldFrom
   }
 }
@@ -242,7 +245,7 @@ function applyHandle(view: EditorView, plan: HandlePlan | null): void {
 
   const collapsed = plan.foldFrom !== null && isFoldedAt(view.state, plan.foldFrom)
   handle.badge.replaceChildren(
-    plan.block.kind === 'heading' ? document.createTextNode(headingText(plan.block.level)) : blockIcon(plan.block.kind)
+    plan.block.kind === 'heading' ? document.createTextNode(headingText(plan.block.level)) : blockIcon(plan.block)
   )
   handle.caretSlot.replaceChildren()
   if (plan.foldFrom !== null) {
@@ -372,15 +375,31 @@ function updateEmptyInsertAtLine(
   button.style.left = `${PILL_WIDTH - EMPTY_INSERT_SIZE}px`
 }
 
+/**
+ * 指针在哪一行 —— **用 DOM 命中测试**，不用 `posAtCoords`。
+ *
+ * `posAtCoords` 走 CodeMirror 的高度表（只有量过的行是准的，其余是估算），长笔记里
+ * 误差会累积：实测在 551 行的示例笔记里，点第 6 行光标落到第 9 行，越往下越偏。
+ * 那是 CM 自己的判定，改不了；但我们可以绕开它 —— `elementFromPoint` 一次命中，
+ * 再用 `posAtDOM`（读文档结构，不读几何）换出行号，任何时候都准。
+ *
+ * 指针停在浮层自己身上时命中的是浮层 → 返回 null，调用方保留上一次的行（正合期望：
+ * 从正文移到手柄上不该让它跳走）。
+ */
+function lineAtPoint(view: EditorView, x: number, y: number): number | null {
+  const hit = document.elementFromPoint(x, y)
+  const lineEl = hit instanceof HTMLElement ? hit.closest('.cm-line') : null
+  if (lineEl === null) return null
+  const line = view.state.doc.lineAt(view.posAtDOM(lineEl, 0)).number - 1
+  return line >= 0 && line < view.state.doc.lines ? line : null
+}
+
 function updateToolHover(view: EditorView, event: MouseEvent, callbacks: MarkdownBlockEditorCallbacks): void {
-  const contentBox = view.contentDOM.getBoundingClientRect()
-  const pos = view.posAtCoords({ x: contentBox.left + 8, y: event.clientY })
-  if (pos === null) {
-    clearHover(view)
-    removeEmptyInsert(view)
+  const lineNumber = lineAtPoint(view, event.clientX, event.clientY)
+  if (lineNumber === null) {
+    // 指针在浮层自己身上（或编辑器之外）—— 保留当前行，别让它跳
     return
   }
-  const lineNumber = view.state.doc.lineAt(pos).number - 1
   setHoverLine(view, lineNumber)
   updateEmptyInsertAtLine(view, lineNumber, callbacks.onEmptyMenu)
 }

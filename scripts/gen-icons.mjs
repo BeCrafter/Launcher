@@ -23,7 +23,7 @@ const ICONS = [
   'strikethrough',
   'code',
   'link',
-  'remove-formatting',
+  'eraser',
   'subscript',
   'superscript',
   // 块级格式
@@ -45,6 +45,10 @@ const ICONS = [
   'pilcrow',
   'info',
   'minus',
+  // 媒体（按类型分开：图 / 视频 / 音频 / PDF）
+  'file-video',
+  'file-audio',
+  'file-text',
   // 提示块类型
   'lightbulb',
   'circle-alert',

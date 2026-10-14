@@ -7,6 +7,7 @@
 import { iconNode } from './icon-dom'
 import type { IconName } from './icon-paths'
 import type { CalloutKind } from './markdown'
+import type { NoteAssetKind } from '@shared/notes'
 
 /** 块类型 → 图标名。标题不走这里 —— 它显示 H1/H2/H3 文本（豆包与飞书都是）。 */
 const BLOCK_ICON: Record<string, IconName> = {
@@ -17,7 +18,20 @@ const BLOCK_ICON: Record<string, IconName> = {
   fence: 'square-code',
   table: 'table',
   details: 'square-chevron-down',
-  thematicBreak: 'minus'
+  thematicBreak: 'minus',
+  // 围栏的两种特例：它们是图 / 网页嵌入，不是代码 —— 与工具栏那两个按钮同图标
+  diagram: 'workflow',
+  embed: 'globe'
+}
+
+/** 媒体按类型分开：图 / 视频 / 音频 / PDF 各一张，别都当成图片。 */
+const MEDIA_ICON: Record<NoteAssetKind, IconName> = {
+  image: 'image',
+  video: 'file-video',
+  audio: 'file-audio',
+  pdf: 'file-text',
+  // 本地网页（示例里那个）—— 和「网页嵌入」同一张图标
+  page: 'globe'
 }
 
 /** 六点抓手。整颗胶囊都是拖拽源，这个图标只是「可以拖」的暗示。 */
@@ -25,12 +39,27 @@ export function dragIcon(): SVGSVGElement {
   return iconNode('grip-vertical', 14)
 }
 
-export function blockIconName(kind: string): IconName {
-  return BLOCK_ICON[kind] ?? 'pilcrow'
+/**
+ * 一个块该显示哪张图标。
+ *
+ * 两处「不能只看 kind」：
+ *  · 提示块 —— 它自己是 note / tip / important / warning / caution 五种之一，
+ *    手柄要出对应那张，而不是笼统的「引用」图标；
+ *  · 媒体 —— 整段只有一个 `![](…)` 时按扩展名分成图 / 视频 / 音频 / PDF
+ *    （用的是 shared/notes 那张**唯一**的附件类型表，与预览同一个判据）。
+ */
+export function blockIconName(block: {
+  kind: string
+  callout?: CalloutKind
+  media?: NoteAssetKind
+}): IconName {
+  if (block.kind === 'callout') return CALLOUT_ICON_NAMES[block.callout ?? 'note']
+  if (block.kind === 'media') return MEDIA_ICON[block.media ?? 'image']
+  return BLOCK_ICON[block.kind] ?? 'pilcrow'
 }
 
-export function blockIcon(kind: string): SVGSVGElement {
-  return iconNode(blockIconName(kind), 14)
+export function blockIcon(block: { kind: string; callout?: CalloutKind; media?: NoteAssetKind }): SVGSVGElement {
+  return iconNode(blockIconName(block), 14)
 }
 
 /**

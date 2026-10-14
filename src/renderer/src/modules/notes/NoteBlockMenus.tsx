@@ -118,7 +118,7 @@ export function NoteBlockMenu({
     <div ref={ref} className="notes-block-menu" style={menuStyle(anchor, 250, 520)} role="menu">
       <div className="notes-block-menu-head">
         <span className="notes-block-menu-type">
-          {block.kind === 'heading' ? `H${block.level}` : <Icon name={blockIconName(block.kind)} />}
+          {block.kind === 'heading' ? `H${block.level}` : <Icon name={blockIconName(block)} />}
         </span>
         <span>{t(`notes.blockMenu.type.${block.kind}`)}</span>
       </div>

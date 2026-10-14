@@ -172,6 +172,92 @@ describe('list items', () => {
   })
 })
 
+describe('block flavours', () => {
+  it('records which kind of callout a quote block is', () => {
+    const text = '> [!WARNING] 注意\n> 琥珀色。\n\n> 普通引用\n'
+    const blocks = parseMarkdownBlocks(text)
+    const callout = blocks.find((b) => b.kind === 'callout')!
+    expect(callout.callout).toBe('warning')
+    expect(blocks.find((b) => b.kind === 'quote')?.callout).toBeUndefined()
+  })
+
+  it('tells a diagram, an embedded page and a styled table apart from a plain code fence', () => {
+    const text =
+      '```mermaid\nflowchart LR\n```\n\n```embed https://x.dev\n\n```\n\n```table border=none color=#8b5cf6\n| a | b |\n| --- | --- |\n```\n\n```ts\nconst a = 1\n```\n'
+    expect(parseMarkdownBlocks(text).map((b) => b.kind)).toEqual(['diagram', 'embed', 'table', 'fence'])
+  })
+
+  it('still treats an unknown info string as a plain code fence', () => {
+    expect(parseMarkdownBlocks('```tablenope\nx\n```\n').map((b) => b.kind)).toEqual(['fence'])
+  })
+
+  it('makes a whole-line media reference its own kind, by extension', () => {
+    const text = [
+      '![](assets/a.png)',
+      '',
+      '![](assets/b.mp4)',
+      '',
+      '![](assets/c.mp3)',
+      '',
+      '![|x140](assets/d.pdf)',
+      '',
+      '带字的段落 ![](assets/e.png) 不算'
+    ].join('\n')
+    const blocks = parseMarkdownBlocks(text)
+    expect(blocks.filter((b) => b.kind === 'media').map((b) => b.media)).toEqual([
+      'image',
+      'video',
+      'audio',
+      'pdf'
+    ])
+    expect(blocks.filter((b) => b.kind === 'paragraph')).toHaveLength(1)
+  })
+})
+
+describe('details', () => {
+  const TEXT = [
+    '<details>',
+    '<summary>标题</summary>',
+    '',
+    '- 甲',
+    '- 乙',
+    '',
+    '| a | b |',
+    '| --- | --- |',
+    '| 1 | 2 |',
+    '',
+    '</details>',
+    '',
+    '后面的段落'
+  ].join('\n')
+
+  it('parses what is inside as blocks of its own, parented to the details', () => {
+    const blocks = parseMarkdownBlocks(TEXT)
+    const details = blocks.find((b) => b.kind === 'details')!
+    const items = blocks.filter((b) => b.kind === 'listItem')
+    const table = blocks.find((b) => b.kind === 'table')!
+    expect(items.map((b) => b.parentId)).toEqual([details.id, details.id])
+    expect(table.parentId).toBe(details.id)
+    expect(blocks.some((b) => b.kind === 'paragraph' && b.from === 12)).toBe(true)
+    // 自有正文只到 summary 那一行 —— 套格式不会碰里面的东西
+    expect(details.bodyTo).toBe(2)
+  })
+
+  it('gives every line to the innermost block, falling back to the details', () => {
+    const blocks = parseMarkdownBlocks(TEXT)
+    const owners = blockOwnersByLine(blocks)
+    const kindOf = (line: number): string | undefined => owners.get(line)?.kind
+    expect(kindOf(0)).toBe('details')
+    expect(kindOf(1)).toBe('details')
+    // 空行落在 details 上（里面没有更内层的块认领它）
+    expect(kindOf(2)).toBe('details')
+    expect(kindOf(3)).toBe('listItem')
+    expect(kindOf(6)).toBe('table')
+    expect(kindOf(11)).toBeUndefined()
+    expect(kindOf(12)).toBe('paragraph')
+  })
+})
+
 describe('drop scope', () => {
   const linesOf = (text: string): string[] => text.split('\n')
   const at = (text: string, body: string): MarkdownBlock =>

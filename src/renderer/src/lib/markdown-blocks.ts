@@ -1,3 +1,6 @@
+import { noteAssetKindOfUrl, type NoteAssetKind } from '@shared/notes'
+import type { CalloutKind } from './markdown'
+
 export type MarkdownBlockKind =
   | 'frontmatter'
   | 'heading'
@@ -9,6 +12,12 @@ export type MarkdownBlockKind =
   | 'fence'
   | 'details'
   | 'thematicBreak'
+  /** ```mermaid 围栏：是一张图，不是一段代码 */
+  | 'diagram'
+  /** ```embed 围栏：是一个网页嵌入 */
+  | 'embed'
+  /** 整段就是一张图 / 一段视频 / 音频 / PDF */
+  | 'media'
 
 /**
  * A source block uses half-open line ranges. `to` includes the blank lines
@@ -33,12 +42,22 @@ export interface MarkdownBlock {
   /** The nearest containing block — a heading or a list item — or null at the root. */
   parentId: number | null
   movable: boolean
+  /** 提示块的具体类型（`[!NOTE]` 等）。手柄据此出对应的图标，而不是笼统的「引用」。 */
+  callout?: CalloutKind
+  /** `kind === 'media'` 时的媒体类型（图 / 视频 / 音频 / PDF）—— 图标据此区分。 */
+  media?: NoteAssetKind
 }
 
 interface ConsumedBlock {
   kind: Exclude<MarkdownBlockKind, 'frontmatter' | 'heading' | 'listItem'>
   contentTo: number
   to: number
+  /** 自有正文的结束行；缺省等于 contentTo */
+  bodyTo?: number
+  /** details 的内部区间（开标签与 summary 之后、闭合行之前）—— 交给递归解析 */
+  inner?: { from: number; to: number }
+  callout?: CalloutKind
+  media?: NoteAssetKind
 }
 
 const HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+|$)/
@@ -46,9 +65,12 @@ const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(?:[^`~]*)$/
 const LIST_RE = /^ {0,3}(?:[-+*]|\d+[.)])[ \t]+/
 const QUOTE_RE = /^ {0,3}>/
 const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/
-const CALLOUT_RE = /^ {0,3}>[ \t]*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i
+const CALLOUT_RE = /^ {0,3}>[ \t]*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i
 const DETAILS_OPEN_RE = /^ {0,3}<details(?:\s|>)/i
 const DETAILS_CLOSE_RE = /^ {0,3}<\/details\s*>/i
+const DETAILS_SUMMARY_RE = /^ {0,3}<summary(?:\s|>)/i
+/** 整行只有一个媒体引用（可带 `|宽x高`）—— 那样它是一张图，不是一段文字 */
+const MEDIA_LINE_RE = /^!\[[^\]]*\]\(([^)\n]+)\)\s*$/
 
 function blank(line: string): boolean {
   return /^\s*$/.test(line)
@@ -85,21 +107,46 @@ function consumeFence(
   const close = new RegExp(`^ {0,3}${fence.char}{${fence.length},}\\s*$`)
   while (i < limit && !close.test(lines[i])) i += 1
   if (i < limit) i += 1
-  return { kind: 'fence', contentTo: i, to: withTrailingBlanks(lines, i, limit) }
+  // 信息串的第一个词决定它到底是什么 —— 手柄/菜单据此出不同的图标与类型名。
+  // 这三个是应用自带的围栏语言（预览各有各的渲染），其余一律是代码块：
+  //   mermaid → 图表、embed → 网页嵌入、table → 带样式的表格（预览会套一层 .md-table-scope）
+  const info = lines[start].slice(lines[start].indexOf(fence.char) + fence.length).trim().toLowerCase()
+  const lang = info.split(/\s+/)[0] ?? ''
+  const kind = lang === 'mermaid' ? 'diagram' : lang === 'embed' ? 'embed' : lang === 'table' ? 'table' : 'fence'
+  return { kind, contentTo: i, to: withTrailingBlanks(lines, i, limit) }
+}
+
+/** 整行就是一个媒体引用时，给出它的媒体类型；否则 null。 */
+function mediaKindOfLine(line: string): NoteAssetKind | null {
+  const match = MEDIA_LINE_RE.exec(line.trim())
+  return match === null ? null : noteAssetKindOfUrl(match[1])
 }
 
 function consumeDetails(lines: string[], start: number, limit: number): ConsumedBlock {
-  let i = start + 1
-  while (i < limit && !DETAILS_CLOSE_RE.test(lines[i])) i += 1
-  if (i < limit) i += 1
-  return { kind: 'details', contentTo: i, to: withTrailingBlanks(lines, i, limit) }
+  let close = start + 1
+  while (close < limit && !DETAILS_CLOSE_RE.test(lines[close])) close += 1
+  const end = close < limit ? close + 1 : close
+  // 自有正文 = 开标签那一行（外加 summary 那一行）；里面装的块由递归解析出来
+  let bodyTo = start + 1
+  if (bodyTo < close && DETAILS_SUMMARY_RE.test(lines[bodyTo])) bodyTo += 1
+  return {
+    kind: 'details',
+    contentTo: end,
+    to: withTrailingBlanks(lines, end, limit),
+    bodyTo,
+    inner: bodyTo < close ? { from: bodyTo, to: close } : undefined
+  }
 }
 
 function consumeQuote(lines: string[], start: number, limit: number): ConsumedBlock {
-  const kind = CALLOUT_RE.test(lines[start]) ? 'callout' : 'quote'
+  const callout = CALLOUT_RE.exec(lines[start])
   let i = start
   while (i < limit && QUOTE_RE.test(lines[i])) i += 1
-  return { kind, contentTo: i, to: withTrailingBlanks(lines, i, limit) }
+  const base = { contentTo: i, to: withTrailingBlanks(lines, i, limit) }
+  // 提示块记下自己的类型（note / tip / …）—— 手柄要出对应那张图标，而不是笼统的引用
+  return callout === null
+    ? { kind: 'quote', ...base }
+    : { kind: 'callout', callout: callout[1].toLowerCase() as CalloutKind, ...base }
 }
 
 // ── 列表项 ──
@@ -292,7 +339,11 @@ function consumeBlock(lines: string[], start: number, limit: number): ConsumedBl
   if (THEMATIC_BREAK_RE.test(lines[start])) {
     return { kind: 'thematicBreak', contentTo: start + 1, to: withTrailingBlanks(lines, start + 1, limit) }
   }
-  return consumeParagraph(lines, start, limit)
+  // 整段只有一个媒体引用 → 它是「一张图 / 一段视频 / 音频 / PDF」，不是一段文字
+  const media = mediaKindOfLine(lines[start])
+  const paragraph = consumeParagraph(lines, start, limit)
+  if (media !== null && paragraph.contentTo === start + 1) return { ...paragraph, kind: 'media', media }
+  return paragraph
 }
 
 /** 标题的自有正文就是它自己那一行 —— 子树交给子块。 */
@@ -318,8 +369,7 @@ export function parseMarkdownBlocks(text: string): MarkdownBlock[] {
   // It must stay at the end of the document instead of travelling with a block.
   const limit = lines.length > 1 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length
   const blocks: MarkdownBlock[] = []
-  const headings: MarkdownBlock[] = []
-  let i = 0
+  let start = 0
 
   const fmEnd = frontmatterEnd(lines, limit)
   if (fmEnd !== null) {
@@ -334,13 +384,34 @@ export function parseMarkdownBlocks(text: string): MarkdownBlock[] {
       parentId: null,
       movable: false
     })
-    i = fmEnd
+    start = fmEnd
   }
 
-  /** 最近的**包含块**：标题或列表项。两者都能当父级 —— 列表项的子项就挂在它下面。 */
-  const parentOf = (): number | null => (headings.length > 0 ? headings[headings.length - 1].id : null)
+  collectBlocks(lines, start, limit, null, blocks)
+  return blocks
+}
 
-  while (i < limit) {
+/**
+ * 解析 `[from, to)` 这一段，把块按文档序推进 `blocks`。
+ *
+ * 递归只为一件事：**`<details>` 里面装的东西也是块**。以前整段 `<details>…</details>`
+ * 算一个块，于是里面嵌的列表 / 表格 / 引用全都顶着「折叠块」的标识；
+ * 现在里面的内容单独解析一遍，父级是那个 details —— 最内层的块因此能出自己的标识，
+ * 而真正没有更内层块的行（空行、details 自己的行）仍然落到 details 上。
+ */
+function collectBlocks(
+  lines: string[],
+  from: number,
+  to: number,
+  outerParent: number | null,
+  blocks: MarkdownBlock[]
+): void {
+  const headings: MarkdownBlock[] = []
+  /** 段内的标题自成层级；段内没有标题时，块的父级就是 outerParent */
+  const parentOf = (): number | null => (headings.length > 0 ? headings[headings.length - 1].id : outerParent)
+  let i = from
+
+  while (i < to) {
     if (blank(lines[i])) {
       i += 1
       continue
@@ -355,7 +426,7 @@ export function parseMarkdownBlocks(text: string): MarkdownBlock[] {
         id: blocks.length,
         kind: 'heading',
         from: i,
-        to: limit,
+        to,
         contentTo: i + 1,
         bodyTo: i + 1,
         level: heading.level,
@@ -371,32 +442,36 @@ export function parseMarkdownBlocks(text: string): MarkdownBlock[] {
     // 列表：逐项成块（每项带自己的子项），不再整段算一块
     if (LIST_RE.test(lines[i])) {
       const mark = itemMarkOf(lines[i])
-      const run = mark === null ? null : parseItemRun(lines, i, limit, mark.indent, mark.ordered)
+      const run = mark === null ? null : parseItemRun(lines, i, to, mark.indent, mark.ordered)
       // run.end 必须前进，否则这里的 while 会原地打转（渲染进程直接卡死）
       if (run !== null && run.end > i) {
-        emitItemRun(blocks, lines, limit, run.items, parentOf())
+        emitItemRun(blocks, lines, to, run.items, parentOf())
         i = run.end
         continue
       }
     }
 
-    const consumed = consumeBlock(lines, i, limit)
+    const consumed = consumeBlock(lines, i, to)
+    const id = blocks.length
     blocks.push({
-      id: blocks.length,
+      id,
       kind: consumed.kind,
       from: i,
       to: consumed.to,
       contentTo: consumed.contentTo,
-      bodyTo: consumed.contentTo,
+      bodyTo: consumed.bodyTo ?? consumed.contentTo,
       level: 0,
       parentId: parentOf(),
-      movable: true
+      movable: true,
+      callout: consumed.callout,
+      media: consumed.media
     })
     i = consumed.to
+    // `<details>` 里面的内容单独解析一遍 —— 父级就是它
+    if (consumed.inner !== undefined) collectBlocks(lines, consumed.inner.from, consumed.inner.to, id, blocks)
   }
 
-  while (headings.length > 0) closeHeading(lines, headings.pop()!, limit)
-  return blocks
+  while (headings.length > 0) closeHeading(lines, headings.pop()!, to)
 }
 
 export function isMarkdownBlockDraggable(block: MarkdownBlock): boolean {
@@ -412,6 +487,8 @@ export function isMarkdownBlockFoldable(block: MarkdownBlock): boolean {
     block.kind === 'heading' ||
     block.kind === 'listItem' ||
     block.kind === 'fence' ||
+    block.kind === 'diagram' ||
+    block.kind === 'embed' ||
     block.kind === 'table'
   )
 }
