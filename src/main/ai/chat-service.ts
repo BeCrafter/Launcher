@@ -87,10 +87,10 @@ interface RunState {
   verifyQueue: { label: string; scope?: string }[]
   /** 已注入的自动验证轮数(封顶 2,防止「修了又坏、坏了又修」无限续跑) */
   verifyRound: number
-  /** prepare_agent 产出的就绪计划;对应标签必须先有成功 write 才能 load */
-  preparedAgentLabels: Set<string>
-  /** 本轮由 write_plist 成功落盘的计划标签 */
-  writtenAgentLabels: Set<string>
+  /** prepare_agent 产出的就绪计划;对应 scope+label 必须先有成功 write 才能 load */
+  preparedAgentKeys: Set<string>
+  /** 本轮由 write_plist 成功落盘的计划身份 */
+  writtenAgentKeys: Set<string>
   /** generate_plist 成功产出的 XML 草稿;写入时可安全补回模型遗漏的 xml 参数 */
   generatedAgentDrafts: Map<string, { scope: string; xml: string }>
 }
@@ -206,17 +206,21 @@ export function createChatService(deps: {
           const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
           // blocked 计划不应解锁后续执行;准备卡的首行是宿主可控的 ok/warn 结果
           const ready = result.card?.kind === 'agentPreparation' && result.card.readiness === 'ready'
-          if (label !== '' && ready) r.preparedAgentLabels.add(label)
+          const scopeRaw = (params as Record<string, unknown>)['scope']
+          const scope = typeof scopeRaw === 'string' ? scopeRaw : 'user'
+          if (label !== '' && ready) r.preparedAgentKeys.add(agentKey(label, scope))
         }
         if (d.name === 'generate_plist' && !result.isError && result.card?.kind === 'plist') {
           const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
           const scopeRaw = (params as Record<string, unknown>)['scope']
           const scope = typeof scopeRaw === 'string' ? scopeRaw : 'user'
-          if (label !== '') r.generatedAgentDrafts.set(label, { scope, xml: result.card.xml })
+          if (label !== '') r.generatedAgentDrafts.set(agentKey(label, scope), { scope, xml: result.card.xml })
         }
         if (d.name === 'write_plist' && !result.isError) {
           const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
-          if (label !== '') r.writtenAgentLabels.add(label)
+          const scopeRaw = (params as Record<string, unknown>)['scope']
+          const scope = typeof scopeRaw === 'string' ? scopeRaw : 'user'
+          if (label !== '') r.writtenAgentKeys.add(agentKey(label, scope))
         }
         // load_plist 成功 → 记入自动验证队列(agent 自然停止时宿主注入验证轮)
         if (d.name === 'load_plist' && !result.isError) {
@@ -584,7 +588,7 @@ export function createChatService(deps: {
         statusRes = await runStatus()
       }
       const logRes = logs
-        ? await logs.execute({ label: target.label, lines: 50 }, ctx)
+        ? await logs.execute({ label: target.label, ...(target.scope ? { scope: target.scope } : {}), lines: 50 }, ctx)
         : { lines: [{ level: 'err' as const, text: 'tail_log 工具不存在' }] }
       sections.push(
         `### ${target.label}\n` +
@@ -618,14 +622,23 @@ export function createChatService(deps: {
 
   // ── 运行 ──
 
+  const agentKey = (label: string, scope: string | undefined): string => `${scope ?? 'user'}:${label}`
+
   /** 跨消息回合查找成功的 prepare_agent 计划:用户先看计划、下一条才确认应用也必须受此顺序保护。 */
-  function hasReadyPreparation(session: StoredSession, label: string): boolean {
+  function hasReadyPreparation(session: StoredSession, label: string, scope: string | undefined): boolean {
     return session.messages.some(
       (m) =>
         m.role === 'toolResult' &&
         m.toolName === 'prepare_agent' &&
         !m.isError &&
-        m.blocks.some((b) => b.type === 'card' && b.card.kind === 'agentPreparation' && b.card.readiness === 'ready' && b.card.label === label)
+        m.blocks.some(
+          (b) =>
+            b.type === 'card' &&
+            b.card.kind === 'agentPreparation' &&
+            b.card.readiness === 'ready' &&
+            b.card.label === label &&
+            b.card.scope === (scope ?? 'user')
+        )
     )
   }
 
@@ -642,14 +655,15 @@ export function createChatService(deps: {
           execute: async (toolCallId: string, params: unknown, signal?: AbortSignal) => {
             const raw = (params ?? {}) as Record<string, unknown>
             const label = String(raw['label'] ?? '').trim()
-            const draft = label === '' ? undefined : r.generatedAgentDrafts.get(label)
+            const scopeRaw = raw['scope']
+            const scope = typeof scopeRaw === 'string' ? scopeRaw : undefined
+            const key = agentKey(label, scope)
+            const draft = label === '' ? undefined : r.generatedAgentDrafts.get(key)
             const session = currentSession()
-            const planned = label !== '' && session !== null && hasReadyPreparation(session, label)
+            const planned = label !== '' && session !== null && hasReadyPreparation(session, label, scope)
             // 模型经常把 XML 只展示在草稿卡、却漏传到 write_plist 参数；宿主已有本轮生成的
             // 完整草稿时安全补齐。scope 必须一致，避免把 user 草稿写进 daemon 目录。
             const xml = String(raw['xml'] ?? '').trim()
-            const scopeRaw = raw['scope']
-            const scope = typeof scopeRaw === 'string' ? scopeRaw : undefined
             if (planned && xml === '' && draft === undefined) {
               const result: ToolExecResult = {
                 lines: [{ level: 'err', text: `${label} 有已确认的创建计划，但本回合还没有生成 XML；请先调用 generate_plist` }],
@@ -671,12 +685,16 @@ export function createChatService(deps: {
         return {
           ...tool,
           execute: async (toolCallId: string, params: unknown, signal?: AbortSignal) => {
-            const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
+            const raw = (params ?? {}) as Record<string, unknown>
+            const label = String(raw['label'] ?? '').trim()
+            const scopeRaw = raw['scope']
+            const scope = typeof scopeRaw === 'string' ? scopeRaw : undefined
+            const key = agentKey(label, scope)
             // 新建流程必须先有就绪计划和成功写入。既有任务仍可直接 load/reload，
             // 不能因此挡住诊断/修复路径。
             const session = currentSession()
-            const planned = label !== '' && ((session !== null && hasReadyPreparation(session, label)) || r.preparedAgentLabels.has(label))
-            if (planned && !r.writtenAgentLabels.has(label)) {
+            const planned = label !== '' && ((session !== null && hasReadyPreparation(session, label, scope)) || r.preparedAgentKeys.has(key))
+            if (planned && !r.writtenAgentKeys.has(key)) {
               const result: ToolExecResult = {
                 lines: [
                   { level: 'err', text: `${label} 只有创建计划，尚未成功写入 plist；请先带完整 XML 调用 write_plist` }
@@ -844,8 +862,8 @@ export function createChatService(deps: {
         turnCount: 0,
         verifyQueue: [],
         verifyRound: 0,
-        preparedAgentLabels: new Set(),
-        writtenAgentLabels: new Set(),
+        preparedAgentKeys: new Set(),
+        writtenAgentKeys: new Set(),
         generatedAgentDrafts: new Map()
       }
       run = r

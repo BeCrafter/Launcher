@@ -6,6 +6,7 @@ import type { CrontabService } from '../../services/crontab-service'
 import type { ProcessDiscovery } from '../../services/process-discovery'
 import type { LaunchctlService } from '../../services/launchctl-service'
 import type { PlistService } from '../../services/plist-service'
+import type { BrewAgentService } from '../../services/brew-agent-service'
 import type { ToolDef, ToolOutputLine } from '../tool-types'
 import { agentLine, cap, line, locateAgent, omittedLine, scopeLabel, SCOPES } from './shared'
 
@@ -15,6 +16,7 @@ export function createServiceTools(deps: {
   discovery: ProcessDiscovery
   plists: PlistService
   launchctl: LaunchctlService
+  brew: BrewAgentService
   home: string
 }): ToolDef[] {
   /** 触发方式摘要:自动验证要据此判断「未运行」是不是故障(一次性/定时任务不能套常驻服务的判据) */
@@ -218,6 +220,33 @@ export function createServiceTools(deps: {
           out.push(...omittedLine(omitted))
         }
         if (out.length === 0) out.push(line('', '没有匹配项'))
+        return { lines: out }
+      }
+    },
+
+    {
+      name: 'list_brew_services',
+      label: '列出 Homebrew 服务',
+      description: '直接读取 brew services list --json，列出已安装的 Homebrew 服务（包括当前未载入、没有 launchd plist 的服务）。仅盘点，不修改 brew 或 plist。',
+      parameters: Type.Object({
+        keyword: Type.Optional(Type.String({ description: '按服务名筛选；留空列出全部' }))
+      }),
+      write: false,
+      execute: async (args) => {
+        const keyword = String(args['keyword'] ?? '').trim().toLowerCase()
+        const all = await deps.brew.list()
+        const list = keyword === '' ? all : all.filter((s) => s.name.toLowerCase().includes(keyword))
+        const { shown, omitted } = cap(list, 50)
+        const out: ToolOutputLine[] = [line('', `Homebrew 服务 ${list.length} 项：`)]
+        out.push(
+          ...shown.map((s) =>
+            line(
+              s.status === 'started' ? 'info' : 'warn',
+              `  ${s.name} · ${s.status}${s.user ? ` · user ${s.user}` : ''}${s.exitCode != null ? ` · exit ${s.exitCode}` : ''}${s.file ? ` · ${s.file}` : ' · 无 plist 文件'}`
+            )
+          )
+        )
+        out.push(...omittedLine(omitted))
         return { lines: out }
       }
     },

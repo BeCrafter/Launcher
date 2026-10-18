@@ -1,4 +1,4 @@
-// 工具层契约与边界的回归:21 个工具(13 只读 + 8 写)、写工具必备授权摘要、
+// 工具层契约与边界的回归:22 个工具(14 只读 + 8 写)、写工具必备授权摘要、
 // 以及最容易出错的几类目标(跨作用域同名 / 非任务文件 / 损坏 plist / 找不到 / 附件路径闸门)
 import { describe, expect, it } from 'vitest'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -255,7 +255,12 @@ function makeRegistry(portServices: PortService[] = []) {
     launchctl: {
       list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set<string>(), system: new Set<string>() } })
     },
-    brew: {},
+    brew: {
+      list: async () => [
+        { name: 'redis', status: 'started', user: 'tester', file: `${HOME}/Library/LaunchAgents/custom-redis.plist`, exitCode: 0 },
+        { name: 'postgresql@16', status: 'stopped', user: null, file: null, exitCode: null }
+      ]
+    },
     notes: notesFake
   }
   const registry = createToolRegistry({ ...services, home: HOME } as never)
@@ -269,10 +274,10 @@ const byName = (registry: ReturnType<typeof makeRegistry>['registry'], n: string
 }
 
 describe('ToolRegistry 契约', () => {
-  it('恰好 21 个工具:13 只读 + 8 写', () => {
+  it('恰好 22 个工具:14 只读 + 8 写', () => {
     const { registry } = makeRegistry()
-    expect(registry.all()).toHaveLength(21)
-    expect(registry.readOnly()).toHaveLength(13)
+    expect(registry.all()).toHaveLength(22)
+    expect(registry.readOnly()).toHaveLength(14)
     expect(registry.writable()).toHaveLength(8)
   })
 
@@ -280,7 +285,7 @@ describe('ToolRegistry 契约', () => {
     const { registry } = makeRegistry()
     expect(registry.all().map((t) => t.name).sort()).toEqual([
       'add_cron', 'check_port', 'collect_diagnostic_context', 'delete_note', 'generate_plist',
-      'get_service_status', 'link_note', 'list_notes', 'list_services', 'load_plist', 'prepare_agent', 'read_note',
+      'get_service_status', 'link_note', 'list_brew_services', 'list_notes', 'list_services', 'load_plist', 'prepare_agent', 'read_note',
       'read_note_image', 'read_plist', 'remove_cron', 'search_services', 'tail_log', 'unload_plist',
       'validate_plist', 'write_note', 'write_plist'
     ])
@@ -312,6 +317,17 @@ describe('ToolRegistry 契约', () => {
   it('只读工具不定义 summarize(避免误标成写操作)', () => {
     const { registry } = makeRegistry()
     for (const t of registry.readOnly()) expect(t.summarize).toBeUndefined()
+  })
+})
+
+describe('Homebrew 服务清单', () => {
+  it('直接列出 brew registry，包括未载入且没有 plist 的服务', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'list_brew_services').execute({}, ctx())
+    const text = savedText(r)
+    expect(text).toContain('redis')
+    expect(text).toContain('postgresql@16')
+    expect(text).toContain('无 plist 文件')
   })
 })
 

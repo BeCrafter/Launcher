@@ -12,6 +12,7 @@ import { assertValidAgentLabel } from '../../domains/agent-label'
 import type { AgentService } from '../../services/agent-service'
 import type { PlistService } from '../../services/plist-service'
 import type { ProcessDiscovery } from '../../services/process-discovery'
+import { matchBrewService, type BrewAgentService } from '../../services/brew-agent-service'
 import type { ToolDef, ToolOutputLine } from '../tool-types'
 import { agentLine, cap, line, locateAgent, omittedLine, scopeLabel, SCOPES } from './shared'
 
@@ -51,6 +52,7 @@ export function createPlistTools(deps: {
   agents: AgentService
   plists: PlistService
   discovery: ProcessDiscovery
+  brew: BrewAgentService
   getXmlIndent: () => string
 }): ToolDef[] {
   /**
@@ -805,11 +807,15 @@ export function createPlistTools(deps: {
         // Homebrew 管理的 plist 不能手工改写:下次 brew 操作会覆盖,而且 brew 的启停路由会和应用打架
         let isBrew = false
         try {
-          isBrew = (await deps.agents.list()).agents.some(
-            (a) => a.scope === scope && a.label === xmlLabel && a.isBrew
-          )
+          const [listed, brewServices] = await Promise.all([deps.agents.list(), deps.brew.list()])
+          const agent = listed.agents.find((a) => a.scope === scope && a.label === xmlLabel)
+          const existingProgram = agent?.program ?? ''
+          // 优先按 brew --json 的 file 精确匹配:自定义 Label 的 brew 服务也必须受保护。
+          isBrew =
+            agent?.isBrew === true ||
+            matchBrewService(xmlLabel, existingProgram, brewServices, path) !== null
         } catch {
-          /* 列表读取失败不阻断本地写入;覆盖守卫仍在 */
+          /* brew 清单读取失败不阻断本地写入;常规列表启发式守卫仍尽力可用 */
         }
         if (isBrew) {
           return {

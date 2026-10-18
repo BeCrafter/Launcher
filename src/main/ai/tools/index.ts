@@ -37,9 +37,10 @@ export function createToolRegistry(deps: {
       discovery: deps.discovery,
       plists: deps.plists,
       launchctl: deps.launchctl,
+      brew: deps.brew,
       home: deps.home
     }),
-    ...createPlistTools({ agents: deps.agents, plists: deps.plists, discovery: deps.discovery, getXmlIndent: () => '  ' }),
+    ...createPlistTools({ agents: deps.agents, plists: deps.plists, discovery: deps.discovery, brew: deps.brew, getXmlIndent: () => '  ' }),
     ...createCronTools({ cron: deps.cron }),
     ...createLogTools({ agents: deps.agents, cron: deps.cron, home: deps.home }),
     ...createNotesTools({

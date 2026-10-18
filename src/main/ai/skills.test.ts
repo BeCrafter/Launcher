@@ -16,6 +16,7 @@ const TOOL_NAMES = [
   'link_note',
   'list_notes',
   'list_services',
+  'list_brew_services',
   'load_plist',
   'read_note',
   'read_note_image',
@@ -50,16 +51,14 @@ describe('SKILLS 契约', () => {
     }
   })
 
-  it('闭环技能(sk-plist / sk-import)带状态与日志工具,且写入后要验证', () => {
-    for (const id of ['sk-plist', 'sk-import']) {
-      const s = findSkill(id)!
-      expect(s.tools, `${id} 应允许写入`).toContain('write_plist')
-      expect(s.tools, `${id} 应允许载入`).toContain('load_plist')
-      expect(s.tools, `${id} 应能查状态`).toContain('get_service_status')
-      expect(s.tools, `${id} 应能看日志`).toContain('tail_log')
-      expect(s.task).toMatch(/get_service_status/)
-      expect(s.task).toMatch(/tail_log/)
-    }
+  it('sk-plist 闭环带状态与日志工具,且写入后要验证', () => {
+    const s = findSkill('sk-plist')!
+    expect(s.tools, 'sk-plist 应允许写入').toContain('write_plist')
+    expect(s.tools, 'sk-plist 应允许载入').toContain('load_plist')
+    expect(s.tools, 'sk-plist 应能查状态').toContain('get_service_status')
+    expect(s.tools, 'sk-plist 应能看日志').toContain('tail_log')
+    expect(s.task).toMatch(/get_service_status/)
+    expect(s.task).toMatch(/tail_log/)
   })
 
   it('sk-diag 修复后必须实际验证(不是只给步骤)', () => {
@@ -68,24 +67,20 @@ describe('SKILLS 契约', () => {
     expect(s.task).toMatch(/tail_log/)
   })
 
-  it('sk-refactor 保持只读(不含任何写工具)', () => {
+  it('sk-refactor 保持严格只读且最小工具面', () => {
     const s = findSkill('sk-refactor')!
-    expect(s.tools).not.toContain('write_plist')
-    expect(s.tools).not.toContain('load_plist')
-    expect(s.tools).not.toContain('add_cron')
-    expect(s.tools).not.toContain('write_note')
+    expect(s.tools).toEqual(['list_services', 'search_services', 'read_plist', 'get_service_status'])
+    expect(s.task).toMatch(/严格只读/)
   })
 
-  it('闭环技能带 PATH 硬规则(launchd 不加载 shell 配置)', () => {
-    for (const id of ['sk-plist', 'sk-import']) {
-      const s = findSkill(id)!
-      expect(s.task, `${id} 应点名 launchd 不加载 shell 配置`).toMatch(/zshrc|zprofile|shell 配置/)
-      expect(s.task, `${id} 应要求 EnvironmentVariables.PATH`).toMatch(/EnvironmentVariables\.PATH/)
-    }
+  it('sk-plist 带 PATH 硬规则(launchd 不加载 shell 配置)', () => {
+    const s = findSkill('sk-plist')!
+    expect(s.task).toMatch(/zshrc|zprofile|shell 配置/)
+    expect(s.task).toMatch(/EnvironmentVariables\.PATH/)
   })
 
-  it('闭环技能有 turnLimit(默认 8 轮跑不完验证环)', () => {
-    for (const id of ['sk-plist', 'sk-diag', 'sk-import']) {
+  it('需要多轮的工具类技能有 turnLimit(默认 8 轮跑不完)', () => {
+    for (const id of ['sk-plist', 'sk-diag', 'sk-import', 'sk-refactor']) {
       const s = findSkill(id)!
       expect(s.turnLimit, `${id} 应设 turnLimit`).toBeGreaterThanOrEqual(16)
     }
@@ -131,12 +126,23 @@ describe('SKILLS 契约', () => {
     expect(s.task).toMatch(/logs: 'none'|logs.*none/)
   })
 
-  it('sk-import 同步日志 / 端口 / 回滚规则', () => {
+  it('sk-import 是 Brew 盘点，不写/载入 Brew plist', () => {
     const s = findSkill('sk-import')!
-    expect(s.tools).toContain('check_port')
-    expect(s.tools).toContain('unload_plist')
-    expect(s.task).toMatch(/logs: 'none'/)
-    expect(s.task).toMatch(/tail_log path=/)
-    expect(s.task).toMatch(/exit code 0/)
+    expect(s.tools).toContain('list_brew_services')
+    expect(s.tools).not.toContain('write_plist')
+    expect(s.tools).not.toContain('load_plist')
+    expect(s.tools).not.toContain('unload_plist')
+    expect(s.task).toMatch(/一律盘点/)
+    expect(s.task).toMatch(/不 write\/load\/unload/)
+  })
+
+  it('sk-diag 按资源类型分支，且工具面不含笔记写入', () => {
+    const s = findSkill('sk-diag')!
+    expect(s.tools).toContain('search_services')
+    expect(s.tools).toContain('tail_log')
+    expect(s.tools).not.toContain('write_note')
+    expect(s.tools).not.toContain('delete_note')
+    expect(s.task).toMatch(/cron/)
+    expect(s.task).toMatch(/端口服务/)
   })
 })

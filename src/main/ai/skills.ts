@@ -97,11 +97,15 @@ PATH(完整规则见专家提示词,这里只列本任务的具体查法):
     icon: 'fa-stethoscope',
     turnLimit: 16,
     task: `当前任务:**诊断某个任务为什么没在运行 / 反复退出**。
-按 状态 → plist → 日志 的顺序取证(get_service_status → read_plist → tail_log),
-不要跳过日志直接猜。任务自己管理日志时,向用户要日志文件的**绝对路径**,用 \`tail_log path=<绝对路径>\` 读取(仅允许标准日志目录或该任务已配置的路径)。结论按「症状 → 证据 → 根因 → 修复步骤 → 验证方式」组织,证据要引用具体的 pid / exit code / 日志行。
-修复需要落盘时先说明再调用写工具,用户在授权卡上确认后才会执行。
-修复落盘并**载入之后,必须实际调用 get_service_status 与 tail_log 验证**(状态正常、日志无新报错)再给最终结论 —— 不要只说"应该好了"。`,
-    tools: null
+如果用户只点了技能卡、还没有给出具体目标，先问清要诊断哪个 launchd Label / cron 任务 / 端口服务，不要先全量扫描。
+先用 search_services（或用户提供的明确 id/Label）确认资源类型与 scope，遇同名跨 scope 必须先要求用户指明 scope，不能猜。
+- launchd：按 状态 → plist → 日志 取证(get_service_status → read_plist → tail_log)。
+- cron：先用 search_services(source=cron) 确认任务；确认后直接把返回的**命令/说明**传给 tail_log（label 参数可传命令或说明），不要再重复 list_services；cron 没有 launchd 状态/plist。
+- 端口服务：用 check_port 取证；不要把端口服务误当 launchd。
+任务自己管理日志时,向用户要日志文件的**绝对路径**,用 \`tail_log path=<绝对路径>\` 读取(仅允许标准日志目录或该任务已配置的路径)。未配置文件日志是「验证不充分」，不是「日志干净」。结论按「症状 → 证据 → 根因 → 修复步骤 → 验证方式」组织,证据要引用具体的 pid / exit code / 日志行。
+launchd 修复需要落盘时先说明再调用写工具,用户在授权卡上确认后才会执行；若是新补充配置，先 prepare_agent → generate_plist → write_plist → load_plist。
+修复并**载入之后,必须实际调用 get_service_status 与 tail_log 验证**(状态正常、日志有足够证据或明确标注验证不充分)再给最终结论 —— 不要只说"应该好了"。`,
+    tools: ['list_services', 'search_services', 'check_port', 'read_plist', 'get_service_status', 'tail_log', 'prepare_agent', 'generate_plist', 'validate_plist', 'write_plist', 'load_plist', 'unload_plist']
   },
   {
     id: 'sk-refactor',
@@ -109,11 +113,13 @@ PATH(完整规则见专家提示词,这里只列本任务的具体查法):
     descKey: 'ai.skill.refactor.desc',
     tag: 'refactor',
     icon: 'fa-wand-magic-sparkles',
+    turnLimit: 16,
     task: `当前任务:**扫描重复或冗余的任务配置,给出合并与抽象建议**。
-用 list_services / search_services 找出语义重复的任务(例如 launchd 与 cron 都在做同一件事),
-读它们的 plist 对比差异,再用 start_interval / calendar / StartCalendarInterval 等实际键给出**可落地的合并方案**。
-本任务是**只读分析**:不要调用任何写工具,把建议交给用户决定。`,
-    tools: ['list_services', 'search_services', 'read_plist', 'get_service_status', 'validate_plist', 'generate_plist']
+如果用户只点了技能卡、还没有给出扫描范围，先问关键词/标签/服务名；不要在全无目标时立刻全量扫描。
+先用用户给出的关键词/标签/服务名定位候选；只有用户明确要求全量盘点时才列全部。发现候选后直接对比并给结论，不要为每个无关任务逐个查状态或读 plist —— 那样会在几轮内耗尽工具额度。
+用 list_services / search_services 找出语义重复的任务(例如 launchd 与 cron 都在做同一件事),读相关 plist 与状态对比差异，再用 StartInterval / StartCalendarInterval 等实际键给出**可落地但未执行的合并方案**。
+本任务是**严格只读分析**:工具面不含任何写入/载入/删除能力；不要生成草稿或暗示已经应用，把建议交给用户决定。扫描结果受工具返回上限影响时必须说明覆盖范围，不要声称已穷尽所有服务。`,
+    tools: ['list_services', 'search_services', 'read_plist', 'get_service_status']
   },
   {
     id: 'sk-import',
@@ -122,33 +128,14 @@ PATH(完整规则见专家提示词,这里只列本任务的具体查法):
     tag: 'import',
     icon: 'fa-file-import',
     turnLimit: 16,
-    task: `当前任务:**盘点本机已安装的 Homebrew 服务,评估能否纳入 Launcher 统一管理**。
-用 search_services(source=brew) 与 list_services 找出 brew 管理的服务及其现有 launchd 标签,
-逐个说明:已有对应标签的(无需新建)、缺日志路径的、以及未被 Launcher 看到的。
+    task: `当前任务:**盘点本机已安装的 Homebrew 服务，给出 Launcher 可见性与管理边界报告**。
+先调用 list_brew_services（它是 brew services 的权威清单，含未载入/无 plist 的服务），再用 search_services(source=brew) 与 list_services 对照 Launcher 当前扫描结果。
+逐个说明:已被 Launcher 识别的、已停止/无 plist 因而未显示的、自定义 Label 但按 plist 文件匹配的、以及日志线索。
 
-PATH(完整规则见专家提示词):launchd 不加载 shell 配置;补配置时 program 用绝对路径,
-程序内部会调用外部命令时必须写 EnvironmentVariables.PATH —— 路径拿不到就问用户,不要猜。
-
-日志与验证:
-- 补配置时传 scope;brew 服务自己管理日志时传 \`logs: 'none'\`,并如实告诉用户日志在哪;否则按 scope 派生默认日志目录(可再用 tail_log path= 读取自定义路径)。
-- 生成草稿前预检 program / WorkingDirectory;需要补配置时生成并校验,**写入前必须先向用户说明并取得确认**。
-- 写入并载入后,用 get_service_status + tail_log 验证;已知监听端口时用 check_port 确认端口在监听且 pid 一致。
-- 判据:常驻服务 running=false / exit≠0 / 日志报错 → 修复;一次性任务 exit code 0 即成功;定时任务两次触发之间未运行正常。
-- 载入失败或需要回滚时可 unload_plist;覆盖前生成的 .bak 可用于恢复旧配置(先向用户说明)。
-注意 brew 管理的 plist 不要手工改写 —— 下次 brew 操作会覆盖,这一点要如实告知用户。`,
-    tools: [
-      'search_services',
-      'list_services',
-      'read_plist',
-      'get_service_status',
-      'check_port',
-      'generate_plist',
-      'validate_plist',
-      'write_plist',
-      'load_plist',
-      'unload_plist',
-      'tail_log'
-    ]
+**Brew 服务一律盘点/建议，不创建替代 plist、不 write/load/unload，也不承诺由 Launcher 统一接管。** brew 管理的 plist 下次 brew 操作会覆盖；启停请使用 brew services。只有用户明确需要一个与 Brew 服务无关的补充 launchd 任务时，才另走 prepare_agent → generate_plist → 用户授权的 write_plist/load_plist。
+日志缺失要标为验证不充分；程序自管日志时可让用户提供允许的绝对路径，用 tail_log path= 读取。
+本任务本身是只读盘点，不调用写工具。`,
+    tools: ['list_brew_services', 'search_services', 'list_services', 'read_plist', 'get_service_status', 'check_port', 'tail_log']
   }
 ]
 

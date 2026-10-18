@@ -210,7 +210,7 @@ function BotGroupView({
         </div>
       )}
       {nodes}
-      <MsgMeta assistant={assistant} isFinal={isFinal} />
+      <MsgMeta assistant={assistant} isFinal={isFinal} runActive={runActive} />
     </div>
   )
 }
@@ -229,10 +229,12 @@ function cardToolCallId(
 
 function MsgMeta({
   assistant,
-  isFinal
+  isFinal,
+  runActive
 }: {
   assistant: AiAssistantMessage
   isFinal: boolean
+  runActive: boolean
 }): React.JSX.Element | null {
   const t = useT()
   const fmt = useFmt()
@@ -247,7 +249,10 @@ function MsgMeta({
           : // 末条仍是 toolUse = 运行在"还想继续调工具"时被截断(工具轮数上限)。
             // ⚠ 必须限定"整段对话的最后一条":中间任何调过工具的助手消息都是 toolUse 状态
             //   (循环接着跑下一轮),不限定就会满屏都是这条提示。
-            stopReason === 'toolUse' && isFinal
+            // 运行还在继续时，最后一条暂时是 toolUse 只是中间态；等 run 结束仍是
+            // toolUse 才说明被轮数上限截断。否则每个多轮技能都会中途闪一次
+            // 「Tool-call limit reached」。
+            stopReason === 'toolUse' && isFinal && !runActive
             ? t('ai.notice.toolLimit')
             : null
   const cost = usage?.cost

@@ -532,14 +532,16 @@ on the metadata row turns it off.
 
 ### What it can do
 
-It calls the app's own tool layer (**reading real system state**, not mock data) — 21 tools in total:
+It calls the app's own tool layer (**reading real system state**, not mock data) — 22 tools in total:
 
-- **13 read-only**: list/query agents, scheduled tasks, port services; read raw plist source, read logs, check a task's run state, read notes (including screenshots inside them), prepare an Agent creation plan…
+- **14 read-only**: list/query agents, scheduled tasks, port services; read raw plist source, read logs, check a task's run state, read notes (including screenshots inside them), prepare an Agent creation plan, inventory Homebrew services…
 - **8 requiring authorization**: edit plists, write files, perform write operations — each execution pops an **authorization card** stating **the exact command about to run**; it only runs once you hit "Allow"
 
-Whether write tools are **visible** is decided by the **MCP permission mode** (default `readOnly` exposes only the 12 read-only tools). In **full** mode, external agents on HTTP connections **execute write tools directly**, without the built-in chat's per-call approval cards — enable it only for agents you trust. The stdio mount's write access is decided by the process you start yourself; the app has no control over it. The built-in chat always keeps per-call approval cards.
+Whether write tools are **visible** is decided by the **MCP permission mode** (default `readOnly` exposes only the 14 read-only tools). In **full** mode, external agents on HTTP connections **execute write tools directly**, without the built-in chat's per-call approval cards — enable it only for agents you trust. The stdio mount's write access is decided by the process you start yourself; the app has no control over it. The built-in chat always keeps per-call approval cards.
 
 The built-in **Generate LaunchAgent** skill first shows a **creation plan card**: it read-only checks the program, working directory, Label conflicts, log policy, and an optional port conflict, then lists risks and post-apply acceptance criteria. It **does not** write or load anything. Write and load approval cards appear only after you explicitly ask to apply the plan.
+
+**Diagnose jobs** resolves the resource first (launchd / cron / port) before collecting evidence. **Batch refactor suggestions** and **Import live config** are **read-only**: the former only suggests merges, and the latter only inventories brew services and Launcher visibility without taking over or rewriting Brew-managed services.
 
 The built-in skills (generate a LaunchAgent, diagnose a job, …) **automatically verify after loading a task**: once the AI loads a plist, the app re-checks the run state and logs and hands the real readings back to the AI — if the job isn't running or the log shows errors, it keeps diagnosing and fixing instead of just reporting "done".
 
