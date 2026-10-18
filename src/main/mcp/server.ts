@@ -44,20 +44,28 @@ export function createLauncherMcpServer(deps: {
       capabilities: { tools: {}, prompts: {} },
       instructions:
         'BeCrafter Launcher 的本机服务管理能力(macOS launchd / crontab / 端口服务)。' +
-        '写操作工具仅在权限模式为 full 时可见;即使可见,执行仍需应用侧授权。'
+        '写操作工具仅在权限模式为 full 时可见;full 模式下外部 Agent 会直接执行(没有内置聊天的逐次授权卡),请只在信任的外部 Agent 上开启。'
     }
   )
 
   server.setRequestHandler(ListToolsRequestSchema, () => ({
-    tools: visibleTools(deps.registry, deps.getPermission()).map((t) => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: toJsonSchema(t.parameters),
-      // 写工具标记为破坏性:客户端据此在界面上提示用户
-      annotations: t.write
-        ? { readOnlyHint: false, destructiveHint: true, idempotentHint: false }
-        : { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
-    }))
+    tools: visibleTools(deps.registry, deps.getPermission()).map((t) => {
+      const inputSchema = toJsonSchema(t.parameters)
+      // tail_log 的 path 只在内置聊天 / full 权限下可用;readOnly 对外部 Agent 连参数都不暴露
+      if (t.name === 'tail_log' && deps.getPermission() !== 'full') {
+        const props = inputSchema['properties'] as Record<string, unknown> | undefined
+        if (props !== undefined) delete props['path']
+      }
+      return {
+        name: t.name,
+        description: t.description,
+        inputSchema,
+        // 写工具标记为破坏性:客户端据此在界面上提示用户
+        annotations: t.write
+          ? { readOnlyHint: false, destructiveHint: true, idempotentHint: false }
+          : { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+      }
+    })
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
@@ -73,7 +81,9 @@ export function createLauncherMcpServer(deps: {
     try {
       const result = await def.execute((req.params.arguments ?? {}) as Record<string, unknown>, {
         sessionId: deps.sessionId,
-        signal: extra.signal
+        signal: extra.signal,
+        // 自定义日志路径只在内置聊天 / full 权限下允许;readOnly 外部 Agent 只能读已配置日志
+        allowCustomLogPath: deps.getPermission() === 'full'
       })
       const text = result.lines
         .map((l) => (l.level === '' || l.level === 'info' ? l.text : `[${l.level}] ${l.text}`))

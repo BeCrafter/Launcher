@@ -120,6 +120,7 @@ Other keys the form **doesn't know** (e.g. `MachServices`, `Umask`) do **not** l
 - **"Loaded but the plist is gone"**: still registered in launchd but the file is missing (usually deleted by hand). An orange banner appears on the card — hit **Remove** to clear it out of launchd
 - **XML tab**: edit the raw source directly; a syntax check runs before saving (equivalent to `plutil -lint`)
 - **Log tab**: two switchable sources — **Log files** (tails the files pointed at by `StandardOutPath` / `StandardErrorPath`) and **System log** (`log show`, filterable by level)
+- **Log rotation**: for user-scope Agent stdout/stderr under `~/Library/Logs/<Label>/`, the app rotates by size while running (copytruncate, keeping `.1…N`); adjust the threshold and history count in Settings › Launchd engine. system/daemon logs are not rotated automatically (they may be owned by root), and other apps' log directories are left alone.
 - **External changes sync automatically**: add or remove a plist in Finder or another tool and the list refreshes (FSEvents watching can be turned off in Settings)
 
 ---
@@ -531,14 +532,22 @@ on the metadata row turns it off.
 
 ### What it can do
 
-It calls the app's own tool layer (**reading real system state**, not mock data) — 20 tools in total:
+It calls the app's own tool layer (**reading real system state**, not mock data) — 21 tools in total:
 
-- **12 read-only**: list/query agents, scheduled tasks, port services; read raw plist source, read logs, check a task's run state, read notes (including screenshots inside them)…
+- **13 read-only**: list/query agents, scheduled tasks, port services; read raw plist source, read logs, check a task's run state, read notes (including screenshots inside them), prepare an Agent creation plan…
 - **8 requiring authorization**: edit plists, write files, perform write operations — each execution pops an **authorization card** stating **the exact command about to run**; it only runs once you hit "Allow"
 
-Whether write tools are **visible** is decided by the **MCP permission mode** (default `readOnly` exposes only the 12 read-only tools); but **even when visible, execution still needs your per-call authorization**.
+Whether write tools are **visible** is decided by the **MCP permission mode** (default `readOnly` exposes only the 12 read-only tools). In **full** mode, external agents on HTTP connections **execute write tools directly**, without the built-in chat's per-call approval cards — enable it only for agents you trust. The stdio mount's write access is decided by the process you start yourself; the app has no control over it. The built-in chat always keeps per-call approval cards.
+
+The built-in **Generate LaunchAgent** skill first shows a **creation plan card**: it read-only checks the program, working directory, Label conflicts, log policy, and an optional port conflict, then lists risks and post-apply acceptance criteria. It **does not** write or load anything. Write and load approval cards appear only after you explicitly ask to apply the plan.
 
 The built-in skills (generate a LaunchAgent, diagnose a job, …) **automatically verify after loading a task**: once the AI loads a plist, the app re-checks the run state and logs and hands the real readings back to the AI — if the job isn't running or the log shows errors, it keeps diagnosing and fixing instead of just reporting "done".
+
+When creating a task, the built-in skill writes `stdout` / `stderr` to `~/Library/Logs/<Label>/` by default (system scope uses `/Library/Logs/<Label>/`), unless the program manages its own logs or you explicitly opt out — this gives the post-load verification real output to inspect. launchd does not rotate logs; configure rotation yourself for long-running jobs.
+
+When the AI loads a task: `RunAtLoad` jobs start immediately; `StartInterval` / `StartCalendarInterval` / `WatchPaths` jobs wait for their trigger; manual-only jobs run once on load.
+
+If the service manages its own logs, give the AI the **absolute path** to the log file; it can read files under the standard log directories or paths already configured on that task via `tail_log`.
 
 ### Connecting external agents (MCP)
 
@@ -566,6 +575,8 @@ The top of the dialog shows the real state of the PATH link (installed / not ins
 | **Launchd engine** | FSEvents directory watching | Auto-refresh the list when external tools add/remove plists (turn off for manual refresh only) |
 | | Command timeout | Upper bound for waiting on `launchctl` / `kill`; raise it on slow machines or with many tasks |
 | | Scheduled task log retention | Log segments older than this are cleaned up automatically (3 days by default) |
+| | Agent log rotation threshold | User-scope Agent stdout/stderr under `~/Library/Logs/<Label>/` rotate with copytruncate above this size (Off / 5 / 10 / 25 / 50 MB) |
+| | History files to keep | Keep `.1…N` after rotation; the oldest file is deleted |
 | **Plist editor** | New task label prefix | Default Label prefix when creating an Agent (`com.user.` by default) |
 | | XML indentation | Indentation used when saving/formatting plists (2 spaces / 4 spaces / Tab) |
 | **Security** | Quiet period | Don't ask again for this long after authorizing (aligned with macOS's ~5 minute authorization cache) |
@@ -595,7 +606,8 @@ The top of the dialog shows the real state of the PATH link (installed / not ins
 | Load at login | `launchctl`'s flag (across reboots) | Turn the switch off |
 | Create / modify a scheduled task | Rewrites `crontab` (or `/etc/crontab`) | Delete in-app, or edit back with `crontab -e` |
 | Kill / restart a port process | Terminates a real process | Restart relaunches with the recorded command line; some processes can only be restarted by relaunching their host app |
-| AI write operations | Executed only after per-call confirmation on the authorization card | Same as above |
+| Built-in AI write operations | Executed only after per-call confirmation on the authorization card | Same as above |
+| External agent writes (MCP full) | Executed directly by the external agent, with no in-app per-call approval card | Same as above |
 
 ---
 

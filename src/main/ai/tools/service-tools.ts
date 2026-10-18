@@ -17,6 +17,37 @@ export function createServiceTools(deps: {
   launchctl: LaunchctlService
   home: string
 }): ToolDef[] {
+  /** 触发方式摘要:自动验证要据此判断「未运行」是不是故障(一次性/定时任务不能套常驻服务的判据) */
+  function triggerLine(value: Record<string, unknown>): ToolOutputLine {
+    const isDict = (v: unknown): v is Record<string, unknown> =>
+      typeof v === 'object' && v !== null && !Array.isArray(v)
+    const bits: string[] = []
+    if (value['RunAtLoad'] === true) bits.push('RunAtLoad')
+    const ka = value['KeepAlive']
+    if (ka === true) bits.push('KeepAlive')
+    else if (isDict(ka)) bits.push(Object.keys(ka).length > 0 ? 'KeepAlive(dict)' : 'KeepAlive(空=关闭)')
+    const si = value['StartInterval']
+    if (typeof si === 'number') bits.push(`StartInterval ${si}s`)
+    const sci = value['StartCalendarInterval']
+    if (sci !== undefined) {
+      const entries = Array.isArray(sci) ? sci : [sci]
+      const fmt = (e: unknown): string => {
+        if (!isDict(e)) return '?'
+        const parts = ['Month', 'Day', 'Weekday', 'Hour', 'Minute']
+          .filter((k) => typeof e[k] === 'number')
+          .map((k) => `${k}=${e[k]}`)
+        // 空字典 = 每分钟触发;这是新建任务时最容易误生成的形态
+        return parts.length > 0 ? parts.join(',') : '空=每分钟'
+      }
+      bits.push(`StartCalendarInterval(${entries.map(fmt).join(' / ')})`)
+      if (entries.some((e) => isDict(e) && Object.keys(e).length === 0)) {
+        bits.push('⚠ 空日历=每分钟触发')
+      }
+    }
+    const wp = value['WatchPaths']
+    if (Array.isArray(wp)) bits.push(`WatchPaths ${wp.length} 个`)
+    return line('', `触发：${bits.length > 0 ? bits.join(' · ') : '无（仅手动启动）'}`)
+  }
   /** 三个域的计数:任务 / 运行中 / 未运行 / 非任务占位 / 损坏 */
   function counts(list: Agent[]): ToolOutputLine[] {
     const tasks = list.filter((a) => !a.isNotTask && !a.parseError)
@@ -102,6 +133,21 @@ export function createServiceTools(deps: {
         if (agent.parseError) {
           out.push(line('err', `plist 无法解析：${agent.parseError}；需要按 XML 修复`))
           return { lines: out, isError: true }
+        }
+        // 触发方式与日志路径:自动验证要靠它们区分「常驻服务挂了」和「一次性/定时任务正常未运行」
+        try {
+          const pf = await deps.plists.readFresh(scope, deps.plists.pathFor(scope, agent.label))
+          out.push(triggerLine(pf.value))
+          const so = pf.value['StandardOutPath']
+          const se = pf.value['StandardErrorPath']
+          out.push(
+            line(
+              '',
+              `日志：stdout ${typeof so === 'string' && so !== '' ? so : '未配置'} · stderr ${typeof se === 'string' && se !== '' ? se : '未配置'}`
+            )
+          )
+        } catch {
+          /* 文件读不到不影响运行态查询 */
         }
         try {
           const st = await deps.agents.readStatus(agent.id)

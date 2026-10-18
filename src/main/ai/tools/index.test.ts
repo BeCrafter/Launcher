@@ -1,6 +1,9 @@
-// 工具层契约与边界的回归:20 个工具(12 只读 + 8 写)、写工具必备授权摘要、
+// 工具层契约与边界的回归:21 个工具(13 只读 + 8 写)、写工具必备授权摘要、
 // 以及最容易出错的几类目标(跨作用域同名 / 非任务文件 / 损坏 plist / 找不到 / 附件路径闸门)
 import { describe, expect, it } from 'vitest'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parsePlistXml } from '../../domains/plist-xml'
 import { createToolRegistry } from './index'
 import type { Agent, PortService } from '../../../shared/models'
@@ -41,7 +44,33 @@ const AGENTS: Agent[] = [
 ]
 
 const FILES = [
-  { path: `${HOME}/Library/LaunchAgents/com.user.alpha.plist`, scope: 'user' as const, fileName: 'com.user.alpha.plist', label: 'com.user.alpha', isTask: true },
+  {
+    path: `${HOME}/Library/LaunchAgents/com.user.alpha.plist`,
+    scope: 'user' as const,
+    fileName: 'com.user.alpha.plist',
+    label: 'com.user.alpha',
+    isTask: true,
+    xml: '<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>com.user.alpha</string></dict></plist>',
+    value: { Label: 'com.user.alpha' }
+  },
+  {
+    path: `${HOME}/Library/LaunchAgents/com.user.beta.plist`,
+    scope: 'user' as const,
+    fileName: 'com.user.beta.plist',
+    label: 'com.user.beta',
+    isTask: true,
+    xml: '',
+    value: { Label: 'com.user.beta', StartCalendarInterval: {} }
+  },
+  {
+    path: `${HOME}/Library/LaunchAgents/homebrew.mxcl.redis.plist`,
+    scope: 'user' as const,
+    fileName: 'homebrew.mxcl.redis.plist',
+    label: 'homebrew.mxcl.redis',
+    isTask: true,
+    xml: '<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>homebrew.mxcl.redis</string></dict></plist>',
+    value: { Label: 'homebrew.mxcl.redis' }
+  },
   { path: `${HOME}/Library/LaunchAgents/placeholder.plist`, scope: 'user' as const, fileName: 'placeholder.plist', label: '', isTask: false },
   { path: `${HOME}/Library/LaunchAgents/broken.plist`, scope: 'user' as const, fileName: 'broken.plist', label: '', isTask: false }
 ]
@@ -176,7 +205,11 @@ function makeRegistry(portServices: PortService[] = []) {
         opsCalls.push({ id, action })
         return { loaded: action === 'start', enabled: true, running: false }
       },
-      readLogs: async () => [{ ts: '2026-09-22 10:00:00', type: 'info' as const, text: 'hello' }]
+      logPaths: async (id: string) =>
+        id.includes('beta') ? { stdout: '', stderr: '' } : { stdout: `${HOME}/logs/out.log`, stderr: `${HOME}/logs/err.log` },
+      readLogs: async () => [
+        { ts: '2026-09-22 10:00:00', type: 'info' as const, text: 'hello', source: 'stdout' as const }
+      ]
     },
     cron: {
       list: async () => ({ jobs: [], headers: { user: { headerRaw: '', exists: false }, system: { headerRaw: '', exists: false } } }),
@@ -196,11 +229,28 @@ function makeRegistry(portServices: PortService[] = []) {
       readFresh: async (scope: string, path: string) => {
         const f = FILES.find((x) => x.path === path)
         if (!f) throw new Error('not found')
+        if (f.label === 'com.user.alpha') {
+          return { ...f, xml: '', value: { RunAtLoad: true, KeepAlive: true, StandardOutPath: '/tmp/out.log' }, desc: '' }
+        }
+        if (f.label === 'com.user.beta') {
+          return { ...f, xml: '', value: { Label: 'com.user.beta', StartCalendarInterval: {} }, desc: '' }
+        }
         return { ...f, xml: '', value: {}, desc: '' }
       },
       pathFor: (scope: string, label: string) =>
         scope === 'user' ? `${HOME}/Library/LaunchAgents/${label}.plist` : `/Library/LaunchAgents/${label}.plist`,
-      write: async (scope: string, path: string, xml: string) => void written.push({ path, xml })
+      write: async (scope: string, path: string, xml: string) => void written.push({ path, xml }),
+      writeAt: async (scope: string, path: string, xml: string) => void written.push({ path, xml }),
+      writeWithBackup: async (
+        scope: string,
+        path: string,
+        xml: string,
+        backupPath: string,
+        backupXml: string
+      ) => {
+        written.push({ path: backupPath, xml: backupXml })
+        written.push({ path, xml })
+      }
     },
     launchctl: {
       list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set<string>(), system: new Set<string>() } })
@@ -219,10 +269,10 @@ const byName = (registry: ReturnType<typeof makeRegistry>['registry'], n: string
 }
 
 describe('ToolRegistry 契约', () => {
-  it('恰好 20 个工具:12 只读 + 8 写', () => {
+  it('恰好 21 个工具:13 只读 + 8 写', () => {
     const { registry } = makeRegistry()
-    expect(registry.all()).toHaveLength(20)
-    expect(registry.readOnly()).toHaveLength(12)
+    expect(registry.all()).toHaveLength(21)
+    expect(registry.readOnly()).toHaveLength(13)
     expect(registry.writable()).toHaveLength(8)
   })
 
@@ -230,7 +280,7 @@ describe('ToolRegistry 契约', () => {
     const { registry } = makeRegistry()
     expect(registry.all().map((t) => t.name).sort()).toEqual([
       'add_cron', 'check_port', 'collect_diagnostic_context', 'delete_note', 'generate_plist',
-      'get_service_status', 'link_note', 'list_notes', 'list_services', 'load_plist', 'read_note',
+      'get_service_status', 'link_note', 'list_notes', 'list_services', 'load_plist', 'prepare_agent', 'read_note',
       'read_note_image', 'read_plist', 'remove_cron', 'search_services', 'tail_log', 'unload_plist',
       'validate_plist', 'write_note', 'write_plist'
     ])
@@ -320,6 +370,49 @@ describe('目标定位的边界', () => {
   })
 })
 
+describe('prepare_agent', () => {
+  it('只读准备:返回卡片且不写入/不执行 ops', async () => {
+    const { registry, written, opsCalls } = makeRegistry()
+    const r = await byName(registry, 'prepare_agent').execute(
+      { label: 'com.user.plan', scope: 'user', program: '/bin/echo', args: ['hello'] },
+      ctx()
+    )
+    expect(r.isError).toBeFalsy()
+    expect(r.cardOnly).toBe(true)
+    expect(r.card).toMatchObject({ kind: 'agentPreparation', readiness: 'ready', label: 'com.user.plan', scope: 'user' })
+    expect(written).toHaveLength(0)
+    expect(opsCalls).toHaveLength(0)
+  })
+
+  it('同 scope 标签冲突与端口占用会阻断,不进行写入', async () => {
+    const { registry, written } = makeRegistry([
+      {
+        id: 'svc-3000', port: 3000, name: 'old-app', pid: 99, command: 'node old.js', cmd: 'node old.js',
+        user: 'tester', status: 'running', addr: '127.0.0.1', proto: 'tcp', uptime: '1m'
+      }
+    ])
+    const r = await byName(registry, 'prepare_agent').execute(
+      { label: 'com.user.alpha', scope: 'user', program: '/bin/echo', port: 3000 },
+      ctx()
+    )
+    expect(r.isError).toBeFalsy()
+    expect(r.card).toMatchObject({ kind: 'agentPreparation', readiness: 'blocked', port: { value: 3000, state: 'occupied' } })
+    if (r.card?.kind !== 'agentPreparation') throw new Error('unreachable')
+    expect(r.card.questions.join('\n')).toContain('端口 3000 已占用')
+    expect(written).toHaveLength(0)
+  })
+
+  it('无效端口被拒绝', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'prepare_agent').execute(
+      { label: 'com.user.plan', scope: 'user', program: '/bin/echo', port: 70000 },
+      ctx()
+    )
+    expect(r.isError).toBe(true)
+    expect(savedText(r)).toContain('1–65535')
+  })
+})
+
 describe('generate_plist', () => {
   it('产出可解析的 plist,ProgramArguments 首项即可执行文件(argv 规范形态)', async () => {
     const { registry } = makeRegistry()
@@ -370,6 +463,193 @@ describe('generate_plist', () => {
     const p2 = parsePlistXml(x2)
     expect(p2.ok && Array.isArray(p2.value['StartCalendarInterval'])).toBe(true)
   })
+
+  it('logDir 自动派生 stdout/stderr,并把 ~/ 展开成绝对路径', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.logs', program: '/bin/echo', logDir: '~/Library/Logs/com.user.logs' },
+      ctx()
+    )
+    expect(r.isError).toBeFalsy()
+    const xml = r.card?.kind === 'plist' ? r.card.xml : ''
+    const p = parsePlistXml(xml)
+    expect(p.ok).toBe(true)
+    if (!p.ok) return
+    expect(p.value['StandardOutPath']).toBe(`${HOME}/Library/Logs/com.user.logs/stdout.log`)
+    expect(p.value['StandardErrorPath']).toBe(`${HOME}/Library/Logs/com.user.logs/stderr.log`)
+  })
+
+  it('传 scope 后自动按作用域派生默认日志目录;logs=none 可关闭', async () => {
+    const { registry } = makeRegistry()
+    const user = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.logs', program: '/bin/echo', scope: 'user' },
+      ctx()
+    )
+    const userXml = user.card?.kind === 'plist' ? user.card.xml : ''
+    const up = parsePlistXml(userXml)
+    expect(up.ok && up.value['StandardOutPath']).toBe(`${HOME}/Library/Logs/com.user.logs/stdout.log`)
+
+    const daemon = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.logs', program: '/bin/echo', scope: 'daemon' },
+      ctx()
+    )
+    const daemonXml = daemon.card?.kind === 'plist' ? daemon.card.xml : ''
+    const dp = parsePlistXml(daemonXml)
+    expect(dp.ok && dp.value['StandardOutPath']).toBe('/Library/Logs/com.user.logs/stdout.log')
+
+    const none = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.logs', program: '/bin/echo', scope: 'user', logs: 'none' },
+      ctx()
+    )
+    const noneXml = none.card?.kind === 'plist' ? none.card.xml : ''
+    const np = parsePlistXml(noneXml)
+    expect(np.ok && np.value['StandardOutPath']).toBeUndefined()
+    expect(savedText(none)).toContain('logs=none')
+  })
+
+  it('scope=daemon 时 UserName 不再提示「仅 daemon」;user 时提示', async () => {
+    const { registry } = makeRegistry()
+    const daemon = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', scope: 'daemon', userName: '_www' },
+      ctx()
+    )
+    expect(savedText(daemon)).not.toContain('仅 daemon 作用域生效')
+    const user = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', scope: 'user', userName: '_www' },
+      ctx()
+    )
+    expect(savedText(user)).toContain('仅 daemon 作用域生效')
+  })
+
+  it('日志路径必须是绝对路径,且 stdout/stderr 不能相同', async () => {
+    const { registry } = makeRegistry()
+    const rel = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.logs', program: '/bin/echo', stdout: 'logs/out.log' },
+      ctx()
+    )
+    expect(rel.isError).toBe(true)
+    expect(rel.lines[0].text).toContain('绝对路径')
+
+    const same = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.logs', program: '/bin/echo', stdout: '/tmp/same.log', stderr: '/tmp/same.log' },
+      ctx()
+    )
+    expect(same.isError).toBe(true)
+    expect(same.lines[0].text).toContain('同一个文件')
+  })
+
+  it('program / workingDirectory 预检:不存在或不可执行直接报错', async () => {
+    const { registry } = makeRegistry()
+    const noProgram = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/definitely/not/here' },
+      ctx()
+    )
+    expect(noProgram.isError).toBe(true)
+    expect(noProgram.lines[0].text).toContain('不存在')
+
+    const noDir = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', workingDirectory: '/definitely/not/here' },
+      ctx()
+    )
+    expect(noDir.isError).toBe(true)
+    expect(noDir.lines[0].text).toContain('workingDirectory')
+  })
+
+  it('calendar / processType 取值校验', async () => {
+    const { registry } = makeRegistry()
+    const badCal = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', calendar: [{ minute: 99 }] },
+      ctx()
+    )
+    expect(badCal.isError).toBe(true)
+    expect(badCal.lines[0].text).toContain('calendar.Minute')
+
+    const badProc = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', processType: 'Quick' },
+      ctx()
+    )
+    expect(badProc.isError).toBe(true)
+    expect(badProc.lines[0].text).toContain('processType')
+  })
+
+  it('calendar 统一写成 launchd / 页面表单的大写键(兼容小写输入)', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.cal', program: '/bin/echo', calendar: [{ hour: 2, minute: 30 }] },
+      ctx()
+    )
+    expect(r.isError).toBeFalsy()
+    const xml = r.card?.kind === 'plist' ? r.card.xml : ''
+    const p = parsePlistXml(xml)
+    expect(p.ok && p.value['StartCalendarInterval']).toEqual({ Hour: 2, Minute: 30 })
+  })
+
+  it('空 calendar 条目被拒绝(空字典 = 每分钟触发)', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.cal', program: '/bin/echo', calendar: [{}] },
+      ctx()
+    )
+    expect(r.isError).toBe(true)
+    expect(r.lines[0].text).toContain('不能为空')
+  })
+
+  it('页面支持的 WatchPaths / Nice / UserName / KeepAlive(dict) 都能生成', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'generate_plist').execute(
+      {
+        label: 'com.user.misc',
+        program: '/bin/echo',
+        watchPaths: ['/tmp/watch-a', '/tmp/watch-b'],
+        nice: 5,
+        userName: '_www',
+        keepAliveDict: { crashed: true }
+      },
+      ctx()
+    )
+    expect(r.isError).toBeFalsy()
+    const xml = r.card?.kind === 'plist' ? r.card.xml : ''
+    const p = parsePlistXml(xml)
+    expect(p.ok).toBe(true)
+    if (!p.ok) return
+    expect(p.value['WatchPaths']).toEqual(['/tmp/watch-a', '/tmp/watch-b'])
+    expect(p.value['Nice']).toBe(5)
+    expect(p.value['UserName']).toBe('_www')
+    expect(p.value['KeepAlive']).toEqual({ Crashed: true })
+  })
+
+  it('Nice / UserName 越界或含空白被拒绝;空 keepAliveDict 只警告', async () => {
+    const { registry } = makeRegistry()
+    const badNice = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', nice: 21 },
+      ctx()
+    )
+    expect(badNice.isError).toBe(true)
+    expect(badNice.lines[0].text).toContain('Nice')
+
+    const badUser = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', userName: 'a b' },
+      ctx()
+    )
+    expect(badUser.isError).toBe(true)
+    expect(badUser.lines[0].text).toContain('UserName')
+
+    const emptyDict = await byName(registry, 'generate_plist').execute(
+      { label: 'com.user.demo', program: '/bin/echo', keepAliveDict: {} },
+      ctx()
+    )
+    expect(emptyDict.isError).toBeFalsy()
+    expect(savedText(emptyDict)).toContain('没有有效条件')
+  })
+})
+
+describe('load_plist 重新载入语义', () => {
+  it('走 reload(已载入也会先卸载再载入,确保读取磁盘上的最新配置)', async () => {
+    const { registry, opsCalls } = makeRegistry()
+    const r = await byName(registry, 'load_plist').execute({ label: 'com.user.beta', scope: 'user' }, ctx())
+    expect(r.isError).toBeFalsy()
+    expect(opsCalls).toEqual([{ id: 'user:com.user.beta', action: 'reload' }])
+  })
 })
 
 describe('write_plist 覆盖守卫', () => {
@@ -406,6 +686,19 @@ describe('write_plist 覆盖守卫', () => {
     expect(written).toHaveLength(0)
   })
 
+  it('Homebrew 管理的任务拒绝手工改写', async () => {
+    const { registry, written } = makeRegistry()
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Label</key><string>homebrew.mxcl.redis</string></dict></plist>`
+    const r = await byName(registry, 'write_plist').execute(
+      { label: 'homebrew.mxcl.redis', xml, scope: 'user', overwrite: true },
+      ctx()
+    )
+    expect(r.isError).toBe(true)
+    expect(savedText(r)).toContain('Homebrew')
+    expect(written).toHaveLength(0)
+  })
+
   it('参数 label 与 XML 里的 Label 不一致 → 拒绝(身份以 XML 为准)', async () => {
     const { registry, written } = makeRegistry()
     const r = await byName(registry, 'write_plist').execute({ label: 'com.user.other', xml: goodXml, scope: 'user' }, ctx())
@@ -419,6 +712,101 @@ describe('write_plist 覆盖守卫', () => {
     const r = await byName(registry, 'write_plist').execute({ label: 'x', xml: 'not xml', scope: 'user' }, ctx())
     expect(r.isError).toBe(true)
     expect(written).toHaveLength(0)
+  })
+
+  it('覆盖同名任务前写 .bak(载入失败可恢复旧配置)', async () => {
+    const { registry, written } = makeRegistry()
+    const alphaXml = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Label</key><string>com.user.alpha</string></dict></plist>`
+    const r = await byName(registry, 'write_plist').execute(
+      { label: 'com.user.alpha', xml: alphaXml, scope: 'user', overwrite: true },
+      ctx()
+    )
+    expect(r.isError).toBeFalsy()
+    const bak = written.find((w) => w.path.endsWith('.bak'))
+    expect(bak?.path).toBe(`${HOME}/Library/LaunchAgents/com.user.alpha.plist.bak`)
+    expect(bak?.xml).toContain('com.user.alpha')
+    expect(savedText(r)).toContain('旧配置已备份')
+  })
+
+  it('写 user 作用域时自动创建日志目录', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ai-logs-'))
+    try {
+      const logDir = join(dir, 'nested', 'logs')
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.user.withlog</string>
+<key>StandardOutPath</key><string>${logDir}/out.log</string>
+<key>StandardErrorPath</key><string>${logDir}/err.log</string>
+</dict></plist>`
+      const { registry, written } = makeRegistry()
+      const r = await byName(registry, 'write_plist').execute({ label: 'com.user.withlog', xml, scope: 'user' }, ctx())
+      expect(r.isError).toBeFalsy()
+      expect(existsSync(logDir)).toBe(true)
+      expect(written.some((w) => w.path.includes('com.user.withlog'))).toBe(true)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('日志路径相对 / stdout 与 stderr 相同 → 拒绝', async () => {
+    const { registry } = makeRegistry()
+    const relXml = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Label</key><string>com.user.rel</string><key>StandardOutPath</key><string>logs/out.log</string></dict></plist>`
+    const rel = await byName(registry, 'write_plist').execute({ label: 'com.user.rel', xml: relXml, scope: 'user' }, ctx())
+    expect(rel.isError).toBe(true)
+    expect(savedText(rel)).toContain('绝对路径')
+
+    const sameXml = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>Label</key><string>com.user.same</string><key>StandardOutPath</key><string>/tmp/same.log</string><key>StandardErrorPath</key><string>/tmp/same.log</string></dict></plist>`
+    const same = await byName(registry, 'write_plist').execute({ label: 'com.user.same', xml: sameXml, scope: 'user' }, ctx())
+    expect(same.isError).toBe(true)
+    expect(savedText(same)).toContain('不能是同一个文件')
+  })
+
+  it('授权卡摘要展示程序、触发与日志路径;非标准日志目录标为危险', () => {
+    const { registry } = makeRegistry()
+    const t = byName(registry, 'write_plist')
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.user.alpha</string>
+<key>ProgramArguments</key><array><string>/bin/sleep</string><string>60</string></array>
+<key>RunAtLoad</key><true/>
+<key>StandardOutPath</key><string>/tmp/out.log</string>
+</dict></plist>`
+    const s = t.summarize!({ label: 'com.user.alpha', xml, scope: 'user' })
+    expect(s.detail).toContain('RunAtLoad')
+    expect(s.detail).toContain('/tmp/out.log')
+    expect(s.command).toContain('/bin/sleep')
+    expect(s.dangerous).toBe(true)
+  })
+})
+
+describe('日志与触发方式的取证口径', () => {
+  it('未配置日志路径时明确说「未配置」,而不是「没有日志行」', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'tail_log').execute({ label: 'com.user.beta', source: 'file' }, ctx())
+    expect(savedText(r)).toContain('未配置 StandardOutPath')
+  })
+
+  it('get_service_status 带触发方式与日志路径(自动验证据此判断未运行是否正常)', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'get_service_status').execute({ label: 'com.user.alpha', scope: 'user' }, ctx())
+    expect(savedText(r)).toContain('触发：RunAtLoad · KeepAlive')
+    expect(savedText(r)).toContain('日志：stdout /tmp/out.log')
+  })
+
+  it('tail_log 标注 stdout/stderr 来源', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'tail_log').execute({ label: 'com.user.alpha', scope: 'user', source: 'file' }, ctx())
+    expect(savedText(r)).toContain('[stdout]')
+  })
+
+  it('空 StartCalendarInterval 标注为每分钟触发', async () => {
+    const { registry } = makeRegistry()
+    const r = await byName(registry, 'get_service_status').execute({ label: 'com.user.beta', scope: 'user' }, ctx())
+    expect(savedText(r)).toContain('空=每分钟')
+    expect(savedText(r)).toContain('⚠ 空日历=每分钟触发')
   })
 })
 

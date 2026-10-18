@@ -49,6 +49,17 @@ export interface PlistService {
   write(scope: AgentScope, path: string, xml: string): Promise<void>
   /** 写入指定文件、跳过覆盖守卫:仅用于调用方已显式指向该文件的原地编辑(占位/损坏文件修复) */
   writeAt(scope: AgentScope, path: string, xml: string): Promise<void>
+  /**
+   * 覆盖写入 + 备份:特权作用域合并为**一次提权**,避免「先备份再写入」弹两次系统授权框。
+   * user 作用域顺序写两个原子文件。
+   */
+  writeWithBackup(
+    scope: AgentScope,
+    path: string,
+    xml: string,
+    backupPath: string,
+    backupXml: string
+  ): Promise<void>
   remove(scope: AgentScope, path: string): Promise<void>
   lint(xml: string): Promise<{ ok: boolean; error: string | null }>
   pathFor(scope: AgentScope, label: string): string
@@ -69,6 +80,12 @@ export function createPlistService(deps: {
   home: string
   /** scanAll 结果记忆时长(ms,默认 1500);write/remove/目录变更都会显式失效 */
   memoTtlMs?: number
+  /**
+   * 文件被写入/删除后的通知(应用内传「广播 agents:changed」)。
+   * AI/MCP 的写工具直接走服务层,不经过 renderer store —— 没有这个事件,列表会停在旧状态。
+   * 独立进程(launcher-mcp stdio)不传。
+   */
+  onChange?(): void
 }): PlistService {
   const memoTtlMs = deps.memoTtlMs ?? 1500
   const dirs = (): { scope: AgentScope; dir: string; privileged: boolean }[] => [
@@ -85,6 +102,9 @@ export function createPlistService(deps: {
   const invalidate = (): void => {
     memo = null
   }
+
+  /** 写盘/删除成功 → 通知宿主重新拉取列表(AI/MCP 写路径绕过 renderer store) */
+  const notifyChange = (): void => deps.onChange?.()
 
   /**
    * 解析单个 plist,**永不抛错、永不丢弃**:每个文件都要产出一条记录。
@@ -217,6 +237,7 @@ export function createPlistService(deps: {
       await fs.writeFile(tmp, xml, { encoding: 'utf8', flag: 'wx' })
       await fs.rename(tmp, path)
       invalidate()
+      notifyChange()
       return
     }
     // 顺序:P1 —— 先在**临时文件**上 chown/chmod,最后才 mv 覆盖目标(权限步骤失败时原目标保持完整)
@@ -236,6 +257,48 @@ export function createPlistService(deps: {
       if (!r.ok) throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
     })
     invalidate()
+    notifyChange()
+  }
+
+  /** 覆盖写入 + 备份。特权作用域把两个文件放进同一个提权事务,只弹一次授权。 */
+  async function writeWithBackup(
+    scope: AgentScope,
+    path: string,
+    xml: string,
+    backupPath: string,
+    backupXml: string
+  ): Promise<void> {
+    assertInsideScope(scope, path)
+    assertInsideScope(scope, backupPath)
+    if (scope === 'user') {
+      await writeAt(scope, backupPath, backupXml)
+      await writeAt(scope, path, xml)
+      return
+    }
+    await withPrivateStaging(async (dir) => {
+      const stagingMain = join(dir, basename(path))
+      const stagingBak = join(dir, basename(backupPath))
+      await fs.writeFile(stagingMain, xml, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+      await fs.writeFile(stagingBak, backupXml, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+      for (const staging of [stagingMain, stagingBak]) {
+        const st = await fs.lstat(staging)
+        if (!st.isFile()) throw new Error(`提权暂存文件异常(非普通文件): ${staging}`)
+      }
+      const r = await deps.elevate.run({
+        steps: [
+          { command: 'chown', args: ['root:wheel', stagingMain] },
+          { command: 'chmod', args: ['644', stagingMain] },
+          { command: 'chown', args: ['root:wheel', stagingBak] },
+          { command: 'chmod', args: ['644', stagingBak] },
+          // 先落备份,再覆盖主文件;主文件 mv 失败时旧配置仍在
+          { command: 'mv', args: [stagingBak, backupPath] },
+          { command: 'mv', args: [stagingMain, path] }
+        ]
+      })
+      if (!r.ok) throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
+    })
+    invalidate()
+    notifyChange()
   }
 
   return {
@@ -272,11 +335,14 @@ export function createPlistService(deps: {
 
     writeAt,
 
+    writeWithBackup,
+
     async remove(scope, path) {
       assertInsideScope(scope, path)
       if (scope === 'user') {
         await fs.unlink(path)
         invalidate()
+        notifyChange()
         return
       }
       const r = await deps.elevate.run({ steps: [{ command: 'rm', args: [path] }] })
@@ -284,6 +350,7 @@ export function createPlistService(deps: {
         throw new Error(r.cancelled ? ELEVATION_CANCELLED : `${ELEVATION_FAILED}: ${r.stderr ?? ''}`)
       }
       invalidate()
+      notifyChange()
     },
 
     async lint(xml) {
@@ -308,6 +375,7 @@ export function createPlistService(deps: {
       })
       if (r.ok) {
         invalidate()
+        notifyChange()
         return { bootoutDone: loaded, fileDeleted: true, cancelled: false, stderr: null }
       }
       if (r.cancelled) {

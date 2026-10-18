@@ -23,6 +23,8 @@ export interface ToolExecResult {
   images?: AiImageBlock[]
   /** 领域卡(可选;内置聊天渲染成卡片,MCP 侧只取 lines 的文本) */
   card?: AiDomainCard
+  /** 内置聊天只展示领域卡，不在通用工具步骤中重复展示该调用 */
+  cardOnly?: boolean
   /** 是否调用失败(pi 约定:抛异常 → isError=true;此处用于不需要抛的"软失败") */
   isError?: boolean
 }
@@ -30,6 +32,12 @@ export interface ToolExecResult {
 export interface ToolContext {
   sessionId: string
   signal: AbortSignal
+  /**
+   * 是否允许 tail_log 按任意路径读取日志文件。
+   * 内置聊天为 true(用户能看见对话与路径);MCP 外部 Agent 为 false ——
+   * 避免只读 MCP 变成任意文件读取器。
+   */
+  allowCustomLogPath?: boolean
 }
 
 export interface ToolDef {

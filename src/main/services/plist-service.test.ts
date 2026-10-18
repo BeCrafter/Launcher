@@ -31,13 +31,13 @@ const OTHER_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>Label</key><string>com.test.other</string></dict></plist>`
 
-function harness(ttl: number) {
+function harness(ttl: number, onChange?: () => void) {
   const home = mkdtempSync(join(tmpdir(), 'plist-memo-'))
   const userDir = join(home, 'Library/LaunchAgents')
   mkdirSync(userDir, { recursive: true })
   const elevate: ElevationExecutor = { run: async () => ({ ok: true, cancelled: false, code: 0, stderr: '' }) }
   const runner: ShellRunner = { run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null }) }
-  const svc = createPlistService({ runner, elevate, home, memoTtlMs: ttl })
+  const svc = createPlistService({ runner, elevate, home, memoTtlMs: ttl, onChange })
   const userFiles = (r: Awaited<ReturnType<typeof svc.scanAll>>): PlistFile[] => r.filter((p) => p.scope === 'user')
   /** 用户作用域内的任务 label(非任务/损坏文件不计入) */
   const userLabels = (r: Awaited<ReturnType<typeof svc.scanAll>>): string[] =>
@@ -73,6 +73,22 @@ describe('plist-service.scanAll 记忆', () => {
       await h.svc.write('user', p, PLIST_XML)
       const r = await h.svc.scanAll()
       expect(h.userLabels(r)).toEqual(['com.test.memo'])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('write/remove 成功后通知宿主(AI/MCP 写路径靠它刷新列表)', async () => {
+    let changes = 0
+    const h = harness(60_000, () => {
+      changes += 1
+    })
+    try {
+      const p = join(h.userDir, 'a.plist')
+      await h.svc.write('user', p, PLIST_XML)
+      expect(changes).toBe(1)
+      await h.svc.remove('user', p)
+      expect(changes).toBe(2)
     } finally {
       h.cleanup()
     }
@@ -326,6 +342,26 @@ describe('plist-service 提权事务', () => {
       // 提权结束后整目录被清理(不留 root 拥有的暂存文件)
       const dir = staging.slice(0, staging.lastIndexOf('/'))
       expect(existsSync(dir)).toBe(false)
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('特权覆盖:备份 + 主写入合并为一次提权(只弹一次授权)', async () => {
+    const h = elevHarness({ ok: true })
+    try {
+      await h.svc.writeWithBackup(
+        'daemon',
+        '/Library/LaunchDaemons/com.t.plist',
+        PLIST_XML,
+        '/Library/LaunchDaemons/com.t.plist.bak',
+        OTHER_XML
+      )
+      expect(h.requests).toHaveLength(1)
+      const steps = h.requests[0].steps as { command: string; args: string[] }[]
+      expect(steps.map((s) => s.command)).toEqual(['chown', 'chmod', 'chown', 'chmod', 'mv', 'mv'])
+      expect(steps[4].args[1]).toBe('/Library/LaunchDaemons/com.t.plist.bak')
+      expect(steps[5].args[1]).toBe('/Library/LaunchDaemons/com.t.plist')
     } finally {
       h.cleanup()
     }

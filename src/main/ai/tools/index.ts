@@ -39,9 +39,9 @@ export function createToolRegistry(deps: {
       launchctl: deps.launchctl,
       home: deps.home
     }),
-    ...createPlistTools({ agents: deps.agents, plists: deps.plists, getXmlIndent: () => '  ' }),
+    ...createPlistTools({ agents: deps.agents, plists: deps.plists, discovery: deps.discovery, getXmlIndent: () => '  ' }),
     ...createCronTools({ cron: deps.cron }),
-    ...createLogTools({ agents: deps.agents, cron: deps.cron }),
+    ...createLogTools({ agents: deps.agents, cron: deps.cron, home: deps.home }),
     ...createNotesTools({
       notes: deps.notes,
       agents: deps.agents,

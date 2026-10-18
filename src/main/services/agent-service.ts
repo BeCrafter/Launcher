@@ -40,8 +40,8 @@ import type { LaunchctlService } from './launchctl-service'
 import type { PlistFile, PlistService } from './plist-service'
 import type { ShellRunner } from './shell-runner'
 
-/** 意图动作(用户语义):启动 / 停止 / 重启 / 开机自启开停 / 立即执行一次 —— 顺序逻辑在 main 内部完成 */
-export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
+/** 意图动作(用户语义):启动 / 停止 / 重启 / 重新载入 / 开机自启开停 —— 顺序逻辑在 main 内部完成 */
+export type OpAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable'
 
 export interface AgentService {
   list(): Promise<{ agents: Agent[] }>
@@ -63,6 +63,8 @@ export interface AgentService {
   checkMissing(candidates: { scope: AgentScope; label: string }[]): Promise<MissingAgent[]>
   /** 该 agent 的日志文件路径(stdout 优先,其次 stderr;均无 → null) */
   logFilePath(id: string): Promise<string | null>
+  /** 该 agent 配置的 stdout/stderr 路径(未配置为空串);AI 工具据此区分「未配日志」与「日志为空」 */
+  logPaths(id: string): Promise<{ stdout: string; stderr: string }>
 }
 
 export const agentId = (scope: AgentScope, label: string): string => `${scope}:${label}`
@@ -101,9 +103,17 @@ export function createAgentService(deps: {
   plists: PlistService
   brew: BrewAgentService
   getXmlIndent(): string
+  /**
+   * 运行态被改变后的通知(应用内传「广播 agents:changed」)。
+   * AI/MCP 的 load_plist / unload_plist 直接调 ops,不经过 renderer store ——
+   * 没有这个事件,列表会一直停在旧状态,直到用户重启应用。
+   */
+  onChange?(): void
 }): AgentService {
   const { runner, launchctl, plists, brew } = deps
   const drafts = new Map<string, Agent>() // 未落盘草稿(createDraft → save)
+  /** 运行态变更 → 通知宿主(AI/MCP 路径绕过 renderer store) */
+  const notifyChange = (): void => deps.onChange?.()
 
   /** gui 域(用户态 list)与 system 域(`print system` 服务表)按作用域取用 */
   const tableFor = (tables: LaunchctlTables, scope: AgentScope): LaunchctlTables['gui'] =>
@@ -177,7 +187,9 @@ export function createAgentService(deps: {
         exitCode: null,
         restarts: 0,
         isNotTask: true,
-        parseError: pf.parseError
+        parseError: pf.parseError,
+        logOut: '',
+        logErr: ''
       }
     }
     const entry = entries.get(pf.label)
@@ -195,7 +207,9 @@ export function createAgentService(deps: {
       exitCode: entry?.lastExitCode ?? null,
       restarts: 0,
       isBrew: isBrewManaged(pf.label, program),
-      isDisabledByOverride: disabledFor(tables, pf.scope).has(pf.label)
+      isDisabledByOverride: disabledFor(tables, pf.scope).has(pf.label),
+      logOut: typeof pf.value.StandardOutPath === 'string' ? pf.value.StandardOutPath : '',
+      logErr: typeof pf.value.StandardErrorPath === 'string' ? pf.value.StandardErrorPath : ''
     }
   }
 
@@ -818,6 +832,42 @@ export function createAgentService(deps: {
     await launchctl.bootout(pf.path, pf.scope)
   }
 
+  /**
+   * 重新载入:launchd **只在 bootstrap 时读取 plist**,已载入状态下覆盖文件不会生效。
+   * 因此 AI 的「修好 → write_plist → load_plist → 再验证」必须走 bootout → bootstrap,
+   * 否则第二轮验证看到的仍是旧配置(项目真实事故)。
+   *
+   * 与 `start` 的区别:这里**不替定时任务立即 kickstart** —— RunAtLoad 由 launchd 自己执行,
+   * StartInterval / StartCalendarInterval / WatchPaths 按计划等待;只有「仅手动启动」的任务
+   * 才在载入后 kickstart 一次(否则它永远不会跑)。一次性任务也不会因为 bootstrap 后
+   * pid 已消失而被 kickstart 第二遍。
+   */
+  async function intentReload(pf: PlistFile, tables: LaunchctlTables): Promise<void> {
+    if (disabledFor(tables, pf.scope).has(pf.label)) {
+      await launchctl.enable(pf.label, pf.scope)
+    }
+    const keepAlive = pf.value.KeepAlive
+    // KeepAlive 空字典 = 没有任何重启理由(page 的兼容性扫描也按「关闭」处理)
+    const keepAliveTrigger =
+      keepAlive === true ||
+      (typeof keepAlive === 'object' && keepAlive !== null && !Array.isArray(keepAlive) && Object.keys(keepAlive).length > 0)
+    const hasTrigger =
+      pf.value.RunAtLoad === true ||
+      keepAliveTrigger ||
+      typeof pf.value.StartInterval === 'number' ||
+      pf.value.StartCalendarInterval !== undefined ||
+      Array.isArray(pf.value.WatchPaths)
+    if (tableFor(tables, pf.scope).has(pf.label)) {
+      await launchctl.bootout(pf.path, pf.scope)
+    }
+    await launchctl.bootstrap(pf.path, pf.scope)
+    const entry = tableFor(await launchctl.list(), pf.scope).get(pf.label)
+    // 只有「没有任何触发条件」的任务需要主动 kickstart;其余交给 launchd 的触发条件
+    if (!hasTrigger && (entry === undefined || entry.pid === null)) {
+      await launchctl.kickstart(pf.label, pf.scope)
+    }
+  }
+
   /** 重启:运行中 → kickstart -k(先杀再起);未载入 → 走启动序列 */
   async function intentRestart(pf: PlistFile, tables: LaunchctlTables): Promise<void> {
     const entry = tableFor(tables, pf.scope).get(pf.label)
@@ -841,6 +891,7 @@ export function createAgentService(deps: {
         const info = matchBrewService(found.label, program, brews, found.pf.path)
         if (!info) throw new Error(`not a brew-managed service: ${id}`)
         await brew.action(kind, info)
+        notifyChange()
         // brew 的 stop 会移除 plist(条目从列表消失)→ 容错返回动作前状态并修正 status
         try {
           return await currentAgent(id)
@@ -1234,9 +1285,12 @@ const located = await locateFresh(id, expectedRevision, '源文件已被外部�
       if (action === 'start') await intentStart(found.pf, tables)
       else if (action === 'stop') await intentStop(found.pf)
       else if (action === 'restart') await intentRestart(found.pf, tables)
+      else if (action === 'reload') await intentReload(found.pf, tables)
       else if (action === 'enable') await launchctl.enable(found.label, found.scope) // 开机自启:开
       else await launchctl.disable(found.label, found.scope) // 开机自启:关
-      return opsStateFor(found.pf, found.label)
+      const state = await opsStateFor(found.pf, found.label)
+      notifyChange()
+      return state
       })
     },
 
@@ -1323,7 +1377,7 @@ const located = await locateFresh(id, expectedRevision, '源文件已被外部�
           .split('\n')
           .filter((l) => l.trim() !== '' && !l.startsWith('Timestamp') && !/^-+$/.test(l.trim()))
         const capped = lines.slice(-SYSTEM_LOG_MAX_LINES)
-        return capped.map((text) => ({ ts: extractTs(text), type: classify(text), text: stripTs(text) }))
+        return capped.map((text) => ({ ts: extractTs(text), type: classify(text), text: stripTs(text), source: 'system' as const }))
       }
       const outPath = typeof found.pf.value.StandardOutPath === 'string' ? found.pf.value.StandardOutPath : ''
       const errPath = typeof found.pf.value.StandardErrorPath === 'string' ? found.pf.value.StandardErrorPath : ''
@@ -1341,8 +1395,13 @@ const located = await locateFresh(id, expectedRevision, '源文件已被外部�
             const buf = Buffer.alloc(st.size - start)
             await fh.read(buf, 0, buf.length, start)
             let text = buf.toString('utf8')
-            if (start > 0) text = text.slice(text.indexOf('\n') + 1)
-            chunks.push(...parseLogText(text, formatTs(st.mtime), SYSTEM_LOG_MAX_LINES))
+            if (start > 0) {
+              // 丢掉被截断的第一行(它可能只是半行)
+              const nl = text.indexOf('\n')
+              text = nl >= 0 ? text.slice(nl + 1) : ''
+            }
+            const parsed = parseLogText(text, formatTs(st.mtime), SYSTEM_LOG_MAX_LINES)
+            chunks.push(...parsed.map((l) => ({ ...l, source: p === outPath ? ('stdout' as const) : ('stderr' as const) })))
           } finally {
             await fh.close()
           }
@@ -1375,6 +1434,17 @@ const located = await locateFresh(id, expectedRevision, '源文件已被外部�
 
     async validateXml(xml) {
       return plists.lint(xml)
+    },
+
+    async logPaths(id) {
+      const found = await findAgent(id)
+      if (!found) return { stdout: '', stderr: '' }
+      const out = found.pf.value.StandardOutPath
+      const err = found.pf.value.StandardErrorPath
+      return {
+        stdout: typeof out === 'string' ? out : '',
+        stderr: typeof err === 'string' ? err : ''
+      }
     },
 
     async logFilePath(id) {

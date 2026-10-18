@@ -1,10 +1,10 @@
 // 内置技能的契约测试:白名单工具名必须真实存在、闭环技能必须带验证工具与 PATH 规则。
-// 工具名的全集以 tools/index.test.ts 的 20 个契约为准 —— 这里重复列出用于白名单校验,
+// 工具名的全集以 tools/index.test.ts 的 21 个契约为准 —— 这里重复列出用于白名单校验,
 // 两处同时改才能让「白名单写错工具名」这类静默失效被测出来。
 import { describe, expect, it } from 'vitest'
 import { SKILLS, findSkill } from './skills'
 
-/** tools/index.test.ts 里的工具名契约(20 个) */
+/** tools/index.test.ts 里的工具名契约(21 个) */
 const TOOL_NAMES = [
   'add_cron',
   'check_port',
@@ -12,6 +12,7 @@ const TOOL_NAMES = [
   'delete_note',
   'generate_plist',
   'get_service_status',
+  'prepare_agent',
   'link_note',
   'list_notes',
   'list_services',
@@ -88,5 +89,54 @@ describe('SKILLS 契约', () => {
       const s = findSkill(id)!
       expect(s.turnLimit, `${id} 应设 turnLimit`).toBeGreaterThanOrEqual(16)
     }
+  })
+
+  it('sk-plist 带日志默认策略(默认配 stdout/stderr,按输出视情况调整)', () => {
+    const s = findSkill('sk-plist')!
+    expect(s.task).toMatch(/StandardOutPath/)
+    expect(s.task).toMatch(/StandardErrorPath/)
+    expect(s.task).toMatch(/logDir/)
+    expect(s.task).toMatch(/Library\/Logs/)
+    expect(s.task).toMatch(/不轮转/)
+    expect(s.task).toMatch(/tail_log path=/)
+  })
+
+  it('sk-plist 区分常驻 / 一次性 / 定时任务的验证判据', () => {
+    const s = findSkill('sk-plist')!
+    expect(s.task).toMatch(/常驻服务/)
+    expect(s.task).toMatch(/一次性任务/)
+    expect(s.task).toMatch(/定时任务/)
+    expect(s.task).toMatch(/exit code 0/)
+  })
+
+  it('sk-plist 带端口验证与回滚工具', () => {
+    const s = findSkill('sk-plist')!
+    expect(s.tools).toContain('check_port')
+    expect(s.tools).toContain('unload_plist')
+  })
+
+  it('sk-plist 与页面表单能力对齐(WatchPaths / Nice / UserName / KeepAlive dict)', () => {
+    const s = findSkill('sk-plist')!
+    expect(s.task).toMatch(/WatchPaths/)
+    expect(s.task).toMatch(/Nice/)
+    expect(s.task).toMatch(/UserName/)
+    expect(s.task).toMatch(/Crashed/)
+    expect(s.task).toMatch(/SuccessfulExit/)
+  })
+
+  it('sk-plist 覆盖仅手动任务与 scope/logs 派生', () => {
+    const s = findSkill('sk-plist')!
+    expect(s.task).toMatch(/仅手动启动/)
+    expect(s.task).toMatch(/scope/)
+    expect(s.task).toMatch(/logs: 'none'|logs.*none/)
+  })
+
+  it('sk-import 同步日志 / 端口 / 回滚规则', () => {
+    const s = findSkill('sk-import')!
+    expect(s.tools).toContain('check_port')
+    expect(s.tools).toContain('unload_plist')
+    expect(s.task).toMatch(/logs: 'none'/)
+    expect(s.task).toMatch(/tail_log path=/)
+    expect(s.task).toMatch(/exit code 0/)
   })
 })

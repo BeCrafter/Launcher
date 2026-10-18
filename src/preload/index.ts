@@ -19,6 +19,7 @@ function readInitialSettings(): ReturnType<typeof normalizeSettings> {
 const EVENT_CHANNELS: readonly IpcEventChannel[] = [
   IPC_EVENTS.settingsChanged,
   IPC_EVENTS.agentsDirChanged,
+  IPC_EVENTS.agentsChanged,
   IPC_EVENTS.servicesUpdated,
   IPC_EVENTS.aiRunEvent,
   IPC_EVENTS.notesChanged

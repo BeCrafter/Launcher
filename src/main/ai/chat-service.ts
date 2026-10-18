@@ -87,6 +87,12 @@ interface RunState {
   verifyQueue: { label: string; scope?: string }[]
   /** 已注入的自动验证轮数(封顶 2,防止「修了又坏、坏了又修」无限续跑) */
   verifyRound: number
+  /** prepare_agent 产出的就绪计划;对应标签必须先有成功 write 才能 load */
+  preparedAgentLabels: Set<string>
+  /** 本轮由 write_plist 成功落盘的计划标签 */
+  writtenAgentLabels: Set<string>
+  /** generate_plist 成功产出的 XML 草稿;写入时可安全补回模型遗漏的 xml 参数 */
+  generatedAgentDrafts: Map<string, { scope: string; xml: string }>
 }
 
 export function createChatService(deps: {
@@ -184,7 +190,7 @@ export function createChatService(deps: {
       parameters: d.parameters,
       execute: async (toolCallId, params, signal) => {
         const started = Date.now()
-        const ctx = { sessionId, signal: signal ?? new AbortController().signal }
+        const ctx = { sessionId, signal: signal ?? new AbortController().signal, allowCustomLogPath: true }
         let result: ToolExecResult
         try {
           result = await d.execute(params as Record<string, unknown>, ctx)
@@ -196,12 +202,40 @@ export function createChatService(deps: {
           }
         }
         finalizeToolResult(r, toolCallId, d, result, Date.now() - started)
+        if (d.name === 'prepare_agent' && !result.isError) {
+          const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
+          // blocked 计划不应解锁后续执行;准备卡的首行是宿主可控的 ok/warn 结果
+          const ready = result.card?.kind === 'agentPreparation' && result.card.readiness === 'ready'
+          if (label !== '' && ready) r.preparedAgentLabels.add(label)
+        }
+        if (d.name === 'generate_plist' && !result.isError && result.card?.kind === 'plist') {
+          const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
+          const scopeRaw = (params as Record<string, unknown>)['scope']
+          const scope = typeof scopeRaw === 'string' ? scopeRaw : 'user'
+          if (label !== '') r.generatedAgentDrafts.set(label, { scope, xml: result.card.xml })
+        }
+        if (d.name === 'write_plist' && !result.isError) {
+          const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
+          if (label !== '') r.writtenAgentLabels.add(label)
+        }
         // load_plist 成功 → 记入自动验证队列(agent 自然停止时宿主注入验证轮)
         if (d.name === 'load_plist' && !result.isError) {
           const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
           const scopeRaw = (params as Record<string, unknown>)['scope']
+          const scope = typeof scopeRaw === 'string' ? scopeRaw : undefined
+          if (label !== '' && !r.verifyQueue.some((t) => t.label === label && t.scope === scope)) {
+            r.verifyQueue.push({ label, ...(scope ? { scope } : {}) })
+          }
+        }
+        // 载入后又卸载(失败回滚 / 用户改主意):从验证队列移除,别在收尾时验证一个被故意停掉的任务
+        if (d.name === 'unload_plist' && !result.isError) {
+          const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
+          const scopeRaw = (params as Record<string, unknown>)['scope']
+          const scope = typeof scopeRaw === 'string' ? scopeRaw : undefined
           if (label !== '') {
-            r.verifyQueue.push({ label, ...(typeof scopeRaw === 'string' ? { scope: scopeRaw } : {}) })
+            r.verifyQueue = r.verifyQueue.filter(
+              (t) => !(t.label === label && (scope === undefined || t.scope === undefined || t.scope === scope))
+            )
           }
         }
         // 图片块直接进 pi 的 transcript(模型当轮看得到);落库那一路由 finalizeToolResult
@@ -226,6 +260,11 @@ export function createChatService(deps: {
     return lines
       .map((l) => (l.level === '' || l.level === 'info' ? l.text : `[${l.level}] ${l.text}`))
       .join('\n')
+  }
+
+  /** 状态输出里是否已经有 pid / running:自动验证的短轮询用 */
+  function statusLooksRunning(res: ToolExecResult): boolean {
+    return res.lines.some((l) => /\bpid\s*[:=]?\s*\d+|\brunning\b/i.test(l.text))
   }
 
   // ── 运行事件应用 ──
@@ -430,6 +469,7 @@ export function createChatService(deps: {
       status: result.isError ? (isCancelled(result) ? 'warn' : 'err') : 'ok',
       durationMs,
       ...(def.write ? { write: true } : {}),
+      ...(result.cardOnly ? { cardOnly: true } : {}),
       timestamp: Date.now()
     }
     if (msg.blocks.length === 0) msg.blocks = [{ type: 'text', text: '（无输出）' }]
@@ -531,11 +571,20 @@ export function createChatService(deps: {
     for (const target of targets) {
       const status = deps.registry.get('get_service_status')
       const logs = deps.registry.get('tail_log')
-      const statusRes = status
-        ? await status.execute({ label: target.label, ...(target.scope ? { scope: target.scope } : {}) }, ctx)
-        : { lines: [{ level: 'err' as const, text: 'get_service_status 工具不存在' }] }
+      const runStatus = (): Promise<ToolExecResult> =>
+        status
+          ? status.execute({ label: target.label, ...(target.scope ? { scope: target.scope } : {}) }, ctx)
+          : Promise.resolve({ lines: [{ level: 'err' as const, text: 'get_service_status 工具不存在' }] })
+      let statusRes = await runStatus()
+      // 刚 bootstrap 的常驻服务可能还没产生 pid(冷启动/重启窗口);再等约 1.5s,
+      // 避免宿主把「还在启动」误报成「没跑起来」。
+      for (let i = 0; i < 2; i += 1) {
+        if (r.abort.signal.aborted || statusLooksRunning(statusRes)) break
+        await new Promise((resolve) => setTimeout(resolve, 700))
+        statusRes = await runStatus()
+      }
       const logRes = logs
-        ? await logs.execute({ label: target.label, lines: 20 }, ctx)
+        ? await logs.execute({ label: target.label, lines: 50 }, ctx)
         : { lines: [{ level: 'err' as const, text: 'tail_log 工具不存在' }] }
       sections.push(
         `### ${target.label}\n` +
@@ -546,8 +595,12 @@ export function createChatService(deps: {
     const text =
       `【自动验证】你刚载入了下面这些任务,宿主已代你查过状态与日志。请核对读数:\n\n` +
       `${sections.join('\n\n')}\n\n` +
-      `- 若状态显示未在运行、退出码非 0 或日志里有报错 → 诊断根因并修复(可再 write_plist / load_plist),修复后会再次自动验证(最多 2 轮);\n` +
-      `- 若一切正常 → 给出最终交付说明,引用上面的真实读数(pid / exit code / 日志行),不要凭印象写。`
+      `判据(先看上面【状态】里的「触发」行):\n` +
+      `- 常驻服务(KeepAlive):running=false、exit code 非 0 或日志有报错 → 诊断根因并修复(可再 write_plist / load_plist),修复后会再次自动验证(最多 2 轮);\n` +
+      `- 一次性任务(有 RunAtLoad、无 KeepAlive/定时/监视):exit code 0 即成功,未在运行是正常终态,不要为此加 KeepAlive;\n` +
+      `- 定时/监视任务(StartInterval / StartCalendarInterval / WatchPaths):两次触发之间未在运行正常,重点看 last exit code 与日志;\n` +
+      `- 仅手动启动(无任何触发条件):载入后会立即运行一次,之后未运行是正常终态。\n` +
+      `- 一切正常 → 给出最终交付说明,引用上面的真实读数(pid / exit code / 日志行),不要凭印象写。`
     const s = currentSession()
     if (!s) return false
     const msg: AiUserMessage = {
@@ -565,12 +618,80 @@ export function createChatService(deps: {
 
   // ── 运行 ──
 
+  /** 跨消息回合查找成功的 prepare_agent 计划:用户先看计划、下一条才确认应用也必须受此顺序保护。 */
+  function hasReadyPreparation(session: StoredSession, label: string): boolean {
+    return session.messages.some(
+      (m) =>
+        m.role === 'toolResult' &&
+        m.toolName === 'prepare_agent' &&
+        !m.isError &&
+        m.blocks.some((b) => b.type === 'card' && b.card.kind === 'agentPreparation' && b.card.readiness === 'ready' && b.card.label === label)
+    )
+  }
+
   async function runAgent(r: RunState, skillId?: string): Promise<void> {
     const settings = deps.getSettings()
     const skill = findSkill(skillId)
     const allTools = deps.registry.all()
     const allowed = skill?.tools ? allTools.filter((t) => skill.tools!.includes(t.name)) : allTools
-    const agentTools = buildAgentTools(r, allowed, r.sessionId)
+    const agentTools = buildAgentTools(r, allowed, r.sessionId).map((tool) => {
+      if (tool.name === 'write_plist') {
+        const execute = tool.execute
+        return {
+          ...tool,
+          execute: async (toolCallId: string, params: unknown, signal?: AbortSignal) => {
+            const raw = (params ?? {}) as Record<string, unknown>
+            const label = String(raw['label'] ?? '').trim()
+            const draft = label === '' ? undefined : r.generatedAgentDrafts.get(label)
+            const session = currentSession()
+            const planned = label !== '' && session !== null && hasReadyPreparation(session, label)
+            // 模型经常把 XML 只展示在草稿卡、却漏传到 write_plist 参数；宿主已有本轮生成的
+            // 完整草稿时安全补齐。scope 必须一致，避免把 user 草稿写进 daemon 目录。
+            const xml = String(raw['xml'] ?? '').trim()
+            const scopeRaw = raw['scope']
+            const scope = typeof scopeRaw === 'string' ? scopeRaw : undefined
+            if (planned && xml === '' && draft === undefined) {
+              const result: ToolExecResult = {
+                lines: [{ level: 'err', text: `${label} 有已确认的创建计划，但本回合还没有生成 XML；请先调用 generate_plist` }],
+                isError: true
+              }
+              finalizeToolResult(r, toolCallId, deps.registry.get('write_plist')!, result, 0)
+              return { content: [{ type: 'text' as const, text: linesToText(result.lines) }], details: { toolCallId } }
+            }
+            const normalized =
+              xml === '' && draft !== undefined && (scope === undefined || scope === draft.scope)
+                ? { ...raw, xml: draft.xml, ...(scope === undefined ? { scope: draft.scope } : {}) }
+                : raw
+            return execute(toolCallId, normalized, signal)
+          }
+        }
+      }
+      if (tool.name === 'load_plist') {
+        const execute = tool.execute
+        return {
+          ...tool,
+          execute: async (toolCallId: string, params: unknown, signal?: AbortSignal) => {
+            const label = String((params as Record<string, unknown>)['label'] ?? '').trim()
+            // 新建流程必须先有就绪计划和成功写入。既有任务仍可直接 load/reload，
+            // 不能因此挡住诊断/修复路径。
+            const session = currentSession()
+            const planned = label !== '' && ((session !== null && hasReadyPreparation(session, label)) || r.preparedAgentLabels.has(label))
+            if (planned && !r.writtenAgentLabels.has(label)) {
+              const result: ToolExecResult = {
+                lines: [
+                  { level: 'err', text: `${label} 只有创建计划，尚未成功写入 plist；请先带完整 XML 调用 write_plist` }
+                ],
+                isError: true
+              }
+              finalizeToolResult(r, toolCallId, deps.registry.get('load_plist')!, result, 0)
+              return { content: [{ type: 'text' as const, text: linesToText(result.lines) }], details: { toolCallId } }
+            }
+            return execute(toolCallId, params, signal)
+          }
+        }
+      }
+      return tool
+    })
 
     const resolved = deps.llm.resolve()
     if (!resolved.ok) throw new Error('AI_NOT_CONFIGURED')
@@ -722,7 +843,10 @@ export function createChatService(deps: {
         finalized: new Set(),
         turnCount: 0,
         verifyQueue: [],
-        verifyRound: 0
+        verifyRound: 0,
+        preparedAgentLabels: new Set(),
+        writtenAgentLabels: new Set(),
+        generatedAgentDrafts: new Map()
       }
       run = r
       emit({ type: 'run_start', sessionId: r.sessionId, runId: r.runId })

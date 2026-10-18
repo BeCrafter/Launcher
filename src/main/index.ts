@@ -10,6 +10,7 @@ import { applyThemeSource, windowBgColor } from './settings/appliers/appearance'
 import { createTrayController } from './settings/appliers/tray'
 import { createApplierRegistry } from './settings/appliers'
 import { launchdWatchDirs } from './services/dir-watcher'
+import { createAgentLogRotation } from './services/agent-log-rotation'
 import { createShellRunner } from './services/shell-runner'
 import { createElevationExecutor } from './services/elevation'
 import { toServicesPayload } from './services/process-discovery'
@@ -372,6 +373,9 @@ async function startApp(): Promise<void> {
         }),
       onServicesChange: (r, polling) => broadcast(IPC_EVENTS.servicesUpdated, toServicesPayload(r, polling)),
       onNotesChange: (ids) => broadcast(IPC_EVENTS.notesChanged, { ids }),
+      // AI/MCP 的写工具直接走领域服务,不经过 renderer store —— 变更后必须推一次事件,
+      // 否则「新建/启停」后列表会一直停在旧状态,只有重启应用才刷新。
+      onAgentsChange: () => broadcast(IPC_EVENTS.agentsChanged),
       // 应用内删除走系统废纸篓(用户可恢复);独立进程没有 shell,退回 <dir>/.trash/
       trashNote: (path) => shell.trashItem(path),
       log: (m) => console.log(`[notes] ${m}`)
@@ -437,6 +441,18 @@ async function startApp(): Promise<void> {
     (m) => console.log(`[notes] ${m}`)
   )
   notes.start() // 笔记目录 fs.watch(仅上报外部改动;正确性不依赖它 —— list() 每次都 stat)
+
+  // launchd 日志轮转:user 作用域且位于 ~/Library/Logs 下的 stdout/stderr。
+  // 建窗后才启动,启动 5s 后跑一轮,之后每小时;settings 改动在下一轮生效。
+  const agentLogRotation = createAgentLogRotation({
+    agents,
+    home: app.getPath('home'),
+    getMaxMB: () => store.get().agentLogMaxMB,
+    getKeep: () => store.get().agentLogKeep,
+    log: (m) => console.log(`[agent-log] ${m}`)
+  })
+  agentLogRotation.start()
+  app.once('before-quit', () => agentLogRotation.stop())
 
   // 首次运行:目录完全为空时放一篇「随心手记示例」进去(见 domains/note-sample.ts)。
   // 不 await —— 它只是个引导,失败了也不该拖住启动。

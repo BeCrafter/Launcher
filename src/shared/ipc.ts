@@ -97,6 +97,8 @@ export const IPC = {
 export const IPC_EVENTS = {
   settingsChanged: 'settings:changed',
   agentsDirChanged: 'agents:dirChanged',
+  /** Agent 运行态/文件被 main 侧改变(含 AI/MCP 工具写入、启停)→ renderer 重新拉取列表 */
+  agentsChanged: 'agents:changed',
   servicesUpdated: 'services:updated',
   /** AI 运行事件流(AiRunEvent;高频,只在会话运行期间推送) */
   aiRunEvent: 'ai:runEvent',

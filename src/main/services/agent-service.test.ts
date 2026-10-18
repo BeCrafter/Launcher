@@ -87,7 +87,7 @@ describe('agent-service.checkMissing(孤儿定向复核)', () => {
 // ── 意图动作契约(顺序逻辑在 main:UI 不拼命令序列) ──
 describe('agent-service 意图动作(start/stop/restart/autostart/runOnce)', () => {
   /** 可控 launchctl 假件:记录调用序列;disabled 覆盖位/域表由测试注入 */
-  function opsHarness(opts: { disabledGui?: string[]; loadedPid?: number | null }) {
+  function opsHarness(opts: { disabledGui?: string[]; loadedPid?: number | null; value?: Record<string, unknown> }) {
     const calls: string[] = []
     const tables = {
       gui: new Map<string, { label: string; pid: number | null; lastExitCode: number | null }>(),
@@ -129,7 +129,7 @@ describe('agent-service 意图动作(start/stop/restart/autostart/runOnce)', () 
           scope: 'user' as const,
           fileName: 'com.heal.test.plist',
           xml: '',
-          value: { Label: 'com.heal.test' },
+          value: opts.value ?? { Label: 'com.heal.test' },
           label: 'com.heal.test',
           desc: '',
           isTask: true
@@ -138,8 +138,16 @@ describe('agent-service 意图动作(start/stop/restart/autostart/runOnce)', () 
       dirs: () => [{ scope: 'user' as const, dir, privileged: false }],
       pathFor: () => pfPath
     } as unknown as PlistService
-    const svc = createAgentService({ runner: {} as never, launchctl, plists, brew: {} as never, getXmlIndent: () => '  ' })
-    return { svc, calls, pfPath, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
+    const changes: string[] = []
+    const svc = createAgentService({
+      runner: {} as never,
+      launchctl,
+      plists,
+      brew: {} as never,
+      getXmlIndent: () => '  ',
+      onChange: () => changes.push('changed')
+    })
+    return { svc, calls, changes, pfPath, cleanup: () => rmSync(dir, { recursive: true, force: true }) }
   }
   const ID = 'user:com.heal.test'
 
@@ -208,6 +216,82 @@ describe('agent-service 意图动作(start/stop/restart/autostart/runOnce)', () 
       expect(hIdle.calls).toEqual([`bootstrap:${hIdle.pfPath}`, 'kickstart'])
     } finally {
       hIdle.cleanup()
+    }
+  })
+
+  it('reload(已载入运行中)→ bootout → bootstrap(launchd 只在 bootstrap 时读 plist)', async () => {
+    const h = opsHarness({ loadedPid: 42 })
+    try {
+      await h.svc.ops(ID, 'reload')
+      expect(h.calls).toEqual(['bootout', `bootstrap:${h.pfPath}`])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('reload(已载入未运行)→ bootout → bootstrap → kickstart', async () => {
+    const h = opsHarness({ loadedPid: null })
+    try {
+      await h.svc.ops(ID, 'reload')
+      expect(h.calls).toEqual(['bootout', `bootstrap:${h.pfPath}`, 'kickstart'])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('reload(未载入)→ 与启动等价:bootstrap → kickstart', async () => {
+    const h = opsHarness({})
+    try {
+      await h.svc.ops(ID, 'reload')
+      expect(h.calls).toEqual([`bootstrap:${h.pfPath}`, 'kickstart'])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('reload(RunAtLoad)→ 只 bootstrap,不再额外 kickstart(避免一次性任务跑两遍)', async () => {
+    const h = opsHarness({ value: { Label: 'com.heal.test', RunAtLoad: true } })
+    try {
+      await h.svc.ops(ID, 'reload')
+      expect(h.calls).toEqual([`bootstrap:${h.pfPath}`])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('reload(定时/监视任务)→ 只 bootstrap,按计划等待', async () => {
+    for (const value of [
+      { Label: 'com.heal.test', StartInterval: 60 },
+      { Label: 'com.heal.test', StartCalendarInterval: { Hour: 9 } },
+      { Label: 'com.heal.test', WatchPaths: ['/tmp/watch'] }
+    ]) {
+      const h = opsHarness({ value })
+      try {
+        await h.svc.ops(ID, 'reload')
+        expect(h.calls).toEqual([`bootstrap:${h.pfPath}`])
+      } finally {
+        h.cleanup()
+      }
+    }
+  })
+
+  it('reload(KeepAlive 空字典视为无触发)→ bootstrap + kickstart', async () => {
+    const h = opsHarness({ value: { Label: 'com.heal.test', KeepAlive: {} } })
+    try {
+      await h.svc.ops(ID, 'reload')
+      expect(h.calls).toEqual([`bootstrap:${h.pfPath}`, 'kickstart'])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('ops 完成后通知宿主(AI/MCP 路径靠它刷新列表)', async () => {
+    const h = opsHarness({ loadedPid: 42 })
+    try {
+      await h.svc.ops(ID, 'reload')
+      expect(h.changes).toEqual(['changed'])
+    } finally {
+      h.cleanup()
     }
   })
 

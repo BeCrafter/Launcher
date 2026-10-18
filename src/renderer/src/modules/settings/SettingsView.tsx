@@ -313,6 +313,46 @@ export function SettingsView(): React.JSX.Element {
                     </select>
                   }
                 />
+                <SettingsRow
+                  title={t('settings.launchd.agentLogMax.rowTitle')}
+                  descKey="settings.launchd.agentLogMax.rowDesc"
+                  control={
+                    <select
+                      className="settings-select"
+                      value={String(settings.agentLogMaxMB)}
+                      onChange={(e) => {
+                        set({ agentLogMaxMB: Number(e.target.value) })
+                        savedToast()
+                      }}
+                    >
+                      <option value="0">{t('settings.launchd.agentLogMax.off')}</option>
+                      <option value="5">5 MB</option>
+                      <option value="10">10 MB</option>
+                      <option value="25">25 MB</option>
+                      <option value="50">50 MB</option>
+                    </select>
+                  }
+                />
+                <SettingsRow
+                  title={t('settings.launchd.agentLogKeep.rowTitle')}
+                  descKey="settings.launchd.agentLogKeep.rowDesc"
+                  control={
+                    <select
+                      className="settings-select"
+                      value={String(settings.agentLogKeep)}
+                      onChange={(e) => {
+                        set({ agentLogKeep: Number(e.target.value) })
+                        savedToast()
+                      }}
+                    >
+                      {[1, 2, 3, 5].map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
+                      ))}
+                    </select>
+                  }
+                />
               </SettingsSection>
             </div>
           )}

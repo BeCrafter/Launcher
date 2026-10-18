@@ -28,6 +28,9 @@ export interface Agent {
   parseError?: string
   /** 非任务文件的原文件名(仅 isNotTask 时填充;label 为空时作展示名与身份) */
   fileName?: string
+  /** plist 里配置的日志路径(未配置为空串;列表/轮转直接可用,避免逐条重扫目录) */
+  logOut?: string
+  logErr?: string
 }
 
 export type CronScope = 'user' | 'system'
@@ -120,11 +123,15 @@ export type SvcType = 'brew' | 'node' | 'process' | 'docker'
 export type SvcKind = 'brew' | 'node' | 'python' | 'php' | 'jvm' | 'ruby' | 'docker' | 'dev' | 'process'
 
 export type LogType = 'info' | 'ok' | 'warn' | 'err' | ''
+/** 日志行来源:stdout/stderr 来自 plist 配置的文件,system 来自统一日志 */
+export type LogSource = 'stdout' | 'stderr' | 'system'
 
 export interface LogLine {
   ts: string
   type: LogType
   text: string
+  /** 旧数据/调用方可不填;tail_log 用它标注 stdout/stderr 来源 */
+  source?: LogSource
 }
 
 export interface CronPreset {

@@ -78,6 +78,10 @@ export interface LauncherSettings {
   fseventsActive: boolean
   cmdTimeout: number
   cronLogRetainDays: number
+  /** launchd 日志轮转:单个文件超过多少 MB 时 copytruncate;0 = 关闭 */
+  agentLogMaxMB: number
+  /** 轮转保留多少个历史文件(.1 … .N) */
+  agentLogKeep: number
   // ── 编辑器 ──
   labelPrefix: string
   xmlIndent: XmlIndent
@@ -131,6 +135,8 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   fseventsActive: true,
   cmdTimeout: 5000,
   cronLogRetainDays: 3,
+  agentLogMaxMB: 10,
+  agentLogKeep: 3,
   labelPrefix: 'com.user.',
   xmlIndent: '2',
   // 空串 = 默认目录($HOME/.config/launcher/notes),由 shared/notes.ts 的 resolveNotesDir 解析
@@ -165,6 +171,8 @@ const LANGUAGE_VALUES: Language[] = ['zh-CN', 'en-US']
 const XML_INDENT_VALUES: XmlIndent[] = ['2', '4', 'tab']
 const CMD_TIMEOUT_VALUES = [3000, 5000, 10000]
 const CRON_RETAIN_VALUES = [1, 3, 7, 14]
+const AGENT_LOG_MAX_VALUES = [0, 5, 10, 25, 50]
+const AGENT_LOG_KEEP_VALUES = [1, 2, 3, 5]
 const AUTH_CACHE_VALUES = [0, 5, 15]
 const AI_PROVIDER_VALUES: AiProviderId[] = ['anthropic', 'openai-compatible']
 const AI_TOOL_ROUNDS_VALUES = [4, 8, 16]
@@ -320,6 +328,8 @@ export function normalizeSettings(raw: unknown): LauncherSettings {
     fseventsActive: boolOr(r.fseventsActive, d.fseventsActive),
     cmdTimeout: enumNumberOr(r.cmdTimeout, CMD_TIMEOUT_VALUES, d.cmdTimeout),
     cronLogRetainDays: enumNumberOr(r.cronLogRetainDays, CRON_RETAIN_VALUES, d.cronLogRetainDays),
+    agentLogMaxMB: enumNumberOr(r.agentLogMaxMB, AGENT_LOG_MAX_VALUES, d.agentLogMaxMB),
+    agentLogKeep: enumNumberOr(r.agentLogKeep, AGENT_LOG_KEEP_VALUES, d.agentLogKeep),
     // 编辑器
     labelPrefix: typeof r.labelPrefix === 'string' && r.labelPrefix.length > 0 ? r.labelPrefix : d.labelPrefix,
     xmlIndent: enumOr(r.xmlIndent, XML_INDENT_VALUES, d.xmlIndent),

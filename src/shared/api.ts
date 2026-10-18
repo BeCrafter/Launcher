@@ -89,7 +89,7 @@ export interface LauncherApi {
     renameAgent: (input: RenameInput) => Promise<SaveOutcome>
     remove: (id: string, expectedRevision: string) => Promise<SaveOutcome>
     clone: (input: CloneInput) => Promise<SaveOutcome>
-    ops: (id: string, action: 'start' | 'stop' | 'restart' | 'enable' | 'disable') => Promise<OpsState>
+    ops: (id: string, action: 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable') => Promise<OpsState>
     readStatus: (id: string) => Promise<DrawerStatusModel>
     readLogs: (id: string, source: 'file' | 'system') => Promise<LogLine[]>
     clearLogs: (id: string) => Promise<{ cleared: string[]; failed: { path: string; error: string }[] }>

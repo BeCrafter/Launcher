@@ -184,6 +184,88 @@ describe('ChatService 运行链路', () => {
     expect(tr.blocks.some((b) => b.type === 'text' && b.text.includes('服务 3 项'))).toBe(true)
   })
 
+  it('prepare_agent 是卡片专用只读结果:不申请授权也不排入自动验证', async () => {
+    const prepareTool: ToolDef = {
+      name: 'prepare_agent',
+      label: '准备 Agent 创建计划',
+      description: '只读计划',
+      parameters: Type.Object({}),
+      write: false,
+      execute: async () => ({
+        lines: [{ level: 'ok', text: '计划已就绪' }],
+        cardOnly: true,
+        card: {
+          kind: 'agentPreparation', readiness: 'ready', label: 'com.user.plan', scope: 'user',
+          command: '/bin/echo hello', trigger: '仅手动启动', logs: [], risks: [], questions: [], verification: []
+        }
+      })
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('prepare_agent', {})]),
+      fauxAssistantMessage([fauxText('请确认后再应用')])
+    ])
+    const svc = build({ faux, tools: [prepareTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '准备一个任务' })
+    const result = svc.getMessages(s.id).find((m) => m.role === 'toolResult')
+    expect(result).toMatchObject({ role: 'toolResult', toolName: 'prepare_agent', cardOnly: true, status: 'ok' })
+    expect(events.some((e) => e.type === 'approval_request')).toBe(false)
+    expect(events.some((e) => e.type === 'user_message')).toBe(false)
+  })
+
+  it('同一轮 generate 后 write 漏传 xml 时，宿主复用草稿补齐并允许写入', async () => {
+    let receivedXml = ''
+    const generateTool: ToolDef = {
+      name: 'generate_plist', label: '生成', description: '生成', parameters: Type.Object({ label: Type.String() }), write: false,
+      execute: async () => ({ lines: [{ level: 'ok', text: 'draft' }], card: { kind: 'plist', xml: '<plist>draft</plist>' } })
+    }
+    const writeTool: ToolDef = {
+      name: 'write_plist', label: '写入', description: '写入', parameters: Type.Object({ label: Type.String(), xml: Type.Optional(Type.String()) }), write: false,
+      execute: async (args) => {
+        receivedXml = String(args['xml'] ?? '')
+        return { lines: [{ level: 'ok', text: 'written' }] }
+      }
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('generate_plist', { label: 'com.user.draft', scope: 'user' })]),
+      fauxAssistantMessage([fauxToolCall('write_plist', { label: 'com.user.draft' })]),
+      fauxAssistantMessage([fauxText('done')])
+    ])
+    const svc = build({ faux, tools: [generateTool, writeTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: 'draft then write' })
+    expect(receivedXml).toBe('<plist>draft</plist>')
+  })
+
+  it('准备计划后直接 load 被宿主拦下，直到 write 成功', async () => {
+    const prepareTool: ToolDef = {
+      name: 'prepare_agent', label: '准备计划', description: '准备', parameters: Type.Object({ label: Type.String() }), write: false,
+      execute: async () => ({
+        lines: [{ level: 'ok', text: 'ready' }],
+        card: { kind: 'agentPreparation', readiness: 'ready', label: 'com.user.guard', scope: 'user', command: '/bin/echo', trigger: 'manual', logs: [], risks: [], questions: [], verification: [] }
+      })
+    }
+    const loadTool: ToolDef = {
+      name: 'load_plist', label: '载入', description: '载入', parameters: Type.Object({ label: Type.String() }), write: false,
+      execute: async () => ({ lines: [{ level: 'ok', text: 'loaded' }] })
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('prepare_agent', { label: 'com.user.guard' })]),
+      fauxAssistantMessage([fauxToolCall('load_plist', { label: 'com.user.guard' })]),
+      fauxAssistantMessage([fauxText('done')])
+    ])
+    const svc = build({ faux, tools: [prepareTool, loadTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: 'prepare then load' })
+    const result = svc.getMessages(s.id).filter((m) => m.role === 'toolResult').at(-1)
+    expect(result).toMatchObject({ role: 'toolResult', toolName: 'load_plist', isError: true })
+    if (result?.role !== 'toolResult') throw new Error('unreachable')
+    expect(result.blocks.map((b) => b.type === 'text' ? b.text : '').join('\n')).toContain('尚未成功写入')
+  })
+
   it('写工具先挂起等授权:授权后执行,并把授权卡状态改成 approved', async () => {
     const faux = fauxProvider()
     faux.setResponses([
@@ -367,6 +449,9 @@ describe('ChatService 运行链路', () => {
     expect(first.text).toContain('【自动验证】')
     expect(first.text).toContain('pid=456 running')
     expect(first.text).toContain('Started com.user.x')
+    // 判据必须区分常驻 / 一次性 / 定时任务:未运行不能一律当故障
+    expect(first.text).toContain('一次性任务')
+    expect(first.text).toContain('exit code 0 即成功')
 
     // 落库一致:session 里能按 id 找到这条注入消息(重载后不丢)
     const stored = svc.getMessages(s.id).find((m) => m.role === 'user' && m.id === first.messageId)
@@ -419,6 +504,85 @@ describe('ChatService 运行链路', () => {
     const s = svc.createSession()
     await approveAll(svc, svc.send({ sessionId: s.id, text: '只写入' }))
     expect(events.some((e) => e.type === 'user_message')).toBe(false)
+  })
+
+  it('load 后又 unload:不注入自动验证(不验证被故意停掉的任务)', async () => {
+    const loadTool: ToolDef = {
+      name: 'load_plist',
+      label: '载入任务',
+      description: '载入任务',
+      parameters: Type.Object({ label: Type.String() }),
+      write: true,
+      summarize: (a) => ({ detail: `载入 ${a['label']}`, command: 'launchctl bootstrap' }),
+      execute: async () => ({ lines: [{ level: 'ok', text: '已载入' }] })
+    }
+    const unloadTool: ToolDef = {
+      name: 'unload_plist',
+      label: '卸载任务',
+      description: '卸载任务',
+      parameters: Type.Object({ label: Type.String() }),
+      write: true,
+      summarize: (a) => ({ detail: `卸载 ${a['label']}`, command: 'launchctl bootout' }),
+      execute: async () => ({ lines: [{ level: 'ok', text: '已卸载' }] })
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall('load_plist', { label: 'com.user.x' }),
+        fauxToolCall('unload_plist', { label: 'com.user.x' })
+      ]),
+      fauxAssistantMessage([fauxText('已回滚')])
+    ])
+    const svc = build({ faux, tools: [loadTool, unloadTool] })
+    const s = svc.createSession()
+    await approveAll(svc, svc.send({ sessionId: s.id, text: '载入后回滚' }))
+    expect(events.some((e) => e.type === 'user_message')).toBe(false)
+  })
+
+  it('自动验证对刚启动的服务做短轮询(第一次未运行,第二次 running)', async () => {
+    let statusCalls = 0
+    const loadTool: ToolDef = {
+      name: 'load_plist',
+      label: '载入任务',
+      description: '载入任务',
+      parameters: Type.Object({ label: Type.String() }),
+      write: true,
+      summarize: (a) => ({ detail: `载入 ${a['label']}`, command: 'launchctl bootstrap' }),
+      execute: async () => ({ lines: [{ level: 'ok', text: '已载入' }] })
+    }
+    const statusTool: ToolDef = {
+      name: 'get_service_status',
+      label: '查看状态',
+      description: '查看状态',
+      parameters: Type.Object({ label: Type.String() }),
+      write: false,
+      execute: async () => {
+        statusCalls += 1
+        return { lines: [{ level: '', text: statusCalls === 1 ? 'pid — · uptime —' : 'pid=999 · uptime 0s' }] }
+      }
+    }
+    const logTool: ToolDef = {
+      name: 'tail_log',
+      label: '查看日志',
+      description: '查看日志',
+      parameters: Type.Object({ label: Type.String() }),
+      write: false,
+      execute: async () => ({ lines: [{ level: '', text: 'starting' }] })
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('load_plist', { label: 'com.user.slow' })]),
+      fauxAssistantMessage([fauxText('已载入,等待验证')]),
+      fauxAssistantMessage([fauxText('验证通过 pid=999')])
+    ])
+    const svc = build({ faux, tools: [loadTool, statusTool, logTool] })
+    const s = svc.createSession()
+    await approveAll(svc, svc.send({ sessionId: s.id, text: '载入慢启动服务' }))
+    const injected = events.filter((e) => e.type === 'user_message')
+    expect(injected).toHaveLength(1)
+    if (injected[0]?.type !== 'user_message') throw new Error('unreachable')
+    expect(injected[0].text).toContain('pid=999')
+    expect(statusCalls).toBeGreaterThanOrEqual(2)
   })
 
   it('skill.turnLimit 抬高轮数下限:全局 4 轮时 sk-plist 仍能跑到第 5+ 轮', async () => {

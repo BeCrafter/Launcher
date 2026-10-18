@@ -10,7 +10,7 @@ import { Chip } from '../../components/ui/Chip'
 import { copyText, showToast } from '../../lib/utils'
 import { useAiStore } from '../../state/ai-store'
 import { useUiStore } from '../../state/ui-store'
-import type { AiApproveCard, AiCronCard, AiDomainCard, AiPlistCard, AiReportCard } from '@shared/ai'
+import type { AiAgentPreparationCard, AiApproveCard, AiCronCard, AiDomainCard, AiPlistCard, AiReportCard } from '@shared/ai'
 
 export function AiCard({
   card,
@@ -27,6 +27,8 @@ export function AiCard({
       return <CronCard card={card} />
     case 'plist':
       return <PlistCard card={card} />
+    case 'agentPreparation':
+      return <AgentPreparationCard card={card} />
     case 'approve':
       return <ApproveCard card={card} pendingToolCallId={pendingToolCallId} />
     default:
@@ -116,6 +118,50 @@ function PlistCard({ card }: { card: AiPlistCard }): React.JSX.Element {
           <span>{t('ai.plist.open')}</span>
         </button>
       </div>
+    </div>
+  )
+}
+
+// ── Agent 创建准备计划（只读，不执行）──
+
+function AgentPreparationCard({ card }: { card: AiAgentPreparationCard }): React.JSX.Element {
+  const t = useT()
+  const blocked = card.readiness === 'blocked'
+  const Section = ({ title, items, cls }: { title: string; items: string[]; cls?: string }): React.JSX.Element | null =>
+    items.length === 0 ? null : (
+      <div className={`ai-plan-section${cls ? ` ${cls}` : ''}`}>
+        <div className="ai-plan-section-title">{title}</div>
+        {items.map((item, index) => (
+          <div className="ai-plan-item" key={`${title}-${index}`}>
+            <i className={`fa-solid ${cls === 'risk' ? 'fa-triangle-exclamation' : cls === 'question' ? 'fa-circle-question' : 'fa-check'}`} />
+            <span>{item}</span>
+          </div>
+        ))}
+      </div>
+    )
+  return (
+    <div className={`ai-card ai-plan${blocked ? ' blocked' : ''}`}>
+      <div className="ai-card-hd">
+        <i className={`fa-solid ${blocked ? 'fa-triangle-exclamation' : 'fa-route'}`} style={{ color: blocked ? 'var(--yellow)' : 'var(--accent2)' }} />
+        {t('ai.plan.title')}
+        <span className={`ai-plan-state ${blocked ? 'blocked' : 'ready'}`}>
+          {t(blocked ? 'ai.plan.blocked' : 'ai.plan.ready')}
+        </span>
+      </div>
+      <div className="ai-plan-target">
+        <span>{card.label}</span>
+        <span>{card.scope}</span>
+      </div>
+      <div className="ai-appr-cmd">{card.command}</div>
+      <div className="ai-plan-summary">
+        <div><span>{t('ai.plan.trigger')}</span>{card.trigger}</div>
+        <div><span>{t('ai.plan.logs')}</span>{card.logs.length > 0 ? card.logs.join(' / ') : t('ai.plan.noLogs')}</div>
+        {card.port && <div><span>{t('ai.plan.port')}</span>{card.port.value} · {card.port.detail}</div>}
+      </div>
+      <Section title={t('ai.plan.risks')} items={card.risks} cls="risk" />
+      <Section title={t('ai.plan.questions')} items={card.questions} cls="question" />
+      <Section title={t('ai.plan.verify')} items={card.verification} />
+      <div className="ai-plan-hint">{t('ai.plan.hint')}</div>
     </div>
   )
 }

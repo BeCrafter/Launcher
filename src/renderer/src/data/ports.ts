@@ -45,8 +45,8 @@ import type {
   NotesListPayload
 } from '@shared/notes'
 
-/** 意图动作(用户语义):顺序逻辑在 main 内部完成 */
-export type OpAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable'
+/** 意图动作(用户语义):顺序逻辑在 main 内部完成;reload = 已载入时先卸载再载入(应用最新配置) */
+export type OpAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable'
 export type AgentScope = 'user' | 'system' | 'daemon'
 export type AgentFilter = 'all' | 'brew' | 'user' | 'system' | 'daemon'
 /** 运行状态筛选(与类型筛选叠加;'all' = 不限) */

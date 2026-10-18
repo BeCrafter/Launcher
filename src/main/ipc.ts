@@ -147,7 +147,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.agRename, (_e, input: RenameInput) => deps.agents.renameAgent(input))
   ipcMain.handle(IPC.agRemove, (_e, id: string, expectedRevision: string) => deps.agents.remove(id, expectedRevision))
   ipcMain.handle(IPC.agClone, (_e, input: CloneInput) => deps.agents.clone(input))
-  ipcMain.handle(IPC.agOps, (_e, id: string, action: 'start' | 'stop' | 'restart' | 'enable' | 'disable') => deps.agents.ops(id, action))
+  ipcMain.handle(IPC.agOps, (_e, id: string, action: 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable') => deps.agents.ops(id, action))
   ipcMain.handle(IPC.agReadDocument, (_e, id: string) => deps.agents.readDocument(id))
   ipcMain.handle(IPC.agSaveXml, (_e, input: SaveXmlInput) => deps.agents.saveXml(input))
   ipcMain.handle(IPC.agReadStatus, (_e, id: string) => deps.agents.readStatus(id))

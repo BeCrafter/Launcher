@@ -44,12 +44,19 @@ export function createCoreServices(opts: {
   onServicesChange?(r: ScanResult, polling: boolean): void
   /** 笔记目录被外部改动(不传 = 独立进程:不启监听、不上报) */
   onNotesChange?(ids: string[]): void
+  /** Agent 文件/运行态被 main 侧改变(应用内传广播;独立进程不需要) */
+  onAgentsChange?(): void
   /** 删除笔记的落点(应用传 shell.trashItem;不传则移到 <dir>/.trash/) */
   trashNote?(path: string): Promise<void>
   log?(msg: string): void
 }): CoreServices {
   const log = opts.log ?? ((): void => {})
-  const plists = createPlistService({ runner: opts.runner, elevate: opts.elevate, home: opts.home })
+  const plists = createPlistService({
+    runner: opts.runner,
+    elevate: opts.elevate,
+    home: opts.home,
+    onChange: opts.onAgentsChange
+  })
 
   const cron = createCrontabService({
     runner: opts.runner,
@@ -70,7 +77,8 @@ export function createCoreServices(opts: {
     launchctl,
     plists,
     brew,
-    getXmlIndent: opts.getXmlIndent
+    getXmlIndent: opts.getXmlIndent,
+    onChange: opts.onAgentsChange
   })
 
   const docker = createDockerService({ runner: opts.runner })

@@ -72,6 +72,22 @@ export interface AiPlistCard {
   xml: string
 }
 
+/** 创建 Agent 前的只读准备计划:展示给内置聊天,不执行任何写入/载入 */
+export interface AiAgentPreparationCard {
+  kind: 'agentPreparation'
+  readiness: 'ready' | 'blocked'
+  label: string
+  scope: 'user' | 'system' | 'daemon'
+  command: string
+  trigger: string
+  logs: string[]
+  /** 端口状态未提供时省略 */
+  port?: { value: number; state: 'free' | 'occupied'; detail: string }
+  risks: string[]
+  questions: string[]
+  verification: string[]
+}
+
 /** 授权卡状态:pending 等待用户 → approved 已授权 / cancelled 已取消 */
 export type AiApproveState = 'pending' | 'approved' | 'cancelled'
 
@@ -88,7 +104,7 @@ export interface AiApproveCard {
   state: AiApproveState
 }
 
-export type AiDomainCard = AiReportCard | AiCronCard | AiPlistCard | AiApproveCard
+export type AiDomainCard = AiReportCard | AiCronCard | AiPlistCard | AiAgentPreparationCard | AiApproveCard
 
 export interface AiCardBlock {
   type: 'card'
@@ -200,6 +216,8 @@ export interface AiToolResultMessage {
   durationMs: number
   /** 该工具是否属写操作(需授权);写工具在步骤块里带标识 */
   write?: boolean
+  /** 内置聊天只展示领域卡，不在通用工具步骤中重复展示该调用 */
+  cardOnly?: boolean
   timestamp: number
 }
 

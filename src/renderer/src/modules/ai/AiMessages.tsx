@@ -141,8 +141,12 @@ function BotGroupView({
   let k = 0
   const flushRun = (): void => {
     if (!run.length) return
-    const items = run.map(stepOf)
-    nodes.push(<AiSteps key={`steps-${idx}-${k++}`} items={items} />)
+    // prepare_agent 的结果以计划卡呈现；不再重复生成一个通用工具步骤。
+    const visible = run.filter((call) => !results.some((r) => r.toolCallId === call.id && r.cardOnly))
+    if (visible.length > 0) {
+      const items = visible.map(stepOf)
+      nodes.push(<AiSteps key={`steps-${idx}-${k++}`} items={items} />)
+    }
     run = []
   }
   assistant.blocks.forEach((b, bi) => {

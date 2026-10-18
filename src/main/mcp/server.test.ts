@@ -41,6 +41,19 @@ const failing: ToolDef = {
   }
 }
 
+let lastAllowCustomLogPath: boolean | undefined
+const customTailLog: ToolDef = {
+  name: 'tail_log',
+  label: '看日志',
+  description: '看日志',
+  parameters: Type.Object({ label: Type.Optional(Type.String()), path: Type.Optional(Type.String()) }),
+  write: false,
+  execute: async (_args, ctx) => {
+    lastAllowCustomLogPath = ctx.allowCustomLogPath
+    return { lines: [{ level: 'ok', text: 'ok' }] }
+  }
+}
+
 function registry(): ToolRegistry {
   const tools = [readonly, writable, failing]
   return {
@@ -51,9 +64,19 @@ function registry(): ToolRegistry {
   }
 }
 
-async function pair(permission: McpPermission): Promise<Client> {
+function tailRegistry(): ToolRegistry {
+  const tools = [customTailLog]
+  return {
+    all: () => tools,
+    get: (n) => tools.find((t) => t.name === n),
+    readOnly: () => tools,
+    writable: () => []
+  }
+}
+
+async function pairWith(reg: ToolRegistry, permission: McpPermission): Promise<Client> {
   const server = createLauncherMcpServer({
-    registry: registry(),
+    registry: reg,
     getPermission: () => permission,
     getLanguage: () => 'zh-CN',
     sessionId: 'test'
@@ -62,6 +85,10 @@ async function pair(permission: McpPermission): Promise<Client> {
   const [a, b] = InMemoryTransport.createLinkedPair()
   await Promise.all([server.connect(b), client.connect(a)])
   return client
+}
+
+async function pair(permission: McpPermission): Promise<Client> {
+  return pairWith(registry(), permission)
 }
 
 describe('MCP server', () => {
@@ -89,6 +116,21 @@ describe('MCP server', () => {
     const t = tools.find((x) => x.name === 'list_services')
     expect(t?.inputSchema).toMatchObject({ type: 'object' })
     expect(Object.keys((t?.inputSchema as { properties?: object }).properties ?? {})).toContain('domain')
+  })
+
+  it('tail_log.path 在 readOnly 下隐藏、full 下暴露;ctx 权限随之切换', async () => {
+    lastAllowCustomLogPath = undefined
+    const ro = await pairWith(tailRegistry(), 'readOnly')
+    const roTool = (await ro.listTools()).tools.find((t) => t.name === 'tail_log')
+    expect(Object.keys((roTool?.inputSchema as { properties?: object }).properties ?? {})).not.toContain('path')
+    await ro.callTool({ name: 'tail_log', arguments: { path: '/tmp/x.log' } })
+    expect(lastAllowCustomLogPath).toBe(false)
+
+    const full = await pairWith(tailRegistry(), 'full')
+    const fullTool = (await full.listTools()).tools.find((t) => t.name === 'tail_log')
+    expect(Object.keys((fullTool?.inputSchema as { properties?: object }).properties ?? {})).toContain('path')
+    await full.callTool({ name: 'tail_log', arguments: { path: '/tmp/x.log' } })
+    expect(lastAllowCustomLogPath).toBe(true)
   })
 
   it('工具调用返回文本行,级别以 [ok]/[err] 前缀呈现', async () => {

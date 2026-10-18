@@ -24,9 +24,18 @@ export function bootstrap(): void {
   setConfirmDangerousGetter(() => useSettingsStore.getState().settings?.confirmDangerous ?? true)
 
   // fseventsActive:main 监听 launchd 目录变化 → agents 重载(mock 源下数据不变,阶段 1 换源即真实刷新)
-  window.launcher.onEvent(IPC_EVENTS.agentsDirChanged, () => {
-    void useAgentsStore.getState().load().catch((e) => console.error('[bootstrap] agents reload', e))
-  })
+  // agentsChanged:文件写入/运行态改变(main 侧 AI/MCP 工具直接调服务,绕过本 store)→ 同样重载。
+  // 两者都走同一个去抖:AI 一次「写入 + 载入」会连发两条事件,没必要各拉一次整表。
+  let agentsReloadTimer: ReturnType<typeof setTimeout> | null = null
+  const reloadAgents = (): void => {
+    if (agentsReloadTimer) clearTimeout(agentsReloadTimer)
+    agentsReloadTimer = setTimeout(() => {
+      agentsReloadTimer = null
+      void useAgentsStore.getState().load().catch((e) => console.error('[bootstrap] agents reload', e))
+    }, 150)
+  }
+  window.launcher.onEvent(IPC_EVENTS.agentsDirChanged, reloadAgents)
+  window.launcher.onEvent(IPC_EVENTS.agentsChanged, reloadAgents)
 
   // 端口服务:main 轮询命中集合变化时推送(阶段 3;页面激活时 3s 一轮)
   window.launcher.onEvent(IPC_EVENTS.servicesUpdated, (payload) => {
