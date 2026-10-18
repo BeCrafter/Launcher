@@ -11,7 +11,9 @@ import { join } from 'node:path'
 import { createNotesService, type NotesService } from './notes-service'
 import { MAX_NOTE_BYTES } from '../../shared/notes'
 
-const FIXED = Date.UTC(2026, 9, 9, 7, 41, 3) // 2026-10-09T15:41:03+08:00
+// 用**本地时间**构造:compactStamp 按本地时区给附件命名,
+// 这样断言与运行机器的时区无关(CI 常在 UTC 下跑,写死 UTC 会差 8 小时)
+const FIXED = new Date(2026, 9, 9, 15, 41, 3).getTime()
 
 let root = ''
 const dirs: string[] = []
