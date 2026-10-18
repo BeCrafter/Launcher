@@ -82,19 +82,25 @@ export function plusIcon(): SVGSVGElement {
 
 /** 折叠三角：展开时朝下、收起时朝右。实心带圆角，贴着正文，与飞书那颗同形。 */
 export function caretIcon(collapsed: boolean): SVGSVGElement {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  const NS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(NS, 'svg')
   svg.setAttribute('viewBox', '0 0 16 16')
   svg.setAttribute('width', '16')
   svg.setAttribute('height', '16')
   svg.setAttribute('fill', 'currentColor')
   svg.setAttribute('aria-hidden', 'true')
-  if (collapsed) svg.setAttribute('transform', 'rotate(-90 8 8)')
-  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  const g = document.createElementNS(NS, 'g')
+  // ⚠ 旋转必须加在内部的 <g> 上，**不能加在根 <svg> 上**：
+  // 根 svg 的 transform 属性在 Chromium 里会把整个盒子往下推一个图标高度（实测 +16px），
+  // 表现就是「折叠后三角按钮掉到下面去了」。
+  if (collapsed) g.setAttribute('transform', 'rotate(-90 8 8)')
+  const path = document.createElementNS(NS, 'path')
   path.setAttribute(
     'd',
     'M4.2 5.6h7.6c.86 0 1.36.97.86 1.67l-3.8 5.03a1.02 1.02 0 0 1-1.72 0L3.34 7.27c-.5-.7 0-1.67.86-1.67z'
   )
-  svg.append(path)
+  g.append(path)
+  svg.append(g)
   return svg
 }
 

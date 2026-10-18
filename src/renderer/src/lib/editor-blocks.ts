@@ -11,6 +11,7 @@ import { getCurrentLang, makeT } from '../i18n'
 import { hasTextSelection } from './note-marks'
 import { blockIcon, caretIcon, dragIcon, headingText, plusIcon } from './block-icons'
 import {
+  blockContainsLine,
   blockOwnersByLine,
   inSameDropScope,
   isMarkdownBlockDraggable,
@@ -46,7 +47,10 @@ function blocksOf(doc: Text): MarkdownBlock[] {
   return blocks
 }
 
-/** 行 → 归属块（最内层）。手柄、悬停底色、折叠都问它。 */
+/**
+ * 行 → 归属块（最内层）。用来决定「这一行的手柄/菜单/折叠属于哪个块」。
+ * ⚠ **悬停底色不用它** —— 底色要盖住块的完整范围（含子内容），用 `blockContainsLine`。
+ */
 function ownersOf(doc: Text): Map<number, MarkdownBlock> {
   let owners = ownerCache.get(doc)
   if (owners === undefined) {
@@ -130,7 +134,6 @@ interface HandleView {
 const handleViews = new WeakMap<EditorView, HandleView>()
 const hoverLines = new WeakMap<EditorView, number>()
 const pinnedLines = new WeakMap<EditorView, number>()
-const washedBlocks = new WeakMap<EditorView, MarkdownBlock>()
 
 const HIDDEN_CLASS = 'cm-block-handle-hidden'
 const PILL_HEIGHT = 26
@@ -265,23 +268,26 @@ function applyHandle(view: EditorView, plan: HandlePlan | null): void {
   paintHoverWash(view, plan.block)
 }
 
-/** 鼠标停在哪一块，那一块就加一层极淡底色 —— 一眼看出手柄属于谁。 */
+/**
+ * 鼠标停在哪一块，那一块就加一层极淡底色 —— 一眼看出手柄属于谁。
+ *
+ * 判据是块的**完整范围** `[from, contentTo)`（含子树），不是「行归属」：
+ * 归属取最内层块（标题子树里的正文归属各自的段落/列表），拿它来上色的话，
+ * 悬停标题时只有标题行和没人认领的空白行会亮，正文反而不会 —— 用户报的就是这个。
+ * 高亮 / 拖拽 / 折叠现在用同一个范围。
+ */
 function paintHoverWash(view: EditorView, block: MarkdownBlock | null): void {
-  if (washedBlocks.get(view) === block && block !== null) return
-  if (washedBlocks.get(view) === undefined && block === null) return
+  // 每次都重扫、重挂，**不做「同一个块跳过」的缓存**：行 DOM 会被 CodeMirror 重建
+  // （同步文档、视口变化…），inline class 随之丢失；缓存的「已经画过」会让我们
+  // 再也不补，表现就是「有时亮有时不亮」。行数很少，重扫的代价可以忽略。
   view.dom.querySelectorAll<HTMLElement>('.cm-line.cm-block-hovered').forEach((el) => {
     el.classList.remove('cm-block-hovered')
   })
-  if (block !== null) {
-    const owners = ownersOf(view.state.doc)
-    view.dom.querySelectorAll<HTMLElement>('.cm-line').forEach((el) => {
-      const index = view.state.doc.lineAt(view.posAtDOM(el, 0)).number - 1
-      if (owners.get(index)?.id === block.id) el.classList.add('cm-block-hovered')
-    })
-    washedBlocks.set(view, block)
-  } else {
-    washedBlocks.delete(view)
-  }
+  if (block === null) return
+  view.dom.querySelectorAll<HTMLElement>('.cm-line').forEach((el) => {
+    const index = view.state.doc.lineAt(view.posAtDOM(el, 0)).number - 1
+    if (blockContainsLine(block, index)) el.classList.add('cm-block-hovered')
+  })
 }
 
 /**
@@ -318,9 +324,11 @@ export function setPinnedLine(view: EditorView, line: number | null): void {
 // ── 悬停 ──
 
 function setHoverLine(view: EditorView, line: number): void {
-  if (hoverLines.get(view) === line) return
+  const unchanged = hoverLines.get(view) === line
   hoverLines.set(view, line)
-  repaintHandle(view)
+  // 同一行也要在「高亮丢了」时重画：切笔记 / 整篇替换会把行 DOM 换掉、class 随之消失，
+  // 而 hoverLines 记的行号可能刚好没变（比如鼠标一直停在第 3 行，换了篇笔记还是第 3 行）
+  if (!unchanged || view.dom.querySelector('.cm-line.cm-block-hovered') === null) repaintHandle(view)
 }
 
 function clearHover(view: EditorView): void {
@@ -442,15 +450,12 @@ function markdownBlockHover(callbacks: MarkdownBlockEditorCallbacks): Extension 
           handleViews.delete(this.view)
           hoverLines.delete(this.view)
           pinnedLines.delete(this.view)
-          washedBlocks.delete(this.view)
         }
       }
     ),
     // 滚动同样不设标志 —— 观察者比 handler 更合适（不会被别人 return true 拦掉）
     EditorView.domEventObservers({
-      scroll: (_event, view) => {
-        repaintHandle(view)
-      }
+      scroll: (_event, view) => repaintHandle(view)
     })
   ]
 }

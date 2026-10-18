@@ -531,6 +531,19 @@ export function inSameDropScope(lines: readonly string[], a: MarkdownBlock, b: M
 }
 
 /**
+ * 行是否在这个块的**正文范围**内。区间是 `[from, contentTo)` ——
+ * 与 `blockOwnersByLine` 的归属区间同口径（块尾的分隔空行不算）。
+ *
+ * ⚠ 「行归属」和「块范围」是两件事：
+ *  · 归属（`blockOwnersByLine`）回答「这一行的手柄属于哪个块」——取**最内层**；
+ *  · 范围（这个函数）回答「这个块盖住了哪些行」——用于高亮 / 拖拽 / 折叠。
+ * 两者混用的症状：悬停标题时空白行亮了、下面的正文却没亮。
+ */
+export function blockContainsLine(block: MarkdownBlock, line: number): boolean {
+  return line >= block.from && line < block.contentTo
+}
+
+/**
  * The most specific block owning a source line. 行区间取 `[from, contentTo)` ——
  * 与 gutter 出按钮、hover 激活用的是同一个判据(块的尾部空行不属于任何块)。
  * 标题块的 `contentTo` 覆盖整棵子树,所以子块行要取**最窄**的那个匹配。
@@ -542,7 +555,7 @@ export function narrowestBlockAtLine(
 ): MarkdownBlock | null {
   let result: MarkdownBlock | null = null
   for (const block of blocks) {
-    if (!accepts(block) || line < block.from || line >= block.contentTo) continue
+    if (!accepts(block) || !blockContainsLine(block, line)) continue
     if (result === null || block.contentTo - block.from < result.contentTo - result.from) result = block
   }
   return result

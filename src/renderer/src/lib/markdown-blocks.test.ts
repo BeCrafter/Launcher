@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blockContainsLine,
   blockOwnersByLine,
   inSameDropScope,
   isMarkdownBlockDraggable,
@@ -255,6 +256,34 @@ describe('details', () => {
     expect(kindOf(6)).toBe('table')
     expect(kindOf(11)).toBeUndefined()
     expect(kindOf(12)).toBe('paragraph')
+  })
+})
+
+describe('blockContainsLine', () => {
+  const TEXT = '# A\n\npara\n\n# B\n\ntail\n'
+  const blocks = parseMarkdownBlocks(TEXT)
+  const a = blocks.find((b) => b.kind === 'heading' && b.from === 0)!
+  const b = blocks.find((b) => b.kind === 'heading' && b.from === 4)!
+
+  it('covers the block itself, its child blocks and the blanks between them', () => {
+    expect(blockContainsLine(a, 0)).toBe(true) // 标题行
+    expect(blockContainsLine(a, 1)).toBe(true) // 块内空行
+    expect(blockContainsLine(a, 2)).toBe(true) // 子树里的段落
+    expect(blockContainsLine(a, 3)).toBe(false) // contentTo 右开：块尾分隔空行
+    expect(blockContainsLine(b, 6)).toBe(true)
+  })
+
+  it('covers a list item together with its children', () => {
+    const list = parseMarkdownBlocks('- 甲\n  - 子\n')
+    const parent = list.find((block) => block.from === 0)!
+    const child = list.find((block) => block.from === 1)!
+    expect([blockContainsLine(parent, 0), blockContainsLine(parent, 1)]).toEqual([true, true])
+    expect([blockContainsLine(child, 0), blockContainsLine(child, 1)]).toEqual([false, true])
+  })
+
+  it('agrees with the owner map: an owner always contains its own line', () => {
+    const owners = blockOwnersByLine(blocks)
+    for (const [line, owner] of owners) expect(blockContainsLine(owner, line)).toBe(true)
   })
 })
 
