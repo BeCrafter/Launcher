@@ -1771,6 +1771,39 @@
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
 }
+/* ── 引用样式选择器 ──
+   与表格选择器同构(往上开、同一个浮层壳),里面一排 6 颗图标:
+   普通引用 + 五种提示块,与块菜单那排引用样式同源(同一份 CALLOUT_ICON_NAMES)。 */
+.notes-quote-picker {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: -6px;
+  z-index: 30;
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--menu-bg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.notes-quote-picker button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+/* 悬停只改背景色与颜色,不动任何布局属性(见 CLAUDE.md「悬停不得改变布局」) */
+.notes-quote-picker button:hover {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
 .notes-toolbar-spacer {
   flex: 1;
 }

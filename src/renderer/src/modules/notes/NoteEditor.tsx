@@ -80,6 +80,12 @@ export interface NoteEditorHandle {
    * 作用于**块首行** —— 解析器只认块的第一行。
    */
   setQuoteStyle(line: number, kind: CalloutKind | null): void
+  /**
+   * 底部工具条的「引用样式」入口:`null` 是普通引用(切换 `> ` 前缀,同 `prefixLines`),
+   * 有 kind 时先把选中的各行加成引用块(只加不切换),再对首行套提示块标记 ——
+   * 与块菜单里「普通引用 → 提示块」走同一条升级路径(`setQuoteStyle`)。
+   */
+  applyQuote(kind: CalloutKind | null): void
   /** 把 `line` 行设成指定列表标记;已是该标记则取消(变回普通行),不同标记直接替换 */
   setListMarker(line: number, marker: '- ' | '1. ' | '- [ ] '): void
   /** 整行缩进/反缩进 2 空格(列表嵌套) */
@@ -372,6 +378,41 @@ export function NoteEditor({
             // 普通引用升级:标记独占一行,原文本下移一行 —— 与示例笔记的写法一致
             view.dispatch({ changes: { from: cur.from, to: cur.to, insert: `${indent}${tag}\n${indent}> ${rest}` } })
           }
+        }
+        view.focus()
+      },
+
+      applyQuote(kind) {
+        const view = viewRef.current
+        if (!view) return
+        const { state } = view
+        const { from, to, empty } = state.selection.main
+        const first = state.doc.lineAt(from).number
+        const last = state.doc.lineAt(to).number
+        if (kind === null) {
+          // 普通引用就是「切换 `> ` 前缀」,与原来按钮的行为完全一致
+          this.prefixLines('> ')
+          return
+        }
+        // 先把选中的各行加成引用块。**只加不切换**:这里的语义是「升级成提示块」,
+        // 不是在普通引用和提示块之间摇摆 —— 已是引用的行原样保留
+        const changes: { from: number; to: number; insert: string }[] = []
+        for (let n = first; n <= last; n++) {
+          const line = state.doc.line(n)
+          if (!line.text.startsWith('> ')) {
+            changes.push({ from: line.from, to: line.from, insert: '> ' })
+          }
+        }
+        if (changes.length > 0) view.dispatch({ changes })
+        // 再对块首行套提示块标记 —— 标记独占一行、原文本下移,与块菜单同一条路径
+        const hadSelection = !empty
+        this.setQuoteStyle(first - 1, kind)
+        if (hadSelection) {
+          // 恢复选区:标记插入会把首行加长,按标记后的行数夹一下再放回去
+          const doc = view.state.doc
+          const a = doc.line(Math.min(first, doc.lines)).from
+          const b = doc.line(Math.min(last + 1, doc.lines)).to
+          view.dispatch({ selection: { anchor: a, head: b }, annotations: suppressSelectionBubble.of(true) })
         }
         view.focus()
       },

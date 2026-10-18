@@ -13,6 +13,8 @@ import { useT } from '../../hooks/useT'
 import { Icon } from '../../components/ui/Icon'
 import type { IconName } from '../../lib/icon-paths'
 import { tableSkeleton } from '../../lib/note-table'
+import { CALLOUT_ICON_NAMES } from '../../lib/block-icons'
+import { CALLOUT_KINDS, type CalloutKind } from '../../lib/markdown'
 import type { NoteEditorHandle } from './NoteEditor'
 
 interface FormatAction {
@@ -34,7 +36,6 @@ const FORMATS: FormatAction[] = [
   { id: 'heading', icon: 'heading', labelKey: 'notes.fmt.heading', groupStart: true, run: (h) => h.prefixLines('## ') },
   { id: 'list', icon: 'list', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },
   { id: 'task', icon: 'square-check-big', labelKey: 'notes.fmt.task', run: (h) => h.prefixLines('- [ ] ') },
-  { id: 'quote', icon: 'text-quote', labelKey: 'notes.fmt.quote', run: (h) => h.prefixLines('> ') },
   { id: 'codeBlock', icon: 'square-code', labelKey: 'notes.fmt.codeBlock', groupStart: true, run: (h) => h.insertBlock('```\n\n```', 4) },
   { id: 'image', icon: 'image', labelKey: 'notes.fmt.image', run: (h) => h.wrapSelection('![', '](assets/)') },
   {
@@ -112,6 +113,53 @@ function TablePicker({
   )
 }
 
+/**
+ * 引用样式选择器:普通引用 + 五种提示块,与块菜单里那排引用样式**同源**
+ * (图标都出自 `CALLOUT_ICON_NAMES`)。往上开 —— 工具条贴着窗口底边,往下开会被切掉。
+ */
+function QuotePicker({
+  onPick,
+  onClose
+}: {
+  onPick: (kind: CalloutKind | null) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const boxRef = useRef<HTMLDivElement | null>(null)
+
+  // 与 TablePicker 同一套关法:pointerdown 比 click 早一层,别处按下立即收起
+  useEffect(() => {
+    const onDown = (e: PointerEvent): void => {
+      if (!boxRef.current?.contains(e.target as Node)) onClose()
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [onClose])
+
+  const plain = t('notes.fmt.quote')
+  return (
+    <div className="notes-quote-picker" ref={boxRef} role="dialog" aria-label={t('notes.blockMenu.quoteStyle')}>
+      <button type="button" title={plain} aria-label={plain} onClick={() => onPick(null)}>
+        <Icon name="text-quote" />
+      </button>
+      {CALLOUT_KINDS.map((kind) => {
+        const label = t(`notes.callout.${kind}`)
+        return (
+          <button
+            key={kind}
+            type="button"
+            title={label}
+            aria-label={label}
+            onClick={() => onPick(kind)}
+          >
+            <Icon name={CALLOUT_ICON_NAMES[kind]} />
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /** 生成 GFM 表格骨架。表头给占位名,空表头在预览里是一片看不出边界的格子 */
 export function NoteToolbar({
   handleRef,
@@ -128,6 +176,12 @@ export function NoteToolbar({
   const t = useT()
   const empty = body.trim() === ''
   const [tableOpen, setTableOpen] = useState(false)
+  const [quoteOpen, setQuoteOpen] = useState(false)
+
+  const applyQuote = (kind: CalloutKind | null): void => {
+    setQuoteOpen(false)
+    handleRef.current?.applyQuote(kind)
+  }
 
   const run = (a: FormatAction): void => {
     const handle = handleRef.current
@@ -167,6 +221,20 @@ export function NoteToolbar({
             <Icon name={a.icon} />
           </button>
         ))}
+        {/* 引用样式:与表格按钮同构 —— 带浮层,点开选普通引用或提示块 */}
+        <div className="notes-fmt-group group-start">
+          <button
+            type="button"
+            className={'notes-fmt-btn' + (quoteOpen ? ' active' : '')}
+            title={t('notes.fmt.quote')}
+            aria-label={t('notes.fmt.quote')}
+            aria-expanded={quoteOpen}
+            onClick={() => setQuoteOpen((v) => !v)}
+          >
+            <Icon name="text-quote" />
+          </button>
+          {quoteOpen && <QuotePicker onPick={applyQuote} onClose={() => setQuoteOpen(false)} />}
+        </div>
         <div className="notes-fmt-group group-start">
           <button
             type="button"
