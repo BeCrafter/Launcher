@@ -1,5 +1,5 @@
 // ⚠ 本文件由 scripts/gen-icons.mjs 生成，不要手改 —— 改脚本里的名单后重跑。
-// 生成时间：2026-10-14，来源 lucide-static@1.57.0
+// 生成时间：2026-10-18，来源 lucide-static@1.57.0
 //
 // 图标来自 Lucide（https://lucide.dev），ISC 许可：
 //   Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of
@@ -96,6 +96,12 @@ export const ICON_SHAPES: Record<string, readonly IconShape[]> = {
   'square-chevron-down': [
     { tag: 'rect', attrs: {"width":"18","height":"18","x":"3","y":"3","rx":"2"} },
     { tag: 'path', attrs: {"d":"m16 10-4 4-4-4"} }
+  ],
+  'chevron-right': [
+    { tag: 'path', attrs: {"d":"m9 18 6-6-6-6"} }
+  ],
+  'chevron-down': [
+    { tag: 'path', attrs: {"d":"m6 9 6 6 6-6"} }
   ],
   'align-left': [
     { tag: 'path', attrs: {"d":"M21 5H3"} },

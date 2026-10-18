@@ -1,8 +1,5 @@
 // 块手柄用的图标。几何数据来自 `lib/icon-paths.ts`（由 scripts/gen-icons.mjs 从 Lucide 生成），
 // 与底部工具条、块菜单**同一份来源** —— 三处图标因此天然一致。
-//
-// 唯一的例外是**折叠三角**：飞书那颗是**实心**带圆角的三角，而 Lucide 只有描边版本，
-// 照搬反而更不像，所以它仍然是这里自绘的一个 path。
 
 import { iconNode } from './icon-dom'
 import type { IconName } from './icon-paths'
@@ -80,28 +77,16 @@ export function plusIcon(): SVGSVGElement {
   return iconNode('plus', 12)
 }
 
-/** 折叠三角：展开时朝下、收起时朝右。实心带圆角，贴着正文，与飞书那颗同形。 */
+/**
+ * 折叠三角:收起时朝右、展开时朝下。
+ *
+ * 用 Lucide 的**细描边**折角 —— 与工具条 / 块菜单同一套笔画语言。
+ * (以前是自绘的实心三角:在浅色主题里它比周围所有图标都重,看着突兀。)
+ * 两个方向直接用两张图标、不做旋转:根 `<svg>` 上的 transform 属性会推动布局(见 CLAUDE.md)。
+ */
 export function caretIcon(collapsed: boolean): SVGSVGElement {
-  const NS = 'http://www.w3.org/2000/svg'
-  const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('viewBox', '0 0 16 16')
-  svg.setAttribute('width', '16')
-  svg.setAttribute('height', '16')
-  svg.setAttribute('fill', 'currentColor')
-  svg.setAttribute('aria-hidden', 'true')
-  const g = document.createElementNS(NS, 'g')
-  // ⚠ 旋转必须加在内部的 <g> 上，**不能加在根 <svg> 上**：
-  // 根 svg 的 transform 属性在 Chromium 里会把整个盒子往下推一个图标高度（实测 +16px），
-  // 表现就是「折叠后三角按钮掉到下面去了」。
-  if (collapsed) g.setAttribute('transform', 'rotate(-90 8 8)')
-  const path = document.createElementNS(NS, 'path')
-  path.setAttribute(
-    'd',
-    'M4.2 5.6h7.6c.86 0 1.36.97.86 1.67l-3.8 5.03a1.02 1.02 0 0 1-1.72 0L3.34 7.27c-.5-.7 0-1.67.86-1.67z'
-  )
-  g.append(path)
-  svg.append(g)
-  return svg
+  // 16px 铺满按钮:14px 时描边在浅色主题下偏淡,用户反馈「不够明显」
+  return iconNode(collapsed ? 'chevron-right' : 'chevron-down', 16)
 }
 
 /** 标题的类型标识用文本（豆包与飞书都是这样），不画图标。 */

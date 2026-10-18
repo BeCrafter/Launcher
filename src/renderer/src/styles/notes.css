@@ -1074,7 +1074,9 @@
   border: 0;
   border-radius: 3px;
   background: none;
-  color: var(--text);
+  /* --muted 而不是 --dim:折叠三角要能一眼看见(辅助操作,但首先是可点的按钮);
+     抓手继续用 --dim —— 它不是按钮,只是「可以拖」的暗示。悬停再变 --accent2 */
+  color: var(--muted);
   cursor: pointer;
 }
 .note-editor-host .cm-block-caret:hover {

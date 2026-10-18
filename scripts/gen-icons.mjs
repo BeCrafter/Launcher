@@ -35,6 +35,9 @@ const ICONS = [
   'square-code',
   'image',
   'square-chevron-down',
+  // 块折叠三角:细描边折角,与其余图标同一套笔画语言(收起 → 右,展开 → 下)
+  'chevron-right',
+  'chevron-down',
   'align-left',
   'align-center',
   'align-right',
