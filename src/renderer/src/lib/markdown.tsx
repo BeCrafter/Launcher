@@ -35,6 +35,7 @@ import {
   type MediaSize,
   type MediaTarget
 } from './note-media-size'
+import { alignOpenOf, isAlignClose } from './note-align'
 import { openExternal } from './utils'
 import {
   clampTableCol,
@@ -50,6 +51,9 @@ import {
   cellFromEditText,
   cellToEditText,
   colCount,
+  moveEntry,
+  moveTableColumn,
+  moveTableRow,
   setTableOptionInBody,
   setTableOptionsInBody,
   setTableWidthInBody,
@@ -238,6 +242,16 @@ export interface TableLabels {
   /** 列边界 / 行边界拖拽手柄的无障碍名 */
   resizeColumn: string
   resizeRow: string
+  /** 行 / 列手柄:点击选中,拖动移动 */
+  rowHandle: string
+  colHandle: string
+  /** 表头行固定,不参与拖动和删除 */
+  headerLocked: string
+  /** 选中行 / 列后的局部插入 */
+  insertRowAbove: string
+  insertRowBelow: string
+  insertColumnLeft: string
+  insertColumnRight: string
 }
 
 /** 提示块(GitHub / Obsidian callout)的五个类型 */
@@ -1048,9 +1062,9 @@ const LIST_EXT_RE = /^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)$/
  *
  * 为什么只能走 HTML:Markdown 没有段落对齐的标准语法。而 align 属性是
  * **实践中可移植**的那一个 —— GitHub 认、Obsidian 也认。
+ * 识别规则在 `lib/note-align.ts`:标签名不写死(div / p / span …都行),
+ * 闭合行按开标签名配对。这里只负责把包裹块渲染出来。
  */
-const ALIGN_OPEN_RE = /^\s*<(?:div|p)\s+align=["']?(left|center|right)["']?\s*>\s*$/i
-const ALIGN_CLOSE_RE = /^\s*<\/(?:div|p)>\s*$/i
 /**
  * 折叠块。Markdown 标准里**没有**折叠语法,通行的是 HTML 的 details/summary ——
  * GitHub 认、Obsidian 也认。这是全项目第三处「认一小段 HTML」,
@@ -1199,6 +1213,24 @@ function CopyCodeButton({ code, label }: { code: string; label: string }): React
   )
 }
 
+interface TableGuides {
+  cols: number[]
+  rows: number[]
+  w: number
+  h: number
+  nested: { left: number; right: number; top: number; bottom: number }[]
+}
+
+/** 当前选中的是正文行(0 起)还是列(0 起) —— 同一时刻只有一种 */
+type TableSelection = { kind: 'row'; index: number } | { kind: 'col'; index: number }
+
+/** 正在拖动的行 / 列;`before` 是松手后插入到哪一项之前 */
+interface TableReorder {
+  kind: 'row' | 'col'
+  from: number
+  before: number
+}
+
 /**
  * 预览里的表格。只读时与以前完全一样;调用方给了 `onEditTable` 才多出编辑能力。
  *
@@ -1268,6 +1300,19 @@ function TableView({
   const dragColsRef = useRef<(number | null)[] | null>(null)
   const [dragRows, setDragRows] = useState<(number | null)[] | null>(null)
   const dragRowsRef = useRef<(number | null)[] | null>(null)
+  /** 拖拽改尺寸时量出来的边界 —— 指针事件里也读得到最新值 */
+  const guidesRef = useRef<TableGuides | null>(null)
+  /** 当前选中的正文行 / 列;同一时刻只有一种 */
+  const [selected, setSelected] = useState<TableSelection | null>(null)
+  /** 正在拖动的行 / 列(松手前的落点) */
+  const [reorder, setReorder] = useState<TableReorder | null>(null)
+  /** 悬停在某个行 / 列手柄上时，给整行 / 整列套一圈高亮框 */
+  const [hoverFrame, setHoverFrame] = useState<TableSelection | null>(null)
+  /** 手柄被按下(还没松开)。按住期间表格级外框要让位,点击 / 长按拖动都不能露出来 */
+  const [handlePress, setHandlePress] = useState(false)
+  /** Delete 键的监听器在 effect 里,用 ref 拿到最新一版「删除并同步尺寸」的实现 */
+  const deleteRowRef = useRef<(rn: number) => void>(() => {})
+  const deleteColRef = useRef<(c: number) => void>(() => {})
 
   const run = (fn: (body: string, line: number) => string | null): void => {
     if (ctx.onEditTable === undefined || ctx.body === undefined) return
@@ -1275,10 +1320,15 @@ function TableView({
     if (next2 !== null) ctx.onEditTable(next2)
   }
 
+  // 指针事件的监听器里要拿到最新的 run(表格内容每次编辑都会重渲染)
+  const runRef = useRef(run)
+  runRef.current = run
+
   /** 表格在正文里的行区间 —— 所有尺寸回写都要它 */
   const range = { line, to: line + block.to - block.from, fenced }
 
-  const lastCol = colCount(block) - 1
+  const colTotal = colCount(block)
+  const lastCol = colTotal - 1
   /*
    * ⚠ `cols=` 的项数**必须夹到表格的真实列数**。
    * 多出来的项会让 <colgroup> 凭空造出列:表格列数 = max(colgroup, 单元格数) ——
@@ -1289,6 +1339,281 @@ function TableView({
     list === null ? null : list.slice(0, colCount(block))
   const shownCols = clampCols(dragCols ?? cols)
   const shownRows = dragRows ?? rows
+
+  /* ── 行 / 列的选择与拖拽 ──
+     选择状态只活在这一张表里;点到别处、按 Escape、或者行/列数变了就失效。 */
+
+  // 选中后 Delete / Backspace 删除,Esc 取消。输入框、格子编辑器和源码编辑器里不抢键。
+  useEffect(() => {
+    if (selected === null) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setSelected(null)
+        return
+      }
+      if (e.key !== 'Delete' && e.key !== 'Backspace') return
+      // 输入框 / 格子编辑器里不抢 Delete。源码编辑器(contenteditable)不在此列:
+      // 选中行/列后按 Delete 的意图很明确,而且点到源码编辑器时选中已被清除。
+      const target = e.target
+      if (
+        target instanceof HTMLElement &&
+        target.closest('input, textarea, select') !== null
+      ) {
+        return
+      }
+      if (selected.kind === 'row') {
+        e.preventDefault()
+        e.stopPropagation()
+        // 走与菜单相同的 deleteRowAt —— 它会同步删掉 rows= 里对应的那一项
+        deleteRowRef.current(selected.index)
+      } else if (colTotal > 1) {
+        e.preventDefault()
+        e.stopPropagation()
+        deleteColRef.current(selected.index)
+      }
+    }
+    // 捕获阶段:先把「这是表格选中」的 Delete 吃掉,不再传给源码编辑器
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [selected, colTotal])
+
+  // 点到别处(包括别的格子)就收起选中;手柄、菜单、新增条自己不算「别处」
+  useEffect(() => {
+    if (selected === null) return
+    const onDown = (e: PointerEvent): void => {
+      const el = e.target
+      if (!(el instanceof HTMLElement)) return
+      if (
+        el.closest(
+          '.md-table-row-handle, .md-table-col-handle, .md-table-selection-menu, .md-table-add-col, .md-table-add-row'
+        ) !== null
+      ) {
+        return
+      }
+      setSelected(null)
+    }
+    document.addEventListener('pointerdown', onDown, true)
+    return () => document.removeEventListener('pointerdown', onDown, true)
+  }, [selected])
+
+  // 表格被别处改小(删行/删列)后,越界的选中自动清掉
+  useEffect(() => {
+    setSelected((cur) => {
+      if (cur === null) return null
+      if (cur.kind === 'row' && cur.index >= block.rows.length) return null
+      if (cur.kind === 'col' && cur.index >= colTotal) return null
+      return cur
+    })
+  }, [block.rows.length, colTotal])
+
+  /** 当前表格的 rows= / cols= 值(补齐到真实行/列数);没有围栏选项时是 null */
+  const rowSizeList = (): (number | null)[] | null =>
+    shownRows === null
+      ? null
+      : Array.from({ length: block.rows.length + 1 }, (_, i) => shownRows[i] ?? null)
+  const colSizeList = (): (number | null)[] | null =>
+    shownCols === null ? null : Array.from({ length: colTotal }, (_, i) => shownCols[i] ?? null)
+
+  /**
+   * 结构编辑(增删行/列)之后同步 rows= / cols= —— 尺寸是按下标存的,
+   * 只改内容不改尺寸列表的话,删掉中间一行会让下面的行高整体错位。
+   */
+  const withSizes = (
+    next: string | null,
+    key: 'rows' | 'cols',
+    sizes: (number | null)[] | null,
+    edit: (list: (number | null)[]) => (number | null)[]
+  ): string | null => {
+    if (next === null || !fenced || sizes === null) return next
+    const list = edit(sizes)
+    const value = list.every((n) => n === null) ? null : joinSizeList(list)
+    return setTableOptionsInBody(next, range, [[key, value]])
+  }
+
+  /** 移动正文行;围栏里有 rows= 时把行高一起搬走 */
+  const commitRowMove = (from: number, before: number): void => {
+    if (before === from || before === from + 1) {
+      setSelected(null)
+      return
+    }
+    runRef.current((b, l) => {
+      const next = moveTableRow(b, l, from, before)
+      return withSizes(next, 'rows', rowSizeList(), (list) => moveEntry(list, from + 1, before + 1))
+    })
+    setSelected(null)
+  }
+
+  /** 移动整列;围栏里有 cols= 时把列宽一起搬走 */
+  const commitColMove = (from: number, before: number): void => {
+    if (before === from || before === from + 1) {
+      setSelected(null)
+      return
+    }
+    runRef.current((b, l) => {
+      const next = moveTableColumn(b, l, from, before)
+      return withSizes(next, 'cols', colSizeList(), (list) => moveEntry(list, from, before))
+    })
+    setSelected(null)
+  }
+
+  const insertRowAt = (rn: number, where: 'above' | 'below'): void => {
+    const row = where === 'above' ? rn : rn + 1
+    runRef.current((b, l) => {
+      const next = addTableRow(b, l, row)
+      const at = Math.min(Math.max(row, 0), block.rows.length)
+      return withSizes(next, 'rows', rowSizeList(), (list) => {
+        const out = list.slice()
+        out.splice(at + 1, 0, null)
+        return out
+      })
+    })
+    setSelected(null)
+  }
+
+  const deleteRowAt = (rn: number): void => {
+    runRef.current((b, l) => {
+      const next = removeTableRow(b, l, rn + 1)
+      return withSizes(next, 'rows', rowSizeList(), (list) => {
+        const out = list.slice()
+        out.splice(rn + 1, 1)
+        return out
+      })
+    })
+    setSelected(null)
+  }
+
+  const insertColAt = (c: number, where: 'left' | 'right'): void => {
+    const at = Math.min(Math.max(where === 'left' ? c : c + 1, 0), colTotal)
+    runRef.current((b, l) => {
+      const next = addTableColumn(b, l, where === 'left' ? c - 1 : c)
+      return withSizes(next, 'cols', colSizeList(), (list) => {
+        const out = list.slice()
+        out.splice(at, 0, null)
+        return out
+      })
+    })
+    setSelected(null)
+  }
+
+  const deleteColAt = (c: number): void => {
+    if (colTotal <= 1) return
+    runRef.current((b, l) => {
+      const next = removeTableColumn(b, l, c)
+      return withSizes(next, 'cols', colSizeList(), (list) => {
+        const out = list.slice()
+        out.splice(c, 1)
+        return out
+      })
+    })
+    setSelected(null)
+  }
+
+  deleteRowRef.current = deleteRowAt
+  deleteColRef.current = deleteColAt
+
+  /** 末尾追加:同步把 rows= / cols= 补一个 auto,保持下标对齐 */
+  const appendRow = (): void => {
+    runRef.current((b, l) => {
+      const next = addTableRow(b, l, block.rows.length)
+      return withSizes(next, 'rows', rowSizeList(), (list) => [...list, null])
+    })
+  }
+
+  const appendColumn = (): void => {
+    runRef.current((b, l) => {
+      const next = addTableColumn(b, l, lastCol)
+      return withSizes(next, 'cols', colSizeList(), (list) => [...list, null])
+    })
+  }
+
+  /**
+   * 行 / 列手柄的指针逻辑:移动超过 4px 才算拖拽,否则松手就是「选中」。
+   * 落点按最近的边界算,与 `moveEntry` 的 before 口径一致。
+   */
+  const startHandleDrag = (e: React.PointerEvent, kind: 'row' | 'col', index: number): void => {
+    if (!editable) return
+    e.preventDefault()
+    e.stopPropagation()
+    // preventDefault 会拦掉浏览器的默认聚焦:手动把焦点放到手柄上,
+    // 否则焦点还留在源码编辑器里时,Delete 会先被编辑器吃掉。
+    if (e.currentTarget instanceof HTMLElement) e.currentTarget.focus({ preventScroll: true })
+    // 拖行 / 拖列时别让悬停边界的 col-resize / row-resize 光标留在表格上
+    if (wrapRef.current !== null) wrapRef.current.dataset.cursor = ''
+    const guides = guidesRef.current
+    const table = tableRef.current
+    if (guides === null || table === null) return
+    // 按住手柄期间一直算「行列交互中」:表格外框、边界线、缩放手柄都不出现
+    setHandlePress(true)
+    const rect = table.getBoundingClientRect()
+    const startX = e.clientX
+    const startY = e.clientY
+    let moved = false
+    let before = index
+
+    const boundaryAt = (ev: PointerEvent): number => {
+      if (kind === 'row') {
+        const y = ev.clientY - rect.top
+        let best = 0
+        let dist = Number.POSITIVE_INFINITY
+        for (let b = 0; b <= block.rows.length; b++) {
+          const d = Math.abs(y - (guides.rows[b] ?? guides.h))
+          if (d < dist) {
+            dist = d
+            best = b
+          }
+        }
+        return best
+      }
+      const x = ev.clientX - rect.left
+      const bounds = [0, ...guides.cols]
+      let best = 0
+      let dist = Number.POSITIVE_INFINITY
+      for (let b = 0; b <= colTotal; b++) {
+        const d = Math.abs(x - (bounds[b] ?? guides.w))
+        if (d < dist) {
+          dist = d
+          best = b
+        }
+      }
+      return best
+    }
+
+    const onMove = (ev: PointerEvent): void => {
+      if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 4) return
+      ev.preventDefault()
+      if (!moved) {
+        moved = true
+        setSelected(null) // 拖动时不要让旧的选中高亮留在旁边
+        setHoverFrame(null) // 落点线接管提示,先收起悬停框
+      }
+      before = boundaryAt(ev)
+      setReorder({ kind, from: index, before })
+    }
+    const cleanup = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+    }
+    const onUp = (): void => {
+      cleanup()
+      setHandlePress(false)
+      setReorder(null)
+      if (!moved) {
+        setSelected({ kind, index })
+        return
+      }
+      if (kind === 'row') commitRowMove(index, before)
+      else commitColMove(index, before)
+    }
+    const onCancel = (): void => {
+      cleanup()
+      setHandlePress(false)
+      setReorder(null)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+  }
 
   /**
    * 拖列边界 / 行边界。
@@ -1307,11 +1632,15 @@ function TableView({
     e.stopPropagation()
     const table = tableRef.current
     if (table === null) return
+    // 与 guides 同理:只量外层表格自己的列 / 行,嵌套表格的行列不能混进来
+    const headRow = table.tHead?.rows[0] ?? table.rows[0]
     const boxes =
       axis === 'col'
-        ? [...table.querySelectorAll('thead th')].map((el) => el.getBoundingClientRect().width)
+        ? headRow === undefined
+          ? []
+          : [...headRow.cells].map((el) => el.getBoundingClientRect().width)
         : // 行高按**所有行**算,表头也算第 0 行 —— 排版表格里内容就写在第一行(它没有数据行)
-          [...table.querySelectorAll('tr')].map((el) => el.getBoundingClientRect().height)
+          [...table.rows].map((el) => el.getBoundingClientRect().height)
     if (boxes.length === 0 || boxes[index] === undefined) return
 
     const base = boxes.map((n) => Math.round(n))
@@ -1370,8 +1699,13 @@ function TableView({
 
   const cell = (raw: string, row: number, col: number, key: string, head: boolean): ReactNode => {
     const Tag = head ? 'th' : 'td'
-    const isLast = col === lastCol
     const isEditing = editing !== null && editing.r === row && editing.c === col
+    const classes = [
+      editable ? 'md-cell-host' : '',
+      reorder?.kind === 'col' && reorder.from === col ? 'md-col-dragging' : ''
+    ]
+      .filter((c) => c !== '')
+      .join(' ')
 
     /*
      * 这一**行**在源文里的行号。
@@ -1393,7 +1727,7 @@ function TableView({
     return (
       <Tag
         key={key}
-        className={editable ? 'md-cell-host' : undefined}
+        className={classes === '' ? undefined : classes}
         style={{ textAlign: block.aligns[col] ?? undefined }}
         title={editable && !isEditing ? labels?.editHint : undefined}
         // 整个格子都是双击落点 —— 空单元格同样点得到
@@ -1442,35 +1776,63 @@ function TableView({
         ) : (
           /*
            * 内容套一层 wrapper:单元格里现在可以有块级内容(见 renderCellContent),
-           * 而后面还跟着两个**绝对定位**的删除按钮 —— 没有这层就写不出
-           * 「首尾块的外边距归零」:`:last-child` 匹配到的是按钮,不是最后那块内容。
+           * 而表头后面还跟着一个**绝对定位**的列手柄 —— 没有这层就写不出
+           * 「首尾块的外边距归零」:`:last-child` 匹配到的是手柄,不是最后那块内容。
            */
           <div className="md-cell-body">{renderCellContent(raw, `${k}-${key}`, ctx, rowLine)}</div>
         )}
-        {/* 列删除贴在表头格右上角(它删的是整列,位置就该在列上) */}
+        {/* 行手柄在第一个格子的**外侧**:高度与整行一致,背景继承格子。
+            默认隐藏,只有鼠标移出格子、进入左侧留白时才显形。表头行显示锁。 */}
+        {editable && col === 0 && (head ? (
+          <span
+            className="md-table-row-handle locked"
+            title={labels?.headerLocked}
+            aria-label={labels?.headerLocked}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <i className="fa-solid fa-lock" />
+          </span>
+        ) : (
+          <button
+            type="button"
+            className={
+              'md-table-row-handle' +
+              (selected?.kind === 'row' && selected.index === row - 1 ? ' active' : '') +
+              (reorder?.kind === 'row' && reorder.from === row - 1 ? ' dragging' : '')
+            }
+            title={labels?.rowHandle}
+            aria-label={labels?.rowHandle}
+            onPointerDown={(e) => startHandleDrag(e, 'row', row - 1)}
+            onPointerEnter={() => setHoverFrame({ kind: 'row', index: row - 1 })}
+            onPointerLeave={() =>
+              setHoverFrame((cur) => (cur?.kind === 'row' && cur.index === row - 1 ? null : cur))
+            }
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <i className="fa-solid fa-grip-vertical" />
+          </button>
+        ))}
+        {/* 列手柄在表头格的**外侧上方**:宽度与整列一致,背景继承表头格子。
+            默认隐藏,只有鼠标移出格子、进入上方留白时才显形。 */}
         {editable && head && (
           <button
             type="button"
-            className="md-table-del col"
-            title={labels?.delColumn}
-            aria-label={labels?.delColumn}
+            className={
+              'md-table-col-handle' +
+              (selected?.kind === 'col' && selected.index === col ? ' active' : '') +
+              (reorder?.kind === 'col' && reorder.from === col ? ' dragging' : '')
+            }
+            title={labels?.colHandle}
+            aria-label={labels?.colHandle}
+            onPointerDown={(e) => startHandleDrag(e, 'col', col)}
+            onPointerEnter={() => setHoverFrame({ kind: 'col', index: col })}
+            onPointerLeave={() =>
+              setHoverFrame((cur) => (cur?.kind === 'col' && cur.index === col ? null : cur))
+            }
             onDoubleClick={(e) => e.stopPropagation()}
-            onClick={() => run((b, l) => removeTableColumn(b, l, col))}
+            onClick={(e) => e.stopPropagation()}
           >
-            <i className="fa-solid fa-xmark" />
-          </button>
-        )}
-        {/* 行删除挂在最后一个数据格里,绝对定位到表格右边框之外 —— 不占格子、不撑宽表格 */}
-        {editable && !head && isLast && (
-          <button
-            type="button"
-            className="md-table-del row"
-            title={labels?.delRow}
-            aria-label={labels?.delRow}
-            onDoubleClick={(e) => e.stopPropagation()}
-            onClick={() => run((b, l) => removeTableRow(b, l, row))}
-          >
-            <i className="fa-solid fa-xmark" />
+            <i className="fa-solid fa-grip-horizontal" />
           </button>
         )}
       </Tag>
@@ -1497,7 +1859,8 @@ function TableView({
   const startResize = (e: React.PointerEvent): void => {
     e.preventDefault()
     e.stopPropagation()
-    const box = wrapRef.current?.getBoundingClientRect()
+    // ⚠ 用**表格**的宽度起算:外层块还带着右侧新增条的 24px 留白
+    const box = tableRef.current?.getBoundingClientRect() ?? wrapRef.current?.getBoundingClientRect()
     if (box === undefined) return
     const startX = e.clientX
     const startW = box.width
@@ -1530,20 +1893,8 @@ function TableView({
    * (`position: relative`),抓手塞进去就被困在一格宽里 —— 表头行的行边界只剩第一列那么宽,
    * 列边界也只能在表头上抓。量出边界位置之后,列边界可以整表高、行边界可以整行宽。
    */
-  const edgesRef = useRef<{
-    cols: number[]
-    rows: number[]
-    w: number
-    h: number
-    nested: { left: number; right: number; top: number; bottom: number }[]
-  }>({ cols: [], rows: [], w: 0, h: 0, nested: [] })
-  const [guides, setGuides] = useState<{
-    cols: number[]
-    rows: number[]
-    w: number
-    h: number
-    nested: { left: number; right: number; top: number; bottom: number }[]
-  } | null>(null)
+  const edgesRef = useRef<TableGuides>({ cols: [], rows: [], w: 0, h: 0, nested: [] })
+  const [guides, setGuides] = useState<TableGuides | null>(null)
 
   // 每次渲染后重量一次(内容、列宽、行高、整表宽度都会让边界移动)。
   // 量出来没变就不 setState —— 否则「渲染 → 量 → 渲染」会一直转下去。
@@ -1551,6 +1902,7 @@ function TableView({
     const t = tableRef.current
     if (t === null || !canResize) {
       edgesRef.current = { cols: [], rows: [], w: 0, h: 0, nested: [] }
+      guidesRef.current = null
       setGuides(null)
       return
     }
@@ -1558,8 +1910,17 @@ function TableView({
     // **每一列**的右缘都算一条边界,最后一列也是 —— 它的右缘就是表格的右边缘,
     // 拖它改的是最后一列的宽度(整表宽度跟着走)。从前把最后一列切掉了,于是
     // 「行能拖最后一行、列却拖不了最后一列」,不对称(用户报的)。
-    const cols = [...t.querySelectorAll('thead th')].map((el) => el.getBoundingClientRect().right - base.left)
-    const rows = [...t.querySelectorAll('tr')].map((el) => el.getBoundingClientRect().bottom - base.top)
+    /*
+     * ⚠ 只能用**外层表格自己**的行 / 表头格。`querySelectorAll('tr')` 会把格子里
+     * 嵌套表格的行也一并算进来,guides.rows 的下标随之错位 —— 选第 3 行时高亮
+     * 会落到第 2 行。HTMLTableElement.rows / tHead.rows 只包含本表的行。
+     */
+    const headRow = t.tHead?.rows[0] ?? t.rows[0]
+    const cols =
+      headRow === undefined
+        ? []
+        : [...headRow.cells].map((el) => el.getBoundingClientRect().right - base.left)
+    const rows = [...t.rows].map((el) => el.getBoundingClientRect().bottom - base.top)
     /*
      * 格子里那张**嵌套表**的纵向范围。
      *
@@ -1581,6 +1942,7 @@ function TableView({
     })
     const next = { cols, rows, w: base.width, h: base.height, nested }
     edgesRef.current = next
+    guidesRef.current = next
     setGuides((cur) =>
       cur !== null &&
       Math.abs(cur.w - next.w) < 0.5 &&
@@ -1658,34 +2020,28 @@ function TableView({
     if (el !== null) el.dataset.cursor = ''
   }
 
-  const tools = editable ? (
-    <div className="md-table-tools">
-      <button type="button" onClick={() => run((b, l) => addTableRow(b, l, block.rows.length))}>
-        <i className="fa-solid fa-plus" />
-        <span>{labels?.addRow}</span>
-      </button>
-      <button type="button" onClick={() => run((b, l) => addTableColumn(b, l, colCount(block) - 1))}>
-        <i className="fa-solid fa-plus" />
-        <span>{labels?.addColumn}</span>
-      </button>
-    </div>
-  ) : null
+  const selRow = selected?.kind === 'row' ? selected.index : null
+  const selCol = selected?.kind === 'col' ? selected.index : null
 
-  return (
-    <Fragment>
-    {/*
+  /*
       两层是刻意的:
         · 外层 .md-table-block **不滚动** —— 角柄挂在它上面,才能和媒体一样落在框外(-7px)
           而不被 wrap 的 overflow 裁掉;
         · 内层 .md-table-wrap 保留 overflow-x: auto —— 宽表格仍然自己横向滚,
           不必把整栏拖去滚。
-    */}
+    */
+  return (
     <div
       className={
         'md-table-block' +
         (canResize ? ' resizable' : '') +
+        (editable ? ' framed' : '') +
         (dragW !== null ? ' dragging' : '') +
+        (reorder !== null ? ' reordering' : '') +
         (shown !== null ? ' sized' : '')
+      }
+      data-active={
+        selected !== null || hoverFrame !== null || reorder !== null || handlePress ? '' : undefined
       }
       data-line={anchor(ctx, line)}
       ref={wrapRef}
@@ -1724,7 +2080,11 @@ function TableView({
         <tbody>
           {block.rows.map((r, rn) => (
             // 行高是**最小**高度:`<tr>` 上的 height 在表格里就是下限,内容更高时照样撑开
-            <tr key={rn} style={shownRows?.[rn + 1] != null ? { height: `${shownRows[rn + 1]}px` } : undefined}>
+            <tr
+              key={rn}
+              className={reorder?.kind === 'row' && reorder.from === rn ? 'md-row-dragging' : undefined}
+              style={shownRows?.[rn + 1] != null ? { height: `${shownRows[rn + 1]}px` } : undefined}
+            >
               {block.header.map((_, cn) => cell(r[cn] ?? '', rn + 1, cn, `td${rn}-${cn}`, false))}
             </tr>
           ))}
@@ -1780,12 +2140,193 @@ function TableView({
           </div>
         )}
       </div>
+      {/* ── 行 / 列控制框 ──
+          只在使用预览时出现。默认淡出,悬停表格或已有选中/拖动时显形。
+          左侧行手柄落在预览的左留白里;右侧 / 底部的新增条是视觉上的「合并单元格」,
+          不写进 Markdown。 */}
+      {editable && guides !== null && (
+        <>
+          <button
+            type="button"
+            className="md-table-add-col"
+            style={{ left: `${guides.w}px`, height: `${guides.h}px` }}
+            title={labels?.addColumn}
+            aria-label={labels?.addColumn}
+            onClick={appendColumn}
+          >
+            <i className="fa-solid fa-plus" />
+          </button>
+          <button
+            type="button"
+            className="md-table-add-row"
+            style={{
+              top: `calc(var(--md-table-col-gutter, 20px) + ${guides.h}px)`,
+              width: `${guides.w}px`
+            }}
+            title={labels?.addRow}
+            aria-label={labels?.addRow}
+            onClick={appendRow}
+          >
+            <i className="fa-solid fa-plus" />
+          </button>
+
+          {/* 选中行 / 列:用一整块背景色，不画线，避免边框在格子接缝处断裂 */}
+          {selected !== null &&
+            !(
+              hoverFrame !== null &&
+              hoverFrame.kind === selected.kind &&
+              hoverFrame.index === selected.index
+            ) &&
+            (selected.kind === 'row' ? (
+              (() => {
+                const top = guides.rows[selected.index] ?? 0
+                const bottom = guides.rows[selected.index + 1] ?? guides.h
+                return (
+                  <span
+                    className="md-table-selection-band"
+                    style={{
+                      top: `calc(var(--md-table-col-gutter, 20px) + ${top}px)`,
+                      left: 0,
+                      width: `${guides.w}px`,
+                      height: `${Math.max(0, bottom - top)}px`
+                    }}
+                  />
+                )
+              })()
+            ) : (
+              (() => {
+                const left = selected.index === 0 ? 0 : (guides.cols[selected.index - 1] ?? 0)
+                const right = guides.cols[selected.index] ?? guides.w
+                return (
+                  <span
+                    className="md-table-selection-band"
+                    style={{
+                      top: 'var(--md-table-col-gutter, 20px)',
+                      left: `${left}px`,
+                      width: `${Math.max(0, right - left)}px`,
+                      height: `${guides.h}px`
+                    }}
+                  />
+                )
+              })()
+            ))}
+
+          {/* 悬停手柄时给整行 / 整列套一圈高亮框 */}
+          {hoverFrame !== null &&
+            (() => {
+              if (hoverFrame.kind === 'row') {
+                const top = guides.rows[hoverFrame.index] ?? 0
+                const bottom = guides.rows[hoverFrame.index + 1] ?? guides.h
+                return (
+                  <span
+                    className="md-table-hover-frame"
+                    style={{
+                      top: `calc(var(--md-table-col-gutter, 20px) + ${top}px)`,
+                      left: 0,
+                      width: `${guides.w}px`,
+                      height: `${Math.max(0, bottom - top)}px`
+                    }}
+                  />
+                )
+              }
+              const left = hoverFrame.index === 0 ? 0 : (guides.cols[hoverFrame.index - 1] ?? 0)
+              const right = guides.cols[hoverFrame.index] ?? guides.w
+              return (
+                <span
+                  className="md-table-hover-frame"
+                  style={{
+                    top: 'var(--md-table-col-gutter, 20px)',
+                    left: `${left}px`,
+                    width: `${Math.max(0, right - left)}px`,
+                    height: `${guides.h}px`
+                  }}
+                />
+              )
+            })()}
+
+          {reorder !== null &&
+            (reorder.kind === 'row' ? (
+              <span
+                className="md-table-drop-line row"
+                style={{
+                  top: `calc(var(--md-table-col-gutter, 20px) + ${(guides.rows[reorder.before] ?? guides.h) - 1}px)`,
+                  width: `${guides.w}px`
+                }}
+              />
+            ) : (
+              <span
+                className="md-table-drop-line col"
+                style={{
+                  left: `${
+                    (reorder.before === 0 ? 0 : (guides.cols[reorder.before - 1] ?? guides.w)) - 1
+                  }px`,
+                  height: `${guides.h}px`
+                }}
+              />
+            ))}
+
+          {selRow !== null && selRow < block.rows.length && (
+            <div
+              className="md-table-selection-menu"
+              style={{
+                top: `calc(var(--md-table-col-gutter, 20px) + ${guides.rows[selRow] ?? 0}px)`,
+                left: '4px'
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              role="menu"
+            >
+              <button type="button" onClick={() => insertRowAt(selRow, 'above')}>
+                <i className="fa-solid fa-plus" />
+                <span>{labels?.insertRowAbove}</span>
+              </button>
+              <button type="button" onClick={() => insertRowAt(selRow, 'below')}>
+                <i className="fa-solid fa-plus" />
+                <span>{labels?.insertRowBelow}</span>
+              </button>
+              <button type="button" className="danger" onClick={() => deleteRowAt(selRow)}>
+                <i className="fa-solid fa-trash-can" />
+                <span>{labels?.delRow}</span>
+                <span className="md-table-menu-key">Delete</span>
+              </button>
+            </div>
+          )}
+
+          {selCol !== null && selCol < colTotal && (
+            <div
+              className="md-table-selection-menu"
+              style={{
+                top: 'calc(var(--md-table-col-gutter, 20px) + 2px)',
+                left: `${Math.min(guides.cols[selCol - 1] ?? 0, Math.max(0, guides.w - 132)) + 2}px`
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              role="menu"
+            >
+              <button type="button" onClick={() => insertColAt(selCol, 'left')}>
+                <i className="fa-solid fa-plus" />
+                <span>{labels?.insertColumnLeft}</span>
+              </button>
+              <button type="button" onClick={() => insertColAt(selCol, 'right')}>
+                <i className="fa-solid fa-plus" />
+                <span>{labels?.insertColumnRight}</span>
+              </button>
+              <button
+                type="button"
+                className="danger"
+                disabled={colTotal <= 1}
+                onClick={() => deleteColAt(selCol)}
+              >
+                <i className="fa-solid fa-trash-can" />
+                <span>{labels?.delColumn}</span>
+                <span className="md-table-menu-key">Delete</span>
+              </button>
+            </div>
+          )}
+        </>
+      )}
       {canResize && (
         <span className="md-resize-handle" role="slider" aria-label="调整宽度" onPointerDown={startResize} />
       )}
     </div>
-    {tools}
-    </Fragment>
   )
 }
 
@@ -1935,7 +2476,7 @@ function alignmentsOf(sep: string): (('left' | 'center' | 'right') | undefined)[
 
 function isBlockStartExt(line: string, next?: string): boolean {
   return (
-    ALIGN_OPEN_RE.test(line) ||
+    alignOpenOf(line) !== null ||
     DETAILS_OPEN_RE.test(line) ||
     DETAILS_ONE_LINE_RE.test(line) ||
     FENCE_EXT_RE.test(line) ||
@@ -2139,6 +2680,8 @@ function renderBlocks(
             key={k0}
             data-line={anchor(ctx, abs)}
             data-layout={tableOpts.layout ? '' : undefined}
+            data-head={tableOpts.head !== null ? '' : undefined}
+            data-fill={tableOpts.fill !== null ? '' : undefined}
             style={vars}
           >
             {renderBlocks(body, `${k0}-t`, ctx, baseLine + startLine + 1, counter, {
@@ -2243,20 +2786,20 @@ function renderBlocks(
 
     // 段落对齐包裹块:内容照常按块渲染,只是外面套一层 textAlign。
     // 未闭合就吃到结尾 —— 不静默丢掉后半篇。
-    const alignOpen = ALIGN_OPEN_RE.exec(line)
+    const alignOpen = alignOpenOf(line)
     if (alignOpen !== null) {
       const k0 = key()
       const startLine = i
       const body: string[] = []
       i++
-      while (i < lines.length && !ALIGN_CLOSE_RE.test(lines[i])) body.push(lines[i++])
+      while (i < lines.length && !isAlignClose(lines[i], alignOpen.tag)) body.push(lines[i++])
       if (i < lines.length) i++
       out.push(
         <div
           className="md-align"
           key={k0}
           data-line={anchor(ctx, baseLine + startLine)}
-          style={{ textAlign: alignOpen[1].toLowerCase() as 'left' | 'center' | 'right' }}
+          style={{ textAlign: alignOpen.dir }}
         >
           {renderBlocks(body, `${k0}-al`, ctx, baseLine + startLine + 1, counter)}
         </div>

@@ -4,10 +4,16 @@ import {
   cellFromEditText,
   cellToEditText,
   addTableRow,
+  findTableMetaAtLine,
+  moveEntry,
+  moveTableColumn,
+  moveTableRow,
   parseTableBlock,
+  readTableMeta,
   removeTableColumn,
   removeTableRow,
   renderTableBlock,
+  setTableAlignInBody,
   setTableCell,
   setTableOptionInBody,
   setTableOptionsInBody,
@@ -512,5 +518,201 @@ describe('容器矩阵:回写要落在容器**里面**', () => {
     ])!
     expect(twice.split('\n').filter((l) => l.includes('```table'))).toHaveLength(1)
     expect(twice.split('\n')[at]!.endsWith('```table width=400')).toBe(true)
+  })
+})
+
+describe('layout 是唯一的裸词开关', () => {
+  const FENCED = ['```table border=none', '| a |', '|---|', '```'].join('\n')
+
+  it('打开时写成裸词 layout,不是 layout=true', () => {
+    const out = setTableOptionsInBody(FENCED, { line: 1, to: 2, fenced: true }, [['layout', '']])!
+    expect(out.split('\n')[0]).toBe('```table border=none layout')
+  })
+
+  it('关闭时连同裸词一起删掉,别的选项保留', () => {
+    const on = ['```table border=none layout', '| a |', '|---|', '```'].join('\n')
+    const out = setTableOptionsInBody(on, { line: 1, to: 2, fenced: true }, [['layout', null]])!
+    expect(out.split('\n')[0]).toBe('```table border=none')
+  })
+})
+
+describe('readTableMeta(块菜单的定位入口)', () => {
+  it('普通表:读出行区间、对齐、行列数与空选项', () => {
+    const meta = readTableMeta(BODY, 2)!
+    expect(meta).toMatchObject({
+      line: 2,
+      to: 5,
+      fenced: false,
+      aligns: ['left', 'right'],
+      cols: 2,
+      rows: 2
+    })
+    expect(meta.options).toEqual({
+      border: null,
+      color: null,
+      head: null,
+      fill: null,
+      width: null,
+      cols: null,
+      rows: null,
+      layout: false
+    })
+  })
+
+  it('围栏表:从块的起始行读到全部选项', () => {
+    const body = [
+      '前言',
+      '```table border=none head=#8b5cf6 fill=#f5f3ff width=480',
+      '| a | b |',
+      '|---|---|',
+      '| 1 | 2 |',
+      '```',
+      '后记'
+    ].join('\n')
+    const meta = readTableMeta(body, 1)!
+    expect(meta.fenced).toBe(true)
+    expect(meta.line).toBe(2)
+    expect(meta.to).toBe(4)
+    expect(meta.options).toMatchObject({
+      border: 'none',
+      head: '#8b5cf6',
+      fill: '#f5f3ff',
+      width: 480
+    })
+  })
+
+  it('引用里的表:前缀不影响读出选项', () => {
+    const body = ['> ```table border=thick', '> | a |', '> |---|', '> ```'].join('\n')
+    const meta = readTableMeta(body, 0)!
+    expect(meta.fenced).toBe(true)
+    expect(meta.line).toBe(1)
+    expect(meta.options.border).toBe('thick')
+  })
+
+  it('给普通表补围栏后,同一个块起始行仍然指向这张表', () => {
+    // 菜单连续设置时行号会漂,靠的正是「围栏开在块起始行上」这一点
+    const wrapped = setTableOptionsInBody(BODY, { line: 2, to: 5, fenced: false }, [['border', 'none']])!
+    const meta = readTableMeta(wrapped, 2)!
+    expect(meta.fenced).toBe(true)
+    expect(meta.line).toBe(3)
+    expect(meta.rows).toBe(2)
+    expect(meta.options.border).toBe('none')
+  })
+})
+
+describe('setTableAlignInBody(整表列对齐)', () => {
+  it('全部列设成同一档,再清回默认', () => {
+    const centered = setTableAlignInBody(BODY, 2, 'center')!
+    expect(parseTableBlock(centered.split('\n'), 2)!.aligns).toEqual(['center', 'center'])
+
+    const cleared = setTableAlignInBody(centered, 2, null)!
+    expect(parseTableBlock(cleared.split('\n'), 2)!.aligns).toEqual([null, null])
+  })
+
+  it('引用里的表也认前缀', () => {
+    const body = ['> | a | b |', '> |---|---|', '> | 1 | 2 |'].join('\n')
+    const out = setTableAlignInBody(body, 0, 'right')!
+    expect(out.split('\n').every((l) => l.startsWith('> '))).toBe(true)
+  })
+
+  it('不是表格时返回 null', () => {
+    expect(setTableAlignInBody('普通段落', 0, 'center')).toBeNull()
+  })
+})
+
+describe('findTableMetaAtLine(引用里的表格也能开设置)', () => {
+  const QUOTED = ['> 引用正文', '>', '> | a | b |', '> |---|---|', '> | 1 | 2 |', '', '后记'].join('\n')
+
+  it('表行 / 分隔行都能反查到同一张表', () => {
+    for (const line of [2, 3, 4]) {
+      const meta = findTableMetaAtLine(QUOTED, line)!
+      expect(meta.anchor).toBe(2)
+      expect(meta.line).toBe(2)
+      expect(meta.rows).toBe(1)
+      expect(meta.cols).toBe(2)
+    }
+  })
+
+  it('围栏表从收尾围栏反查到围栏开启行', () => {
+    const body = ['> ```table border=none', '> | a |', '> |---|', '> | 1 |', '> ```'].join('\n')
+    const meta = findTableMetaAtLine(body, 4)!
+    expect(meta.anchor).toBe(0)
+    expect(meta.fenced).toBe(true)
+    expect(meta.line).toBe(1)
+    expect(meta.options.border).toBe('none')
+  })
+
+  it('表格下面的空行不算(免得在引用里随便点一下就出表格设置)', () => {
+    const body = ['> | a |', '> |---|', '>', '> 后记'].join('\n')
+    expect(findTableMetaAtLine(body, 2)).toBeNull()
+    expect(findTableMetaAtLine(body, 3)).toBeNull()
+  })
+
+  it('围栏开启行自己就是锚点', () => {
+    const body = ['```table width=480', '| a |', '|---|', '```'].join('\n')
+    expect(findTableMetaAtLine(body, 0)).toMatchObject({ anchor: 0, line: 1, fenced: true })
+  })
+})
+
+
+describe('移动行 / 列', () => {
+  const T = ['| a | b | c |', '|:--|:-:|--:|', '| 1 | 2 | 3 |', '| 4 | 5 | 6 |', '| 7 | 8 | 9 |'].join('\n')
+  const read = (body: string) => parseTableBlock(body.split('\n'), 0)!
+
+  it('moveTableRow 只动正文行,表头不动', () => {
+    const t = read(moveTableRow(T, 0, 0, 3)!)
+    expect(t.header).toEqual(['a', 'b', 'c'])
+    expect(t.rows).toEqual([
+      ['4', '5', '6'],
+      ['7', '8', '9'],
+      ['1', '2', '3']
+    ])
+  })
+
+  it('moveTableRow 往上移', () => {
+    const t = read(moveTableRow(T, 0, 2, 0)!)
+    expect(t.rows).toEqual([
+      ['7', '8', '9'],
+      ['1', '2', '3'],
+      ['4', '5', '6']
+    ])
+  })
+
+  it('moveTableRow 落在自己身上 / 自己下方 = 不动', () => {
+    expect(moveTableRow(T, 0, 1, 1)).toBeNull()
+    expect(moveTableRow(T, 0, 1, 2)).toBeNull()
+  })
+
+  it('moveTableColumn 表头、对齐、每一行一起动', () => {
+    const t = read(moveTableColumn(T, 0, 0, 3)!)
+    expect(t.header).toEqual(['b', 'c', 'a'])
+    expect(t.aligns).toEqual(['center', 'right', 'left'])
+    expect(t.rows).toEqual([
+      ['2', '3', '1'],
+      ['5', '6', '4'],
+      ['8', '9', '7']
+    ])
+  })
+
+  it('moveTableColumn 参差行先补齐再移动', () => {
+    const body = ['| a | b | c |', '|---|---|---|', '| 1 |', '| 4 | 5 | 6 |'].join('\n')
+    const t = read(moveTableColumn(body, 0, 2, 0)!)
+    expect(t.header).toEqual(['c', 'a', 'b'])
+    expect(t.rows).toEqual([
+      ['', '1', ''],
+      ['6', '4', '5']
+    ])
+  })
+
+  it('引用里的表格:移动后每一行仍带前缀', () => {
+    const body = ['> | a | b |', '> |---|---|', '> | 1 | 2 |', '> | 3 | 4 |'].join('\n')
+    const out = moveTableColumn(body, 0, 0, 2)!
+    expect(out.split('\n').every((l) => l.startsWith('> '))).toBe(true)
+    expect(out).toContain('> | b')
+  })
+
+  it('moveEntry 的 before 是移动前下标', () => {
+    expect(moveEntry(['a', 'b', 'c'], 0, 3)).toEqual(['b', 'c', 'a'])
+    expect(moveEntry(['a', 'b', 'c'], 2, 0)).toEqual(['c', 'a', 'b'])
   })
 })

@@ -16,6 +16,7 @@ import { refTypeLabel } from '../../lib/note-refs'
 import { rankByTagHits, tagHitsOf } from '../../lib/note-search'
 import { relTime } from '../../lib/rel-time'
 import { confirmDangerous } from '../../lib/elevation'
+import { useRailResize } from '../../lib/use-rail-resize'
 import { useNotesStore } from '../../state/notes-store'
 
 /**
@@ -69,6 +70,14 @@ export function NotesRail(): React.JSX.Element {
   const open = useNotesStore((s) => s.open)
   const toggleFolder = useNotesStore((s) => s.toggleFolder)
   const setSelectedFolder = useNotesStore((s) => s.setSelectedFolder)
+  const setRailCollapsed = useNotesStore((s) => s.setRailCollapsed)
+  // 左右拖拽调宽;拖到 50px 以下直接折叠(复用现有折叠状态与展开按钮)
+  const { width, narrow, startResize, resetWidth, onResizeKeyDown } = useRailResize({
+    storageKey: 'launcherNotesRailWidth',
+    // 窄窗口保持原来的 200px 默认(与 notes.css 的 ≤860px 媒体查询一致)
+    defaultWidth: window.innerWidth <= 860 ? 200 : 258,
+    onCollapse: () => setRailCollapsed(true)
+  })
   const createFolder = useNotesStore((s) => s.createFolder)
   const renameFolder = useNotesStore((s) => s.renameFolder)
   const removeFolder = useNotesStore((s) => s.removeFolder)
@@ -441,7 +450,7 @@ export function NotesRail(): React.JSX.Element {
   const pinnedRef = useRef<HTMLDivElement | null>(null)
 
   return (
-    <div className="notes-rail">
+    <div className={'notes-rail' + (narrow ? ' rail-narrow' : '')} style={{ width }}>
       {/* 一篇都没有时连搜索框一起收起来:没有东西可搜,摆在那儿只是噪音。
           (首启引导自己带顶部留白,所以这里不需要留占位。) */}
       {!isEmpty && (
@@ -598,6 +607,19 @@ export function NotesRail(): React.JSX.Element {
           <span>{dir}</span>
         </button>
       </div>
+
+      {/* 拖拽条:骑在 rail 的右边界上,不占布局宽度。拖到 <50px 会直接折叠。 */}
+      <div
+        className="rail-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('common.railResize')}
+        title={t('common.railResize')}
+        tabIndex={0}
+        onPointerDown={startResize}
+        onDoubleClick={resetWidth}
+        onKeyDown={onResizeKeyDown}
+      />
     </div>
   )
 }

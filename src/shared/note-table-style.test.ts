@@ -13,6 +13,8 @@ import {
 const opts = (o: Partial<TableOptions>): TableOptions => ({
   border: null,
   color: null,
+  head: null,
+  fill: null,
   width: null,
   cols: null,
   rows: null,
@@ -38,6 +40,18 @@ describe('parseTableOptions', () => {
 
   it('颜色关键字也认', () => {
     expect(parseTableOptions('color=tomato').color).toBe('tomato')
+  })
+
+  it('表头底色 / 单元格底色,别名同样可用', () => {
+    expect(parseTableOptions('head=#8b5cf6 fill=#f5f3ff')).toEqual(
+      opts({ head: '#8b5cf6', fill: '#f5f3ff' })
+    )
+    expect(parseTableOptions('header=violet bg=linen').head).toBe('violet')
+    expect(parseTableOptions('header=violet bg=linen').fill).toBe('linen')
+  })
+
+  it('底色的非法值与边框色同一条规则:忽略', () => {
+    expect(parseTableOptions('head=url(x) fill=javascript:1')).toEqual(opts({}))
   })
 
   it('两个一起写,顺序无所谓', () => {
@@ -113,6 +127,13 @@ describe('tableCssVars', () => {
   it('没写的项不产出变量(留给全局默认)', () => {
     expect(tableCssVars(opts({ color: '#abc' }))).toEqual({ '--md-table-bc': '#abc' })
     expect(tableCssVars(opts({}))).toEqual({})
+  })
+
+  it('表头 / 单元格底色各有自己的变量', () => {
+    expect(tableCssVars(opts({ head: '#abc', fill: '#def' }))).toEqual({
+      '--md-table-head-bg': '#abc',
+      '--md-table-fill-bg': '#def'
+    })
   })
 
   it('列宽 / 行高不进 CSS 变量 —— 它们要变成 <colgroup> 与 <tr> 的行内样式', () => {

@@ -36,8 +36,11 @@ const FORMATS: FormatAction[] = [
   { id: 'heading', icon: 'heading', labelKey: 'notes.fmt.heading', groupStart: true, run: (h) => h.prefixLines('## ') },
   { id: 'list', icon: 'list', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },
   { id: 'task', icon: 'square-check-big', labelKey: 'notes.fmt.task', run: (h) => h.prefixLines('- [ ] ') },
+  { id: 'indent', icon: 'indent-increase', labelKey: 'notes.fmt.indent', run: (h) => h.indentBlock('in') },
+  { id: 'outdent', icon: 'indent-decrease', labelKey: 'notes.fmt.outdent', run: (h) => h.indentBlock('out') },
   { id: 'codeBlock', icon: 'square-code', labelKey: 'notes.fmt.codeBlock', groupStart: true, run: (h) => h.insertBlock('```\n\n```', 4) },
   { id: 'image', icon: 'image', labelKey: 'notes.fmt.image', run: (h) => h.wrapSelection('![', '](assets/)') },
+  { id: 'rule', icon: 'minus', labelKey: 'notes.fmt.rule', run: (h) => h.insertRule() },
   {
     id: 'details',
     icon: 'square-chevron-down',

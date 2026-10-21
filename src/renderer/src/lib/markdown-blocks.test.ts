@@ -120,6 +120,24 @@ describe('list items', () => {
   const lines = TREE.split('\n')
   const items = (): MarkdownBlock[] => parseMarkdownBlocks(TREE).filter((b) => b.kind === 'listItem')
 
+  it('区分任务项、有序列表项与普通列表项', () => {
+    const text = '- 普通\n- [ ] 待办\n- [x] 完成\n* [X] 星号任务\n1. 有序\n1. [ ] 有序任务\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => [b.ordered, b.task])).toEqual([
+      [false, false],
+      [false, true],
+      [false, true],
+      [false, true],
+      [true, false],
+      [true, true]
+    ])
+  })
+
+  it('任务标记只作用于自己那一行,不传染给子项', () => {
+    const all = parseMarkdownBlocks('- [ ] 任务\n  - 子项\n').filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => b.task)).toEqual([true, false])
+  })
+
   it('makes every item its own block, carrying its children', () => {
     const all = items()
     expect(all.map((b) => lines[b.from])).toEqual(['- 甲', '- 乙', '  - 乙子项', '- 丙'])
@@ -493,5 +511,29 @@ describe('permutationOffsets', () => {
     expect(visual).toEqual(['# A', '# C', '# B'])
     expect(committed).toEqual(visual)
     expect(next).toBe('# A\n\nA\n\n# C\n\nC\n\n# B\n\nB\n')
+  })
+})
+
+describe('对齐包裹块', () => {
+  it('任意标签 + align 都识别为一个 align 块(不再写死 div)', () => {
+    const text = ['<span align="center">', '', '甲', '', '</span>', '', '乙'].join('\n')
+    const blocks = parseMarkdownBlocks(text)
+    const align = blocks.find((b) => b.kind === 'align')!
+    expect(align).toMatchObject({ kind: 'align', align: 'center', from: 0, contentTo: 5 })
+    expect(blocks.find((b) => b.kind === 'paragraph')?.from).toBe(6)
+  })
+
+  it('闭合行必须与开标签同名:别的闭合标签只是内容', () => {
+    const text = ['<span align="center">', '', '甲', '', '</div>', '', '乙', '', '</span>'].join('\n')
+    const blocks = parseMarkdownBlocks(text)
+    const align = blocks.find((b) => b.kind === 'align')!
+    expect(align.contentTo).toBe(9)
+    expect(blocks.filter((b) => b.kind === 'align').length).toBe(1)
+  })
+
+  it('未闭合吃到结尾(不静默丢后半篇)', () => {
+    const text = ['<div align="right">', '', '甲', '', '乙'].join('\n')
+    const blocks = parseMarkdownBlocks(text)
+    expect(blocks.find((b) => b.kind === 'align')).toMatchObject({ align: 'right', contentTo: 5 })
   })
 })

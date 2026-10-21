@@ -50,8 +50,64 @@ import {
 } from '../../lib/editor-blocks'
 import type { MarkdownBlock } from '../../lib/markdown-blocks'
 import type { CalloutKind } from '../../lib/markdown'
+import {
+  addTableColumn,
+  addTableRow,
+  readTableMeta,
+  removeTableColumn,
+  removeTableRow,
+  setTableAlignInBody,
+  setTableOptionsInBody,
+  type TableAlign,
+  type TableEdit
+} from '../../lib/note-table-edit'
 
 const t = (): ((k: string) => string) => makeT(getCurrentLang())
+
+/**
+ * 在 `at` 处插入一条分隔线(---),并按上下文补前后空行。
+ * 否则 `---` 会粘进上一段变成 setext 标题,或者变成普通文本。
+ * 工具栏与块菜单/插入弹窗共用这一份规则。
+ */
+function insertRuleAtPos(view: EditorView, at: number): void {
+  const before = view.state.sliceDoc(0, at)
+  const lead = before === '' ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
+  const after = view.state.sliceDoc(at)
+  const trail = after === '' ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n'
+  const block = `${lead}---${trail}`
+  view.dispatch({
+    changes: { from: at, insert: block },
+    // 光标落到分隔线下一行(trail 一定以 \n 开头,或原文本本身就以空行开头)
+    selection: { anchor: at + lead.length + 4 }
+  })
+  view.focus()
+}
+
+/**
+ * 把整篇新文本写回编辑器,但只替换**变化的那一段**。
+ *
+ * 表格样式/行列操作都是「整篇纯函数 → 新正文」:直接整篇 dispatch 会把光标顶回 0、
+ * 滚动位置也一起丢;取公共前后缀后只替换中间,CodeMirror 会照常映射选区与滚动,
+ * 撤销栈里也仍然只记一次(Cmd+Z 能整体退回)。
+ */
+function applyDocText(view: EditorView, next: string): void {
+  const prev = view.state.doc.toString()
+  if (prev === next) return
+  let start = 0
+  const max = Math.min(prev.length, next.length)
+  while (start < max && prev.charCodeAt(start) === next.charCodeAt(start)) start += 1
+  let endPrev = prev.length
+  let endNext = next.length
+  while (
+    endPrev > start &&
+    endNext > start &&
+    prev.charCodeAt(endPrev - 1) === next.charCodeAt(endNext - 1)
+  ) {
+    endPrev -= 1
+    endNext -= 1
+  }
+  view.dispatch({ changes: { from: start, to: endPrev, insert: next.slice(start, endNext) } })
+}
 
 /** 编辑器对外的命令式接口(预览勾选任务项、底部工具条排版按钮、滚动同步) */
 export interface NoteEditorHandle {
@@ -90,8 +146,14 @@ export interface NoteEditorHandle {
   setListMarker(line: number, marker: '- ' | '1. ' | '- [ ] '): void
   /** 整行缩进/反缩进 2 空格(列表嵌套) */
   indentLine(line: number, dir: 'in' | 'out'): void
+  /** 对选中的每一行(没有选区就是当前行)缩进/反缩进 2 空格;空行跳过 */
+  indentBlock(dir: 'in' | 'out'): void
   /** 插入一个围栏块(图表 / 网页嵌入)。自动补围栏与前后空行 —— 光标在哪都不会和上一段粘在一起 */
   insertFence(lang: string, body: string): void
+  /** 插入一条分隔线(---),自动补前后空行,保证它自成一块 */
+  insertRule(): void
+  /** 在指定**行首**插入分隔线(0 起;可传 doc.lines 表示文末) */
+  insertRuleAt(line: number): void
   /** 整段替换若干行(含首尾)。图表的「编辑」走这里 —— 定点替换,能进撤销栈 */
   replaceLines(from: number, to: number, text: string): void
   /**
@@ -99,6 +161,17 @@ export interface NoteEditorHandle {
    * `'left'` 等于去掉包裹 —— 左对齐就是 Markdown 的默认。
    */
   alignBlock(dir: 'left' | 'center' | 'right'): void
+  /**
+   * 单表样式:写/删 ````table 围栏选项(`border` / `color` / `head` / `fill` /
+   * `width` / `layout`)。表格还没有围栏时就地包一层 —— 与预览里拖动改宽同一条规则。
+   * `anchor` 是写回锚点(独立表格就是块起始行,引用里的表格由菜单反查);每次调用都会从
+   * **当前正文**重新定位,菜单连续调多个选项也不会错位。
+   */
+  setTableOptions(anchor: number, opts: ReadonlyArray<readonly [string, string | null]>): void
+  /** 整表列对齐;`null` = 去掉分隔行里的对齐标记 */
+  setTableAlign(anchor: number, align: TableAlign): void
+  /** 行列增删。`row` 0 = 表头,1..n = 正文行;按写回锚点定位 */
+  editTable(anchor: number, edit: TableEdit, row: number): void
   /** 当前视口顶部的源行号(0 起) */
   topLine(): number
   /** 滚到指定行;小数部分在行内插值,同步时不会一跳一跳 */
@@ -447,6 +520,30 @@ export function NoteEditor({
         view.focus()
       },
 
+      indentBlock(dir) {
+        const view = viewRef.current
+        if (!view) return
+        const { from, to } = view.state.selection.main
+        const first = view.state.doc.lineAt(from).number
+        const last = view.state.doc.lineAt(to).number
+        // 一次 dispatch 改所有行:撤销栈只记一步,选区由 CodeMirror 自动跟着位移
+        const changes: { from: number; to: number; insert: string }[] = []
+        for (let n = first; n <= last; n++) {
+          const line = view.state.doc.line(n)
+          // 空行不加空格:缩进本来就没有意义,还会在正文里留下看不见的尾随空白
+          if (line.text.trim() === '') continue
+          if (dir === 'in') {
+            changes.push({ from: line.from, to: line.from, insert: '  ' })
+          } else {
+            const m = /^(?: {1,2}|\t)/.exec(line.text)
+            if (m !== null) changes.push({ from: line.from, to: line.from + m[0].length, insert: '' })
+          }
+        }
+        if (changes.length === 0) return
+        view.dispatch({ changes })
+        view.focus()
+      },
+
       insertFence(lang, body) {
         const view = viewRef.current
         if (!view) return
@@ -463,7 +560,22 @@ export function NoteEditor({
         view.focus()
       },
 
-      replaceLines(from, to, text) {        const view = viewRef.current
+      insertRule() {
+        const view = viewRef.current
+        if (view !== null) insertRuleAtPos(view, view.state.selection.main.from)
+      },
+
+      insertRuleAt(line) {
+        const view = viewRef.current
+        if (view === null) return
+        const doc = view.state.doc
+        // 允许传 doc.lines = 文末(块菜单的「在下方插入分隔线」会这么用)
+        const n = Math.min(Math.max(Math.trunc(line), 0), doc.lines)
+        insertRuleAtPos(view, n >= doc.lines ? doc.length : doc.line(n + 1).from)
+      },
+
+      replaceLines(from, to, text) {
+        const view = viewRef.current
         if (!view) return
         const doc = view.state.doc
         const a = Math.min(Math.max(from, 0), doc.lines - 1)
@@ -487,6 +599,48 @@ export function NoteEditor({
         // 整篇替换:CodeMirror 的 history 照常记得到,一次 Cmd+Z 就能整体撤销
         view.dispatch({ changes: { from: 0, to: doc.length, insert: next }, selection: { anchor: 0 } })
         view.focus()
+      },
+
+      setTableOptions(anchor, opts) {
+        const view = viewRef.current
+        if (!view) return
+        const body = view.state.doc.toString()
+        const meta = readTableMeta(body, anchor)
+        if (meta === null) return
+        const next = setTableOptionsInBody(
+          body,
+          { line: meta.line, to: meta.to, fenced: meta.fenced },
+          opts
+        )
+        // 不 focus:菜单还开着,连续调边框/颜色/宽度时焦点不该被抢回编辑器
+        if (next !== null) applyDocText(view, next)
+      },
+
+      setTableAlign(anchor, align) {
+        const view = viewRef.current
+        if (!view) return
+        const body = view.state.doc.toString()
+        const meta = readTableMeta(body, anchor)
+        if (meta === null) return
+        const next = setTableAlignInBody(body, meta.line, align)
+        if (next !== null) applyDocText(view, next)
+      },
+
+      editTable(anchor, edit, row) {
+        const view = viewRef.current
+        if (!view) return
+        const body = view.state.doc.toString()
+        const meta = readTableMeta(body, anchor)
+        if (meta === null) return
+        // 点的是收尾围栏/表外行时夹到末行 —— 不要因为菜单开在块尾就什么都不做
+        const r = Math.max(0, Math.min(row, meta.rows))
+        let next: string | null = null
+        if (edit === 'row-above') next = r > 0 ? addTableRow(body, meta.line, r - 1) : null
+        else if (edit === 'row-below') next = addTableRow(body, meta.line, r)
+        else if (edit === 'row-delete') next = r > 0 ? removeTableRow(body, meta.line, r) : null
+        else if (edit === 'col-append') next = addTableColumn(body, meta.line, meta.cols - 1)
+        else next = removeTableColumn(body, meta.line, meta.cols - 1)
+        if (next !== null) applyDocText(view, next)
       },
 
       resetFolds() {

@@ -1182,3 +1182,77 @@ body.light-theme .skeleton-row {
   color: var(--dim);
   overflow-wrap: anywhere;
 }
+
+/* ══════════ 列表栏拖拽调宽(随心记 / AI 会话栏共用)══════════
+   拖拽条绝对定位骑在栏的右边界上,不占布局宽度。
+   ⚠ 只用 opacity/背景色表达状态 —— 悬停与拖拽都不得改变任何布局属性。 */
+.notes-rail,
+.ai-rail {
+  position: relative;
+}
+.rail-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -3px;
+  width: 7px;
+  z-index: 30;
+  cursor: col-resize;
+  background: transparent;
+}
+.rail-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.rail-resizer:hover::after,
+.rail-resizer:focus-visible::after,
+body.rail-resizing .rail-resizer::after {
+  background: var(--accent2);
+}
+.rail-resizer:focus-visible {
+  outline: none;
+}
+/* 拖拽期间统一光标并禁止选中:子元素自己的 cursor 会盖掉继承值,故用 * 强制。
+   只在拖拽的这段时间里生效。 */
+body.rail-resizing,
+body.rail-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* ── 窄宽度 / 拖拽中:内容只裁切,不重新折行 ──
+   宽度变窄时若让文字重新折行,行高会跟着跳,拖拽观感很晃;这些内容此时也已不可读,
+   直接横向裁掉即可。rail-narrow 由 useRailResize 按宽度切换(拖拽结束后也保持)。 */
+body.rail-resizing .notes-rail,
+body.rail-resizing .notes-rail *,
+body.rail-resizing .ai-rail,
+body.rail-resizing .ai-rail *,
+.notes-rail.rail-narrow,
+.notes-rail.rail-narrow *,
+.ai-rail.rail-narrow,
+.ai-rail.rail-narrow * {
+  white-space: nowrap !important;
+}
+
+/* 各内容块自己裁掉横向溢出(rail 本身不能 overflow:hidden ——
+   笔记栏的自绘滚动条跨在 border-right 上,会被裁掉半边) */
+.notes-rail-top,
+.notes-rail-active,
+.notes-rail-list,
+.notes-rail-ft,
+.ai-rail-tools,
+.ai-rail-list {
+  overflow-x: hidden;
+}
+/* 移动端会话栏是覆盖层,宽度固定,不提供拖拽 */
+@media (max-width: 900px) {
+  .ai-rail .rail-resizer {
+    display: none;
+  }
+}

@@ -4,6 +4,7 @@
 import { iconNode } from './icon-dom'
 import type { IconName } from './icon-paths'
 import type { CalloutKind } from './markdown'
+import type { TextAlign } from './note-align'
 import type { NoteAssetKind } from '@shared/notes'
 
 /** 块类型 → 图标名。标题不走这里 —— 它显示 H1/H2/H3 文本（豆包与飞书都是）。 */
@@ -36,26 +37,51 @@ export function dragIcon(): SVGSVGElement {
   return iconNode('grip-vertical', 14)
 }
 
+/** 对齐块的图标按方向区分:左 / 中 / 右各一张,与工具条同源。 */
+const ALIGN_ICON: Record<TextAlign, IconName> = {
+  left: 'align-left',
+  center: 'align-center',
+  right: 'align-right'
+}
+
 /**
  * 一个块该显示哪张图标。
  *
- * 两处「不能只看 kind」：
+ * 四处「不能只看 kind」：
  *  · 提示块 —— 它自己是 note / tip / important / warning / caution 五种之一，
  *    手柄要出对应那张，而不是笼统的「引用」图标；
  *  · 媒体 —— 整段只有一个 `![](…)` 时按扩展名分成图 / 视频 / 音频 / PDF
- *    （用的是 shared/notes 那张**唯一**的附件类型表，与预览同一个判据）。
+ *    （用的是 shared/notes 那张**唯一**的附件类型表，与预览同一个判据）；
+ *  · 对齐块 —— 按 align 方向出左 / 中 / 右对齐图标，而不是默认的段落图标；
+ *  · 列表项 —— 任务项 / 有序 / 无序各一张图标，否则三种列表在左侧手柄上长得一样。
  */
 export function blockIconName(block: {
   kind: string
   callout?: CalloutKind
   media?: NoteAssetKind
+  align?: TextAlign
+  ordered?: boolean
+  task?: boolean
 }): IconName {
   if (block.kind === 'callout') return CALLOUT_ICON_NAMES[block.callout ?? 'note']
   if (block.kind === 'media') return MEDIA_ICON[block.media ?? 'image']
+  if (block.kind === 'align') return ALIGN_ICON[block.align ?? 'left']
+  // 任务图标优先:有序任务(`1. [ ]`)也是任务,先认出勾选框
+  if (block.kind === 'listItem') {
+    if (block.task === true) return 'square-check-big'
+    return block.ordered === true ? 'list-ordered' : 'list'
+  }
   return BLOCK_ICON[block.kind] ?? 'pilcrow'
 }
 
-export function blockIcon(block: { kind: string; callout?: CalloutKind; media?: NoteAssetKind }): SVGSVGElement {
+export function blockIcon(block: {
+  kind: string
+  callout?: CalloutKind
+  media?: NoteAssetKind
+  align?: TextAlign
+  ordered?: boolean
+  task?: boolean
+}): SVGSVGElement {
   return iconNode(blockIconName(block), 14)
 }
 

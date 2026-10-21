@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { alignOf, isAlignClose, isAlignOpen, setBlockAlign } from './note-align'
 
 describe('识别包裹行', () => {
-  it('只认自己写出去的那一种形态', () => {
+  it('标签名不写死:div / p / span 等都按「标签 + align」识别', () => {
     expect(isAlignOpen('<div align="center">')).toBe(true)
     expect(isAlignOpen('<p align="right">')).toBe(true)
+    expect(isAlignOpen('<span align="center">')).toBe(true)
     expect(isAlignOpen("<div align='left'>")).toBe(true)
     expect(isAlignOpen('  <div align="center">  ')).toBe(true)
   })
@@ -12,20 +13,23 @@ describe('识别包裹行', () => {
   it('别的东西一概不认(不解析 HTML)', () => {
     expect(isAlignOpen('<div class="x">')).toBe(false)
     expect(isAlignOpen('<div align="justify">')).toBe(false)
-    expect(isAlignOpen('<span align="center">')).toBe(false)
     expect(isAlignOpen('普通文字 <div align="center">')).toBe(false)
   })
 
   it('alignOf 读出方向', () => {
     expect(alignOf('<div align="center">')).toBe('center')
     expect(alignOf('<p align="RIGHT">')).toBe('right')
+    expect(alignOf('<span align="left">')).toBe('left')
     expect(alignOf('随便一行')).toBeNull()
   })
 
-  it('闭合行', () => {
+  it('闭合行:不传标签时任意闭合都算,传了标签必须同名', () => {
     expect(isAlignClose('</div>')).toBe(true)
     expect(isAlignClose('</p>')).toBe(true)
-    expect(isAlignClose('</span>')).toBe(false)
+    expect(isAlignClose('</span>')).toBe(true)
+    expect(isAlignClose('</span>', 'span')).toBe(true)
+    expect(isAlignClose('</div>', 'span')).toBe(false)
+    expect(isAlignClose('</span>', 'div')).toBe(false)
   })
 })
 
@@ -50,6 +54,12 @@ describe('setBlockAlign', () => {
     expect(twice.match(/<div align=/g)?.length).toBe(1)
     expect(twice).toContain('<div align="right">')
     expect(twice).not.toContain('center')
+  })
+
+  it('旧包裹用的是别的标签(span)也能识别并换成 div', () => {
+    const body = ['<span align="center">', '', '甲', '', '</span>'].join('\n')
+    const out = setBlockAlign(body, 2, 2, 'right')!
+    expect(out).toBe(['<div align="right">', '', '甲', '', '</div>'].join('\n'))
   })
 
   it('多行一起包', () => {

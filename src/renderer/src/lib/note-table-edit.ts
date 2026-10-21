@@ -6,10 +6,16 @@
 // 为什么重排整块而不是只改那一行:表格的价值一半在列对齐,只改一行会让它错位;
 // 而且列增删本来就必须动所有行。重排只动空白,不动任何单元格内容。
 
-import { clampTableWidth } from '@shared/note-table-style'
+import { clampTableWidth, parseTableOptions, type TableOptions } from '@shared/note-table-style'
 import { linePrefix } from './note-media-size'
 
 export type TableAlign = 'left' | 'center' | 'right' | null
+
+/**
+ * 块菜单里的行列快捷操作。
+ * 坐标口径与下面的纯函数一致:`row` 0 = 表头,1..n = 正文行。
+ */
+export type TableEdit = 'row-above' | 'row-below' | 'row-delete' | 'col-append' | 'col-delete-last'
 
 export interface TableBlock {
   /** 表格在正文里的行区间(含首尾,0 起) */
@@ -166,6 +172,112 @@ const clone = (t: TableBlock): TableBlock => ({
   rows: t.rows.map((r) => [...r])
 })
 
+/** 块菜单需要的表格元信息 —— 从**块起始行**读,不管它现在是普通表还是围栏表 */
+export interface TableMeta {
+  /**
+   * 菜单写回时用的锚点:普通表 = 表头行,围栏表 = 围栏开启行。
+   * 引用/提示块里的表格要用它而不是外层块的行号 —— 一个引用块里可能住着好几张表。
+   */
+  anchor: number
+  /** 表头那一行(0 起) */
+  line: number
+  /** 最后一行表格行(含) */
+  to: number
+  /** 是否已有 ````table 围栏 */
+  fenced: boolean
+  options: TableOptions
+  aligns: TableAlign[]
+  cols: number
+  rows: number
+}
+
+/**
+ * 读一张表在源码里的样子。
+ *
+ * `anchor` 是**写回锚点**,可能指向:
+ *   · 普通表格的表头行;
+ *   · ````table 围栏的开启行。
+ *
+ * 独立表格直接用 `block.from`;引用 / 提示块里的表格用 findTableMetaAtLine 反查。
+ *
+ * 为什么锚点前后都不变:首次给普通表加样式会就地插两行围栏,表格整体下移;
+ * 而围栏正好插在锚点那一行上 —— 同一个锚点前后都能读到这张表,
+ * 菜单连续调多个选项时不会因为行号漂移而写错地方。
+ */
+export function readTableMeta(body: string, anchor: number): TableMeta | null {
+  const lines = body.split('\n')
+  const raw = lines[anchor]
+  if (raw === undefined) return null
+  const prefix = linePrefix(raw)
+  const bare = raw.slice(prefix.length)
+  const fence = /^\s*(`{3,}|~{3,})table\b([\s\S]*)$/i.exec(bare)
+  const fenced = fence !== null
+  const line = fenced ? anchor + 1 : anchor
+  const hit = at(body, line)
+  if (hit === null) return null
+  return {
+    anchor,
+    line,
+    to: hit.t.to,
+    fenced,
+    options: fenced ? parseTableOptions(fence[2] ?? '') : parseTableOptions(''),
+    aligns: [...hit.t.aligns],
+    cols: colCount(hit.t),
+    rows: hit.t.rows.length
+  }
+}
+
+/**
+ * 从**正文某一行**反查它属于哪张表。
+ *
+ * 块级定位(`block.from`)对独立表格够用,但引用 / 提示块里的表格是外层块的一部分 ——
+ * 用户点在表行上时,块的起始行并不是表格的起始行。这里按「连续表格行」向上找表头,
+ * 再看表头上方一行是不是围栏,得到一个可写回的锚点。
+ *
+ * 只有**落在表行、分隔行或收尾围栏**上才算;点在表格下面的空行不应误开表格设置。
+ */
+export function findTableMetaAtLine(body: string, line: number): TableMeta | null {
+  const lines = body.split('\n')
+  if (line < 0 || line >= lines.length) return null
+  const prefix = linePrefix(lines[line]!)
+  // 同一个容器层里的行前缀必须一致;对不上就说明已经出了这张表
+  const bareOf = (i: number): string | null => {
+    const raw = lines[i]
+    return raw !== undefined && raw.startsWith(prefix) ? raw.slice(prefix.length) : null
+  }
+
+  const cur = bareOf(line)
+  if (cur === null) return null
+  // 点开围栏的开启行:它自己就是锚点
+  if (/^\s*(`{3,}|~{3,})table\b/i.test(cur)) return readTableMeta(body, line)
+
+  const closing = /^\s*(`{3,}|~{3,})\s*$/.test(cur)
+  if (!isTableRow(cur) && !closing) return null
+
+  let start = line
+  while (start > 0) {
+    const prev = bareOf(start - 1)
+    if (prev === null || !isTableRow(prev)) break
+    start -= 1
+  }
+  const header = bareOf(start)
+  const sep = bareOf(start + 1)
+  if (header === null || !isTableRow(header) || sep === null || !isTableSep(sep)) return null
+
+  const above = start > 0 ? bareOf(start - 1) : null
+  const anchor = above !== null && /^\s*(`{3,}|~{3,})table\b/i.test(above) ? start - 1 : start
+  return readTableMeta(body, anchor)
+}
+
+/** 整表列对齐(菜单只给「整表」一档;按列的编辑留给预览里的表格工具) */
+export function setTableAlignInBody(body: string, line: number, align: TableAlign): string | null {
+  const hit = at(body, line)
+  if (hit === null) return null
+  const t = clone(hit.t)
+  t.aligns = t.aligns.map(() => align)
+  return splice({ ...hit, t })
+}
+
 /**
  * 改一格。`row` 0 = 表头,1..n = 正文行;`col` 从 0 起。
  * 越界返回 null(调用方不提示也行 —— 那是它自己算出来的坐标)。
@@ -238,6 +350,63 @@ export function removeTableColumn(body: string, line: number, col: number): stri
 }
 
 /**
+ * 拖拽用的列表移动:把 `from` 项移到「插入到 `before` 之前」。
+ *
+ * `before` 是**移动前**数组里的下标(0..length),所以 `from < before` 时要先减一 ——
+ * 这正是「松手落在第几行/列之前」的坐标口径。
+ */
+export function moveEntry<T>(list: readonly T[], from: number, before: number): T[] {
+  if (from < 0 || from >= list.length || before < 0 || before > list.length) return list.slice()
+  const next = list.slice()
+  const [item] = next.splice(from, 1)
+  next.splice(from < before ? before - 1 : before, 0, item)
+  return next
+}
+
+/**
+ * 移动正文行。**表头不参与** —— GFM 的首行必须是表头,换掉它就变成语义变更。
+ * `from` / `before` 都是正文行下标(0 起);`before = rows.length` 表示移到末尾。
+ */
+export function moveTableRow(body: string, line: number, from: number, before: number): string | null {
+  const hit = at(body, line)
+  if (hit === null) return null
+  if (from < 0 || from >= hit.t.rows.length || before < 0 || before > hit.t.rows.length) return null
+  // 落到自己身上 / 自己下方那条边界 = 没动,不值得重排一次
+  if (from === before || from === before - 1) return null
+  const t = clone(hit.t)
+  t.rows = moveEntry(t.rows, from, before)
+  return splice({ ...hit, t })
+}
+
+/**
+ * 移动整列:表头、列对齐、每一行的单元格一起走。
+ * 参差行先补齐到列数再移动 —— 写回时本来也会补齐,不能因为缺格把后面的内容错位。
+ */
+export function moveTableColumn(body: string, line: number, from: number, before: number): string | null {
+  const hit = at(body, line)
+  if (hit === null) return null
+  const cols = colCount(hit.t)
+  if (from < 0 || from >= cols || before < 0 || before > cols) return null
+  if (from === before || from === before - 1) return null
+  const t = clone(hit.t)
+  t.header = moveEntry(t.header, from, before)
+  // 分隔行可能比表头短(手写时),先按列数补 null 再移动,免得对齐标记和列错位
+  t.aligns = moveEntry(
+    Array.from({ length: cols }, (_, i) => t.aligns[i] ?? null),
+    from,
+    before
+  )
+  t.rows = t.rows.map((row) =>
+    moveEntry(
+      Array.from({ length: cols }, (_, i) => row[i] ?? ''),
+      from,
+      before
+    )
+  )
+  return splice({ ...hit, t })
+}
+
+/**
  * 单元格里的换行。
  *
  * GFM 的表格**一行就是一行** —— 单元格里放真正的换行会把这张表拆散。
@@ -288,7 +457,10 @@ export function setTableOptionsInBody(
   const { line, to, fenced } = table
   if (line < 0 || to >= lines.length || to < line) return null
 
-  const wanted = opts.filter(([, v]) => v !== null).map(([k, v]) => `${k}=${v}`)
+  const wanted = opts
+    .filter(([, v]) => v !== null)
+    // layout 是唯一一个**裸词**开关,不能写成 layout=true
+    .map(([k, v]) => (k.toLowerCase() === 'layout' ? 'layout' : `${k}=${v}`))
   const keys = new Set(opts.map(([k]) => k.toLowerCase()))
   // 前缀取自**表格那一行**:围栏行与表格行在同一个引用层里,前缀必然相同
   const prefix = linePrefix(lines[line]!)

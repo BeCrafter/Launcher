@@ -3,18 +3,36 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useT } from '../../hooks/useT'
 import { useAiStore, sessionTsLabel } from '../../state/ai-store'
-import type { AiMessage } from '@shared/ai'
+import { confirmDangerous } from '../../lib/elevation'
+import { useRailResize } from '../../lib/use-rail-resize'
+import type { AiMessage, AiSession } from '@shared/ai'
 
-export function AiRail({ collapsed, mobileOpen }: { collapsed: boolean; mobileOpen: boolean }): React.JSX.Element {
+export function AiRail({
+  collapsed,
+  mobileOpen,
+  onCollapse
+}: {
+  collapsed: boolean
+  mobileOpen: boolean
+  /** 拖到折叠阈值以下时收起会话栏(复用 AiView 现有的折叠状态) */
+  onCollapse: () => void
+}): React.JSX.Element {
   const t = useT()
   const sessions = useAiStore((s) => s.sessions)
   const currentId = useAiStore((s) => s.currentId)
   const select = useAiStore((s) => s.select)
+  const removeSession = useAiStore((s) => s.removeSession)
   const railSearch = useAiStore((s) => s.railSearch)
   const setRailSearch = useAiStore((s) => s.setRailSearch)
   const ensureMessages = useAiStore((s) => s.ensureMessages)
   const msgCache = useAiStore((s) => s.msgCache)
   const searchRef = useRef<HTMLInputElement | null>(null)
+  // 左右拖拽调宽;拖到 50px 以下直接折叠(复用 AiView 的折叠状态)
+  const { width, narrow, startResize, resetWidth, onResizeKeyDown } = useRailResize({
+    storageKey: 'launcherAiRailWidth',
+    defaultWidth: 232,
+    onCollapse
+  })
 
   const q = railSearch.trim().toLowerCase()
 
@@ -38,8 +56,20 @@ export function AiRail({ collapsed, mobileOpen }: { collapsed: boolean; mobileOp
     searchRef.current?.focus()
   }
 
+  // 删除会话:与删笔记同一套二次确认(受「危险操作前二次确认」设置控制)
+  const onDelete = async (s: AiSession): Promise<void> => {
+    const name = s.title.trim() || t('ai.rail.untitled')
+    const ok = await confirmDangerous.request(t('ai.rail.deleteMessage').replace('{TITLE}', name))
+    if (ok) await removeSession(s.id)
+  }
+
   return (
-    <aside className={`ai-rail${collapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}`} id="aiRail">
+    <aside
+      className={`ai-rail${collapsed ? ' collapsed' : ''}${mobileOpen ? ' mobile-open' : ''}${narrow ? ' rail-narrow' : ''}`}
+      id="aiRail"
+      // 移动端是覆盖层,宽度沿用 ai.css 的 232px;桌面端才用拖拽出来的宽度
+      style={mobileOpen ? undefined : { width }}
+    >
       <div className="ai-rail-tools">
         <div className={`search-wrap ai-rail-search${railSearch ? ' has-text' : ''}`} id="aiRailSearchWrap">
           <i className="fa-solid fa-magnifying-glass" />
@@ -84,10 +114,36 @@ export function AiRail({ collapsed, mobileOpen }: { collapsed: boolean; mobileOp
                 {s.title}
               </div>
               {hit ?? <div className="ai-rail-item-ts">{sessionTsLabel(s.updatedAt)}</div>}
+              <button
+                type="button"
+                className="ai-rail-item-del"
+                title={t('ai.rail.delete')}
+                aria-label={t('ai.rail.delete')}
+                onClick={(e) => {
+                  // 别让删除按钮的点击冒泡成「切换会话」
+                  e.stopPropagation()
+                  void onDelete(s)
+                }}
+              >
+                <i className="fa-solid fa-trash-can" />
+              </button>
             </div>
           ))
         )}
       </div>
+
+      {/* 拖拽条:骑在 rail 右边界上,不占布局宽度。移动端覆盖层里隐藏(见 ai.css)。 */}
+      <div
+        className="rail-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('common.railResize')}
+        title={t('common.railResize')}
+        tabIndex={0}
+        onPointerDown={startResize}
+        onDoubleClick={resetWidth}
+        onKeyDown={onResizeKeyDown}
+      />
     </aside>
   )
 }

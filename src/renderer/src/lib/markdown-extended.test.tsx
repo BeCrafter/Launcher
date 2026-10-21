@@ -962,6 +962,13 @@ describe('段落对齐(<div align="center">)', () => {
     expect(html('<div align="left">\n\n左\n\n</div>')).toContain('text-align:left')
   })
 
+  it('任意标签都认(span 也行,不写死 div/p)', () => {
+    const out = html('<span align="center">\n\n甲\n\n</span>')
+    expect(out).toContain('text-align:center')
+    expect(out).toContain('甲')
+    expect(out).not.toContain('&lt;span')
+  })
+
   it('**只认自己写出去的那一种形态** —— 别的 HTML 照样按纯文本转义', () => {
     const out = html('<div class="x">\n\n内容\n\n</div>')
     expect(out).not.toContain('text-align')

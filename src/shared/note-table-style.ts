@@ -21,8 +21,17 @@ export const TABLE_BORDER_PX: Record<TableBorder, number> = {
 export interface TableOptions {
   /** null = 不覆盖,用全局默认 */
   border: TableBorder | null
-  /** null = 不覆盖。只收十六进制与简单的颜色关键字,别的一律忽略 */
+  /** 边框色。null = 不覆盖。只收十六进制与简单的颜色关键字,别的一律忽略 */
   color: string | null
+  /**
+   * 表头底色。null = 不覆盖。
+   *
+   * 底色**不直接铺满格子**,而是按比例调进主题底色(见 notes.css) —— 用户随手挑的
+   * 颜色不会把深/浅主题下的正文压得看不见。
+   */
+  head: string | null
+  /** 正文单元格底色;和 head 同一条规则。null = 不覆盖 */
+  fill: string | null
   /**
    * 表格宽度(px);null = 铺满一栏。
    * GFM 的表格语法里没有放尺寸的地方,所以它只能住在 ````table 围栏的选项里 ——
@@ -109,7 +118,16 @@ export function joinSizeList(list: readonly (number | null)[]): string {
  * 为写错一个词把整张表变成错误提示不值得。
  */
 export function parseTableOptions(rest: string): TableOptions {
-  const out: TableOptions = { border: null, color: null, width: null, cols: null, rows: null, layout: false }
+  const out: TableOptions = {
+    border: null,
+    color: null,
+    head: null,
+    fill: null,
+    width: null,
+    cols: null,
+    rows: null,
+    layout: false
+  }
   for (const token of rest.trim().split(/\s+/)) {
     if (token === '') continue
     // 裸词:目前只有 layout 一个
@@ -126,6 +144,10 @@ export function parseTableOptions(rest: string): TableOptions {
       if ((TABLE_BORDERS as readonly string[]).includes(v)) out.border = v as TableBorder
     } else if (key === 'color' || key === 'colour') {
       if (HEX_RE.test(value) || NAME_RE.test(value)) out.color = value
+    } else if (key === 'head' || key === 'header') {
+      if (HEX_RE.test(value) || NAME_RE.test(value)) out.head = value
+    } else if (key === 'fill' || key === 'bg' || key === 'background') {
+      if (HEX_RE.test(value) || NAME_RE.test(value)) out.fill = value
     } else if (key === 'width') {
       const n = Number(value)
       if (Number.isFinite(n) && n > 0) out.width = clampTableWidth(n)
@@ -143,6 +165,8 @@ export function tableCssVars(o: TableOptions): Record<string, string> {
   const vars: Record<string, string> = {}
   if (o.border !== null) vars['--md-table-bw'] = `${TABLE_BORDER_PX[o.border]}px`
   if (o.color !== null) vars['--md-table-bc'] = o.color
+  if (o.head !== null) vars['--md-table-head-bg'] = o.head
+  if (o.fill !== null) vars['--md-table-fill-bg'] = o.fill
   if (o.width !== null) vars['--md-table-w'] = `${o.width}px`
   return vars
 }
@@ -152,6 +176,8 @@ export function mergeTableOptions(base: TableOptions, over: TableOptions): Table
   return {
     border: over.border ?? base.border,
     color: over.color ?? base.color,
+    head: over.head ?? base.head,
+    fill: over.fill ?? base.fill,
     width: over.width ?? base.width,
     cols: over.cols ?? base.cols,
     rows: over.rows ?? base.rows,

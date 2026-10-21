@@ -31,7 +31,7 @@ import { EmbedDialog } from './EmbedDialog'
 import { MermaidBlock } from './MermaidBlock'
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor'
 import { NoteBlockMenu, NoteInsertMenu } from './NoteBlockMenus'
-import type { MarkdownBlock } from '../../lib/markdown-blocks'
+import { parseMarkdownBlocks, type MarkdownBlock } from '../../lib/markdown-blocks'
 import { NoteRefChips } from './NoteRefChips'
 import { NoteRefPicker } from './NoteRefPicker'
 import { NotesRail } from './NotesRail'
@@ -94,6 +94,24 @@ export function NotesView(): React.JSX.Element {
     setBlockMenu(null)
     setInsertMenu({ line, anchor })
   }, [])
+
+  /**
+   * 块菜单开着时,表格设置会就地给普通表补两行围栏 —— 块的行区间随之变化。
+   * 菜单里的复制 / 删除 / 下方插入都用快照里的 `block.from/to`,这里让快照跟着正文
+   * 重新定位;否则删表会漏掉收尾围栏,留下一段悬空的 ``` 把后面整篇吞成代码块。
+   *
+   * 按 `from` 找而不是按行号:插围栏的位置**正好是块的起始行**,所以 from 前后不变。
+   */
+  useEffect(() => {
+    if (blockMenu === null || draft === null) return
+    const next = parseMarkdownBlocks(draft.body).find(
+      (b) => b.from === blockMenu.block.from && b.kind === blockMenu.block.kind
+    )
+    if (next === undefined || (next.to === blockMenu.block.to && next.contentTo === blockMenu.block.contentTo)) {
+      return
+    }
+    setBlockMenu((cur) => (cur === null ? null : { ...cur, block: next }))
+  }, [draft, blockMenu])
   const openDiagramAt = useCallback((line: number | null) => {
     insertLineRef.current = line
     setDiagram({ code: null, from: 0, to: 0 })
@@ -295,7 +313,14 @@ export function NotesView(): React.JSX.Element {
       delColumn: t('notes.table.delColumn'),
       editHint: t('notes.table.editHint'),
       resizeColumn: t('notes.table.resizeColumn'),
-      resizeRow: t('notes.table.resizeRow')
+      resizeRow: t('notes.table.resizeRow'),
+      rowHandle: t('notes.table.rowHandle'),
+      colHandle: t('notes.table.colHandle'),
+      headerLocked: t('notes.table.headerLocked'),
+      insertRowAbove: t('notes.table.insertRowAbove'),
+      insertRowBelow: t('notes.table.insertRowBelow'),
+      insertColumnLeft: t('notes.table.insertColumnLeft'),
+      insertColumnRight: t('notes.table.insertColumnRight')
     }),
     [t]
   )
@@ -722,6 +747,7 @@ export function NotesView(): React.JSX.Element {
         )}
       {blockMenu !== null && (
         <NoteBlockMenu
+          key={`${blockMenu.block.from}:${blockMenu.line}`}
           block={blockMenu.block}
           line={blockMenu.line}
           body={draft.body}

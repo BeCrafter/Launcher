@@ -1,5 +1,6 @@
 import { noteAssetKindOfUrl, type NoteAssetKind } from '@shared/notes'
 import type { CalloutKind } from './markdown'
+import { alignOpenOf, isAlignClose, type TextAlign } from './note-align'
 
 export type MarkdownBlockKind =
   | 'frontmatter'
@@ -18,6 +19,8 @@ export type MarkdownBlockKind =
   | 'embed'
   /** 整段就是一张图 / 一段视频 / 音频 / PDF */
   | 'media'
+  /** `<div align="center">…</div>` 这类对齐包裹块(标签名不限) */
+  | 'align'
 
 /**
  * A source block uses half-open line ranges. `to` includes the blank lines
@@ -46,6 +49,12 @@ export interface MarkdownBlock {
   callout?: CalloutKind
   /** `kind === 'media'` 时的媒体类型（图 / 视频 / 音频 / PDF）—— 图标据此区分。 */
   media?: NoteAssetKind
+  /** `kind === 'align'` 时的对齐方向 —— 手柄与菜单据此出对应的图标/名称。 */
+  align?: TextAlign
+  /** `kind === 'listItem'` 时:有序(`1.`)还是无序(`-`)。手柄据此区分图标。 */
+  ordered?: boolean
+  /** `kind === 'listItem'` 时:是不是任务项(`- [ ]` / `- [x]`)。任务图标优先于 ordered。 */
+  task?: boolean
 }
 
 interface ConsumedBlock {
@@ -58,6 +67,7 @@ interface ConsumedBlock {
   inner?: { from: number; to: number }
   callout?: CalloutKind
   media?: NoteAssetKind
+  align?: TextAlign
 }
 
 const HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+|$)/
@@ -159,6 +169,12 @@ function consumeQuote(lines: string[], start: number, limit: number): ConsumedBl
 /** 列表标记：无序 `-+*`、有序 `1.` / `1)`、任务项 `- [ ]`。缩进不设上限。 */
 const ITEM_RE = /^([ \t]*)(?:([-+*])|(\d+[.)]))([ \t]+)/
 
+/**
+ * 任务项标记。与预览的 `TASK_EXT_RE` 同一口径:标记之后紧跟 `[ ]` / `[x]`。
+ * 只看标记行 —— 任务项的子项未必也是任务,不能顺着子树传染。
+ */
+const TASK_ITEM_RE = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[[ xX]\]/
+
 interface ItemMark {
   /** 标记前导空白宽度（字符数，与预览 parseListExt 同口径） */
   indent: number
@@ -195,6 +211,8 @@ interface ItemNode {
   contentTo: number
   indent: number
   ordered: boolean
+  /** 标记行是否是任务项(`[ ]` / `[x]`) */
+  task: boolean
   children: ItemNode[]
 }
 
@@ -268,6 +286,7 @@ function parseItemRun(
       contentTo: children.length > 0 ? children[children.length - 1].contentTo : ownEnd,
       indent: mark.indent,
       ordered: mark.ordered,
+      task: TASK_ITEM_RE.test(lines[i]),
       children
     })
     i = regionEnd
@@ -304,7 +323,9 @@ function emitItemRun(
       bodyTo: item.ownEnd,
       level: 0,
       parentId,
-      movable: true
+      movable: true,
+      ordered: item.ordered,
+      task: item.task
     })
     emitItemRun(blocks, lines, limit, item.children, id)
   }
@@ -333,6 +354,20 @@ function consumeBlock(lines: string[], start: number, limit: number): ConsumedBl
   if (fence !== null) return consumeFence(lines, start, fence, limit)
   if (DETAILS_OPEN_RE.test(lines[start])) return consumeDetails(lines, start, limit)
   if (QUOTE_RE.test(lines[start])) return consumeQuote(lines, start, limit)
+  // 对齐包裹:标签名不限(div / p / span …),闭合行按开标签名配对。
+  // 未闭合就吃到结尾(与预览一致,不静默丢后半篇)。
+  const align = alignOpenOf(lines[start])
+  if (align !== null) {
+    let i = start + 1
+    while (i < limit && !isAlignClose(lines[i], align.tag)) i += 1
+    if (i < limit) i += 1
+    return {
+      kind: 'align',
+      align: align.dir,
+      contentTo: i,
+      to: withTrailingBlanks(lines, i, limit)
+    }
+  }
   if (start + 1 < limit && tableRow(lines[start]) && tableDelimiter(lines[start + 1])) {
     return consumeTable(lines, start, limit)
   }
@@ -464,7 +499,8 @@ function collectBlocks(
       parentId: parentOf(),
       movable: true,
       callout: consumed.callout,
-      media: consumed.media
+      media: consumed.media,
+      align: consumed.align
     })
     i = consumed.to
     // `<details>` 里面的内容单独解析一遍 —— 父级就是它
@@ -489,7 +525,8 @@ export function isMarkdownBlockFoldable(block: MarkdownBlock): boolean {
     block.kind === 'fence' ||
     block.kind === 'diagram' ||
     block.kind === 'embed' ||
-    block.kind === 'table'
+    block.kind === 'table' ||
+    block.kind === 'align'
   )
 }
 

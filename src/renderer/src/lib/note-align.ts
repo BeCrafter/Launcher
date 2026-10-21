@@ -16,24 +16,46 @@
 
 export type TextAlign = 'left' | 'center' | 'right'
 
-/** 只认自己写出去的那一种形态:独占一行、align 值受限、可带单双引号 */
-const OPEN_RE = /^\s*<(?:div|p)\s+align=["']?(left|center|right)["']?\s*>\s*$/i
-const CLOSE_RE = /^\s*<\/(?:div|p)>\s*$/i
+/**
+ * 只认「独占一行、带 align=left/center/right 的 HTML 开标签」。
+ *
+ * **标签名不写死**:`div` / `p` / `span` / 自定义标签都行 —— 判据是「标签 + align 属性」
+ * 本身,而不是「必须是 div」。闭合行则按**同一个标签名**配对(见 `isAlignClose`)。
+ */
+const OPEN_RE = /^\s*<([a-z][a-z0-9-]*)\s+align=["']?(left|center|right)["']?\s*>\s*$/i
+
+export interface AlignOpen {
+  /** 开标签名(小写)。闭合行必须与它同名 */
+  tag: string
+  dir: TextAlign
+}
+
+/** 读出对齐包裹的开启行(标签名 + 方向);不是返回 null */
+export function alignOpenOf(line: string): AlignOpen | null {
+  const m = OPEN_RE.exec(line)
+  return m === null ? null : { tag: m[1].toLowerCase(), dir: m[2].toLowerCase() as TextAlign }
+}
 
 /** 这一行是不是对齐包裹的开启行 */
 export function isAlignOpen(line: string): boolean {
-  return OPEN_RE.test(line)
+  return alignOpenOf(line) !== null
 }
 
-/** 这一行是不是对齐包裹的闭合行 */
-export function isAlignClose(line: string): boolean {
-  return CLOSE_RE.test(line)
+/**
+ * 这一行是不是闭合行。
+ * 传了 `tag` 就只认**同名**闭合标签(`<span align>` 必须 `</span>`);
+ * 不传则任意标签的闭合行都算(仅用于不关心配对的场景)。
+ */
+export function isAlignClose(line: string, tag?: string): boolean {
+  if (tag !== undefined) {
+    return new RegExp(`^\\s*</${tag}\\s*>\\s*$`, 'i').test(line)
+  }
+  return /^\s*<\/[a-z][a-z0-9-]*\s*>\s*$/i.test(line)
 }
 
 /** 读出某一行的对齐方向;不是开启行返回 null */
 export function alignOf(line: string): TextAlign | null {
-  const m = OPEN_RE.exec(line)
-  return m === null ? null : (m[1].toLowerCase() as TextAlign)
+  return alignOpenOf(line)?.dir ?? null
 }
 
 export function openLine(dir: TextAlign): string {
@@ -59,19 +81,32 @@ export function setBlockAlign(body: string, from: number, to: number, dir: TextA
   // 只看紧邻的那一行会找不到,于是反复点对齐就套娃了。
   let s0 = from
   let e0 = to
+  /** 找到的包裹标签名;闭合行只认与它同名的标签 */
+  let openTag: string | null = null
   let up = s0 - 1
   while (up >= 0 && lines[up].trim() === '') up--
-  if (up >= 0 && isAlignOpen(lines[up])) s0 = up
-  let down = e0 + 1
-  while (down < lines.length && lines[down].trim() === '') down++
-  if (down < lines.length && isAlignClose(lines[down])) e0 = down
+  if (up >= 0) {
+    const open = alignOpenOf(lines[up])
+    if (open !== null) {
+      s0 = up
+      openTag = open.tag
+    }
+  }
+  // 只有确实找到开启行时才去找闭合行;否则一段普通文字后面孤零零的 </div>
+  // 会被误当成包裹的一部分
+  if (openTag !== null) {
+    let down = e0 + 1
+    while (down < lines.length && lines[down].trim() === '') down++
+    if (down < lines.length && isAlignClose(lines[down], openTag)) e0 = down
+  }
 
   const before = lines.slice(0, s0)
   const after = lines.slice(e0 + 1)
   // 去掉旧包裹行与首尾空行 —— 于是「同一段同一方向连做两次」结果完全相同
   const inner = lines.slice(s0, e0 + 1).filter((l, i, arr) => {
     const isEdge = i === 0 || i === arr.length - 1
-    return !(isEdge && (isAlignOpen(l) || isAlignClose(l)))
+    if (!isEdge) return true
+    return !(alignOpenOf(l) !== null || isAlignClose(l, openTag ?? undefined))
   })
   while (inner.length > 0 && inner[0].trim() === '') inner.shift()
   while (inner.length > 0 && inner[inner.length - 1].trim() === '') inner.pop()

@@ -179,11 +179,22 @@
   font-size: 10.5px;
   font-weight: 400;
 }
+/* 目录行的悬停动作:与笔记行同一套右侧浮层(不挤占目录名宽度) */
 .notes-folder-acts {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  z-index: 2;
   display: none;
   align-items: center;
   gap: 1px;
-  flex-shrink: 0;
+  padding: 3px 4px;
+  border-radius: 6px;
+  /* 与笔记行同一层对比底:深色下比 rail 亮、浅色下比 rail 暗,两种主题都抬得出来 */
+  background: color-mix(in srgb, var(--surface4) 60%, transparent);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  transform: translateY(-50%);
 }
 .notes-folder-row:hover .notes-folder-acts {
   display: inline-flex;
@@ -194,15 +205,16 @@
   height: 16px;
   border: 0;
   background: transparent;
-  color: var(--dim);
+  /* 与笔记行一致:正文色 + 略大字号,保证在对比底上清晰 */
+  color: var(--text);
   cursor: pointer;
   padding: 0 4px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
 }
 .notes-folder-acts button:hover {
-  background: var(--surface4);
-  color: var(--text);
+  background: transparent;
+  color: var(--accent2);
 }
 .notes-folder-acts button.danger:hover {
   color: var(--red);
@@ -263,6 +275,8 @@
    它不参与 hover:悬停只该点亮当前那颗按钮,不该动这条线。 */
 .notes-new-row {
   display: flex;
+  /* 栏被拖得很窄时两颗按钮**换行**排,而不是让文字互相压住(用户报过重合) */
+  flex-wrap: wrap;
   gap: 6px;
   margin: 10px 6px 0;
   padding-top: 9px;
@@ -271,7 +285,8 @@
 /* 有内容时:压到几乎看不见 —— 它是低频入口,不该跟笔记抢注意力。
    虚线边框 + 整块降透明度:轮廓还在(找得到),但不会跟实心的笔记行抢眼。 */
 .notes-new-folder {
-  flex: 1;
+  /* 基准宽度 72:两颗 + 间距超过行宽时自动换行 */
+  flex: 1 1 72px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -286,7 +301,15 @@
   font-size: 11.5px;
   cursor: pointer;
   white-space: nowrap;
+  /* 换行后按钮可能仍比文字窄:裁掉溢出,别让标签跑到相邻按钮上 */
+  overflow: hidden;
+  text-overflow: ellipsis;
   opacity: 0.75;
+}
+.notes-new-folder span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .notes-new-folder i {
   font-size: 10px;
@@ -464,12 +487,24 @@
   line-height: 16px;
 }
 
-/* 笔记行的悬停动作(与目录行同一套写法) */
+/* 笔记行的悬停动作(与目录行同一套写法)。
+   绝对定位成右侧浮层:按钮不再挤占标题宽度,标题始终整行展示。
+   按钮组带一层很淡的半透明底(方案 C),上下内边距略大,图标不至贴边。 */
 .notes-row-acts {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  z-index: 2;
   display: none;
   align-items: center;
   gap: 1px;
-  flex-shrink: 0;
+  padding: 3px 4px;
+  border-radius: 6px;
+  /* 对比底(约 60% 不透明):背后的标题只剩模糊轮廓,图标本身要压得住 */
+  background: color-mix(in srgb, var(--surface4) 60%, transparent);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  transform: translateY(-50%);
 }
 .notes-row:hover .notes-row-acts {
   display: inline-flex;
@@ -483,15 +518,17 @@
   height: 16px;
   border: 0;
   background: transparent;
-  color: var(--dim);
+  /* 图标用正文色:在对比底上要清晰可见(原来 --dim 太灰) */
+  color: var(--text);
   cursor: pointer;
   padding: 0 4px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
 }
 .notes-row-acts button:hover {
-  background: var(--surface4);
-  color: var(--text);
+  /* 只换图标颜色:不加底色 */
+  background: transparent;
+  color: var(--accent2);
 }
 .notes-row-acts button.danger:hover {
   color: var(--red);
@@ -1207,6 +1244,14 @@
   box-shadow: 0 14px 38px rgba(0, 0, 0, 0.32);
   color: var(--text);
   font-size: 12px;
+  /* 表格设置菜单比普通块菜单高一截:窗口矮时自己滚,不要让底部动作被切掉 */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+}
+/* 表格菜单要放下「标签 + 6 个色块 + 色值输入」,比通用菜单宽一点 */
+.notes-block-menu-table {
+  width: 312px;
+  max-width: 312px;
 }
 .notes-block-menu-head {
   display: flex;
@@ -1334,6 +1379,204 @@
 }
 .notes-insert-grid button i {
   font-size: 13px;
+}
+
+/* ── 块菜单 · 单表设置 ──
+   菜单开在表格上时出现(独立表格,或引用 / 提示块里点中的表)。一行一个维度:
+   左边标签,右边控件。表格没有围栏时会先就地补围栏,这里的值始终是「这张表」的覆盖值。 */
+.notes-table-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.notes-table-setting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 1px 4px;
+}
+.notes-table-setting-label {
+  width: 56px;
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+.notes-table-setting-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.notes-table-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.notes-table-chip:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-table-chip.active {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+.notes-table-chip:disabled {
+  opacity: 0.38;
+  cursor: default;
+  background: transparent;
+  color: var(--muted);
+}
+.notes-table-chip.num {
+  padding: 0 5px;
+  font-variant-numeric: tabular-nums;
+}
+.notes-table-chip.icon {
+  width: 26px;
+  padding: 0;
+}
+.notes-table-chip.icon svg {
+  width: 15px;
+  height: 15px;
+}
+/* 色块用 transparent 边框留出间隙,选中时再加一圈主题色描边 */
+.notes-table-swatch {
+  width: 17px;
+  height: 17px;
+  flex: none;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background-clip: padding-box;
+  cursor: pointer;
+}
+.notes-table-swatch:hover {
+  border-color: var(--border2);
+}
+.notes-table-swatch.active {
+  box-shadow: 0 0 0 2px var(--menu-bg), 0 0 0 3.5px var(--accent2);
+}
+.notes-table-hex,
+.notes-table-px {
+  height: 24px;
+  margin-left: 2px;
+  padding: 0 5px;
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: 10px ui-monospace, Menlo, monospace;
+  outline: none;
+}
+.notes-table-hex {
+  width: 54px;
+}
+.notes-table-px {
+  width: 50px;
+  text-align: right;
+  font-size: 10.5px;
+}
+.notes-table-hex:focus,
+.notes-table-px:focus {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.notes-table-hint {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.notes-table-layout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 1px 4px;
+}
+.notes-table-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.notes-table-switch:hover {
+  color: var(--text);
+}
+.notes-table-switch-track {
+  position: relative;
+  width: 30px;
+  height: 17px;
+  flex: none;
+  border-radius: 99px;
+  background: var(--surface4);
+  transition: background 0.15s ease;
+}
+.notes-table-switch-track > span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.notes-table-switch.on .notes-table-switch-track {
+  background: var(--wash-accent);
+}
+.notes-table-switch.on .notes-table-switch-track > span {
+  transform: translateX(13px);
+  background: var(--accent2);
+}
+.notes-table-rowcols {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+  padding: 2px 4px 1px;
+}
+.notes-table-rowcols button {
+  height: 27px;
+  min-width: 0;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.notes-table-rowcols button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-table-rowcols button.danger:hover {
+  background: var(--wash-red);
+  color: var(--red);
+}
+.notes-table-rowcols button:disabled {
+  opacity: 0.38;
+  cursor: default;
+  background: transparent;
+  color: var(--muted);
 }
 
 /* ⚠ 必须覆盖 .notes-pane 的 display:flex —— 两者是同一个元素,而 flex item 会收缩到内容宽度,
@@ -2184,6 +2427,22 @@ video.md-media {
   border-style: solid;
   border-color: var(--md-table-bc, var(--border));
 }
+/*
+ * 单表底色(````table head=… fill=…````)。
+ *
+ * 只给**真的设了底色**的表挂选择器(data-head / data-fill):否则 `color-mix(transparent …)`
+ * 会让所有表的表头底色悄悄变透明一档。
+ * 颜色不直接铺满,而是按比例调进主题底色 —— 用户随手挑的深色不会把正文压得看不见。
+ */
+.md-table-scope[data-head] .md-table th {
+  background: color-mix(in srgb, var(--md-table-head-bg) 18%, var(--surface2));
+}
+.md-table-scope[data-fill]:not([data-head]) .md-table th {
+  background: color-mix(in srgb, var(--md-table-fill-bg) 18%, var(--surface2));
+}
+.md-table-scope[data-fill] .md-table td {
+  background: color-mix(in srgb, var(--md-table-fill-bg) 10%, transparent);
+}
 /* 围栏壳本身不占额外间距 —— 里面的 .md-table-wrap 已经有 margin */
 .md-table-scope {
   display: block;
@@ -2235,24 +2494,9 @@ video.md-media {
    只在预览(笔记页)里出现;帮助页 / AI 消息不传 onEditTable,这些元素根本不渲染。 */
 
 /*
- * 行删除按钮**在表格框外面**:它挂在最后一个数据格里,但绝对定位到表格右边框之外。
- * 右侧那 22px 内边距就是它的落脚处 —— 内边距属于滚动盒内部,所以
- * 既不会被 .md-table-wrap 的 overflow 裁掉,也不必为了它把 overflow 关掉
- * (宽表格仍然能自己横向滚)。
- */
-/*
- * 可编辑的表格**不自己横向滚**,原因有两层:
- *   ① 行删除按钮(挂在最后一个数据格里,right: -21px)要落在表格右侧那 22px 里 ——
- *      而表格有**最小内容宽度**(列挤不下去时 width:100% 也拦不住),它会顶进内边距,
- *      按钮就被 overflow 裁掉。实测有 6 个按钮被裁在框外 18–20px。
- *   ② 表格的缩放角柄已经挪到外层 .md-table-block 上了,这一层不再需要为它让位。
- * 代价:比栏还宽的表会把预览撑出横向滚动条(预览本来就有 overflow-x: auto)。
- */
-/*
- * 可编辑的表格**不自己横向滚**,也不留右侧内边距:
- *   · 不留内边距 —— 表格有最小内容宽度(列挤不下去时 width:100% 也拦不住),它会顶进
- *     内边距,于是「表格右边」到底在哪就说不准了,描边与角柄全跟着飘;
- *   · 不横向滚 —— 行删除按钮(right: -8px)与角标都在框外,overflow 会把它裁掉。
+ * 可编辑的表格**不自己横向滚**:
+ *   · 左侧行手柄、右侧 / 底部的新增条都要落在表格框外,overflow 会把它们裁掉;
+ *   · 缩放角柄也挂在框外。
  * 代价:比栏还宽的表把**预览**撑出横向滚动条(预览本来就有 overflow-x: auto)。
  */
 .md-table-wrap.editable {
@@ -2270,17 +2514,21 @@ video.md-media {
   border-radius: 8px;
 }
 /*
- * 表格的缩放与媒体同一套观感:悬停出框与角柄,横向拖改宽。
- *
- * ⚠ 描边必须画在 **.md-table 自己**身上,不能画在外层 .md-table-block 上:
- * 那个块比表格大一圈 —— 右侧有 22px 内边距(行删除按钮的落脚处)、上下有 8px 外边距,
- * 画在块上的框会「比表格宽 22px、还往下沉 8px」。用户看到的就是「框在表格下面」。
- *
- * 角柄同理:它的位置要减去那 22px 内边距(right: 22 - 7 = 15px),才是表格右侧外 7px。
+ * 外层块是控制框的定位基准:
+ *   · 右侧 24px / 底部 24px 用 padding 留给新增条(它们不写进 Markdown);
+ *   · 行手柄绝对定位在左侧的预览留白里;
+ *   · 描边仍画在 .md-table 自己身上 —— 块比表格大一圈,画在块上会「框在表格外面」。
  */
 .md-table-block {
   position: relative;
   margin: 8px 0;
+}
+.md-table-block.framed {
+  /* 行手柄占左侧（叠在预览留白里），列手柄占表头上方；右侧 / 底部是新增条 */
+  --md-table-row-gutter: 22px;
+  --md-table-col-gutter: 20px;
+  --md-table-add-size: 24px;
+  padding: var(--md-table-col-gutter) var(--md-table-add-size) var(--md-table-add-size) 0;
 }
 /* 定过宽之后,块收缩到表格的实际宽度 —— 框与角柄因此永远贴着表格 */
 .md-table-block.sized {
@@ -2297,70 +2545,326 @@ video.md-media {
   outline-offset: 3px;
   border-radius: 8px;
 }
-/* 块与表格同宽(见上),所以 -7px 就是「表格右边框外 7px」,与媒体一致 */
+/* 角柄仍贴在**表格**右下角(选中描边那个角),不被新增条推出去 */
 .md-table-block .md-resize-handle {
-  right: -7px;
+  right: calc(var(--md-table-add-size, 24px) - 7px);
+  bottom: calc(var(--md-table-add-size, 24px) - 7px);
+  z-index: 4;
   opacity: 0;
 }
 .md-table-block.resizable:hover .md-resize-handle,
 .md-table-block.resizable.dragging .md-resize-handle {
   opacity: 1;
 }
-.md-table-wrap.editable .md-table td:last-child {
-  position: relative;
-}
-.md-table-del {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 15px;
-  height: 15px;
-  border: 0;
-  border-radius: 4px;
-  background: var(--surface3);
-  color: var(--dim);
-  cursor: pointer;
-  font-size: 8px;
-  /* 平时完全藏起来:表格是拿来读的,一排叉号会把内容淹掉 */
-  opacity: 0;
-}
-/*
- * 平时完全藏起来,鼠标移到**那一行 / 那一列**时才出现 —— 表格是拿来读的,
- * 一排叉号会把内容淹掉。
- * 按钮虽然定位在表格框外(-21px),但它仍是这一行/这一格的后代,
- * 所以鼠标停在按钮上时 tr:hover / th:hover 依然成立,不会「一移过去就消失」。
- */
-.md-table-del {
-  opacity: 0;
-}
-.md-table tr:hover .md-table-del.row,
-.md-table th:hover .md-table-del.col {
-  opacity: 1;
-}
-/* 行删除:竖着居中对齐这一行,横向落在表格外 */
-/* 平时压到 0.35 而不是 0:完全看不见会让人以为「这个按钮没有了」 */
-/* 完全落在表格右边框之外(-21px,按钮宽 15px)—— 压到 -8px 会有半颗盖在最后一个格子上 */
-.md-table-del.row {
-  position: absolute;
-  right: -21px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-.md-table-del:hover {
-  background: var(--wash-red);
-  color: var(--red);
-}
-/* 列删除按钮贴在表头格右上角(它删的是整列,位置就该在列上) */
+/* 列手柄贴在表头格右上角,需要这个定位基准 */
 .md-table th {
   position: relative;
 }
-.md-table-del.col {
-  position: absolute;
-  top: 1px;
-  right: 1px;
+
+/*
+ * 引用 / 提示块 / 折叠块的内边距只有 12–14px:行手柄收窄到容器里面,
+ * 不要跨过左侧那条竖条 / 卡片边框。
+ */
+.md-quote .md-table-block.framed,
+.md-callout-body .md-table-block.framed,
+.md-details-body .md-table-block.framed {
+  --md-table-row-gutter: 12px;
 }
-.md-table th:hover .md-table-del.col {
+.md-quote .md-table-row-handle,
+.md-callout-body .md-table-row-handle,
+.md-details-body .md-table-row-handle {
+  font-size: 8px;
+}
+/* 行手柄挂在第一个格子里、绝对定位到格子外侧 */
+.md-table-wrap.editable .md-table td:first-child {
+  position: relative;
+}
+
+/* ── 行 / 列控制框 ──
+   只有可编辑的表格才渲染(.framed)。行 / 列手柄默认**完全隐藏**,只有鼠标移出格子、
+   进入左侧 / 上方的外侧留白时才显形;右侧 / 底部的新增条仍随整个表格悬停显形。
+   两个手柄都在格子外面,但背景继承格子、尺寸与行高 / 列宽对齐,看起来像格子伸出来的一截。 */
+
+/* 手柄的框永远存在:表格无框(bw=0)时退回标准 1px,有框时跟随表格线宽。
+   框本身画在 ::before 上并向外扩半个线宽 —— 表格的 collapsed border 是以格线为中心
+   画 ±半个线宽的,两者这样才会落在同一条线上(1px/2px/3px 都成立)。 */
+.md-table-row-handle,
+.md-table-col-handle {
+  --md-handle-bw: max(1px, var(--md-table-bw, 1px));
+}
+/* 行手柄:贴在表格左侧外面,与行高/边框对齐,看起来像这一行多出来的一格。
+   按钮盒严格等于单元格的 border box;视觉边框由 ::before 承担。 */
+.md-table-row-handle {
+  position: absolute;
+  top: calc(-0.5 * var(--md-table-bw, 1px));
+  bottom: calc(-0.5 * var(--md-table-bw, 1px));
+  left: calc(-1 * var(--md-table-row-gutter, 22px) - var(--md-table-bw, 1px));
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--md-table-row-gutter, 22px);
+  padding: 0;
+  box-sizing: border-box;
+  border: 0;
+  background: inherit;
+  color: var(--dim);
+  font-size: 10px;
+  cursor: grab;
+  touch-action: none;
+  /* 默认完全隐藏：只有鼠标移出格子、进入外侧留白时才显形 */
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.md-table-row-handle::before {
+  content: '';
+  position: absolute;
+  inset: calc(-0.5 * var(--md-handle-bw));
+  border: var(--md-handle-bw) solid var(--md-table-bc, var(--border));
+  border-right: 0;
+  border-radius: 4px 0 0 4px;
+  pointer-events: none;
+  transition: border-color 0.12s ease;
+}
+.md-table-row-handle:not(.locked).active,
+.md-table-row-handle:not(.locked):hover,
+.md-table-row-handle:not(.locked).dragging {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+.md-table-row-handle:not(.locked).active::before,
+.md-table-row-handle:not(.locked):hover::before,
+.md-table-row-handle:not(.locked).dragging::before {
+  border-color: var(--accent2);
+}
+.md-table-row-handle:not(.locked):hover,
+.md-table-row-handle:not(.locked).dragging {
   opacity: 1;
+}
+.md-table-row-handle.dragging {
+  cursor: grabbing;
+}
+/* 表头行的锁:同一套外观,暗色常驻,只作提示不可操作 */
+.md-table-row-handle.locked {
+  color: var(--dim);
+  cursor: default;
+  opacity: 0;
+}
+.md-table-row-handle.locked:hover {
+  opacity: 0.35;
+}
+
+/* 列手柄:贴在表头上方外面,与列宽/表头底色对齐。
+   与行手柄同理:按钮盒等于单元格 border box,视觉边框由 ::before 承担。 */
+.md-table-col-handle {
+  position: absolute;
+  top: calc(-1 * var(--md-table-col-gutter, 20px));
+  left: calc(-0.5 * var(--md-table-bw, 1px));
+  right: calc(-0.5 * var(--md-table-bw, 1px));
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--md-table-col-gutter, 20px);
+  padding: 0;
+  box-sizing: border-box;
+  border: 0;
+  background: inherit;
+  color: var(--dim);
+  font-size: 10px;
+  cursor: grab;
+  touch-action: none;
+  /* 默认完全隐藏：只有鼠标移出格子、进入外侧留白时才显形 */
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.md-table-col-handle::before {
+  content: '';
+  position: absolute;
+  inset: calc(-0.5 * var(--md-handle-bw));
+  border: var(--md-handle-bw) solid var(--md-table-bc, var(--border));
+  border-bottom: 0;
+  border-radius: 5px 5px 0 0;
+  pointer-events: none;
+  transition: border-color 0.12s ease;
+}
+.md-table-col-handle.active,
+.md-table-col-handle:hover,
+.md-table-col-handle.dragging {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+.md-table-col-handle.active::before,
+.md-table-col-handle:hover::before,
+.md-table-col-handle.dragging::before {
+  border-color: var(--accent2);
+}
+.md-table-col-handle:hover,
+.md-table-col-handle.dragging {
+  opacity: 1;
+}
+.md-table-col-handle.dragging {
+  cursor: grabbing;
+}
+
+/* 右侧 / 底部新增条:虚线框 + 一个 +,视觉上像跨行 / 跨列的合并单元格。
+   它们跟随整个表格的悬停,而不是单行 / 单列。 */
+.md-table-add-col,
+.md-table-add-row {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border2);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  touch-action: none;
+  opacity: 0;
+  /* 平时不可见但可命中:只有鼠标移到表格外侧、靠近右边 / 底边时才亮出加号 */
+  pointer-events: auto;
+  transition: opacity 0.12s ease;
+}
+.md-table-add-col:hover,
+.md-table-add-row:hover {
+  opacity: 1;
+}
+.md-table-add-col {
+  top: var(--md-table-col-gutter, 20px);
+  width: 24px;
+  border-left: 0;
+  border-radius: 0 6px 6px 0;
+}
+.md-table-add-row {
+  left: 0;
+  height: 24px;
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+}
+.md-table-add-col:hover,
+.md-table-add-row:hover {
+  border-color: var(--accent2);
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+
+/* 选中行 / 列:一整块背景色，不画边框线，避免在格子接缝处断裂。
+   四角保持直角，才能和贴在边上的行 / 列手柄严丝合缝。 */
+.md-table-selection-band {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent2) 15%, transparent);
+}
+
+/* 悬停行 / 列手柄时的高亮框：与表格自身同宽(1px)、同色，不加粗、不加外发光。
+   直角收边 —— 贴着行 / 列手柄的那条边不能是圆角，否则衔接处会露出缺口。 */
+.md-table-hover-frame {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  border: 1px solid var(--accent2);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--accent2) 10%, transparent);
+  animation: md-table-frame-in 0.12s ease-out;
+}
+@keyframes md-table-frame-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 拖拽落点线 */
+.md-table-drop-line {
+  position: absolute;
+  z-index: 5;
+  background: var(--accent2);
+  border-radius: 2px;
+  box-shadow: 0 0 0 2px var(--wash-accent);
+  pointer-events: none;
+}
+.md-table-drop-line.row {
+  left: 0;
+  height: 2px;
+}
+.md-table-drop-line.col {
+  top: var(--md-table-col-gutter, 20px);
+  width: 2px;
+}
+
+/* 选中行 / 列的局部操作菜单 */
+.md-table-selection-menu {
+  position: absolute;
+  z-index: 6;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  background: var(--menu-bg);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.32);
+}
+.md-table-selection-menu button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 26px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.md-table-selection-menu button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.md-table-selection-menu button i {
+  width: 12px;
+  font-size: 10px;
+  text-align: center;
+}
+.md-table-selection-menu button.danger {
+  color: var(--red);
+}
+.md-table-selection-menu button.danger:hover {
+  background: var(--wash-red);
+}
+.md-table-selection-menu button:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: transparent;
+}
+.md-table-menu-key {
+  margin-left: auto;
+  padding: 1px 4px;
+  border: 1px solid var(--border2);
+  border-radius: 3px;
+  color: var(--dim);
+  font: 9px ui-monospace, Menlo, monospace;
+}
+
+/* 拖动中的行 / 列变淡,落点线负责指示位置 */
+.md-table tr.md-row-dragging > td {
+  opacity: 0.4;
+}
+.md-table .md-col-dragging {
+  opacity: 0.4;
+}
+.md-table-block.reordering {
+  user-select: none;
 }
 
 /* 单元格:可编辑时给个「能点」的暗示,但只在悬停时 */
@@ -2369,13 +2873,19 @@ video.md-media {
   cursor: text;
 }
 
+/* 空单元格也要撑出一行的高度:新插入的空行否则只有内边距那么高,
+   行手柄几乎抓不住,视觉上也不像一行。只影响可编辑表格。 */
+.md-table-wrap.editable .md-cell-body {
+  min-height: 1.4em;
+}
+
 /* ── 列边界 / 行边界的可视提示 ──
    拖它们改列宽与行高,数字写回 ````table 围栏的 `cols=` / `rows=`。
 
    ⚠ 它们画在表格**上方的一层**里,而且**不吃指针事件** —— 「按下时命中了哪条线」是在
    表格的 pointerdown 里按坐标算的(见 TableView 的 hitEdge)。这样列边界能横跨整表高度、
-   行边界能横跨整行宽度;塞进格子里就做不到:格子上挂着列删除 / 行删除按钮,那两处都要
-   `position: relative`,抓手会被困在一格宽里(表头行的行边界只剩第一列那么宽)。
+   行边界能横跨整行宽度;塞进格子里就做不到:表头格上挂着列手柄(要 position: relative),
+   抓手会被困在一格宽里(表头行的行边界只剩第一列那么宽)。
 
    平时完全藏起来,悬停表格时才显形 —— 一张表上挂满线会把内容淹掉。 */
 .md-table-guides {
@@ -2389,6 +2899,33 @@ video.md-media {
 }
 .md-table-block:hover .md-table-guides {
   opacity: 1;
+}
+/*
+ * 行 / 列手柄悬停或选中时，只保留行 / 列自己的样式：
+ * 表格级悬停描边、缩放角柄、行列边界线全部让位，避免两套框同时出现。
+ */
+.md-table-block[data-active].resizable:hover .md-table {
+  outline: none;
+}
+.md-table-block[data-active].resizable:hover .md-resize-handle {
+  opacity: 0;
+}
+.md-table-block[data-active]:hover .md-table-guides {
+  opacity: 0;
+}
+/*
+ * 指针还在手柄上时（按住、松开后没移开都算）也走同一套互斥规则。
+ * 只靠 React 的 data-active 会在 pointerdown 清掉悬停态 / 松手后出现一帧表格外框，
+ * 这里用 :has() 从 CSS 层兜住，指针离开手柄才恢复表格级样式。
+ */
+.md-table-block:has(.md-table-row-handle:hover, .md-table-col-handle:hover) .md-table {
+  outline: none;
+}
+.md-table-block:has(.md-table-row-handle:hover, .md-table-col-handle:hover) .md-resize-handle {
+  opacity: 0;
+}
+.md-table-block:has(.md-table-row-handle:hover, .md-table-col-handle:hover) .md-table-guides {
+  opacity: 0;
 }
 .md-col-resize,
 .md-row-resize {
@@ -2432,7 +2969,7 @@ video.md-media {
 
 /* ── 列边界 / 行边界手柄 ──
    拖它们改列宽与行高,数字写回 ````table 围栏的 `cols=` / `rows=`。
-   与删除按钮同一套:平时完全藏起来,鼠标移到那一列 / 那一行时才出现 ——
+   与行 / 列手柄同一套:平时完全藏起来,鼠标移到那一列 / 那一行时才出现 ——
    一张表上挂满手柄会把内容淹掉。 */
 .md-col-resize,
 .md-row-resize {
@@ -2512,29 +3049,6 @@ video.md-media {
   font: inherit;
   line-height: inherit;
   vertical-align: top;
-}
-
-.md-table-tools {
-  display: flex;
-  gap: 5px;
-  margin-top: 5px;
-}
-.md-table-tools button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 21px;
-  padding: 0 8px;
-  border: 1px dashed var(--border2);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
-  font-size: 10.5px;
-}
-.md-table-tools button:hover {
-  border-style: solid;
-  color: var(--text);
 }
 
 /* ══════════════════════════════════════════════════════════════════

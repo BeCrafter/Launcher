@@ -67,6 +67,10 @@ export function AiView(): React.JSX.Element {
   )
   const [mobileOpen, setMobileOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 900)
+  const setCollapsed = useCallback((next: boolean): void => {
+    setRailCollapsed(next)
+    localStorage.setItem(RAIL_LS_KEY, next ? 'true' : 'false')
+  }, [])
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 900px)')
     const sync = (): void => setIsMobile(mq.matches)
@@ -79,13 +83,13 @@ export function AiView(): React.JSX.Element {
     if (window.innerWidth <= 900) {
       setMobileOpen((v) => !v)
     } else {
-      setRailCollapsed((v) => {
-        const next = !v
-        localStorage.setItem(RAIL_LS_KEY, next ? 'true' : 'false')
-        return next
-      })
+      setCollapsed(!railCollapsed)
     }
-  }, [])
+  }, [railCollapsed, setCollapsed])
+
+  // 折叠状态的唯一写入口:按钮与「拖到 50px 以下自动折叠」都走这里,
+  // 保证 localStorage 与 UI 不会分叉
+  const collapseRail = useCallback((): void => setCollapsed(true), [setCollapsed])
 
   // 折叠钮的 is-in 与 tooltip 跟随可见性(demo aiSyncRailToggle:图标恒为 fa-angles-right,展开态 CSS 旋转 180°)
   const railVisible = isMobile ? mobileOpen : !railCollapsed
@@ -93,7 +97,7 @@ export function AiView(): React.JSX.Element {
   return (
     <div id="view-ai" style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
       <div className="ai-shell" id="aiShell">
-        <AiRail collapsed={railCollapsed} mobileOpen={mobileOpen} />
+        <AiRail collapsed={railCollapsed} mobileOpen={mobileOpen} onCollapse={collapseRail} />
         <section className="ai-main">
           <button
             className={`ai-rail-toggle${railVisible ? ' is-in' : ''}`}

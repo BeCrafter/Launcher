@@ -269,6 +269,18 @@ function applyHandle(view: EditorView, plan: HandlePlan | null): void {
 }
 
 /**
+ * 焦点在当前块里时不要铺整块 hover 背景。
+ *
+ * 输入（尤其中文组字）会让 CodeMirror 重建行 DOM；如果每次 update 都把
+ * `.cm-block-hovered` 全删再全加，键盘候选窗/布局变化时中间会露出无背景的一帧，
+ * 表现就是整块背景跟着输入闪动。输入期间只保留当前行已有的 `.cm-activeLine` 高亮，
+ * 失焦或悬停另一块时再恢复整块背景。
+ */
+export function suppressBlockWash(hasFocus: boolean, selectionLine: number, block: MarkdownBlock): boolean {
+  return hasFocus && blockContainsLine(block, selectionLine)
+}
+
+/**
  * 鼠标停在哪一块，那一块就加一层极淡底色 —— 一眼看出手柄属于谁。
  *
  * 判据是块的**完整范围** `[from, contentTo)`（含子树），不是「行归属」：
@@ -284,6 +296,8 @@ function paintHoverWash(view: EditorView, block: MarkdownBlock | null): void {
     el.classList.remove('cm-block-hovered')
   })
   if (block === null) return
+  const selectionLine = view.state.doc.lineAt(view.state.selection.main.head).number - 1
+  if (suppressBlockWash(view.hasFocus, selectionLine, block)) return
   view.dom.querySelectorAll<HTMLElement>('.cm-line').forEach((el) => {
     const index = view.state.doc.lineAt(view.posAtDOM(el, 0)).number - 1
     if (blockContainsLine(block, index)) el.classList.add('cm-block-hovered')

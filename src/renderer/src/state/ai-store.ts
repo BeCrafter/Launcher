@@ -58,6 +58,8 @@ interface AiState {
   loadSkills(): Promise<void>
   loadSessions(): Promise<void>
   select(id: string | null): Promise<void>
+  /** 删除会话(含运行中的会话:main 侧会先 abort);删当前会话则回到欢迎态 */
+  removeSession(id: string): Promise<void>
   setRailSearch(q: string): void
   /** 未配置时的统一拦截:toast + 引导卡脉冲;返回是否已配置 */
   guardConfigured(): boolean
@@ -178,6 +180,28 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   setRailSearch(q) {
     set({ railSearch: q })
+  },
+
+  // 删除会话:main 是事实来源,删除成功后才动本地状态(失败时列表保持原样并提示)。
+  // 删当前会话 → 回欢迎态;删运行中的会话 → 同步清掉 run 状态(main 侧会 abort)
+  async removeSession(id) {
+    try {
+      await dataSource().ai.deleteSession(id)
+    } catch {
+      showToast(t('ai.rail.deleteFailed'), '#f87171', 'fa-circle-exclamation')
+      return
+    }
+    const st = get()
+    const msgCache = { ...st.msgCache }
+    delete msgCache[id]
+    set({
+      sessions: st.sessions.filter((s) => s.id !== id),
+      msgCache,
+      ...(st.currentId === id
+        ? { currentId: null, messages: [], pendingApprovals: {}, toolUpdates: {} }
+        : {}),
+      ...(st.runSessionId === id ? { runId: null, runSessionId: null } : {})
+    })
   },
 
   async ensureMessages(id) {
