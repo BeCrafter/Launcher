@@ -35,7 +35,7 @@ Homebrew 下载 cask 时会主动给下载物打上 `com.apple.quarantine`（`ca
 **全自动**，无需人工复制 sha256：
 
 1. 本仓库打 tag 并推送（tag 形如 `v1.2.3`，须与 `package.json` 的 `version` 一致；
-   推之前先跑 `npm run release:check -- --tag v1.2.3`，把版本一致性与 tag 占用检查提前到本地）
+   推之前先跑 `npm run release:check -- --quick --tag v1.2.3`，把版本一致性与 tag 占用检查提前到本地）
    → `.github/workflows/release.yml` 构建双架构 zip
 2. 上传到 R2（`<R2 公有域名>/launcher/Launcher-<版本>-<架构>.zip`，外加 `Launcher-latest-<架构>.zip` 别名供 install.sh 用）
 3. 复制本目录的模板到 tap 仓库，`sed` 替换 `version` / `url` / 两个 `sha256` 后提交推送

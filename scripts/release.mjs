@@ -17,7 +17,7 @@
 //   --tag <tag>      dev 专用：直接采用该 tag 的版本号（dev-release.yml 的 tag 触发路径用）
 //   --print          只把算出的版本号打到 stdout 就退出（CI 用，不做检查、不改动任何东西）
 //   --dry-run        只展示将要做什么，不提交/不打 tag/不推送
-//   --no-verify      跳过 typecheck + test
+//   --no-verify      跳过预检（干净安装 + typecheck + test + 构建）
 //   --no-push        提交并打 tag，但不推送
 //   -y, --yes        跳过确认
 
@@ -220,7 +220,9 @@ console.log(`  目标版本   ${version}   ${isDev ? '（测试版）' : '（正
 console.log(`  标签       ${tag}`)
 console.log('')
 console.log('  将要执行：')
-if (verify) console.log('    1. npm run typecheck && npm test')
+if (verify) {
+  console.log('    1. npm run release:check -- --head（对 HEAD 做干净安装 + typecheck + test + 构建）')
+}
 if (bumpsPkg) console.log(`    ${verify ? 2 : 1}. 把 ${version} 写进 package.json 并提交`)
 if (!noPush) {
   console.log(`    - git push ${REMOTE} ${branch}`)
@@ -250,9 +252,8 @@ if (!opts.flags.has('yes')) {
 
 // ── 执行 ──
 if (verify) {
-  step('类型检查与测试')
-  spawn('npm', ['run', 'typecheck'])
-  spawn('npm', ['test'])
+  step('发布前检查（干净环境）')
+  spawn('npm', ['run', 'release:check', '--', '--head'])
 }
 
 if (bumpsPkg) {
