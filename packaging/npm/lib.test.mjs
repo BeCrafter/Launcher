@@ -110,7 +110,7 @@ describe('parseArgs', () => {
   })
 
   it('识别子命令与 help 别名', () => {
-    for (const c of ['install', 'status', 'uninstall', 'versions']) {
+    for (const c of ['install', 'upgrade', 'status', 'uninstall', 'versions']) {
       expect(parseArgs([c]).cmd).toBe(c)
     }
     expect(parseArgs(['help']).help).toBe(true)
@@ -130,6 +130,15 @@ describe('parseArgs', () => {
     expect(parseArgs(['install', '--force'])).toMatchObject({ force: true })
     expect(parseArgs(['install', '-f'])).toMatchObject({ force: true })
     expect(parseArgs(['--dir', '/tmp/x'])).toMatchObject({ cmd: null, dir: '/tmp/x' })
+  })
+
+  it('upgrade / --relaunch:应用内升级的兜底命令走这条', () => {
+    expect(parseArgs(['upgrade'])).toMatchObject({ cmd: 'upgrade', relaunch: false })
+    expect(parseArgs(['upgrade', '--relaunch'])).toMatchObject({ cmd: 'upgrade', relaunch: true })
+    expect(parseArgs(['install', '--relaunch'])).toMatchObject({ cmd: 'install', relaunch: true })
+    // 不会重装/重启的命令上带着它只会误导
+    expect(parseArgs(['status', '--relaunch']).error).toMatch(/只用于 install \/ upgrade/)
+    expect(parseArgs(['--relaunch']).error).toMatch(/只用于 install \/ upgrade/)
   })
 
   it('缺值/未知项回 error，而不是静默忽略', () => {

@@ -9,6 +9,7 @@ import { useCronStore } from './cron-store'
 import { useServicesStore } from './services-store'
 import { useNotesStore } from './notes-store'
 import { useSettingsStore } from './settings-store'
+import { useUpdateStore } from './update-store'
 import { setAuthCacheMinGetter, setConfirmDangerousGetter } from '../lib/elevation'
 
 let booted = false
@@ -47,6 +48,10 @@ export function bootstrap(): void {
     const ids = (payload as NotesChangedPayload | undefined)?.ids ?? []
     void useNotesStore.getState().onExternalChange(ids)
   })
+
+  // 应用更新:订阅 main 的状态机。即使从未打开设置页也要初始化 ——
+  // 升级完成后的结果提示、ready 后的自动重启倒计时都挂在这里。
+  useUpdateStore.getState().init()
 
   // menubarBadge:运行中 Agent 计数上报(去重;main 渲染 Tray 角标)
   let lastBadge = -1

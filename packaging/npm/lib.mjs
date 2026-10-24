@@ -196,7 +196,7 @@ export function plistVersion(xml) {
  * 无子命令的单 `--version` 视为「打印 CLI 版本」——这是最容易被误敲的形式。
  */
 export function parseArgs(argv) {
-  const out = { cmd: null, version: null, dir: null, force: false, pre: false, json: false, help: false, wantCliVersion: false }
+  const out = { cmd: null, version: null, dir: null, force: false, relaunch: false, pre: false, json: false, help: false, wantCliVersion: false }
   const rest = [...argv]
 
   if (rest.length === 1 && (rest[0] === '--version' || rest[0] === '-v')) {
@@ -209,7 +209,7 @@ export function parseArgs(argv) {
       out.help = true
       return out
     }
-    if (!['install', 'uninstall', 'status', 'versions'].includes(c)) return { error: `未知命令：${c}` }
+    if (!['install', 'upgrade', 'uninstall', 'status', 'versions'].includes(c)) return { error: `未知命令：${c}` }
     out.cmd = c
   }
 
@@ -219,6 +219,8 @@ export function parseArgs(argv) {
       out.help = true
     } else if (a === '-f' || a === '--force') {
       out.force = true
+    } else if (a === '--relaunch') {
+      out.relaunch = true
     } else if (a === '--pre') {
       out.pre = true
     } else if (a === '--json') {
@@ -239,6 +241,10 @@ export function parseArgs(argv) {
   // --pre / --json 只对「列版本」有意义；其余命令里静默忽略会让用户以为生效了
   if ((out.pre || out.json) && out.cmd !== 'versions') {
     return { error: `${out.pre ? '--pre' : '--json'} 只用于 versions（列可用版本），不作用于其他命令` }
+  }
+  // --relaunch 只对会（重新）安装的命令有意义
+  if (out.relaunch && out.cmd !== 'install' && out.cmd !== 'upgrade') {
+    return { error: '--relaunch 只用于 install / upgrade（安装完成后重新打开应用）' }
   }
   return out
 }

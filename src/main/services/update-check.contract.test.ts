@@ -36,4 +36,17 @@ describe('cdn 根地址三处一致', () => {
     expect(read('packaging/npm/lib.mjs')).toContain('VERSIONS_PATH')
     expect(read('scripts/install.sh')).toContain('LAUNCHER_R2_BASE')
   })
+
+  it('发版流水线先传「按版本的更新清单」,再传 versions.txt', () => {
+    const wf = read('.github/workflows/release.yml')
+    // 清单由 dist 里的实际产物生成(与发布构建同源),不在 YAML 里另写拼装逻辑
+    expect(wf).toContain('node scripts/release-manifest.mjs')
+    expect(wf).toContain('dist/Launcher-${VERSION}.json')
+    const manifestUpload = wf.indexOf('aws s3 cp "dist/Launcher-${VERSION}.json"')
+    const versionsUpload = wf.indexOf('aws s3 cp versions.txt')
+    expect(manifestUpload).toBeGreaterThan(-1)
+    expect(versionsUpload).toBeGreaterThan(-1)
+    // 反了的话,发版刚结束的窗口里应用会「知道有新版但清单 404」
+    expect(manifestUpload).toBeLessThan(versionsUpload)
+  })
 })

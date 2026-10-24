@@ -57,6 +57,7 @@ curl -fsSL .../install.sh | bash -s -- --dir ~/Applications
 | `--dir <目录>` | 安装目录；默认 `/Applications`，不可写回退 `~/Applications` |
 | `--list` | 列出可用版本（`--pre` 连预发布一起列） |
 | `--check` | 已装版本 vs 仓库最新版 |
+| `--relaunch` | 安装完成后自动打开应用（应用内升级的兜底命令带这个参数） |
 | `-h, --help` | 帮助 |
 
 | 环境变量 | 说明 |
@@ -69,6 +70,9 @@ curl -fsSL .../install.sh | bash -s -- --dir ~/Applications
 ```bash
 # 升级 = 再跑一次安装（会先报出当前版本）
 curl -fsSL .../install.sh | bash
+
+# 应用内升级的兜底命令：装完直接重新打开
+curl -fsSL .../install.sh | bash -s -- --relaunch
 
 # 卸载
 rm -rf /Applications/Launcher.app          # 装在 ~/Applications 的话改这个路径
@@ -128,7 +132,8 @@ npx -y @becrafter/launcher
 | `npx -y @becrafter/launcher` | 未装则装；已装则显示状态 |
 | `npx -y @becrafter/launcher status` | 版本检查：已装版本 / CDN 最新 / npm 包最新 |
 | `npx -y @becrafter/launcher versions [--pre] [--json]` | 列出可用版本；`--json` 便于脚本消费 |
-| `npx -y @becrafter/launcher install [--version <v\|latest>] [--dir <目录>] [--force]` | 显式安装 / 强制重装 |
+| `npx -y @becrafter/launcher install [--version <v\|latest>] [--dir <目录>] [--force] [--relaunch]` | 显式安装 / 强制重装 |
+| `npx -y @becrafter/launcher upgrade [--dir <目录>] [--relaunch]` | 升级到最新正式版（沿用原安装目录） |
 | `npx -y @becrafter/launcher uninstall` | 卸载（含清理） |
 
 | 选项 | 说明 |
@@ -136,6 +141,7 @@ npx -y @becrafter/launcher
 | `--version <x.y.z\|latest>` | 指定版本；默认 = 本 CLI 的版本 |
 | `--dir <目录>` | 安装目录；默认 `/Applications`，不可写回退 `~/Applications` |
 | `-f, --force` | 已装同版本时也强制重装 |
+| `--relaunch` | `install` / `upgrade` 完成后重新打开应用 |
 | `--pre` / `--json` | 仅 `versions`：连预发布一起列 / 输出 JSON |
 
 环境变量：`LAUNCHER_R2_BASE` 换下载根地址，`LAUNCHER_INSTALL_DIR` 同 `--dir`。
@@ -184,6 +190,7 @@ ad-hoc 签名 + 未公证，带标记会被 macOS 判为「已损坏」，且**�
 |---|---|
 | **有哪些版本** | `<cdn 根>/versions.txt`（纯文本，一行一版：`0.1.4`；预发布行尾带 ` pre`） |
 | **最新稳定版是哪个** | `Launcher-latest-<架构>.zip` 别名的 HEAD 重定向 |
+| **某个版本由哪些文件组成** | `<cdn 根>/Launcher-<版本>.json`（按版本不可变：文件名 + sha256 + size，双架构） |
 
 三条通道与**应用内**的「检查更新」都读同一份清单，不会出现「通道装得到新版、应用却说没有」。
 
@@ -194,14 +201,25 @@ ad-hoc 签名 + 未公证，带标记会被 macOS 判为「已损坏」，且**�
 
 ## 升级
 
-应用内「设置 → 关于 → 检查更新」会按**检测到的安装来源**给出对应命令（Homebrew / npx / curl 三种），
-不必自己回忆当初是怎么装的。
+应用内「设置 → 关于 → 检查更新」是主路径，**点一次即可**：
 
-| 安装来源 | 升级命令 |
-|---|---|
-| Homebrew | `brew upgrade --cask becrafter/brew/launcher` |
-| npm | `npx -y @becrafter/launcher` |
-| curl / 手动 | `curl -fsSL https://repo.iskill.site/launcher/install.sh \| bash` |
+1. 读 `versions.txt` 找到最新稳定版，按安装来源选择升级引擎；
+2. 自动下载并校验（zip 的 sha256 / 大小来自该版本的 `Launcher-<版本>.json`）；
+3. 显示「新版本已就绪」，10 秒后自动退出、替换并重新打开；也可以点「立即重启并升级」或「稍后」。
+   如果笔记有未保存改动，自动重启会暂停，保存后才继续。
+
+替换由退出后运行的助手脚本完成：先把旧包移到备份，再换入新包；新版本 30 秒内没起来会自动回滚
+（Homebrew 通道由 brew 自己替换，无法自动回滚到旧版本）。
+升级日志在 `~/Library/Application Support/becrafter-launcher/updates/update.log`（界面里可「查看日志」）。
+
+| 安装来源 | 应用内引擎 | 失败 / 不支持时的兜底命令 |
+|---|---|---|
+| Homebrew | `brew update` + `brew fetch`，退出后 `brew upgrade --cask` | `brew upgrade --cask becrafter/brew/launcher` |
+| npm | 应用内直接替换 | `npx -y @becrafter/launcher@latest upgrade --relaunch` |
+| curl / 手动 | 应用内直接替换 | `curl -fsSL https://repo.iskill.site/launcher/install.sh \| bash -s -- --relaunch` |
+
+不适合应用内升级的情况会直接给出上面的命令：开发态运行、App Translocation（从磁盘映像/下载目录直接运行）、
+应用目录不可写，或 macOS 的 App Management 拦下了替换动作。
 
 ---
 
@@ -221,6 +239,7 @@ npx -y @becrafter/launcher uninstall              # 通道 C
 |---|---|
 | `~/.config/launcher/config.json` | 全部设置（主题、语言、`cmdTimeout`、服务别名等） |
 | `~/Library/Application Support/becrafter-launcher/` | AI 会话（`ai-sessions.json`）与密钥文件（`ai-keys.json`，内容经系统钥匙串加密；明文 API Key 也从不在磁盘上落明文） |
+| `~/Library/Application Support/becrafter-launcher/updates/` | 应用内升级的下载包、解压暂存、旧版本备份与 `update.log`（升级完成后备份会保留，确认无恙可手动删） |
 | `~/Library/Logs/BeCrafter-Launcher/cron/` | 定时任务的日志（按小时分段，默认保留 3 天） |
 | `~/.local/bin/launcher-mcp` | 若在应用内点过「安装到 PATH」会留一条符号链接 |
 | `~/Library/LaunchAgents/*.plist`、`crontab -l` | **应用不会碰它们** —— 你创建的任务本身归 macOS / cron 管，卸载应用不会删你的任务 |
@@ -275,6 +294,19 @@ LAUNCHER_R2_BASE=https://your-mirror.example/launcher \
   curl -fsSL .../install.sh | bash
 ```
 
+### 应用内升级失败
+
+界面会显示失败原因和该通道的兜底命令（可直接复制），日志在
+`~/Library/Application Support/becrafter-launcher/updates/update.log`（点「查看日志」打开）。
+
+常见原因：
+
+- **App Translocation**：应用直接从 `.dmg` / 下载目录运行。先拖进 `/Applications` 再升级。
+- **应用目录不可写** 或 macOS 14+ 的「App 管理」拦下了替换：用界面给出的命令行兜底。
+- **新版本起不来**：应用内替换通道会在 30 秒后自动回滚到旧版本，旧包备份留在
+  `~/Library/Application Support/becrafter-launcher/updates/backup/`。
+  Homebrew 通道没有旧版本备份，请重新执行 `brew reinstall --cask becrafter/brew/launcher`。
+
 ### 校验产物完整性
 
 GitHub Releases 的说明里留有每个 zip 的 sha256：
@@ -299,6 +331,8 @@ shasum -a 256 ~/Downloads/Launcher-0.1.4-arm64.zip
 | 安装目录 | `/Applications`，不可写回退 `~/Applications` |
 | 收尾 | `xattr -dr com.apple.quarantine`（防御性） |
 | 完整性 | 校验 `Contents/MacOS/Launcher` 存在 |
+| 版本清单 | `<cdn 根>/versions.txt`（有哪些版本） + `<cdn 根>/Launcher-<版本>.json`（该版本的 zip 路径 / sha256 / size） |
 
 「有哪些版本」「latest 指向谁」同样三通道共用一个来源（CDN 上的 `versions.txt` 与 `latest` 别名），
-跨文件断言在 `packaging/npm/contract.test.mjs`。
+跨文件断言在 `packaging/npm/contract.test.mjs`。应用内升级另用 `Launcher-<版本>.json`，
+**上传顺序必须是 zip → 清单 → versions.txt**。

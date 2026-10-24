@@ -5,8 +5,12 @@ cask 托管在 **`BeCrafter/homebrew-brew`** 仓库（tap 名 `becrafter/brew`�
 ```bash
 brew install --cask becrafter/brew/launcher
 brew outdated --cask --greedy     # 检查是否有新版（cask 需 --greedy 才会列出来）
-brew upgrade --cask launcher      # 升级到 cask 里记的版本
+brew upgrade --cask becrafter/brew/launcher
 ```
+
+> 应用内「设置 → 关于 → 检查更新」在检测到 cask 管理、且当前运行的正是 cask 登记的那份 `.app` 时，
+> 会先 `brew update` / `brew fetch` 预热，退出后执行 `brew upgrade --cask` —— Caskroom 的版本记录
+> 仍由 Homebrew 维护，不会出现「应用内升级后 brew 一直显示过期」。
 
 > cask 记录的是**某一个具体版本**：查「有哪些版本可装」要走官方 CDN 上的版本清单
 > （`curl -fsSL …/install.sh | bash -s -- --list` 或 `npx -y @becrafter/launcher versions`），
@@ -38,6 +42,7 @@ Homebrew 下载 cask 时会主动给下载物打上 `com.apple.quarantine`（`ca
    推之前先跑 `npm run release:check -- --quick --tag v1.2.3`，把版本一致性与 tag 占用检查提前到本地）
    → `.github/workflows/release.yml` 构建双架构 zip
 2. 上传到 R2（`<R2 公有域名>/launcher/Launcher-<版本>-<架构>.zip`，外加 `Launcher-latest-<架构>.zip` 别名供 install.sh 用）
+    → 生成本版本的应用内更新清单 `Launcher-<版本>.json` 并上传（必须早于 `versions.txt`）
 3. 复制本目录的模板到 tap 仓库，`sed` 替换 `version` / `url` / 两个 `sha256` 后提交推送
 4. 同时照常发 GitHub Release（产物 + sha256 清单），作为备用下载源
 

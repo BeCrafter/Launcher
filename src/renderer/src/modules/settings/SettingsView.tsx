@@ -1,14 +1,16 @@
 // 设置页(六 pane + tab 导航 + 页脚)
 import { useEffect, useState } from 'react'
-import { UPGRADE_COMMAND, type InstallChannel } from '@shared/ipc'
+import { UPGRADE_COMMAND } from '@shared/ipc'
 import { TABLE_BORDERS, type TableBorder } from '@shared/note-table-style'
-import { useT, useFmt } from '../../hooks/useT'
+import { useT } from '../../hooks/useT'
 import { useAppInfo } from '../../hooks/useAppInfo'
 import { useSettingsStore } from '../../state/settings-store'
 import { useNotesStore } from '../../state/notes-store'
+import { useUpdateStore } from '../../state/update-store'
 import { showToast } from '../../lib/utils'
 import { openExternal } from '../../lib/utils'
 import { SettingsSection, SettingsRow, SettingsHero } from './SettingsBits'
+import { UpdatePanel } from './UpdatePanel'
 import { ThemeCards } from './ThemeCards'
 import { AiPane } from './AiPane'
 import { useSettingsNav } from '../../state/settings-nav-store'
@@ -17,13 +19,6 @@ import { GITHUB_REPO_URL } from '@shared/constants'
 
 // macOS 系统设置「登录项」面板(main 侧 url-guard 白名单放行)
 const MACOS_LOGIN_ITEMS_URL = 'x-apple.systempreferences:com.apple.LoginItems-Settings.extension'
-
-/** 每通道一条升级文案(文案里带 {CMD},命令本身来自 main 的 UPGRADE_COMMAND) */
-const UPGRADE_TOAST_KEY: Record<InstallChannel, string> = {
-  brew: 'toast.update.available.brew',
-  npm: 'toast.update.available.npm',
-  manual: 'toast.update.available.manual'
-}
 
 const TABS = [
   { id: 'general', icon: 'fa-solid fa-sliders', labelKey: 'settings.tab.general' },
@@ -72,12 +67,14 @@ function NotesDirInput({
 
 export function SettingsView(): React.JSX.Element {
   const t = useT()
-  const fmt = useFmt()
   const info = useAppInfo()
   // tab 提到共享 store:AI 页的引擎 chip / 引导卡要能直接跳到 AI 面板
   const tab = useSettingsNav((s) => s.tab)
   const setTab = useSettingsNav((s) => s.setTab)
-  const [checking, setChecking] = useState(false)
+  const updatePhase = useUpdateStore((s) => s.state?.phase ?? 'idle')
+  // main 决定此刻能不能发起检查(下载中/待重启等阶段再查会打断现有流程)
+  const canCheck = useUpdateStore((s) => s.state?.canCheck ?? true)
+  const checkUpdate = useUpdateStore((s) => s.check)
   const settings = useSettingsStore((s) => s.settings)
   // 生效目录(设置里为空时是默认路径):由 main 算,渲染层不自己拼 —— 两边算法必须同源
   const notesDir = useNotesStore((s) => s.dir)
@@ -86,41 +83,7 @@ export function SettingsView(): React.JSX.Element {
   if (!settings) return <div className="settings-layout" />
 
   const savedToast = (): void => showToast(t('toast.prefsSaved'), '#4ade80', 'fa-check')
-
-  // 检查更新:main 读 cdn 上的版本清单(与三条安装通道同源;四态见 services/update-check.ts)
-  const checkAppUpdates = async (): Promise<void> => {
-    if (checking) return
-    setChecking(true)
-    showToast(t('toast.updating'), '#60a5fa', 'fa-arrows-rotate')
-    try {
-      const r = await window.launcher.checkForUpdate()
-      if (r.status === 'upToDate') {
-        showToast(fmt(t('toast.update.upToDate'), { V: r.currentVersion }), '#4ade80', 'fa-circle-check')
-      } else if (r.status === 'available') {
-        // 按安装来源给对应的升级命令 —— 此前所有人看到的都是「请前往 GitHub 下载」,
-        // 而 brew/npx 装的用户照做只会装出第二份应用。
-        // 通道取结果里的 installChannel(权威值),不要从 upgradeCommand 反推
-        showToast(
-          fmt(t(UPGRADE_TOAST_KEY[r.installChannel]), { V: r.latest?.version ?? '', CMD: r.upgradeCommand }),
-          '#a78bfa',
-          'fa-arrow-up'
-        )
-      } else if (r.status === 'noRelease') {
-        showToast(t('toast.update.noRelease'), '#8888aa', 'fa-circle-info')
-      } else {
-        showToast(
-          r.errorMessage ? fmt(t('toast.update.errorWhy'), { W: r.errorMessage }) : t('toast.update.error'),
-          '#f87171',
-          'fa-circle-exclamation'
-        )
-      }
-    } catch (err) {
-      console.error('[settings] checkForUpdate failed:', err)
-      showToast(t('toast.update.error'), '#f87171', 'fa-circle-exclamation')
-    } finally {
-      setChecking(false)
-    }
-  }
+  const checking = updatePhase === 'checking'
 
   return (
     <div className="settings-layout">
@@ -569,17 +532,32 @@ export function SettingsView(): React.JSX.Element {
                   title={t('settings.about.version.rowTitle')}
                   desc={info ? `Launcher v${info.version}` : ''}
                   control={
-                    <button className="d-btn blue" type="button" disabled={checking} onClick={() => void checkAppUpdates()}>
-                      <i className="fa-solid fa-arrows-rotate" />
-                      <span>{t('settings.about.btn.checkUpdates')}</span>
+                    <button
+                      className="d-btn blue"
+                      type="button"
+                      disabled={!canCheck}
+                      onClick={() => void checkUpdate()}
+                    >
+                      <i className={`fa-solid fa-arrows-rotate${checking ? ' fa-spin' : ''}`} />
+                      <span>{checking ? t('settings.about.btn.checking') : t('settings.about.btn.checkUpdates')}</span>
                     </button>
                   }
                 />
+                <UpdatePanel />
                 <SettingsRow
                   title={t('settings.about.installChannel.rowTitle')}
                   descKey="settings.about.installChannel.rowDesc"
                   control={
-                    <span className="tag" title={UPGRADE_COMMAND[info?.installChannel ?? 'manual']}>
+                    <span
+                      className={`tag ${
+                        info?.installChannel === 'brew'
+                          ? 'brew'
+                          : info?.installChannel === 'npm'
+                            ? 'blue'
+                            : 'dim'
+                      }`}
+                      title={UPGRADE_COMMAND[info?.installChannel ?? 'manual']}
+                    >
                       {t(`settings.about.installChannel.${info?.installChannel ?? 'manual'}`)}
                     </span>
                   }

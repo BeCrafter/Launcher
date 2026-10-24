@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, net, shell } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME } from '../shared/constants'
@@ -15,6 +15,8 @@ import { createShellRunner } from './services/shell-runner'
 import { createElevationExecutor } from './services/elevation'
 import { toServicesPayload } from './services/process-discovery'
 import { detectInstallChannel } from './services/install-channel'
+import { createUpdateController } from './services/update-controller'
+import { appBundleFromExecutable } from './services/update-target'
 import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
 import { handleNotesProtocol, registerNotesScheme } from './services/notes-protocol'
@@ -383,6 +385,29 @@ async function startApp(): Promise<void> {
   // 建窗前只需要主题先落位:窗口底色与过渡页配色都读 nativeTheme.themeSource(见 appearance.ts)
   applyThemeSource(store.get())
 
+  // 安装来源探测的记忆化入口(IPC 与更新控制器共用;首个消费者来问时才 spawn)
+  const getInstallChannel = (): Promise<InstallChannel> =>
+    (channelProbe ??= detectInstallChannel({ runner }))
+
+  // 应用内更新:状态机在 main(下载/替换不依赖渲染层是否挂载)。
+  // 网络走 Electron 的 net.fetch —— 它遵守系统代理,企业内网/镜像下比 Node 的 fetch 可靠。
+  const updater = createUpdateController({
+    currentVersion: () => app.getVersion(),
+    hostVersion: process.getSystemVersion(),
+    arch: process.arch === 'arm64' ? 'arm64' : 'x64',
+    // dev 下 process.execPath 是 Electron 本体,不是 .app —— 只能给命令行兜底
+    bundlePath: app.isPackaged ? appBundleFromExecutable(process.execPath) : null,
+    userDataDir: app.getPath('userData'),
+    runner,
+    getChannel: getInstallChannel,
+    fetchImpl: ((input: RequestInfo | URL, init?: RequestInit) =>
+      net.fetch(input as never, init as never)) as typeof fetch,
+    broadcast: (state) => broadcast(IPC_EVENTS.appUpdateChanged, state),
+    quit: () => app.quit(),
+    log: (m) => console.log(`[update] ${m}`)
+  })
+  app.once('before-quit', () => updater.dispose())
+
   // AI 助手(阶段 4):pi 引擎 + ToolRegistry + 内置会话 —— 同步装配,不含网络/重磁盘活
   const ai = createAiStack({
     store,
@@ -407,13 +432,16 @@ async function startApp(): Promise<void> {
     termination,
     docker,
     // 懒发起 + 记忆化:第一个消费者来问时才 spawn(它在建窗之后,不再和渲染层抢启动期的 I/O)
-    getInstallChannel: () => (channelProbe ??= detectInstallChannel({ runner })),
+    getInstallChannel,
     ai,
-    notes
+    notes,
+    updater
   })
 
   createWindow()
   startupDone = true
+  // 让升级助手知道新版本确实起来了(它等这个标记,超时会自动回滚)
+  updater.onBoot()
 
   // 建窗后才跑:全量 applier(各 applier 幂等;此前只落位过主题)+ 设置变更订阅
   registry.apply(store.get())

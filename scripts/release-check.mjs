@@ -319,6 +319,36 @@ function preflight() {
     }
     if (missing.length > 0) throw new Error(`产物缺失:\n    ${missing.join('\n    ')}`)
   })
+
+  // 应用内升级读的是 Launcher-<版本>.json;这里提前跑一遍 CI 用的同一份生成器,
+  // 把「清单字段写错 / 少一个架构 / sha256 对不上」挡在发版之前。
+  stage('生成并校验更新清单', () => {
+    const builtVersion = JSON.parse(readFileSync(join(src, 'package.json'), 'utf8')).version
+    run('node', ['scripts/release-manifest.mjs', '--version', builtVersion, '--dir', 'dist'], { cwd: src })
+
+    const manifestPath = join(src, 'dist', `Launcher-${builtVersion}.json`)
+    if (!existsSync(manifestPath)) throw new Error(`清单未生成:${manifestPath}`)
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    if (manifest.version !== builtVersion) {
+      throw new Error(`清单版本 ${manifest.version} 与 package.json ${builtVersion} 不一致`)
+    }
+    if (typeof manifest.minSystemVersion !== 'string' || manifest.minSystemVersion === '') {
+      throw new Error('清单缺少 minSystemVersion')
+    }
+    for (const arch of ['arm64', 'x64']) {
+      const f = manifest.files?.[arch]
+      if (!f || f.path !== `Launcher-${builtVersion}-${arch}.zip`) {
+        throw new Error(`清单缺少 ${arch} 产物或文件名不符`)
+      }
+      const zip = join(src, 'dist', f.path)
+      const size = lstatSync(zip).size
+      if (f.size !== size) throw new Error(`${arch} 清单 size ${f.size} 与实际 ${size} 不一致`)
+      const sha = execFileSync('/usr/bin/shasum', ['-a', '256', zip], { encoding: 'utf8' })
+        .trim()
+        .split(/\s+/)[0]
+      if (f.sha256 !== sha) throw new Error(`${arch} 清单 sha256 与实际不一致`)
+    }
+  })
 }
 
 try {

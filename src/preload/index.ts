@@ -22,7 +22,8 @@ const EVENT_CHANNELS: readonly IpcEventChannel[] = [
   IPC_EVENTS.agentsChanged,
   IPC_EVENTS.servicesUpdated,
   IPC_EVENTS.aiRunEvent,
-  IPC_EVENTS.notesChanged
+  IPC_EVENTS.notesChanged,
+  IPC_EVENTS.appUpdateChanged
 ]
 
 const api: LauncherApi = {
@@ -43,7 +44,15 @@ const api: LauncherApi = {
   reportBadgeCount: (count) => ipcRenderer.invoke(IPC.agentsBadge, count),
   // 启动进度上报:单向 send(不需要回执),main 据此决定何时显示窗口
   notifyBootPainted: (phase) => ipcRenderer.send(IPC.appBootPainted, phase),
-  checkForUpdate: () => ipcRenderer.invoke(IPC.appCheckUpdates),
+  updates: {
+    getState: () => ipcRenderer.invoke(IPC.appUpdateState),
+    check: () => ipcRenderer.invoke(IPC.appUpdateCheck),
+    download: () => ipcRenderer.invoke(IPC.appUpdateDownload),
+    apply: () => ipcRenderer.invoke(IPC.appUpdateApply),
+    cancel: () => ipcRenderer.invoke(IPC.appUpdateCancel),
+    consumeResult: () => ipcRenderer.invoke(IPC.appUpdateResult),
+    revealLog: () => ipcRenderer.invoke(IPC.appUpdateRevealLog)
+  },
   agents: {
     list: () => ipcRenderer.invoke(IPC.agList),
     brewAction: (kind, id) => ipcRenderer.invoke(IPC.agBrewAction, kind, id),

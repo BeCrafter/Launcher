@@ -655,6 +655,12 @@ textarea.f-input {
   color: var(--text);
 }
 
+/* 禁用态:例如更新下载/待重启时,版本行的「检查更新」不可再发起新检查 */
+.d-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .d-btn.green {
   border-color: var(--green);
   color: var(--green);

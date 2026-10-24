@@ -26,7 +26,20 @@ export interface InstallChannelDeps {
   brewCandidates?: string[]
 }
 
+/** brew 可执行文件候选(Apple Silicon / Intel);测试里注入假路径 */
 const DEFAULT_BREW_CANDIDATES = ['/opt/homebrew/bin/brew', '/usr/local/bin/brew']
+
+/** 找到本机的 brew(找不到 → null)。brew 是 ruby 脚本,存在性用 test -x 判 */
+export async function findBrewExecutable(
+  runner: ShellRunner,
+  candidates: string[] = DEFAULT_BREW_CANDIDATES
+): Promise<string | null> {
+  for (const p of candidates) {
+    const r = await runner.run('/bin/test', ['-x', p], { timeoutMs: 2_000 })
+    if (r.code === 0 && !r.error) return p
+  }
+  return null
+}
 
 /**
  * 判定顺序:**先 brew 再 npm**。两条都可能命中时 brew 优先 —— cask 记着这个应用,
@@ -41,14 +54,7 @@ export async function detectInstallChannel(deps: InstallChannelDeps): Promise<In
 
 /** brew 记录里有本应用 → cask 装的(与 brew upgrade 是否生效是同一个问题) */
 async function installedByCask(runner: ShellRunner, candidates: string[]): Promise<boolean> {
-  let brew: string | null = null
-  for (const p of candidates) {
-    const r = await runner.run('/bin/test', ['-x', p], { timeoutMs: 2_000 })
-    if (r.code === 0 && !r.error) {
-      brew = p
-      break
-    }
-  }
+  const brew = await findBrewExecutable(runner, candidates)
   if (!brew) return false
   // brew 是 ruby 脚本,真跑一次约 0.2s;给足 10s 以免机器忙时被误判为失败
   const r = await runner.run(brew, ['list', '--cask'], { timeoutMs: 10_000 })

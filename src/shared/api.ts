@@ -13,7 +13,8 @@ import type {
   RestartOutcome,
   ServicesListPayload,
   SettingsPatch,
-  UpdateCheckResult,
+  UpdateResultInfo,
+  UpdateState,
   AiApprovalInput,
   AiMcpInfo,
   AiSendInput,
@@ -76,7 +77,21 @@ export interface LauncherApi {
    * main 据此决定**何时**把窗口显示出来 —— 详见 main/services/boot-gate.ts。
    */
   notifyBootPainted: (phase: BootPaintPhase) => void
-  checkForUpdate: () => Promise<UpdateCheckResult>
+  /**
+   * 应用内更新:main 持有状态机,渲染层只发意图 + 订阅 IPC_EVENTS.appUpdateChanged。
+   * check 命中新版后自动开始下载;ready 后可 apply(退出 → 替换 → 重新拉起)。
+   */
+  updates: {
+    getState: () => Promise<UpdateState>
+    check: () => Promise<UpdateState>
+    download: () => Promise<UpdateState>
+    apply: () => Promise<UpdateState>
+    cancel: () => Promise<UpdateState>
+    /** 上次升级的结果(升级助手写入);每次升级只消费一次,无结果 → null */
+    consumeResult: () => Promise<UpdateResultInfo | null>
+    /** 在访达中显示升级日志;没有日志 → null */
+    revealLog: () => Promise<string | null>
+  }
   // Launch Agents(阶段 1:真实 launchctl/plist)
   agents: {
     list: () => Promise<{ agents: Agent[] }>

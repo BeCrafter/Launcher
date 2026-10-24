@@ -5,6 +5,7 @@
 #   curl -fsSL .../install.sh | bash -s -- --version 0.1.0    # 指定版本
 #   curl -fsSL .../install.sh | bash -s -- --list             # 看有哪些版本
 #   curl -fsSL .../install.sh | bash -s -- --check            # 版本检查（装没装、是不是最新）
+#   curl -fsSL .../install.sh | bash -s -- --relaunch         # 装完自动打开（应用内升级的兜底命令）
 #
 # 为什么用 curl 而不是浏览器下载：浏览器会给下载的文件打上 com.apple.quarantine
 # 隔离标记，macOS 随后会对未公证的 app 直接报「已损坏」，且不再提供任何图形化
@@ -27,6 +28,7 @@ VERSION=""
 DO_CHECK=0
 DO_LIST=0
 SHOW_PRE=0
+RELAUNCH=0
 
 usage() {
   cat <<'EOF'
@@ -37,6 +39,7 @@ usage() {
   --check            版本检查：已装版本、仓库最新版
   --version <x.y.z>  安装指定版本（默认取 R2 上的 latest）
   --dir <目录>       安装目录（默认 /Applications,不可写时回退 ~/Applications）
+  --relaunch         安装完成后自动打开应用（应用内升级的兜底命令）
   --pre              配合 --list：连预发布版本一起列
   -h, --help         显示本帮助
 
@@ -62,9 +65,10 @@ while [ $# -gt 0 ]; do
       INSTALL_DIR="$2"; shift 2 ;;
     --check) DO_CHECK=1; shift ;;
     --list) DO_LIST=1; shift ;;
+    --relaunch) RELAUNCH=1; shift ;;
     --pre) SHOW_PRE=1; shift ;;
     -h | --help) usage; exit 0 ;;
-    *) die "未知参数：${1}（可用 --list / --check / --version / --dir，见 -h）" ;;
+    *) die "未知参数：${1}（可用 --list / --check / --version / --dir / --relaunch，见 -h）" ;;
   esac
 done
 
@@ -223,4 +227,11 @@ if [ -n "$INSTALLED" ]; then
 elif [ -n "$VERSION_FROM_URL" ]; then
   echo "   版本：$(version_of_filename "$VERSION_FROM_URL")"
 fi
-echo "   打开：open \"$INSTALL_DIR/$APP_NAME\""
+if [ "$RELAUNCH" = 1 ]; then
+  # 应用内升级的兜底命令会带 --relaunch：替换完成后直接把新版本拉起来，
+  # 用户不需要再点一次图标（升级助手在应用内路径下做的是同一件事）。
+  # 打不开不算安装失败，别让 set -e 把成功的安装判成失败。
+  open "$INSTALL_DIR/$APP_NAME" || echo "   请手动打开：$INSTALL_DIR/$APP_NAME"
+else
+  echo "   打开：open \"$INSTALL_DIR/$APP_NAME\""
+fi

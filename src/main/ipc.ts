@@ -17,7 +17,6 @@ import {
 import { isAllowedExternalUrl } from '../shared/url-guard'
 import type { AgentScope, CloneInput, CronJob, CronScope, RenameInput, SaveFormInput, SaveXmlInput } from '../shared/models'
 import type { AgentService } from './services/agent-service'
-import { checkForUpdate } from './services/update-check'
 import type { CrontabService } from './services/crontab-service'
 import type { DockerService } from './services/docker-service'
 import { toServicesPayload as buildServicesPayload } from './services/process-discovery'
@@ -27,6 +26,7 @@ import type { SettingsStore } from './settings/store'
 import type { TrayController } from './settings/types'
 import type { AiStack } from './ai'
 import type { NotesService } from './services/notes-service'
+import type { UpdateController } from './services/update-controller'
 import type {
   NoteCreateInput,
   NoteRemoveInput,
@@ -56,6 +56,8 @@ export interface IpcDeps {
   ai: AiStack
   /** 笔记(阶段 5) */
   notes: NotesService
+  /** 应用内更新(检查/下载/重启) */
+  updater: UpdateController
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -101,10 +103,19 @@ export function registerIpc(deps: IpcDeps): void {
     deps.tray.setBadgeCount(count)
   })
 
-  // 检查更新:main 侧读 cdn 上的版本清单(与三条安装通道同源;四态见 services/update-check.ts)
-  ipcMain.handle(IPC.appCheckUpdates, async () =>
-    checkForUpdate(app.getVersion(), { channel: await deps.getInstallChannel() })
-  )
+  // ── 应用内更新(状态机在 main;渲染层只发意图,进度走 appUpdateChanged 事件) ──
+  ipcMain.handle(IPC.appUpdateState, () => deps.updater.getState())
+  ipcMain.handle(IPC.appUpdateCheck, () => deps.updater.check())
+  ipcMain.handle(IPC.appUpdateDownload, () => deps.updater.download())
+  ipcMain.handle(IPC.appUpdateApply, () => deps.updater.apply())
+  ipcMain.handle(IPC.appUpdateCancel, () => deps.updater.cancel())
+  ipcMain.handle(IPC.appUpdateResult, () => deps.updater.consumeResult())
+  ipcMain.handle(IPC.appUpdateRevealLog, async (): Promise<string | null> => {
+    const path = deps.updater.logPath()
+    if (path === null || !existsSync(path)) return null
+    shell.showItemInFolder(path)
+    return path
+  })
 
   // ── 原生对话框(渲染层传意图,系统对话框选路径;文件读写都在 main) ──
   ipcMain.handle(IPC.shellPickFile, async (e, opts: { mode: PickFileMode; title?: string }): Promise<PickedFile | null> => {

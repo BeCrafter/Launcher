@@ -34,7 +34,16 @@ export const IPC = {
   agClearLogs: 'agents:clearLogs',
   agValidateXml: 'agents:validateXml',
   agCheckMissing: 'agents:checkMissing',
+  /** 旧的「只检查」入口;新流程用 appUpdate* 系列,保留常量避免旧渲染层/测试漂移 */
   appCheckUpdates: 'app:checkUpdates',
+  // ── 应用更新(检查/下载/准备/重启) ──
+  appUpdateState: 'app:updateState',
+  appUpdateCheck: 'app:updateCheck',
+  appUpdateDownload: 'app:updateDownload',
+  appUpdateApply: 'app:updateApply',
+  appUpdateCancel: 'app:updateCancel',
+  appUpdateResult: 'app:updateResult',
+  appUpdateRevealLog: 'app:updateRevealLog',
   // ── 定时任务(阶段 2) ──
   cronList: 'cron:list',
   cronCreate: 'cron:create',
@@ -103,7 +112,9 @@ export const IPC_EVENTS = {
   /** AI 运行事件流(AiRunEvent;高频,只在会话运行期间推送) */
   aiRunEvent: 'ai:runEvent',
   /** 笔记目录被外部改动(去抖命中;ids = 内容真的变了的那些) */
-  notesChanged: 'notes:changed'
+  notesChanged: 'notes:changed',
+  /** 应用更新状态快照(阶段变化 + 下载进度,节流后推送) */
+  appUpdateChanged: 'app:updateChanged'
 } as const
 
 export type IpcEventChannel = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]
@@ -140,8 +151,8 @@ export type InstallChannel = 'brew' | 'npm' | 'manual'
  */
 export const UPGRADE_COMMAND: Record<InstallChannel, string> = {
   brew: 'brew upgrade --cask becrafter/brew/launcher',
-  npm: 'npx -y @becrafter/launcher',
-  manual: 'curl -fsSL https://repo.iskill.site/launcher/install.sh | bash'
+  npm: 'npx -y @becrafter/launcher@latest upgrade --relaunch',
+  manual: 'curl -fsSL https://repo.iskill.site/launcher/install.sh | bash -s -- --relaunch'
 }
 
 export interface LatestVersionInfo {
@@ -161,6 +172,85 @@ export interface UpdateCheckResult {
   upgradeCommand: string
   /** 失败原因(HTTP 码 / 请求超时 / 网络错误);成功为 null */
   errorMessage: string | null
+}
+
+/**
+ * 应用更新状态机 —— 由 main 的 UpdateController 持有,渲染层只是视图。
+ * 这样离开设置页/窗口重载都不会丢进度;下载和准备也不依赖某个 React 组件是否挂载。
+ */
+export type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'upToDate'
+  | 'available'
+  | 'downloading'
+  | 'verifying'
+  | 'ready'
+  | 'applying'
+  | 'restarting'
+  | 'error'
+
+/** 实际执行升级的引擎:brew 走 cask;self 是应用内原地替换;none 只能走命令兜底 */
+export type UpdateMode = 'brew' | 'self' | 'none'
+
+export type UpdateErrorCode =
+  | 'network'
+  | 'manifest'
+  | 'download'
+  | 'verify'
+  | 'permission'
+  | 'unsupported'
+  | 'apply'
+  | 'unknown'
+
+export interface UpdateProgress {
+  received: number
+  /** 服务端未给 content-length 时为 null */
+  total: number | null
+  /** total 未知时为 null */
+  percent: number | null
+}
+
+export interface UpdateError {
+  code: UpdateErrorCode
+  message: string
+  /** main 侧升级日志路径;没有日志时为 null */
+  logPath: string | null
+}
+
+export interface UpdateState {
+  phase: UpdatePhase
+  currentVersion: string
+  targetVersion: string | null
+  channel: InstallChannel
+  mode: UpdateMode
+  progress: UpdateProgress | null
+  /** 当前阶段的补充说明(brew 日志最后一行、取消原因等) */
+  message: string | null
+  error: UpdateError | null
+  /** 该通道可照抄到终端的命令(应用内升级不可用/失败时的兜底) */
+  fallbackCommand: string
+  /** 上次检查完成的时间(epoch ms) */
+  checkedAt: number | null
+  /** 目标包大小(清单里拿到的字节数;brew 通道为 null) */
+  downloadSize: number | null
+  canCheck: boolean
+  canCancel: boolean
+  canApply: boolean
+}
+
+/**
+ * 上次升级留下的结果(helper 写入,新版本启动时消费一次)。
+ * installed = 新版本已替换并拉起;rolled-back = 启动失败后已自动回到旧版本;
+ * failed = 替换/brew 升级失败(旧版本仍在或原样保留)。
+ */
+export interface UpdateResultInfo {
+  status: 'installed' | 'rolled-back' | 'failed'
+  from: string
+  to: string
+  backup: string | null
+  /** epoch ms;无法解析时为 null */
+  at: number | null
 }
 
 // ── 原生对话框负载(渲染层只传意图,路径选择由系统对话框完成) ──

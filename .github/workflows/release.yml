@@ -153,6 +153,11 @@ jobs:
             echo "X64_SHA=$(shasum -a 256 "Launcher-${VERSION}-x64.zip" | awk '{print $1}')"
           } >> "$GITHUB_ENV"
 
+      # 应用内升级读 `Launcher-<版本>.json`(不可变,不覆盖历史)。与 dist 里实际产物同源生成,
+      # 避免 CI 里另写一份拼装逻辑。必须在 versions.txt **之前**上传(见下面上传步骤的说明)。
+      - name: 生成更新清单
+        run: node scripts/release-manifest.mjs --version "$VERSION" --dir dist
+
       - name: 生成版本清单（R2 上「有哪些版本」的唯一来源）
         run: |
           # 两条安装通道（install.sh --list / CLI versions）都读这个文件，故这里必须把
@@ -221,6 +226,16 @@ jobs:
           AWS_DEFAULT_REGION: auto
           AWS_REGION: auto
         run: |
+          # ⚠ 顺序:清单(Launcher-<版本>.json)必须在 versions.txt **之前**上传。
+          #   应用先读 versions.txt 得知「有新版本」,再去取对应版本的清单;反过来的话,
+          #   发版刚结束的窗口里用户会看到「有新版但清单 404」。
+          #   清单按版本不可变,长缓存(文件名带版本号,cdn 缓存不会串)。
+          aws s3 cp "dist/Launcher-${VERSION}.json" \
+            "s3://${R2_BUCKET}/${R2_PREFIX}/Launcher-${VERSION}.json" \
+            --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            --content-type "application/json" \
+            --cache-control "public, max-age=31536000, immutable"
+
           # ⚠ 预发布**也要**上传：清单只是「有哪些版本可装」，不是 stable 指针。
           #   三条通道的「列版本」都读它，因此预发布必须出现在列表里；
           #   「默认装哪个」由下面那个 latest 别名决定 —— 那个才跳过预发布。
@@ -240,6 +255,19 @@ jobs:
           curl -fsSL --max-time 60 "${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/versions.txt" |
             awk -v v="$VERSION" '$1 == v { found = 1 } END { exit !found }' ||
             { echo "::error::R2 上的 versions.txt 未包含 ${VERSION}"; exit 1; }
+
+          # 应用内升级:清单必须可达,且两个架构的 sha256 与本地产物一致
+          MANIFEST="${R2_PUBLIC_DOMAIN}/${R2_PREFIX}/Launcher-${VERSION}.json"
+          curl -fsSL --max-time 60 "$MANIFEST" -o /tmp/r2-manifest.json ||
+            { echo "::error::$MANIFEST 不可公开访问"; exit 1; }
+          for arch in arm64 x64; do
+            REMOTE="$(node -e "const m=require('/tmp/r2-manifest.json');process.stdout.write(m.files['${arch}'].sha256)")"
+            LOCAL="$(awk -v a="$arch" '$2 ~ ("Launcher-'"${VERSION}"'-"a".zip") {print $1}' /tmp/sha256.txt)"
+            if [ -z "$LOCAL" ] || [ "$REMOTE" != "$LOCAL" ]; then
+              echo "::error::清单里 ${arch} 的 sha256 与产物不一致(remote=$REMOTE local=$LOCAL)"
+              exit 1
+            fi
+          done
 
       # cask 模板在本仓库 packaging/homebrew/，此处只替换 version / url / 两个 sha256；
       # postflight 等其余配置以模板为准，勿在 tap 仓库手改（会被下次发版覆盖）

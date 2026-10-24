@@ -154,7 +154,7 @@ describe('cli 冒烟', () => {
       expect(st.code).toBe(0)
       expect(st.out).toMatch(/仓库最新\s+0\.3\.0/)
       expect(st.out).toMatch(/有新版：0\.1\.0 → 0\.3\.0/)
-      expect(st.out).toMatch(/--version 0\.3\.0/)
+      expect(st.out).toMatch(/升级：npx -y @becrafter\/launcher upgrade --relaunch/)
       expect(st.err).not.toMatch(CRASH)
     } finally {
       rmSync(dir, { recursive: true, force: true })

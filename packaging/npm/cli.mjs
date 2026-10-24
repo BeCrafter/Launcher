@@ -4,7 +4,8 @@
 //   npx -y @becrafter/launcher              默认:未装则装,已装则报告状态
 //   npx -y @becrafter/launcher status       版本检查
 //   npx -y @becrafter/launcher versions     列出可用版本（--pre 连预发布一起列）
-//   npx -y @becrafter/launcher install [--version <v|latest>] [--dir <目录>] [--force]
+//   npx -y @becrafter/launcher install [--version <v|latest>] [--dir <目录>] [--force] [--relaunch]
+//   npx -y @becrafter/launcher upgrade [--dir <目录>] [--relaunch]   # 升级到最新正式版
 //   npx -y @becrafter/launcher uninstall
 //
 // ⚠ 安装契约：本文件与 scripts/install.sh 是同一套逻辑的两份实现（bash 与 Node 无法共用代码）。
@@ -27,7 +28,7 @@
 import { spawn } from 'node:child_process'
 import { accessSync, constants, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import {
@@ -238,7 +239,7 @@ async function quitRunningIf(appPath) {
 
 // ─────────────────────────────── 动作 ───────────────────────────────
 
-async function install({ version, dir, force }) {
+async function install({ version, dir, force, relaunch }) {
   if (process.platform !== 'darwin') fail('本应用仅支持 macOS')
 
   // 架构判据必须与 install.sh 同源（都走 uname -m）。不能用 process.arch —— 那是 **Node 二进制**
@@ -265,6 +266,7 @@ async function install({ version, dir, force }) {
   // 用户显式要 latest 时不能拿它当「已是最新」的依据。
   if (!force && version === null && before === PKG_VERSION) {
     out(`已安装 ${PKG_VERSION}（${appPath}）—— 已是最新。加 --force 可强制重装。`)
+    if (relaunch) await run('/usr/bin/open', [appPath])
     return
   }
 
@@ -308,10 +310,56 @@ async function install({ version, dir, force }) {
     out()
     out(`✅ 已安装到 ${appPath}`)
     out(`   版本：${after ?? '未知'}${before && before !== after ? `（原 ${before}）` : ''}`)
-    out(`   打开：open "${appPath}"`)
+    if (relaunch) {
+      out(`   打开：open "${appPath}"`)
+      const opened = await run('/usr/bin/open', [appPath])
+      if (opened.code !== 0) out(`   ⚠ 自动打开失败，请手动打开 ${appPath}`)
+    } else {
+      out(`   打开：open "${appPath}"`)
+    }
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
+}
+
+/**
+ * 升级到 cdn 上的最新**正式版**。与 install 的差别只有三步:
+ *   1. 先确认已安装(并沿用那份安装的目录,避免在 /Applications 再造一份)
+ *   2. 读 versions.txt 取最新稳定版,已最新就直接返回
+ *   3. 用精确版本号调用 install(不走 latest 别名,CDN 缓存更友好),可选重新打开
+ */
+async function upgrade({ dir, relaunch }) {
+  if (process.platform !== 'darwin') fail('本应用仅支持 macOS')
+  const appPath = findInstalled(dir)
+  if (!appPath) {
+    fail(`未发现已安装的 Launcher。先安装：npx -y ${PKG_NAME}`)
+  }
+
+  const current = installedVersion(appPath)
+  const uname = await run('/usr/bin/uname', ['-m'])
+  const arch = archOfUname(uname.stdout) ?? archOf(process.arch)
+  if (!arch) fail(`不支持的架构 ${uname.stdout.trim() || process.arch}：本应用仅提供 arm64 / x64`)
+
+  const r = await fetchReleases(r2BaseUrl())
+  if (!r.ok) {
+    fail(
+      `取不到版本列表：${r.error}\n  ${r.url}\n` +
+        (r.error === 'HTTP 404' ? '  cdn 上还没有 versions.txt —— 可能尚未发过版。\n' : '')
+    )
+  }
+  const latest = r.latestStable
+  if (!latest) fail('仓库尚未发布正式版（只有预发布）；预发布请用 install --version 指定')
+
+  if (current && compareVersions(latest, current) <= 0) {
+    out(`已是最新版本 ${current}（${appPath}）。`)
+    if (relaunch) await run('/usr/bin/open', [appPath])
+    return
+  }
+
+  out(`升级 ${current ?? '未知'} → ${latest}（${appPath}）`)
+  // 用实际安装目录,而不是重新 resolve：否则 ~/Applications 里的副本可能被“升级”成
+  // /Applications 里的第二份。relaunch 由 install 在替换完成后负责。
+  await install({ version: latest, dir: dirname(appPath), force: true, relaunch })
 }
 
 async function uninstall({ dir }) {
@@ -380,7 +428,7 @@ async function status({ dir }) {
   if (cmp !== null && cmp > 0) {
     out()
     out(`  有新版：${installed} → ${r2.version}`)
-    out(`  升级：npx -y ${PKG_NAME} --version ${r2.version}`)
+    out(`  升级：npx -y ${PKG_NAME} upgrade --relaunch`)
   } else if (cmp === 0) {
     out()
     out('  已是最新。')
@@ -442,6 +490,7 @@ function usage() {
 命令：
   （无）                    未安装则安装；已安装则显示状态
   install                  安装 / 重装
+  upgrade                  升级到最新正式版（保留原安装目录）
   status                   版本检查（已装版本、仓库最新版、npm 包最新版）
   versions                 列出可用版本（默认只列稳定版）
   uninstall                卸载（退出应用并删除 .app）
@@ -450,6 +499,7 @@ function usage() {
   --version <x.y.z|latest> 指定要安装的版本；默认 = 本 CLI 的版本
   --dir <目录>             安装目录；默认 /Applications，不可写时回退 ~/Applications
   -f, --force              已安装同版本时也强制重装
+  --relaunch               install / upgrade 完成后重新打开应用
   --pre                     versions 专用：连预发布版本一起列
   --json                    versions 专用：输出 json，供脚本消费
   -h, --help               显示本帮助
@@ -481,6 +531,9 @@ if (args.error) {
     switch (args.cmd) {
       case 'install':
         await install(args)
+        break
+      case 'upgrade':
+        await upgrade(args)
         break
       case 'uninstall':
         await uninstall(args)
