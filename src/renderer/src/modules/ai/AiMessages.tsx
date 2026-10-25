@@ -8,20 +8,31 @@ import { useT, useFmt } from '../../hooks/useT'
 import { TagChip } from '../../components/ui/TagChip'
 import { renderMarkdown } from '../../lib/markdown'
 import { mentionIcon } from '../../lib/ai-mention-icon'
-import { getTs } from '../../lib/utils'
+import { formatClock, formatDuration } from '../../lib/ai-time'
+import {
+  hasCopyableText,
+  singleMessageCopy,
+  type TranscriptLabels
+} from '../../lib/ai-transcript'
+import { copyText, getTs, showToast } from '../../lib/utils'
 import { isRunningHere, useAiStore } from '../../state/ai-store'
 import { useSettingsStore } from '../../state/settings-store'
 import { useSettingsNav } from '../../state/settings-nav-store'
 import { useUiStore } from '../../state/ui-store'
 import { AiCard, AiSuggest } from './AiCards'
+import { isSupportedImageName } from '@shared/attachment-types'
+import { skillIdsOf } from '@shared/ai-inline'
 import type {
   AiAssistantMessage,
+  AiAttachment,
   AiContentBlock,
   AiMessage,
+  AiMention,
   AiThinkingBlock,
   AiToolCallBlock,
   AiToolResultMessage,
-  AiUserMessage
+  AiUserMessage,
+  AiUserSegment
 } from '@shared/ai'
 
 export function aiFmtMs(ms: number): string {
@@ -34,15 +45,27 @@ function fmtTs(stamp: number): string {
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+/** 批量导出/单条复制共用的标签;纯函数不直接依赖 i18n */
+function transcriptLabels(t: (key: string) => string): TranscriptLabels {
+  return {
+    user: t('ai.transcript.user'),
+    assistant: t('ai.transcript.assistant'),
+    completedAt: t('ai.transcript.completedAt'),
+    duration: t('ai.transcript.duration'),
+    attachments: t('ai.transcript.attachments')
+  }
+}
+
 export function AiMessages(): React.JSX.Element {
   const messages = useAiStore((s) => s.messages)
   const items = buildItems(messages)
   if (!items.length) return <AiWelcome />
+  // 任意一条真实用户消息都可撤回并编辑;internal 是宿主的自动验证轮,不挂撤回。
   return (
     <>
       {items.map((it, i) =>
         it.kind === 'user' ? (
-          <UserMsg key={it.msg.id} msg={it.msg} mi={i} />
+          <UserMsg key={it.msg.id} msg={it.msg} mi={i} canRetract={!it.msg.internal} />
         ) : (
           <BotGroupView key={it.group.assistant.id} group={it.group} idx={i} isFinal={i === items.length - 1} />
         )
@@ -53,20 +76,315 @@ export function AiMessages(): React.JSX.Element {
 
 // ── 用户消息(demo aiMsgHtml user 分支:@ 引用 chips + 气泡)──
 
-function UserMsg({ msg, mi }: { msg: AiUserMessage; mi: number }): React.JSX.Element {
+function UserMsg({
+  msg,
+  mi,
+  canRetract
+}: {
+  msg: AiUserMessage
+  mi: number
+  canRetract: boolean
+}): React.JSX.Element {
+  const t = useT()
+  const retract = useAiStore((s) => s.retract)
+  const retractingId = useAiStore((s) => s.retractingId)
+  const selectionMode = useAiStore((s) => s.selectionMode)
+  const selected = useAiStore((s) => s.selectedIds.includes(msg.id))
+  const toggleSelected = useAiStore((s) => s.toggleSelected)
+  const busy = retractingId !== null
+  const mine = retractingId === msg.id
+  const copyBody = singleMessageCopy(msg, transcriptLabels(t))
+  const skillIds = skillIdsOf(msg)
+  const onCopy = async (): Promise<void> => {
+    const ok = await copyText(copyBody)
+    showToast(
+      t(ok ? 'ai.msg.copied' : 'ai.msg.copyFailed'),
+      ok ? '#4ade80' : '#f87171',
+      'fa-copy'
+    )
+  }
   return (
-    <div className="ai-msg user" data-mi={mi}>
+    <div className={`ai-msg user${selectionMode && selected ? ' selected' : ''}`} data-mi={mi}>
+      {selectionMode && (
+        <button
+          className={`ai-msg-check${selected ? ' on' : ''}`}
+          type="button"
+          aria-pressed={selected}
+          title={t('ai.select.toggle')}
+          onClick={() => toggleSelected(msg.id)}
+        >
+          <i className={`fa-solid ${selected ? 'fa-square-check' : 'fa-square'}`} />
+        </button>
+      )}
       <div className="ai-bubble">
-        {(msg.mentions ?? []).map((m) => (
-          <span className={`ai-chip-ref t-${m.type}`} key={m.key}>
-            <i className={`fa-solid ${mentionIcon(m.type)}`} />
-            {m.quote !== undefined ? `${m.label} · 片段` : m.label}
-          </span>
-        ))}
-        {msg.blocks.map(
-          (b, i) => (b.type === 'text' ? <span key={i}>{b.text}</span> : null)
+        {Array.isArray(msg.segments) && msg.segments.length > 0 ? (
+          <UserSegments
+            segments={msg.segments}
+            attachments={msg.attachments}
+            mentions={msg.mentions}
+            skillIds={skillIds}
+            fallbackText={msg.blocks
+              .filter((b): b is Extract<AiContentBlock, { type: 'text' }> => b.type === 'text')
+              .map((b) => b.text)
+              .join('')}
+          />
+        ) : (
+          <>
+            <UserRefs list={msg.attachments} mentions={msg.mentions} skillIds={skillIds} />
+            {msg.blocks.map(
+              (b, i) => (b.type === 'text' ? <span key={i}>{b.text}</span> : null)
+            )}
+          </>
         )}
       </div>
+      {(canRetract || copyBody !== '') && (
+        <div className="ai-msg-actions">
+          {copyBody !== '' && (
+            <button
+              className="ai-msg-retract"
+              type="button"
+              title={t('ai.msg.copy')}
+              onClick={() => void onCopy()}
+            >
+              <i className="fa-regular fa-copy" />
+              <span>{t('ai.msg.copy')}</span>
+            </button>
+          )}
+          {canRetract && (
+            <button
+              className="ai-msg-retract"
+              type="button"
+              title={t('ai.msg.retractHint')}
+              disabled={busy}
+              onClick={() => void retract(msg.id)}
+            >
+              <i className={`fa-solid ${mine ? 'fa-circle-notch ai-spin' : 'fa-rotate-left'}`} />
+              <span>{mine ? t('ai.retract.running') : t('ai.msg.retract')}</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 内置技能 chip(引用的是某个技能任务时显示) */
+function SkillChip({ id }: { id: string }): React.JSX.Element {
+  const t = useT()
+  const skill = useAiStore((s) => s.skills.find((x) => x.id === id))
+  return (
+    <span className="ai-chip-ref t-skill" title={t('ai.skill.badge')}>
+      <i className={`fa-solid ${skill?.icon ?? 'fa-wand-magic-sparkles'}`} />
+      {skill ? t(skill.nameKey) : id}
+    </span>
+  )
+}
+
+/**
+ * 新版内联气泡:按发送时的排版逐段还原(文字 / 引用 / 图片 / 文件 / 技能),
+ * 不再把引用统一抽到气泡顶上。附件只按 key 查一次,坏数据渲染成占位。
+ */
+function UserSegments({
+  segments,
+  attachments,
+  mentions,
+  skillIds,
+  fallbackText
+}: {
+  segments: AiUserSegment[]
+  attachments: AiAttachment[] | undefined
+  mentions: AiMention[] | undefined
+  /** 技能 token 的兜底列表(旧数据的分段可能缺技能 id) */
+  skillIds: string[]
+  fallbackText: string
+}): React.JSX.Element {
+  const t = useT()
+  const atts = Array.isArray(attachments)
+    ? attachments.filter((a): a is AiAttachment => !!a && (a.type === 'image' || a.type === 'text'))
+    : []
+  const ments = Array.isArray(mentions)
+    ? mentions.filter(
+        (m): m is AiMention =>
+          !!m && (m.type === 'note' || m.type === 'agent' || m.type === 'cron')
+      )
+    : []
+  const attByKey = new Map(atts.map((a) => [a.key, a]))
+  const mentionByKey = new Map(ments.map((m) => [m.key, m]))
+  let hasText = false
+  const nodes: React.ReactNode[] = []
+  segments.forEach((seg, i) => {
+    if (seg.type === 'text') {
+      if (seg.text.trim() !== '') hasText = true
+      nodes.push(
+        <span className="ai-seg-text" key={`t-${i}`}>
+          {seg.text}
+        </span>
+      )
+      return
+    }
+    if (seg.type === 'skill') {
+      nodes.push(<SkillChip key={`k-${i}`} id={seg.id || skillIds[0] || ''} />)
+      return
+    }
+    if (seg.refType === 'mention') {
+      const m = mentionByKey.get(seg.key)
+      if (!m) {
+        nodes.push(
+          <span className="ai-chip-ref t-missing" key={`m-${i}`}>
+            <i className="fa-solid fa-link" />
+            {t('ai.mention.added')}
+          </span>
+        )
+        return
+      }
+      nodes.push(
+        <span className={`ai-chip-ref t-${m.type}`} key={`m-${i}`}>
+          <i className={`fa-solid ${mentionIcon(m.type)}`} />
+          {m.quote !== undefined ? `${m.label} · ${t('ai.mention.quote')}` : m.label}
+        </span>
+      )
+      return
+    }
+    const a = attByKey.get(seg.key)
+    if (!a) {
+      nodes.push(
+        <span className="ai-bubble-att-missing" key={`a-${i}`}>
+          <i className="fa-solid fa-paperclip" />
+          {t('ai.attach.invalid')}
+        </span>
+      )
+      return
+    }
+    if (a.type === 'image') {
+      const usable =
+        !a.trimmed &&
+        typeof a.data === 'string' &&
+        a.data !== '' &&
+        isSupportedImageName(a.name ?? '', a.mimeType ?? '')
+      nodes.push(
+        usable ? (
+          <img
+            key={`a-${i}`}
+            className="ai-bubble-img inline"
+            src={`data:${a.mimeType};base64,${a.data}`}
+            alt={a.name}
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <span className="ai-bubble-att-missing" key={`a-${i}`}>
+            <i className="fa-solid fa-image" />
+            {t('ai.attach.cleanedImage')}
+          </span>
+        )
+      )
+      return
+    }
+    nodes.push(
+      <span className="ai-bubble-file" key={`a-${i}`} title={a.name}>
+        <i className="fa-solid fa-file-lines" />
+        <span>{a.name}</span>
+        {a.trimmed ? (
+          <em>{t('ai.attach.cleanedFile')}</em>
+        ) : a.truncated ? (
+          <em>{t('ai.attach.truncatedTag')}</em>
+        ) : null}
+      </span>
+    )
+  })
+  // 旧客户端可能只存了引用分段、正文仍在 blocks 里;避免气泡丢字
+  if (!hasText && fallbackText !== '') nodes.push(<span key="fallback">{fallbackText}</span>)
+  return <>{nodes}</>
+}
+
+/**
+ * 用户气泡里的引用:附件与 @ 引用按同一套 order 混排(旧数据没有 order 时附件在前)。
+ * trimmed 历史负载显示占位。新消息走 UserSegments,这里只服务没有 segments 的历史数据。
+ */
+function UserRefs({
+  list,
+  mentions,
+  skillIds
+}: {
+  list: AiAttachment[] | undefined
+  mentions: AiMention[] | undefined
+  skillIds: string[]
+}): React.JSX.Element | null {
+  const t = useT()
+  const safeAtts = Array.isArray(list)
+    ? list.filter((a): a is AiAttachment => !!a && (a.type === 'image' || a.type === 'text'))
+    : []
+  const safeMentions = Array.isArray(mentions)
+    ? mentions.filter(
+        (m): m is AiMention =>
+          !!m && (m.type === 'note' || m.type === 'agent' || m.type === 'cron')
+      )
+    : []
+  const items = [
+    ...safeAtts.map((a, i) => ({
+      kind: 'attachment' as const,
+      key: `f:${a.key}`,
+      order: a.order ?? i,
+      attachment: a
+    })),
+    ...safeMentions.map((m, i) => ({
+      kind: 'mention' as const,
+      key: `m:${m.key}`,
+      order: m.order ?? 1_000_000 + i,
+      mention: m
+    }))
+  ].sort((a, b) => a.order - b.order)
+  if (items.length === 0 && skillIds.length === 0) return null
+  return (
+    <div className="ai-bubble-atts">
+      {skillIds.map((id) => (
+        <SkillChip key={`k:${id}`} id={id} />
+      ))}
+      {items.map((item) => {
+        if (item.kind === 'mention') {
+          const m = item.mention
+          return (
+            <span className={`ai-chip-ref t-${m.type}`} key={item.key}>
+              <i className={`fa-solid ${mentionIcon(m.type)}`} />
+              {m.quote !== undefined ? `${m.label} · ${t('ai.mention.quote')}` : m.label}
+            </span>
+          )
+        }
+        const a = item.attachment
+        if (a.type === 'image') {
+          const usable =
+            !a.trimmed &&
+            typeof a.data === 'string' &&
+            a.data !== '' &&
+            isSupportedImageName(a.name ?? '', a.mimeType ?? '')
+          return usable ? (
+            <img
+              key={item.key}
+              className="ai-bubble-img"
+              src={`data:${a.mimeType};base64,${a.data}`}
+              alt={a.name}
+              loading="lazy"
+              decoding="async"
+            />
+          ) : (
+            <span className="ai-bubble-att-missing" key={item.key}>
+              <i className="fa-solid fa-image" />
+              {t('ai.attach.cleanedImage')}
+            </span>
+          )
+        }
+        return (
+          <span className="ai-bubble-file" key={item.key} title={a.name}>
+            <i className="fa-solid fa-file-lines" />
+            <span>{a.name}</span>
+            {a.trimmed ? (
+              <em>{t('ai.attach.cleanedFile')}</em>
+            ) : a.truncated ? (
+              <em>{t('ai.attach.truncatedTag')}</em>
+            ) : null}
+          </span>
+        )
+      })}
     </div>
   )
 }
@@ -111,6 +429,9 @@ function BotGroupView({
   const currentId = useAiStore((s) => s.currentId)
   const toolUpdates = useAiStore((s) => s.toolUpdates)
   const pendingApprovals = useAiStore((s) => s.pendingApprovals)
+  const selectionMode = useAiStore((s) => s.selectionMode)
+  const selected = useAiStore((s) => s.selectedIds.includes(group.assistant.id))
+  const toggleSelected = useAiStore((s) => s.toggleSelected)
   const runActive = isRunningHere({ runSessionId, currentId })
   const { assistant, results } = group
   const streaming = runActive && assistant.stopReason === 'pending'
@@ -192,24 +513,40 @@ function BotGroupView({
   const awaiting = assistant.blocks.length === 0
 
   return (
-    <div className="ai-msg bot" data-mi={idx}>
-      <div className="ai-bot-name">
-        <span className="ai-bot-avatar">
-          <i className="fa-solid fa-wand-magic-sparkles" />
-        </span>
-        Launcher Agent
-      </div>
-      {awaiting && streaming && (
-        <div className="ai-thinking">
-          <span className="ai-dots">
-            <i />
-            <i />
-            <i />
-          </span>
-          <span>{t('ai.thinking')}</span>
-        </div>
+    <div
+      className={`ai-msg bot${selectionMode && selected ? ' selected' : ''}`}
+      data-mi={idx}
+    >
+      {selectionMode && (
+        <button
+          className={`ai-msg-check${selected ? ' on' : ''}`}
+          type="button"
+          aria-pressed={selected}
+          title={t('ai.select.toggle')}
+          onClick={() => toggleSelected(assistant.id)}
+        >
+          <i className={`fa-solid ${selected ? 'fa-square-check' : 'fa-square'}`} />
+        </button>
       )}
-      {nodes}
+      <div className="ai-bot-card">
+        <div className="ai-bot-name">
+          <span className="ai-bot-avatar">
+            <i className="fa-solid fa-wand-magic-sparkles" />
+          </span>
+          Launcher Agent
+        </div>
+        {awaiting && streaming && (
+          <div className="ai-thinking">
+            <span className="ai-dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            <span>{t('ai.thinking')}</span>
+          </div>
+        )}
+        {nodes}
+      </div>
       <MsgMeta assistant={assistant} isFinal={isFinal} runActive={runActive} />
     </div>
   )
@@ -235,10 +572,12 @@ function MsgMeta({
   assistant: AiAssistantMessage
   isFinal: boolean
   runActive: boolean
-}): React.JSX.Element | null {
+}): React.JSX.Element {
   const t = useT()
   const fmt = useFmt()
-  const { stopReason, usage, errorMessage } = assistant
+  const branchFrom = useAiStore((s) => s.branchFrom)
+  const branchingId = useAiStore((s) => s.branchingId)
+  const { stopReason, usage, errorMessage, finishedAt, durationMs } = assistant
   const notice =
     stopReason === 'aborted'
       ? t('ai.notice.aborted')
@@ -256,18 +595,69 @@ function MsgMeta({
             ? t('ai.notice.toolLimit')
             : null
   const cost = usage?.cost
-  if (!notice && !(usage && usage.totalTokens > 0)) return null
+  const streaming = stopReason === 'pending'
+  const copyable = hasCopyableText(assistant)
+  const canBranch = !streaming && !runActive && branchingId === null
+  const branching = branchingId === assistant.id
+
+  const onCopy = async (): Promise<void> => {
+    const body = singleMessageCopy(assistant, transcriptLabels(t))
+    const ok = await copyText(body)
+    showToast(
+      t(ok ? 'ai.msg.copied' : 'ai.msg.copyFailed'),
+      ok ? '#4ade80' : '#f87171',
+      'fa-copy'
+    )
+  }
+
   return (
     <div className="ai-msg-meta">
-      {notice && <span className="ai-msg-notice">{notice}</span>}
-      {usage && usage.totalTokens > 0 && (
-        <span className="ai-msg-usage">
-          {usage.totalTokens} tok
-          {/* 只在有真实计价时显示:OpenAI 兼容端点连到哪家未知,目录价一律补 0,
-             显示 $0.0000 会被读成"免费"而不是"不知道",不如不显示 */}
-          {cost && cost.total > 0 ? ` · $${cost.total.toFixed(4)}` : ''}
+      <div className="ai-msg-foot">
+        <span className="ai-msg-time" title={t('ai.msg.timeHint')}>
+          <i className="fa-regular fa-clock" />
+          {finishedAt !== undefined
+            ? fmt(t('ai.msg.finished'), { T: formatClock(finishedAt) })
+            : formatClock(assistant.timestamp)}
         </span>
-      )}
+        {durationMs !== undefined && (
+          <span className="ai-msg-dur" title={t('ai.msg.durationHint')}>
+            <i className="fa-solid fa-bolt" />
+            {fmt(t('ai.msg.duration'), { T: formatDuration(durationMs) })}
+          </span>
+        )}
+        {notice && <span className="ai-msg-notice">{notice}</span>}
+        {usage && usage.totalTokens > 0 && (
+          <span className="ai-msg-usage">
+            <i className="fa-solid fa-coins" />
+            {usage.totalTokens} tok
+            {/* 只在有真实计价时显示:OpenAI 兼容端点连到哪家未知,目录价一律补 0,
+               显示 $0.0000 会被读成"免费"而不是"不知道",不如不显示 */}
+            {cost && cost.total > 0 ? ` · $${cost.total.toFixed(4)}` : ''}
+          </span>
+        )}
+      </div>
+      <div className="ai-msg-acts">
+        <button
+          className="ai-msg-act"
+          type="button"
+          title={t('ai.msg.copy')}
+          aria-label={t('ai.msg.copy')}
+          disabled={!copyable}
+          onClick={() => void onCopy()}
+        >
+          <i className="fa-regular fa-copy" />
+        </button>
+        <button
+          className="ai-msg-act"
+          type="button"
+          title={t('ai.msg.branchHint')}
+          aria-label={t('ai.msg.branch')}
+          disabled={!canBranch}
+          onClick={() => void branchFrom(assistant.id)}
+        >
+          <i className={`fa-solid ${branching ? 'fa-circle-notch ai-spin' : 'fa-code-branch'}`} />
+        </button>
+      </div>
     </div>
   )
 }
@@ -437,9 +827,9 @@ function AiWelcome(): React.JSX.Element {
   const skills = useAiStore((s) => s.skills)
   const send = useAiStore((s) => s.send)
   const guard = useAiStore((s) => s.guardConfigured)
-  const run = (text: string, skillId?: string): void => {
+  const run = (text: string, skillIds?: string[]): void => {
     if (!guard()) return
-    void send(text, skillId ? { skillId } : undefined)
+    void send(text, skillIds && skillIds.length > 0 ? { skillIds } : undefined)
   }
   return (
     <div className="ai-welcome">
@@ -465,7 +855,7 @@ function AiWelcome(): React.JSX.Element {
       <div className="ai-skill-lbl">{t('ai.welcome.skills')}</div>
       <div className="ai-skill-grid">
         {skills.map((s) => (
-          <div key={s.id} className="ai-skill-card" onClick={() => run(t(s.nameKey), s.id)}>
+          <div key={s.id} className="ai-skill-card" onClick={() => run(t(s.nameKey), [s.id])}>
             <div className="ai-skill-card-hd">
               <i className={`fa-solid ${s.icon} ai-skill-card-icon`} />
               <span className="ai-skill-card-name">{t(s.nameKey)}</span>

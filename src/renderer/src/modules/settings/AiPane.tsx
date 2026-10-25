@@ -7,6 +7,8 @@
 //    快捷填入只列「最近用过的 3 个」,不再铺整个内置目录。
 import { useEffect, useState } from 'react'
 import {
+  AI_CONTEXT_WINDOW_MAX,
+  AI_CONTEXT_WINDOW_MIN,
   RECENT_MODEL_MAX,
   type AiProviderConfig,
   type AiProviderId,
@@ -66,6 +68,8 @@ export function AiPane(): React.JSX.Element {
   const [keyVisible, setKeyVisible] = useState(false)
   /** 自定义请求头的文本形态(每行 `名称: 值`);失焦时解析写回 */
   const [headerDraft, setHeaderDraft] = useState('')
+  /** 上下文窗口的手动覆盖(空 = 自动);输入期间不写设置,失焦时校验 */
+  const [ctxDraft, setCtxDraft] = useState('')
 
   const providerId = settings?.aiProviderId ?? 'anthropic'
   const providers = settings?.aiProviders ?? ({} as AiProvidersConfig)
@@ -103,10 +107,31 @@ export function AiPane(): React.JSX.Element {
     }
   }, [settingsProviderId])
 
+  const storedContextWindow = settings?.aiProviders[settingsProviderId ?? 'anthropic']?.contextWindow
+  // ⚠ 所有 hook 必须在 settings 的早退之前:设置还没加载完时也要保持 hook 顺序稳定
+  useEffect(() => {
+    setCtxDraft(storedContextWindow !== undefined ? String(storedContextWindow) : '')
+  }, [settingsProviderId, storedContextWindow])
+
   if (!settings) return <div className="settings-pane active" id="sp-ai" />
 
   const patchProvider = (patch: Partial<AiProviderConfig>): void => {
     set({ aiProviders: { ...providers, [providerId]: { ...pc, ...patch } } })
+  }
+
+  const commitContextWindow = (): void => {
+    const raw = ctxDraft.trim()
+    if (raw === '') {
+      if (pc.contextWindow !== undefined) patchProvider({ contextWindow: undefined })
+      return
+    }
+    const n = /^\d+$/.test(raw) ? Number(raw) : NaN
+    if (!Number.isSafeInteger(n) || n < AI_CONTEXT_WINDOW_MIN || n > AI_CONTEXT_WINDOW_MAX) {
+      showToast(t('settings.ai.context.invalid'), '#ef8080', 'fa-triangle-exclamation')
+      setCtxDraft(pc.contextWindow !== undefined ? String(pc.contextWindow) : '')
+      return
+    }
+    if (pc.contextWindow !== n) patchProvider({ contextWindow: n })
   }
 
   /** 模型编辑:输入时只落 modelId;失焦/点 chip 时才算「用过」,记进最近列表 */
@@ -335,6 +360,30 @@ export function AiPane(): React.JSX.Element {
             </div>
           )}
         </div>
+
+        <SettingsRow
+          title={t('settings.ai.context.rowTitle')}
+          desc={t('settings.ai.context.rowDesc')}
+          control={
+            <div className="ai-ctx-cfg">
+              <input
+                className="f-input mono ai-cfg-input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="off"
+                spellCheck={false}
+                value={ctxDraft}
+                placeholder={t('settings.ai.context.ph')}
+                onChange={(e) => setCtxDraft(e.target.value)}
+                onBlur={commitContextWindow}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur()
+                }}
+              />
+              <span className="ai-ctx-cfg-unit">{t('settings.ai.context.unit')}</span>
+            </div>
+          }
+        />
 
         <SettingsRow
           title={t('settings.ai.headers.rowTitle')}

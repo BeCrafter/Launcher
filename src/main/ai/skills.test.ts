@@ -2,7 +2,7 @@
 // 工具名的全集以 tools/index.test.ts 的 21 个契约为准 —— 这里重复列出用于白名单校验,
 // 两处同时改才能让「白名单写错工具名」这类静默失效被测出来。
 import { describe, expect, it } from 'vitest'
-import { SKILLS, findSkill } from './skills'
+import { SKILLS, combineSkillTasks, findSkill, findSkills, toolsForSkills, turnLimitForSkills } from './skills'
 
 /** tools/index.test.ts 里的工具名契约(21 个) */
 const TOOL_NAMES = [
@@ -144,5 +144,56 @@ describe('SKILLS 契约', () => {
     expect(s.tools).not.toContain('delete_note')
     expect(s.task).toMatch(/cron/)
     expect(s.task).toMatch(/端口服务/)
+  })
+})
+
+describe('多技能合并', () => {
+  const base = 'BASE PROMPT'
+  const diag = findSkill('sk-diag')!
+  const plist = findSkill('sk-plist')!
+
+  it('findSkills 保持传入顺序,忽略未知 id', () => {
+    expect(findSkills(['sk-diag', 'sk-none', 'sk-plist', 'sk-diag']).map((s) => s.id)).toEqual([
+      'sk-diag',
+      'sk-plist'
+    ])
+  })
+
+  it('没有技能时提示词原样返回', () => {
+    expect(combineSkillTasks(base, [])).toBe(base)
+  })
+
+  it('单技能的提示词与旧的拼接格式完全一致', () => {
+    expect(combineSkillTasks(base, [diag])).toBe(`${base}\n\n---\n\n${diag.task}`)
+  })
+
+  it('多技能按选择顺序拼接任务段,并声明协同关系', () => {
+    const text = combineSkillTasks(base, [diag, plist])
+    expect(text).toContain('同时启用了 2 个技能')
+    expect(text).toContain(diag.task)
+    expect(text).toContain(plist.task)
+    expect(text.indexOf('技能 1')).toBeLessThan(text.indexOf('技能 2'))
+    expect(text.indexOf(diag.task)).toBeLessThan(text.indexOf(plist.task))
+  })
+
+  it('工具白名单取并集,并按注册表顺序返回', () => {
+    const all = [{ name: 'keep' }, { name: 'a' }, { name: 'b' }, { name: 'c' }]
+    const skills = [
+      { ...diag, tools: ['c', 'a'] },
+      { ...plist, tools: ['b'] }
+    ]
+    expect(toolsForSkills(all, skills).map((t) => t.name)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('任一技能不限制工具时返回全部工具(原数组)', () => {
+    const all = [{ name: 'a' }, { name: 'b' }]
+    expect(toolsForSkills(all, [{ ...diag, tools: null }])).toBe(all)
+    expect(toolsForSkills(all, [])).toBe(all)
+  })
+
+  it('轮数下限取全局设置与各技能的最大值', () => {
+    expect(turnLimitForSkills(8, [diag, plist])).toBe(16)
+    expect(turnLimitForSkills(24, [diag, plist])).toBe(24)
+    expect(turnLimitForSkills(8, [])).toBe(8)
   })
 })

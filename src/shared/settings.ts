@@ -51,6 +51,12 @@ export interface AiProviderConfig {
   /** 最近用过的模型 id(新的在前,最多 {@link RECENT_MODEL_MAX} 个),用作快捷填入 */
   recentModels?: string[]
   /**
+   * 上下文窗口(token)的手动覆盖。
+   * 留空 = 自动:内置目录按模型 id 查真实值,查不到再按 128k 估算。
+   * 有些 OpenAI 兼容网关的模型名完全自定义,自动查不到时才需要填这里。
+   */
+  contextWindow?: number
+  /**
    * 附加到每次模型请求上的自定义请求头(键值对)。
    * 存在的理由:不少企业网关/反代会按客户端标识放行 —— 例如要求 `User-Agent` 必须是某个 CLI,
    * 否则一律 403(实测某企业 Claude 网关就是如此)。没有这个口子,这类端点根本用不了。
@@ -183,6 +189,12 @@ const AI_MODEL_ID_MAX = 200
 /** 快捷填入最多留几个模型:再多会把这一行撑爆(demo 原本列整个目录,用户要求收敛到最近 3 个) */
 export const RECENT_MODEL_MAX = 3
 const AI_BASE_URL_MAX = 400
+/**
+ * 手动上下文窗口的合法范围。下限 1k 避免误填导致用量表恒满,上限 10M
+ * 覆盖当前最大的商用窗口;非整数/科学计数法由 Number 解析后截断。
+ */
+export const AI_CONTEXT_WINDOW_MIN = 1_024
+export const AI_CONTEXT_WINDOW_MAX = 10_000_000
 /** 自定义请求头上限:键值都会进请求,不设界时损坏文件能塞进任意大的串 */
 export const HEADER_MAX_ENTRIES = 16
 const HEADER_NAME_MAX = 64
@@ -278,6 +290,11 @@ function aiProviderConfigOr(v: unknown, fallback: AiProviderConfig, legacyModelI
   // (否则在用满 3 个时,用户只看得到 2 颗,与「显示最近 3 个」的预期不符)
   if (model !== '' && !list.includes(model)) list.unshift(model)
   if (list.length > 0) out.recentModels = list.slice(0, RECENT_MODEL_MAX)
+
+  if (typeof o.contextWindow === 'number' && Number.isFinite(o.contextWindow)) {
+    const n = Math.trunc(o.contextWindow)
+    if (n >= AI_CONTEXT_WINDOW_MIN && n <= AI_CONTEXT_WINDOW_MAX) out.contextWindow = n
+  }
 
   const headers = normalizeHeaders(o.headers)
   if (headers) out.headers = headers

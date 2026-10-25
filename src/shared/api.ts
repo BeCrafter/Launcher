@@ -16,7 +16,14 @@ import type {
   UpdateResultInfo,
   UpdateState,
   AiApprovalInput,
+  AiApprovalResult,
+  AiAutoApproveInput,
+  AiAutoApproveResult,
   AiMcpInfo,
+  AiBranchInput,
+  AiGetMessagesOpts,
+  AiRetractInput,
+  AiRetractResult,
   AiSendInput,
   AiTestResult
 } from './ipc'
@@ -159,13 +166,20 @@ export interface LauncherApi {
     listSessions: () => Promise<AiSession[]>
     createSession: () => Promise<AiSession>
     deleteSession: (id: string) => Promise<void>
-    getMessages: (sessionId: string) => Promise<AiMessage[]>
+    /** light = 只取正文,剥离附件负载(会话搜索缓存用) */
+    getMessages: (sessionId: string, opts?: AiGetMessagesOpts) => Promise<AiMessage[]>
     /** 发起一轮对话;过程经 onEvent(IPC_EVENTS.aiRunEvent) 流式推送 */
     send: (input: AiSendInput) => Promise<void>
+    /** 撤回一条用户消息及其之后的全部回复(运行中的会话会先中止) */
+    retract: (input: AiRetractInput) => Promise<AiRetractResult>
+    /** 基于某条助手回复创建分支会话 */
+    branch: (input: AiBranchInput) => Promise<AiSession>
     /** 中止当前运行 */
     abort: () => Promise<void>
-    /** 应答授权卡(approve / cancel) */
-    respondApproval: (input: AiApprovalInput) => Promise<void>
+    /** 应答授权卡(approve / cancel);rememberSession 只对普通写操作生效 */
+    respondApproval: (input: AiApprovalInput) => Promise<AiApprovalResult>
+    /** 开启/关闭某会话的普通写入自动允许(仅当前应用运行期,不落盘) */
+    setAutoApprove: (input: AiAutoApproveInput) => Promise<AiAutoApproveResult>
     skills: () => Promise<AiSkillInfo[]>
     /** 该协议的模型目录(仅 Anthropic 有内置目录,其余返回空 —— 模型名需用户自填) */
     catalog: (providerId: AiProviderId) => Promise<{ id: string; name: string }[]>

@@ -362,7 +362,7 @@ Three ways in, and all of them read the **body as it is on disk right now**:
 - **Select a passage in the editor first, then click that button** → only the **selected passage** is
   referenced, not the whole note. Handy for "just this log excerpt, take a look".
 
-Each reference becomes a chip above the input (green for notes); click ✕ to drop it. Up to 10 per message.
+Each reference becomes a compact chip just above the text (green for notes), numbered together with file references and images in the order you added them; click ✕ to drop it. Up to 10 per message.
 
 Worth knowing:
 
@@ -529,6 +529,7 @@ on the metadata row turns it off.
 
 - The key is stored **locally only**, encrypted via the system keychain (never plaintext on disk), and cleared along with "Restore defaults"
 - The OpenAI-compatible protocol covers most third-party gateways (DeepSeek, Qwen, self-hosted vLLM…); enter the endpoint up to `/v1`
+- **Context window** auto-detects when left blank: it prefers a same-name model in pi's built-in catalog and falls back to 128k for unknown models. Override it for self-hosted gateways (it drives the usage ring in the composer; it does not change the request itself)
 
 ### What it can do
 
@@ -550,6 +551,30 @@ When creating a task, the built-in skill writes `stdout` / `stderr` to `~/Librar
 When the AI loads a task: `RunAtLoad` jobs start immediately; `StartInterval` / `StartCalendarInterval` / `WatchPaths` jobs wait for their trigger; manual-only jobs run once on load.
 
 If the service manages its own logs, give the AI the **absolute path** to the log file; it can read files under the standard log directories or paths already configured on that task via `tail_log`.
+
+### Composer, attachments, selection and branches
+
+The composer keeps **text, `@` references, attachments and skills** in one document flow. References, files and skills are chips embedded in the sentence and wrap with the text instead of being pulled into a separate area. On send, the app splits the flow back into text, mentions, attachments and a skill; history bubbles restore the original positions.
+
+**Skills and the `/` menu**: type `/` at the start of a line, after whitespace, after CJK text or full-width punctuation, or right after a chip to open Skills & actions (or click the `/` button in the toolbar). A slash inside a path or URL (`src/main`, `https://…`) never triggers it; after CJK text the menu stays open only while the typed query still matches a skill or action, so writing something like “morning/afternoon” does not leave a menu hanging. Use ↑↓ to move, Enter to pick, Esc to close. A picked skill becomes a chip in the message; you can pick several skills for one message, and picking one again removes it.
+
+**Local files**: use the paperclip, drag files into the composer, paste a screenshot with `⌘V`, or choose "Add local files" from the `/` menu. `⌘⇧U` is the file-picker shortcut. A file being read shows a spinner chip first, then turns into a thumbnail or file name. Supported images are PNG / JPEG / WebP / GIF / BMP / AVIF; text files include `.txt` / `.md` / `.json` / `.log` / `.csv` and common source files.
+
+- Up to 6 attachments per message (at most 4 images and 4 text files); images are compressed before sending, and each text file is capped at 32 KiB
+- You can send an image with no text, or a skill with no task description yet
+- Attachments and `@` references belong to the user message they were sent with and never drift to another turn. The left-to-right order of chips in the text is the order the model sees; nothing is reordered by read speed or type
+- Full attachment payloads are kept only for the latest 3 user messages; older ones are replaced with placeholders so the session file cannot grow without bound. Placeholders keep the file name, type and position in the message
+- If the model does not support images (some OpenAI-compatible endpoints), a conversation containing images fails explicitly instead of silently dropping them
+
+**Context usage**: the small ring left of Send estimates how much of the model's context window is in use (turns yellow at 70%, red at 90%). The estimate anchors on the latest server-reported `usage` and adds later messages plus the current draft; hover it (or focus it with Tab) to expand a detail card with the server reading, messages added since, the current draft (text/files/references), remaining or excess tokens, the model and window, and the estimation rules. The window comes from "manual setting > built-in model catalog > 128k fallback" and can be overridden under **Settings → AI assistant → Context window**.
+
+**Toolbar**: `@`, paperclip and `/` sit on the left; the right side holds the session auto-approve status, context ring, model chip and Send. On narrow windows the text labels collapse first, keeping the icons and the usage ring.
+
+Each assistant reply shows its **finish time** and **whole-run duration** (including tool calls and approval waits), plus **copy** and **create branch** buttons. User messages also have a copy button. Copying includes only the message text — no thinking or tool output.
+
+**Selection**: the "Select" button at the top right enters selection mode. Tick several user messages/assistant replies, then batch **copy** them or **export** them as a Markdown file (with role, time, duration and attachment names). Press `Esc` to exit.
+
+**Branches**: the branch icon under an assistant reply creates a new chat from that reply, copying only that node and the context before it. Continuing in the new chat does not affect the original. Branching is unavailable while the current chat is generating or the target reply has not finished.
 
 ### Connecting external agents (MCP)
 

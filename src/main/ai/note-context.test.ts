@@ -110,7 +110,7 @@ describe('mentionContext', () => {
     expect(mentionContext([], new Map())).toBe('')
   })
 
-  it('agent / cron 仍是一行标签(本次不改它们的语义)', () => {
+  it('agent / cron 各占一行,并保留引用顺序', () => {
     const out = mentionContext(
       [
         { key: 'agent:1', type: 'agent', id: 'a', label: 'com.foo', scope: 'daemon' },
@@ -118,7 +118,43 @@ describe('mentionContext', () => {
       ],
       new Map()
     )
-    expect(out).toBe('[用户引用了本机任务：com.foo（LaunchAgent · daemon）、每日备份（定时任务）]\n')
+    expect(out).toContain('1. 本机任务：com.foo（LaunchAgent · daemon）')
+    expect(out).toContain('2. 定时任务：每日备份')
+    expect(out.indexOf('com.foo')).toBeLessThan(out.indexOf('每日备份'))
+  })
+
+  it('没有 order 时按数组顺序输出,不再按类型分组', () => {
+    const ctx = new Map([
+      ['note:a', { key: 'note:a', id: 'a', title: 'A', tags: [], refs: [], body: '甲' }],
+      ['note:b', { key: 'note:b', id: 'b', title: 'B', tags: [], refs: [], body: '乙' }]
+    ])
+    const out = mentionContext(
+      [
+        noteMention('a'),
+        { key: 'agent:1', type: 'agent', id: 'svc', label: 'com.foo' },
+        noteMention('b')
+      ],
+      ctx
+    )
+    expect(out.indexOf('笔记「A」')).toBeLessThan(out.indexOf('com.foo'))
+    expect(out.indexOf('com.foo')).toBeLessThan(out.indexOf('笔记「B」'))
+  })
+
+  it('有 order 时按与附件共用的顺序输出', () => {
+    const ctx = new Map([
+      ['note:a', { key: 'note:a', id: 'a', title: 'A', tags: [], refs: [], body: '甲' }],
+      ['note:b', { key: 'note:b', id: 'b', title: 'B', tags: [], refs: [], body: '乙' }]
+    ])
+    const out = mentionContext(
+      [
+        noteMention('b', { order: 30 }),
+        { key: 'agent:1', type: 'agent', id: 'svc', label: 'com.foo', order: 10 },
+        noteMention('a', { order: 20 })
+      ],
+      ctx
+    )
+    expect(out.indexOf('com.foo')).toBeLessThan(out.indexOf('笔记「A」'))
+    expect(out.indexOf('笔记「A」')).toBeLessThan(out.indexOf('笔记「B」'))
   })
 
   it('笔记正文带标题/id/标签/关联一起注入', async () => {
@@ -176,7 +212,7 @@ describe('mentionContext', () => {
 
   it('ctx 缺失时退回一行标签(旧会话里的引用不该让发送炸掉)', () => {
     const out = mentionContext([noteMention('a', { label: '老引用' })], undefined)
-    expect(out).toContain('笔记「老引用」（id=a）')
+    expect(out).toContain('笔记「老引用」')
   })
 
   it('片段引用只注入片段,不注入整篇', () => {
@@ -226,6 +262,16 @@ describe('sanitizeMentions', () => {
   it('agent 的 scope 只认三个合法值', () => {
     expect(sanitizeMentions([{ type: 'agent', id: 'a', scope: 'user' }])[0].scope).toBe('user')
     expect(sanitizeMentions([{ type: 'agent', id: 'a', scope: 'root' }])[0].scope).toBeUndefined()
+  })
+
+  it('保留与附件共用的添加顺序 order,非法值丢弃', () => {
+    const out = sanitizeMentions([
+      { ...noteMention('a'), order: 0 },
+      { ...noteMention('b'), order: 2 }
+    ])
+    expect(out.map((m) => m.order)).toEqual([0, 2])
+    expect(sanitizeMentions([{ ...noteMention('c'), order: -1 }])[0].order).toBeUndefined()
+    expect(sanitizeMentions([{ ...noteMention('d'), order: Number.NaN }])[0].order).toBeUndefined()
   })
 })
 

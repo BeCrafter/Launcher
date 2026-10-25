@@ -7,6 +7,7 @@
 import { create } from 'zustand'
 import type {
   AiAssistantMessage,
+  AiAttachment,
   AiContentBlock,
   AiEngineState,
   AiMention,
@@ -15,13 +16,27 @@ import type {
   AiSession,
   AiSkillInfo,
   AiToolResultMessage,
-  AiUserMessage
+  AiUserMessage,
+  AiUserSegment
 } from '@shared/ai'
 import { MAX_MENTIONS } from '@shared/ai'
+import { skillIdsOf, uniqueSkillIds } from '@shared/ai-inline'
 import { dataSource } from '../data'
 import { t, fmt } from '../i18n'
 import { showToast, truncate } from '../lib/utils'
+import { selectableIds } from '../lib/ai-transcript'
 import type { AiMcpInfo } from '@shared/ipc'
+
+interface AiComposerDraft {
+  sessionId: string
+  text: string
+  mentions: AiMention[]
+  attachments: AiAttachment[]
+  /** 输入框里的内联排版(不传时 composer 按旧版顺序还原) */
+  segments?: AiUserSegment[]
+  skillIds?: string[]
+  nonce: number
+}
 
 interface AiState {
   sessions: AiSession[]
@@ -33,10 +48,21 @@ interface AiState {
   skills: AiSkillInfo[]
   runId: string | null // 当前运行(仅一个;main AI_BUSY 兜底)
   runSessionId: string | null
-  /** 等待用户应答的授权(toolCallId → runId);卡片状态由 block_end(approve card)驱动落定 */
-  pendingApprovals: Record<string, { runId: string; toolName: string }>
+  /** 等待用户应答的授权(toolCallId → runId/sessionId);卡片状态由 block_end(approve card)驱动落定 */
+  pendingApprovals: Record<string, { runId: string; sessionId: string; toolName: string }>
   /** 工具执行中的增量输出(toolCallId → 累积文本;tool_end 后清除) */
   toolUpdates: Record<string, string>
+  /** 撤回期间忽略该 run 的迟到事件(避免 tool_end 之类把刚删掉的消息又拼回来) */
+  ignoredRunId: string | null
+  /** 正在撤回的消息 id(按钮 spinner/防重复点击) */
+  retractingId: string | null
+  /** 正在创建分支的消息 id(按钮 spinner/防重复点击) */
+  branchingId: string | null
+  /** 消息多选模式;选中项是 user.id / assistant.id */
+  selectionMode: boolean
+  selectedIds: string[]
+  /** 撤回/发送失败后待填回输入框的草稿;composer 消费后清空 */
+  composerDraft: AiComposerDraft | null
   railSearch: string // 会话栏搜索词(选中会话不清,仅新对话清空 —— demo 语义)
   connectPulse: number // 未配置引导卡的脉冲计数(发送/技能卡被拦时 +1;卡片重挂载重启动画)
   mcpOpen: boolean
@@ -65,9 +91,30 @@ interface AiState {
   guardConfigured(): boolean
   /** 搜索用:按需取会话正文进缓存 */
   ensureMessages(id: string): Promise<void>
-  send(text: string, opts?: { skillId?: string; mentions?: AiMention[] }): Promise<void>
+  send(
+    text: string,
+    opts?: {
+      /** 本次发送启用的技能(可多个,顺序即选择顺序) */
+      skillIds?: string[]
+      mentions?: AiMention[]
+      attachments?: AiAttachment[]
+      segments?: AiUserSegment[]
+    }
+  ): Promise<void>
+  /** 撤回最后一条用户消息及其回复,并把原文/引用/附件交回输入框 */
+  retract(messageId: string): Promise<void>
+  /** 基于某条助手回复创建分支会话,并切换过去 */
+  branchFrom(messageId: string): Promise<void>
+  enterSelectionMode(): void
+  exitSelectionMode(): void
+  toggleSelected(id: string): void
+  selectAllMessages(): void
+  /** composer 消费撤回草稿后清掉(按 nonce 防止误清新草稿) */
+  clearComposerDraft(nonce: number): void
   stop(): Promise<void>
-  respondApproval(toolCallId: string, decision: 'approve' | 'cancel'): Promise<void>
+  respondApproval(toolCallId: string, decision: 'approve' | 'cancel', rememberSession?: boolean): Promise<void>
+  /** 开启/关闭某会话的普通写入自动允许(仅当前应用运行期) */
+  setAutoApprove(sessionId: string, enabled: boolean): Promise<void>
   openMcp(): Promise<void>
   closeMcp(): void
   /** 安装/修复 PATH 上的 launcher-mcp 链接(用户显式点击才调) */
@@ -89,6 +136,12 @@ export const useAiStore = create<AiState>((set, get) => ({
   runSessionId: null,
   pendingApprovals: {},
   toolUpdates: {},
+  ignoredRunId: null,
+  retractingId: null,
+  branchingId: null,
+  selectionMode: false,
+  selectedIds: [],
+  composerDraft: null,
   railSearch: '',
   connectPulse: 0,
   mcpOpen: false,
@@ -168,7 +221,14 @@ export const useAiStore = create<AiState>((set, get) => ({
 
   // 切会话:null = 欢迎态。不中止 main 侧运行(demo 中止的是本地脚本播放;真实运行归 main 管)
   async select(id) {
-    set({ currentId: id, messages: [], pendingApprovals: {}, toolUpdates: {} })
+    set({
+      currentId: id,
+      messages: [],
+      pendingApprovals: {},
+      toolUpdates: {},
+      selectionMode: false,
+      selectedIds: []
+    })
     if (!id) return
     try {
       const messages = await dataSource().ai.getMessages(id)
@@ -198,7 +258,14 @@ export const useAiStore = create<AiState>((set, get) => ({
       sessions: st.sessions.filter((s) => s.id !== id),
       msgCache,
       ...(st.currentId === id
-        ? { currentId: null, messages: [], pendingApprovals: {}, toolUpdates: {} }
+        ? {
+            currentId: null,
+            messages: [],
+            pendingApprovals: {},
+            toolUpdates: {},
+            selectionMode: false,
+            selectedIds: []
+          }
         : {}),
       ...(st.runSessionId === id ? { runId: null, runSessionId: null } : {})
     })
@@ -207,7 +274,8 @@ export const useAiStore = create<AiState>((set, get) => ({
   async ensureMessages(id) {
     if (get().msgCache[id]) return
     try {
-      const messages = await dataSource().ai.getMessages(id)
+      // 搜索只需要正文:轻量模式剥离附件 base64/文本,避免搜索一次把所有会话图片读进内存
+      const messages = await dataSource().ai.getMessages(id, { light: true })
       set({ msgCache: { ...get().msgCache, [id]: messages } })
     } catch {
       /* 单个会话正文取不到 → 该会话不参与正文搜索 */
@@ -234,47 +302,189 @@ export const useAiStore = create<AiState>((set, get) => ({
       }
     }
     const sid = sessionId
+    const attachments = opts?.attachments ?? []
+    const skillIds = uniqueSkillIds(opts?.skillIds ?? [])
     const userMsg: AiUserMessage = {
       role: 'user',
-      id: `local-u-${Date.now()}`,
+      id: `local-u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       blocks: [{ type: 'text', text }],
       ...(opts?.mentions?.length ? { mentions: opts.mentions } : {}),
+      ...(attachments.length ? { attachments } : {}),
+      ...(opts?.segments?.length ? { segments: opts.segments } : {}),
+      ...(skillIds.length ? { skillIds, skillId: skillIds[0] } : {}),
       timestamp: Date.now()
     }
+    // 本地标题与 main 的 titleSeed 保持一致:文字 > 文本文件名 > 图片对话
+    const firstLine = text.split('\n')[0]?.trim() ?? ''
+    const textFileName = attachments.find((a) => a.type === 'text')?.name ?? ''
+    const localTitle =
+      firstLine ||
+      textFileName ||
+      (attachments.length > 0 ? t('ai.attach.imageTitle') : skillIds.length ? t('ai.skill.taskTitle') : '')
     set((sw) => ({
       messages: [...sw.messages, userMsg],
       msgCache: { ...sw.msgCache, [sid]: [...(sw.msgCache[sid] ?? []), userMsg] },
+      selectionMode: false,
+      selectedIds: [],
       // 首条消息定会话标题(本地先行;run 结束后 loadSessions 以 main 为准)
       sessions: sw.sessions.map((s) =>
         s.id === sid && s.title === ''
-          ? { ...s, title: truncate(text.split('\n')[0]?.trim() || '新对话', 24), updatedAt: Date.now() }
+          ? { ...s, title: truncate(localTitle || '新对话', 24), updatedAt: Date.now() }
           : s
       )
     }))
     try {
-      await dataSource().ai.send({ sessionId: sid, text, mentions: opts?.mentions, skillId: opts?.skillId })
+      await dataSource().ai.send({
+        sessionId: sid,
+        text,
+        mentions: opts?.mentions,
+        attachments,
+        segments: opts?.segments,
+        skillIds,
+        clientMessageId: userMsg.id
+      })
       // send 在整轮运行结束后 resolve:标题/时间戳可能已变
       void get().loadSessions()
     } catch (err) {
-      // main 未入库(校验失败/已有运行),乐观消息回滚;已知错误码换成人话
+      // main 未入库(校验失败/已有运行),乐观消息回滚;输入框内容还回草稿
       set((sw) => ({
         messages: sw.messages.filter((m) => m.id !== userMsg.id),
-        msgCache: { ...sw.msgCache, [sid]: (sw.msgCache[sid] ?? []).filter((m) => m.id !== userMsg.id) }
+        msgCache: { ...sw.msgCache, [sid]: (sw.msgCache[sid] ?? []).filter((m) => m.id !== userMsg.id) },
+        composerDraft: {
+          sessionId: sid,
+          text,
+          mentions: opts?.mentions ?? [],
+          attachments,
+          ...(opts?.segments?.length ? { segments: opts.segments } : {}),
+          ...(skillIds.length ? { skillIds } : {}),
+          nonce: Date.now()
+        }
       }))
       const raw = err instanceof Error ? err.message : String(err)
       const msg =
         raw === 'AI_NOT_CONFIGURED'
           ? t('ai.connect.toast')
-          : fmt(t('ai.notice.error'), { M: raw === 'AI_BUSY' ? t('ai.input.stop') : raw })
+          : raw === 'AI_EMPTY_MESSAGE'
+            ? t('ai.input.empty')
+            : raw === 'AI_ATTACHMENT_INVALID'
+              ? t('ai.attach.invalid')
+              : fmt(t('ai.notice.error'), { M: raw === 'AI_BUSY' ? t('ai.input.stop') : raw })
       showToast(msg, '#f87171', 'fa-circle-exclamation')
     }
+  },
+
+  async retract(messageId) {
+    const st = get()
+    const sessionId = st.currentId
+    if (!sessionId || st.retractingId) return
+    // 运行中的会话:提前记下 runId,撤回期间丢弃它的迟到事件。
+    const activeRunId = st.runSessionId === sessionId ? st.runId : null
+    set({ retractingId: messageId, ...(activeRunId ? { ignoredRunId: activeRunId } : {}) })
+    try {
+      const r = await dataSource().ai.retract({ sessionId, messageId })
+      // main 是事实来源:撤回后重取,而不是在本地猜哪些消息被删了。
+      const messages = await dataSource().ai.getMessages(sessionId)
+      const skillIds = skillIdsOf(r)
+      const draft = {
+        sessionId,
+        text: r.text,
+        mentions: r.mentions ?? [],
+        attachments: r.attachments ?? [],
+        ...(r.segments?.length ? { segments: r.segments } : {}),
+        ...(skillIds.length ? { skillIds } : {}),
+        nonce: Date.now()
+      }
+      if (get().currentId === sessionId) {
+        set((sw) => ({
+          messages,
+          msgCache: { ...sw.msgCache, [sessionId]: messages },
+          composerDraft: draft,
+          // main 侧已 abort 并等运行收尾;这里同步清掉本会话运行态。
+          ...(sw.runSessionId === sessionId ? { runId: null, runSessionId: null } : {}),
+          pendingApprovals: {},
+          toolUpdates: {}
+        }))
+      } else {
+        // 用户切走了也保留草稿;回到这个会话时 composer 会把原文填回去。
+        set((sw) => ({ msgCache: { ...sw.msgCache, [sessionId]: messages }, composerDraft: draft }))
+      }
+      showToast(t('ai.retract.done'), '#4ade80', 'fa-rotate-left')
+      void get().loadSessions()
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      // 校验类失败发生在 abort 之前,run 还在跑:恢复事件流,别把后续输出吞掉。
+      if (raw === 'AI_RETRACT_NOT_FOUND' || raw === 'AI_SESSION_MISSING') {
+        set({ ignoredRunId: null })
+      }
+      showToast(t('ai.retract.failed'), '#f87171', 'fa-rotate-left')
+    } finally {
+      set({ retractingId: null })
+    }
+  },
+
+  async branchFrom(messageId) {
+    const st = get()
+    const sessionId = st.currentId
+    if (!sessionId || st.branchingId) return
+    if (st.runSessionId === sessionId) {
+      showToast(t('ai.branch.running'), '#eec04d', 'fa-code-branch')
+      return
+    }
+    set({ branchingId: messageId })
+    try {
+      const session = await dataSource().ai.branch({ sessionId, messageId })
+      set((sw) => ({
+        sessions: [session, ...sw.sessions.filter((s) => s.id !== session.id)],
+        branchingId: null
+      }))
+      await get().select(session.id)
+      showToast(t('ai.branch.created'), '#4ade80', 'fa-code-branch')
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err)
+      const msg =
+        raw === 'AI_BRANCH_RUNNING'
+          ? t('ai.branch.running')
+          : raw === 'AI_BRANCH_PENDING'
+            ? t('ai.branch.pending')
+            : raw === 'AI_BRANCH_NOT_FOUND' || raw === 'AI_SESSION_MISSING'
+              ? t('ai.branch.notFound')
+              : t('ai.branch.failed')
+      showToast(msg, '#f87171', 'fa-code-branch')
+    } finally {
+      set({ branchingId: null })
+    }
+  },
+
+  enterSelectionMode() {
+    if (get().messages.length === 0) return
+    set({ selectionMode: true, selectedIds: [] })
+  },
+
+  exitSelectionMode() {
+    set({ selectionMode: false, selectedIds: [] })
+  },
+
+  toggleSelected(id) {
+    set((sw) => ({
+      selectedIds: sw.selectedIds.includes(id)
+        ? sw.selectedIds.filter((x) => x !== id)
+        : [...sw.selectedIds, id]
+    }))
+  },
+
+  selectAllMessages() {
+    set({ selectedIds: selectableIds(get().messages) })
+  },
+
+  clearComposerDraft(nonce) {
+    if (get().composerDraft?.nonce === nonce) set({ composerDraft: null })
   },
 
   async stop() {
     await dataSource().ai.abort().catch(() => {})
   },
 
-  async respondApproval(toolCallId, decision) {
+  async respondApproval(toolCallId, decision, rememberSession = false) {
     const entry = get().pendingApprovals[toolCallId]
     if (!entry) return
     set((sw) => {
@@ -282,8 +492,34 @@ export const useAiStore = create<AiState>((set, get) => ({
       delete pending[toolCallId]
       return { pendingApprovals: pending }
     })
-    await dataSource().ai.respondApproval({ runId: entry.runId, toolCallId, decision }).catch(() => {})
+    const result = await dataSource()
+      .ai.respondApproval({
+        runId: entry.runId,
+        toolCallId,
+        decision,
+        ...(rememberSession ? { rememberSession: true } : {})
+      })
+      .catch(() => null)
+    // main 可能因为「危险操作不纳入豁免」而拒绝 remember;以它返回的真实状态为准。
+    if (result?.autoApprove) {
+      set((sw) => ({
+        sessions: sw.sessions.map((s) => (s.id === entry.sessionId ? { ...s, autoApprove: true } : s))
+      }))
+    }
     // 卡片状态由 main 的 block_end(approve card)事件驱动落定
+  },
+
+  async setAutoApprove(sessionId, enabled) {
+    try {
+      const result = await dataSource().ai.setAutoApprove({ sessionId, enabled })
+      set((sw) => ({
+        sessions: sw.sessions.map((s) =>
+          s.id === sessionId ? { ...s, autoApprove: result.autoApprove } : s
+        )
+      }))
+    } catch {
+      showToast(t('ai.appr.sessionFailed'), '#f87171', 'fa-shield-halved')
+    }
   },
 
   async openMcp() {
@@ -319,6 +555,17 @@ export const useAiStore = create<AiState>((set, get) => ({
   // ── 运行事件应用 ──
 
   applyEvent(e: AiRunEvent) {
+    // 同一会话的新 run 一开始就恢复正常接收;被撤回的旧 run 的迟到事件到此为止。
+    // 别的会话开跑不清:旧 run 的迟到事件仍属于当前会话时,必须继续丢。
+    if (e.type === 'run_start' && e.sessionId === get().currentId) set({ ignoredRunId: null })
+    // run_end / run_error 仍要放行:它们负责把运行态收回,且不会往消息列表里加内容。
+    if (
+      get().ignoredRunId === e.runId &&
+      e.type !== 'run_end' &&
+      e.type !== 'run_error'
+    ) {
+      return
+    }
     if (e.sessionId !== get().currentId) return
     switch (e.type) {
       case 'run_start':
@@ -394,6 +641,7 @@ export const useAiStore = create<AiState>((set, get) => ({
                   usage: e.usage ?? null,
                   model: e.model ?? m.model,
                   provider: e.provider ?? m.provider,
+                  ...(e.finishedAt !== undefined ? { finishedAt: e.finishedAt } : {}),
                   ...(e.errorMessage ? { errorMessage: e.errorMessage } : {})
                 }
               : m
@@ -402,7 +650,10 @@ export const useAiStore = create<AiState>((set, get) => ({
         break
       case 'approval_request':
         set((sw) => ({
-          pendingApprovals: { ...sw.pendingApprovals, [e.toolCallId]: { runId: e.runId, toolName: e.toolName } }
+          pendingApprovals: {
+            ...sw.pendingApprovals,
+            [e.toolCallId]: { runId: e.runId, sessionId: e.sessionId, toolName: e.toolName }
+          }
         }))
         break
       case 'user_message': {
@@ -413,16 +664,24 @@ export const useAiStore = create<AiState>((set, get) => ({
           role: 'user',
           id: e.messageId,
           blocks: [{ type: 'text', text: e.text }],
+          // user_message 事件目前只由宿主自动验证轮注入;不是用户实际发送的消息。
+          internal: true,
           timestamp: Date.now()
         }
         set((sw) => ({ messages: [...sw.messages, msg] }))
         break
       }
       case 'run_end':
-        if (e.runId === get().runId) set({ runId: null, runSessionId: null })
+        set((sw) => ({
+          messages: patchTiming(sw.messages, e.messageId, e.durationMs, e.finishedAt),
+          ...(e.runId === sw.runId ? { runId: null, runSessionId: null } : {})
+        }))
         break
       case 'run_error': {
-        if (e.runId === get().runId) set({ runId: null, runSessionId: null })
+        set((sw) => ({
+          messages: patchTiming(sw.messages, e.messageId, e.durationMs, e.finishedAt),
+          ...(e.runId === sw.runId ? { runId: null, runSessionId: null } : {})
+        }))
         // 已知错误码换成人话(端点/Key 没配好是最常见情形)
         const msg = e.message === 'AI_NOT_CONFIGURED' ? t('ai.connect.toast') : e.message
         showToast(msg, '#f87171', 'fa-circle-exclamation')
@@ -441,6 +700,25 @@ function cardToolCallId(card: { toolCallId?: string }): string | undefined {
 
 function isAssistant(m: AiMessage): m is AiAssistantMessage {
   return m.role === 'assistant'
+}
+
+/** run_end / run_error 带回整轮耗时:补到最后一条助手消息 */
+function patchTiming(
+  messages: AiMessage[],
+  messageId: string | undefined,
+  durationMs: number | undefined,
+  finishedAt: number | undefined
+): AiMessage[] {
+  if (!messageId) return messages
+  return messages.map((m) =>
+    m.role === 'assistant' && m.id === messageId
+      ? {
+          ...m,
+          ...(durationMs !== undefined ? { durationMs } : {}),
+          ...(finishedAt !== undefined ? { finishedAt } : {})
+        }
+      : m
+  )
 }
 
 function patchBlocks(

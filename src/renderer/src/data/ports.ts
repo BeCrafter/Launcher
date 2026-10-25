@@ -26,7 +26,14 @@ import type {
   RestartOutcome,
   ServicesListPayload,
   AiApprovalInput,
+  AiApprovalResult,
+  AiAutoApproveInput,
+  AiAutoApproveResult,
+  AiBranchInput,
+  AiGetMessagesOpts,
   AiMcpInfo,
+  AiRetractInput,
+  AiRetractResult,
   AiSendInput,
   AiTestResult
 } from '@shared/ipc'
@@ -158,10 +165,14 @@ export interface AiRepository {
   listSessions(): Promise<AiSession[]>
   createSession(): Promise<AiSession>
   deleteSession(id: string): Promise<void>
-  getMessages(sessionId: string): Promise<AiMessage[]>
+  /** light = 只取正文,剥离附件负载(搜索缓存用) */
+  getMessages(sessionId: string, opts?: AiGetMessagesOpts): Promise<AiMessage[]>
   send(input: AiSendInput): Promise<void>
+  retract(input: AiRetractInput): Promise<AiRetractResult>
+  branch(input: AiBranchInput): Promise<AiSession>
   abort(): Promise<void>
-  respondApproval(input: AiApprovalInput): Promise<void>
+  respondApproval(input: AiApprovalInput): Promise<AiApprovalResult>
+  setAutoApprove(input: AiAutoApproveInput): Promise<AiAutoApproveResult>
   skills(): Promise<AiSkillInfo[]>
   /** 该协议的模型目录(仅内置目录的协议非空) */
   catalog(providerId: AiProviderId): Promise<{ id: string; name: string }[]>

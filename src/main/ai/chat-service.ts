@@ -11,6 +11,7 @@ import type {
   AiApproveCard,
   AiApprovalDecision,
   AiAssistantMessage,
+  AiAttachment,
   AiContentBlock,
   AiEngineState,
   AiMessage,
@@ -20,18 +21,38 @@ import type {
   AiToolResultMessage,
   AiUserMessage
 } from '../../shared/ai'
-import type { AiApprovalInput, AiSendInput, AiTestResult } from '../../shared/ipc'
+import type {
+  AiApprovalInput,
+  AiApprovalResult,
+  AiAutoApproveInput,
+  AiAutoApproveResult,
+  AiBranchInput,
+  AiGetMessagesOpts,
+  AiRetractInput,
+  AiRetractResult,
+  AiSendInput,
+  AiTestResult
+} from '../../shared/ipc'
 import type { AiProviderId, LauncherSettings } from '../../shared/settings'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { expertPrompt } from './prompts/expert'
-import { SKILLS, findSkill } from './skills'
+import { SKILLS, combineSkillTasks, findSkills, toolsForSkills, turnLimitForSkills } from './skills'
 import type { LlmClient } from './llm'
 import type { SecretStore } from './secret-store'
 import type { NotesService } from '../services/notes-service'
 import type { ToolDef, ToolExecResult, ToolRegistry } from './tool-types'
 import { fromPiContent, fromPiToolResult, fromPiUsage, toPiMessages, IMAGE_NOT_STORED } from './message-map'
-import { mentionContext, resolveNoteContexts, sanitizeMentions, type NoteContext } from './note-context'
+import { resolveNoteContexts, sanitizeMentions } from './note-context'
+import {
+  pruneSessionAttachments,
+  pruneStoreAttachments,
+  sanitizeIncomingAttachments,
+  sanitizeStoredAttachments,
+  sessionHasImages
+} from './attachments'
+import { lastUserImages, lastUserMessage, userMessageContext } from './user-context'
+import { sanitizeUserSegments, skillIdsOf, uniqueSkillIds } from '../../shared/ai-inline'
 
 /** 会话与消息的存储上限:对话是只增不减的产物,不设界迟早把 userData 撑爆 */
 const MAX_SESSIONS = 100
@@ -57,10 +78,17 @@ export interface ChatService {
   listSessions(): AiSession[]
   createSession(): AiSession
   deleteSession(id: string): void
-  getMessages(sessionId: string): AiMessage[]
+  /** light = 只取正文,剥离附件负载(会话搜索缓存用) */
+  getMessages(sessionId: string, opts?: AiGetMessagesOpts): AiMessage[]
   send(input: AiSendInput): Promise<void>
+  /** 撤回最后一条用户消息及其之后的全部回复;运行中会先中止并等运行收尾 */
+  retract(input: AiRetractInput): Promise<AiRetractResult>
+  /** 基于某条助手回复创建分支会话(复制该节点及之前的上下文) */
+  branch(input: AiBranchInput): AiSession
   abort(): void
-  respondApproval(input: AiApprovalInput): void
+  respondApproval(input: AiApprovalInput): AiApprovalResult
+  /** 开启/关闭某会话的普通写入自动允许(仅当前应用运行期) */
+  setAutoApprove(input: AiAutoApproveInput): AiAutoApproveResult
   skills(): AiSkillInfo[]
   catalog(providerId: AiProviderId): { id: string; name: string }[]
   /** 运行中?renderer 重连时据此恢复「停止」按钮态 */
@@ -72,14 +100,23 @@ interface RunState {
   sessionId: string
   agent: Agent
   abort: AbortController
+  /** 整轮起点(含工具调用/授权等待,run_end 时算总耗时) */
+  startedAt: number
+  /** 本轮最后创建的助手消息;整轮耗时只落在这一条上 */
+  lastAssistantId: string | null
+  /** 计时是否已落定(成功/失败/finally 可能都会走到,幂等) */
+  timingFinalized: boolean
   /** 正在流式的助手消息(每条 turn 一条) */
   live: AiAssistantMessage | null
   /** pi 的 contentIndex → 我们在 live.blocks 里的下标(宿主扩展块会让两者错位) */
   contentIndexMap: number[]
   /** toolCallId → 持有它的助手消息(审批卡要插回那条消息) */
   toolCallOwner: Map<string, string>
-  /** 等待用户授权的那些 toolCall */
-  approvals: Map<string, (d: AiApprovalDecision) => void>
+  /** 等待用户授权的那些 toolCall(toolCallId → 应答器 + 风险标记) */
+  approvals: Map<
+    string,
+    { done: (d: AiApprovalDecision) => void; toolName: string; dangerous: boolean }
+  >
   /** 已落库的 toolCallId(被 beforeToolCall 拦下的调用不会走 execute,需从 pi 事件补记) */
   finalized: Set<string>
   turnCount: number
@@ -109,9 +146,40 @@ export function createChatService(deps: {
 }): ChatService {
   let store: StoreFile = loadStore(deps.storePath)
   let run: RunState | null = null
+  /** 等待当前运行收尾的调用方(撤回要先 abort,再等 finally 把消息落定) */
+  let runIdleWaiters: Array<() => void> = []
+  /**
+   * 仅当前应用运行期:这些会话的**普通**写操作不再逐条确认。
+   * 刻意不落盘 —— 重启应用后回到逐条确认,避免一个旧会话在用户不知情时继续自动执行。
+   * 危险操作(覆盖/删除/系统级等)永远不走这个豁免。
+   */
+  const autoApproveSessions = new Set<string>()
   let seq = 0
 
   const uid = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${(++seq).toString(36)}`
+
+  function waitForRunIdle(): Promise<void> {
+    if (!run) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      runIdleWaiters.push(resolve)
+    })
+  }
+
+  function notifyRunIdle(): void {
+    const waiters = runIdleWaiters
+    runIdleWaiters = []
+    for (const resolve of waiters) resolve()
+  }
+
+  function abortRun(): void {
+    if (!run) return
+    // pi Agent 的模型流有自己的 AbortSignal;只 abort 宿主的 controller 不会中断
+    // 正在流式生成的回答(它只覆盖工具执行),所以两处都要停。
+    run.abort.abort()
+    run.agent?.abort()
+    for (const [, entry] of run.approvals) entry.done('cancel')
+    run.approvals.clear()
+  }
 
   // ── 持久化 ──
 
@@ -121,13 +189,53 @@ export function createChatService(deps: {
       const raw = JSON.parse(readFileSync(path, 'utf8')) as unknown
       const o = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
       const list = Array.isArray(o.sessions) ? o.sessions : []
-      return {
-        version: 1,
-        sessions: list
-          .filter((s): s is StoredSession => isSessionLike(s))
-          .map((s) => ({ ...s, messages: Array.isArray(s.messages) ? s.messages : [] }))
-          .slice(0, MAX_SESSIONS)
+      const sessions = list
+        .filter((s): s is StoredSession => isSessionLike(s))
+        .map((s) => ({ ...s, messages: Array.isArray(s.messages) ? s.messages : [] }))
+        .slice(0, MAX_SESSIONS)
+      // 历史 JSON 可能来自旧版本/外部编辑:附件与分支元数据都要逐项收敛,
+      // 坏数据绝不能进渲染层(渲染层会 map 附件,形态不对会直接崩)
+      for (const s of sessions) {
+        for (const m of s.messages) {
+          if (m.role !== 'user') continue
+          const attachments = sanitizeStoredAttachments(m.attachments)
+          if (attachments.length > 0) m.attachments = attachments
+          else delete m.attachments
+          const mentions = sanitizeMentions(m.mentions)
+          if (mentions.length > 0) m.mentions = mentions
+          else delete m.mentions
+          // 技能 id 只认当前仍存在的内置技能;历史版本删掉的技能就当没选过。
+          // 新旧字段都读:旧数据只有 skillId,新数据是 skillIds(首个仍镜像进 skillId)。
+          const skillIds = findSkills(skillIdsOf(m)).map((s) => s.id)
+          if (skillIds.length > 0) {
+            m.skillIds = skillIds
+            m.skillId = skillIds[0]
+          } else {
+            delete m.skillIds
+            delete m.skillId
+          }
+          const segments = sanitizeUserSegments(m.segments, attachments, mentions, skillIds)
+          if (segments.length > 0) m.segments = segments
+          else delete m.segments
+        }
+        const b = s.branch as unknown
+        if (typeof b === 'object' && b !== null) {
+          const o = b as Record<string, unknown>
+          if (
+            typeof o.sessionId === 'string' &&
+            typeof o.messageId === 'string' &&
+            typeof o.title === 'string'
+          ) {
+            s.branch = { sessionId: o.sessionId, messageId: o.messageId, title: o.title }
+          } else {
+            delete s.branch
+          }
+        } else {
+          delete s.branch
+        }
       }
+      pruneStoreAttachments(sessions)
+      return { version: 1, sessions }
     } catch {
       // 损坏回空:对话不是关键数据,不能因为它坏掉而让整个应用起不来
       return { version: 1, sessions: [] }
@@ -145,15 +253,23 @@ export function createChatService(deps: {
     // 直接从头截断会切断「toolCall 与其结果」的配对,截断前先对齐到用户消息边界
     store.sessions.sort((a, b) => b.updatedAt - a.updatedAt)
     if (store.sessions.length > MAX_SESSIONS) store.sessions = store.sessions.slice(0, MAX_SESSIONS)
+    // 自动允许状态只跟活着的会话走:被裁剪/删除的会话不能留下悬挂的豁免
+    const alive = new Set(store.sessions.map((s) => s.id))
+    for (const id of autoApproveSessions) if (!alive.has(id)) autoApproveSessions.delete(id)
     for (const s of store.sessions) {
       if (s.messages.length > MAX_MESSAGES_PER_SESSION) {
         s.messages = s.messages.slice(s.messages.length - MAX_MESSAGES_PER_SESSION)
         const firstUser = s.messages.findIndex((m) => m.role === 'user')
         if (firstUser > 0) s.messages = s.messages.slice(firstUser)
       }
+      // 截断可能把更早的消息带走;保留下来的旧附件也不能继续膨胀
+      pruneSessionAttachments(s)
     }
     mkdirSync(dirname(deps.storePath), { recursive: true })
-    writeFileSync(deps.storePath, JSON.stringify(store), 'utf8')
+    // 原子写:流式期间 save() 会被频繁调用,写到一半崩溃/断电不能留下半截 JSON
+    const tmp = `${deps.storePath}.tmp`
+    writeFileSync(tmp, JSON.stringify(store), 'utf8')
+    renameSync(tmp, deps.storePath)
   }
 
   const findSession = (id: string): StoredSession | undefined => store.sessions.find((s) => s.id === id)
@@ -163,17 +279,16 @@ export function createChatService(deps: {
   function engineState(): AiEngineState {
     const s = deps.getSettings()
     const hasKey = deps.secrets.has(s.aiProviderId)
-    const resolved = deps.llm.resolve()
-    // 模型 id 属于「当前协议」,不在全局
-    const modelId = (s.aiProviders[s.aiProviderId]?.modelId ?? '').trim()
+    const meta = deps.llm.modelMeta(s.aiProviderId)
     return {
       providerId: s.aiProviderId,
       providerName: deps.llm.providerName(s.aiProviderId),
-      modelId,
-      // 未配置时 resolve 会失败,此时回退到 id 本身(界面只在已配置时展示模型名)
-      modelLabel: resolved.ok ? resolved.value.modelLabel : modelId,
+      modelId: meta.modelId,
+      modelLabel: meta.modelLabel,
       hasKey,
-      configured: hasKey
+      configured: hasKey,
+      contextWindow: meta.contextWindow,
+      maxTokens: meta.maxTokens
     }
   }
 
@@ -387,6 +502,7 @@ export function createChatService(deps: {
         }
         currentSession()?.messages.push(msg)
         r.live = msg
+        r.lastAssistantId = msg.id
         r.contentIndexMap = []
         emit({ type: 'message_start', sessionId: r.sessionId, runId: r.runId, messageId: msg.id })
         break
@@ -404,6 +520,7 @@ export function createChatService(deps: {
         if (m.errorMessage) r.live.errorMessage = m.errorMessage
         r.live.model = m.model || r.live.model
         r.live.provider = String(m.provider ?? r.live.provider ?? '')
+        r.live.finishedAt = Date.now()
         emit({
           type: 'message_end',
           sessionId: r.sessionId,
@@ -413,7 +530,8 @@ export function createChatService(deps: {
           stopReason: r.live.stopReason,
           ...(r.live.errorMessage ? { errorMessage: r.live.errorMessage } : {}),
           model: r.live.model,
-          provider: r.live.provider
+          provider: r.live.provider,
+          finishedAt: r.live.finishedAt
         })
         r.live = null
         r.contentIndexMap = []
@@ -503,7 +621,12 @@ export function createChatService(deps: {
     }
   }
 
-  function waitApproval(r: RunState, toolCallId: string, signal?: AbortSignal): Promise<AiApprovalDecision> {
+  function waitApproval(
+    r: RunState,
+    toolCallId: string,
+    info: { toolName: string; dangerous: boolean },
+    signal?: AbortSignal
+  ): Promise<AiApprovalDecision> {
     return new Promise<AiApprovalDecision>((resolve) => {
       const done = (d: AiApprovalDecision): void => {
         r.approvals.delete(toolCallId)
@@ -514,7 +637,7 @@ export function createChatService(deps: {
       // 必须跟着 abort 走:否则用户中止运行后这里永远挂着,run 泄漏不结束
       if (signal?.aborted) return done('cancel')
       signal?.addEventListener('abort', onAbort, { once: true })
-      r.approvals.set(toolCallId, done)
+      r.approvals.set(toolCallId, { done, ...info })
     })
   }
 
@@ -538,6 +661,13 @@ export function createChatService(deps: {
       ...(sum.dangerous ? { dangerous: true } : {}),
       state: 'pending'
     }
+    // 本会话已开启「普通写操作自动允许」:直接放行,不再打断对话。
+    // 危险操作不在豁免范围内,继续走下面的逐条确认。
+    if (s && !card.dangerous && autoApproveSessions.has(r.sessionId)) {
+      upsertApproveCard(r, s, { ...card, state: 'approved', auto: true })
+      save()
+      return undefined
+    }
     if (s) upsertApproveCard(r, s, card)
     emit({
       type: 'approval_request',
@@ -549,7 +679,12 @@ export function createChatService(deps: {
       command: card.command,
       dangerous: !!card.dangerous
     })
-    const decision = await waitApproval(r, toolCallId, signal)
+    const decision = await waitApproval(
+      r,
+      toolCallId,
+      { toolName, dangerous: !!card.dangerous },
+      signal
+    )
     const settled: AiApproveCard = { ...card, state: decision === 'approve' ? 'approved' : 'cancelled' }
     if (s) upsertApproveCard(r, s, settled)
     save()
@@ -611,6 +746,7 @@ export function createChatService(deps: {
       role: 'user',
       id: uid('u'),
       blocks: [{ type: 'text', text }],
+      internal: true,
       timestamp: Date.now()
     }
     s.messages.push(msg)
@@ -642,11 +778,13 @@ export function createChatService(deps: {
     )
   }
 
-  async function runAgent(r: RunState, skillId?: string): Promise<void> {
+  async function runAgent(r: RunState, skillIds: readonly string[] = []): Promise<void> {
+    // 可能在 run 刚建立、agent 还没造出来时就被撤回/停止:直接收尾,别把请求发出去。
+    if (r.abort.signal.aborted) return
     const settings = deps.getSettings()
-    const skill = findSkill(skillId)
+    const skills = findSkills(skillIds)
     const allTools = deps.registry.all()
-    const allowed = skill?.tools ? allTools.filter((t) => skill.tools!.includes(t.name)) : allTools
+    const allowed = toolsForSkills(allTools, skills)
     const agentTools = buildAgentTools(r, allowed, r.sessionId).map((tool) => {
       if (tool.name === 'write_plist') {
         const execute = tool.execute
@@ -711,19 +849,22 @@ export function createChatService(deps: {
       return tool
     })
 
-    const resolved = deps.llm.resolve()
-    if (!resolved.ok) throw new Error('AI_NOT_CONFIGURED')
-
     const session = currentSession()
     if (!session) throw new Error('AI_SESSION_MISSING')
+    // 图片能力要在看到会话之后判断:历史里可能还有旧图,模型能力声明漏了会让 pi 静默丢图
+    const resolved = deps.llm.resolve(undefined, { images: sessionHasImages(session.messages) })
+    if (!resolved.ok) throw new Error('AI_NOT_CONFIGURED')
+    const last = lastUserMessage(session)
+    if (!last) throw new Error('AI_SESSION_MISSING')
     // 最后一条用户消息已入库;送进 agent 的历史不含它(prompt() 会追加)
     const history = session.messages.slice(0, -1)
     // 引用的笔记正文在这里**一次性**读齐:历史与本轮共用同一份,
     // 分两处各解析一次的话,同一条消息在历史里和在本轮里会长得不一样
     const noteCtx = await resolveNoteContexts((id) => deps.notes.readBodyForAi(id), session.messages)
+    if (r.abort.signal.aborted) return
     // 输出语言跟随应用语言(用户要求)
     const base = expertPrompt(settings.language)
-    const systemPrompt = skill ? `${base}\n\n---\n\n${skill.task}` : base
+    const systemPrompt = combineSkillTasks(base, skills)
 
     const agent = new Agent({
       initialState: {
@@ -743,7 +884,7 @@ export function createChatService(deps: {
           signal
         ),
       // pi 没有内置轮数上限:超出设置的上限就结束本轮,把控制权交回用户。
-      // 闭环类技能(生成→写入→载入→验证)需要更多轮:取 Math.max(全局设置, skill.turnLimit),
+      // 闭环类技能(生成→写入→载入→验证)需要更多轮:取各技能 turnLimit 与全局设置的最大值,
       // 只抬高下限,不压过用户更高的全局设置。
       //
       // 框架层自动验证兜底也挂在这里:模型收尾(本轮无工具调用)且本轮 load 过任务时,
@@ -753,32 +894,52 @@ export function createChatService(deps: {
       // 所以刚注入过的这轮不能返回 end。注入轮同样计 turn,靠 verifyRound < 2 封顶。
       finishTurn: async (turn) => {
         r.turnCount += 1
-        const limit = skill?.turnLimit ? Math.max(settings.aiToolCallLimit, skill.turnLimit) : settings.aiToolCallLimit
+        const limit = turnLimitForSkills(settings.aiToolCallLimit, skills)
         const injected = await maybeInjectVerify(r)
         if (r.turnCount >= limit && !injected) return { action: 'end' }
         return undefined
       }
     })
     r.agent = agent
+    // abort 可能发生在 agent 赋值之前,那时 abortRun 只能停宿主 controller;
+    // 补一次 agent.abort,模型流才不会继续跑完。
+    if (r.abort.signal.aborted) agent.abort()
 
     const unsubscribe = agent.subscribe((ev) => handleAgentEvent(ev))
     try {
-      await agent.prompt(lastUserText(session, noteCtx))
+      // 当前轮:文本走与历史回放相同的 userMessageContext;图片单独交给 prompt
+      await agent.prompt(userMessageContext(last, noteCtx), lastUserImages(last))
       await agent.waitForIdle()
     } finally {
       unsubscribe()
     }
   }
 
-  /** 取最后一条用户消息的文本(含 @ 引用上下文行;拼接口径与历史回放共用 mentionContext) */
-  function lastUserText(session: StoredSession, notes: Map<string, NoteContext>): string {
-    const last = [...session.messages].reverse().find((m) => m.role === 'user') as AiUserMessage | undefined
-    if (!last) return ''
-    const text = last.blocks
-      .filter((b): b is Extract<AiContentBlock, { type: 'text' }> => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n')
-    return mentionContext(last.mentions, notes) + text
+  /**
+   * 整轮计时落定:只写在本轮最后一条助手消息上。
+   * 成功/失败/finally 都可能调用;第二次调用从已落定的消息读回同一份结果。
+   */
+  function finalizeRunTiming(r: RunState): {
+    messageId?: string
+    durationMs?: number
+    finishedAt?: number
+  } {
+    const id = r.lastAssistantId
+    if (!id) return {}
+    const msg = currentSession()?.messages.find((m) => m.id === id)
+    if (!msg || msg.role !== 'assistant') return {}
+    if (r.timingFinalized) {
+      return {
+        messageId: msg.id,
+        ...(msg.durationMs !== undefined ? { durationMs: msg.durationMs } : {}),
+        ...(msg.finishedAt !== undefined ? { finishedAt: msg.finishedAt } : {})
+      }
+    }
+    r.timingFinalized = true
+    const finishedAt = Date.now()
+    msg.finishedAt = finishedAt
+    msg.durationMs = Math.max(0, finishedAt - r.startedAt)
+    return { messageId: msg.id, durationMs: msg.durationMs, finishedAt }
   }
 
   return {
@@ -801,23 +962,52 @@ export function createChatService(deps: {
     listSessions: () =>
       [...store.sessions]
         .sort((a, b) => b.updatedAt - a.updatedAt)
-        .map(({ id, title, createdAt, updatedAt }) => ({ id, title, createdAt, updatedAt })),
+        .map(({ id, title, createdAt, updatedAt, branch }) => ({
+          id,
+          title,
+          createdAt,
+          updatedAt,
+          ...(branch ? { branch } : {}),
+          autoApprove: autoApproveSessions.has(id)
+        })),
 
     createSession() {
       const now = Date.now()
       const s: StoredSession = { id: uid('s'), title: '', createdAt: now, updatedAt: now, messages: [] }
       store.sessions.unshift(s)
       save()
-      return { id: s.id, title: s.title, createdAt: s.createdAt, updatedAt: s.updatedAt }
+      return {
+        id: s.id,
+        title: s.title,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        autoApprove: false
+      }
     },
 
     deleteSession(id) {
-      if (run?.sessionId === id) this.abort()
+      if (run?.sessionId === id) abortRun()
+      autoApproveSessions.delete(id)
       store.sessions = store.sessions.filter((s) => s.id !== id)
       save()
     },
 
-    getMessages: (sessionId) => findSession(sessionId)?.messages ?? [],
+    getMessages: (sessionId, opts) => {
+      const messages = findSession(sessionId)?.messages ?? []
+      if (!opts?.light) return messages
+      // 搜索缓存只需要正文;base64 图片/文本附件不能整份留在 renderer 内存里
+      return messages.map((m) => {
+        if (m.role !== 'user' || !m.attachments?.length) return m
+        return {
+          ...m,
+          attachments: m.attachments.map((a) =>
+            a.type === 'image'
+              ? { ...a, data: '', trimmed: true as const }
+              : { ...a, content: '', bytes: 0, trimmed: true as const }
+          )
+        }
+      })
+    },
 
     skills: () =>
       SKILLS.map((s) => ({ id: s.id, nameKey: s.nameKey, descKey: s.descKey, tag: s.tag, icon: s.icon })),
@@ -834,19 +1024,47 @@ export function createChatService(deps: {
       const resolved = deps.llm.resolve()
       if (!resolved.ok) throw new Error('AI_NOT_CONFIGURED')
 
-      // 引用跨 IPC 进来、还要落进会话文件:在这里收敛一次(条数 / 字段形态 / 片段长度)
+      // 引用/附件跨 IPC 进来、还要落进会话文件:在这里收敛一次(条数 / 字段形态 / 长度)
       const mentions = sanitizeMentions(input.mentions)
+      const attachments = sanitizeIncomingAttachments(input.attachments)
+      // 新字段 skillIds 为主,旧字段 skillId 只做兼容;未知/重复的技能在这里收敛掉。
+      const skillIds = findSkills(
+        uniqueSkillIds([
+          ...(Array.isArray(input.skillIds) ? input.skillIds : []),
+          ...(typeof input.skillId === 'string' ? [input.skillId] : [])
+        ])
+      ).map((s) => s.id)
+      // 只选了技能、还没写任务描述也可以发:技能提示词会先向用户确认目标。
+      if (input.text.trim() === '' && attachments.length === 0 && skillIds.length === 0) {
+        throw new Error('AI_EMPTY_MESSAGE')
+      }
+      // 内联排版只用于回显;main 只保留确实存在于本次引用/附件/技能里的 key。
+      const segments = sanitizeUserSegments(input.segments, attachments, mentions, skillIds)
+      const requestedId =
+        typeof input.clientMessageId === 'string' ? input.clientMessageId.trim().slice(0, 120) : ''
       const user: AiUserMessage = {
         role: 'user',
-        id: uid('u'),
+        // 复用渲染层的乐观消息 id,撤回/重取时两边指向同一条消息。
+        id:
+          requestedId !== '' && !session.messages.some((m) => m.id === requestedId)
+            ? requestedId
+            : uid('u'),
         blocks: [{ type: 'text', text: input.text }],
         ...(mentions.length ? { mentions } : {}),
+        ...(attachments.length ? { attachments } : {}),
+        ...(segments.length ? { segments } : {}),
+        ...(skillIds.length ? { skillIds, skillId: skillIds[0] } : {}),
         timestamp: Date.now()
       }
       const isFirst = session.messages.length === 0
       session.messages.push(user)
-      if (isFirst) session.title = compactTitle(input.text)
+      if (isFirst) {
+        session.title = compactTitle(titleSeed(input.text, attachments, skillIds.length ? '技能任务' : ''))
+      }
       session.updatedAt = Date.now()
+      // 新消息进来后,更早的附件负载先裁掉,别让它跟着本轮事件反复写盘
+      pruneSessionAttachments(session)
+      pruneStoreAttachments(store.sessions)
       save()
 
       const r: RunState = {
@@ -854,6 +1072,9 @@ export function createChatService(deps: {
         sessionId: session.id,
         agent: null as unknown as Agent,
         abort: new AbortController(),
+        startedAt: Date.now(),
+        lastAssistantId: null,
+        timingFinalized: false,
         live: null,
         contentIndexMap: [],
         toolCallOwner: new Map(),
@@ -870,23 +1091,38 @@ export function createChatService(deps: {
       emit({ type: 'run_start', sessionId: r.sessionId, runId: r.runId })
 
       try {
-        await runAgent(r, input.skillId)
-        emit({ type: 'run_end', sessionId: r.sessionId, runId: r.runId, stopReason: r.abort.signal.aborted ? 'aborted' : 'stop' })
+        await runAgent(r, skillIds)
+        const timing = finalizeRunTiming(r)
+        emit({
+          type: 'run_end',
+          sessionId: r.sessionId,
+          runId: r.runId,
+          stopReason: r.abort.signal.aborted ? 'aborted' : 'stop',
+          ...timing
+        })
       } catch (err) {
         // 中止不算错误(用户主动停止),只有真失败才报
+        const timing = finalizeRunTiming(r)
         if (r.abort.signal.aborted) {
-          emit({ type: 'run_end', sessionId: r.sessionId, runId: r.runId, stopReason: 'aborted' })
+          emit({
+            type: 'run_end',
+            sessionId: r.sessionId,
+            runId: r.runId,
+            stopReason: 'aborted',
+            ...timing
+          })
         } else {
           emit({
             type: 'run_error',
             sessionId: r.sessionId,
             runId: r.runId,
-            message: err instanceof Error ? err.message : String(err)
+            message: err instanceof Error ? err.message : String(err),
+            ...timing
           })
         }
       } finally {
         // 未决的授权要显式放行,否则 promise 永远挂着(包装层已随之返回 block)
-        for (const [, done] of r.approvals) done('cancel')
+        for (const [, entry] of r.approvals) entry.done('cancel')
         r.approvals.clear()
         // 收尾:把流式态落定,避免留下 stopReason=pending 的消息
         if (r.live) {
@@ -894,23 +1130,138 @@ export function createChatService(deps: {
           if (r.live.stopReason === 'pending') r.live.stopReason = 'stop'
           r.live = null
         }
+        // 正常路径已在 try/catch 落定;这里兜底(例如 emit 抛错/极端中断)
+        finalizeRunTiming(r)
         run = null
-        save()
+        try {
+          pruneStoreAttachments(store.sessions)
+          save()
+        } finally {
+          // 即使落盘失败也要放行撤回等待者,否则它会一直挂着。
+          notifyRunIdle()
+        }
+      }
+    },
+
+    async retract(input) {
+      const sessionId = String(input.sessionId ?? '')
+      const messageId = String(input.messageId ?? '')
+      const findTarget = (): { session: StoredSession; index: number; msg: AiUserMessage } => {
+        const session = findSession(sessionId)
+        if (!session) throw new Error('AI_SESSION_MISSING')
+        const index = session.messages.findIndex(
+          (m) => m.role === 'user' && m.id === messageId && !m.internal
+        )
+        const msg = index >= 0 ? session.messages[index] : undefined
+        if (!msg || msg.role !== 'user') throw new Error('AI_RETRACT_NOT_FOUND')
+        // 任意一条用户消息都可撤回:从该点起整段删除,相当于回到那一轮重新编辑。
+        // 历史消息之后的轮次都建立在它之上,删除后模型不会再看到无源头的对话。
+        return { session, index, msg }
+      }
+
+      // 先校验目标再中止:目标不存在时不应该误伤正在跑的那轮。
+      let target = findTarget()
+      if (run?.sessionId === sessionId) {
+        abortRun()
+        await waitForRunIdle()
+        // 运行期间可能有事件落库/收尾;收尾后按最新存储重新定位。
+        target = findTarget()
+      }
+
+      const { session, index, msg } = target
+      const text = msg.blocks
+        .filter((b): b is Extract<AiContentBlock, { type: 'text' }> => b.type === 'text')
+        .map((b) => b.text)
+        .join('\n')
+      const mentions = msg.mentions
+      // trimmed 的附件已经是空占位,带回输入框只会被当成"空附件"再发一次
+      const attachments = (msg.attachments ?? []).filter((a) => !a.trimmed)
+      // 被裁掉的附件不能留在内联排版里(否则草稿里会出现一颗找不到数据的 chip)
+      const skillIds = findSkills(skillIdsOf(msg)).map((s) => s.id)
+      const segments = sanitizeUserSegments(msg.segments, attachments, mentions ?? [], skillIds)
+      // 从目标消息起整段删除:其后的 assistant / toolResult / 自动验证轮
+      // 都是基于这条消息产生的,留着会让下一轮模型看到一段无源头的对话。
+      session.messages.splice(index)
+      if (!session.messages.some((m) => m.role === 'user' && !m.internal)) session.title = ''
+      session.updatedAt = Date.now()
+      save()
+      return {
+        text,
+        ...(mentions && mentions.length > 0 ? { mentions } : {}),
+        ...(attachments.length > 0 ? { attachments } : {}),
+        ...(segments.length > 0 ? { segments } : {}),
+        ...(skillIds.length > 0 ? { skillIds, skillId: skillIds[0] } : {})
+      }
+    },
+
+    branch(input) {
+      const sessionId = String(input.sessionId ?? '')
+      const messageId = String(input.messageId ?? '')
+      const source = findSession(sessionId)
+      if (!source) throw new Error('AI_SESSION_MISSING')
+      // 运行中的消息还在增长,复制出来的上下文可能缺块/半截;让用户等本轮收尾
+      if (run?.sessionId === sessionId) throw new Error('AI_BRANCH_RUNNING')
+      const index = source.messages.findIndex(
+        (m) => m.role === 'assistant' && m.id === messageId
+      )
+      const target = index >= 0 ? source.messages[index] : undefined
+      if (!target || target.role !== 'assistant') throw new Error('AI_BRANCH_NOT_FOUND')
+      if (target.stopReason === 'pending') throw new Error('AI_BRANCH_PENDING')
+
+      // 目标回复 + 紧随其后的 toolResult:少了结果会破坏 toolCall/toolResult 配对。
+      // 再往后的 assistant/user 属于分叉点之后的对话,全部排除。
+      let end = index + 1
+      while (end < source.messages.length && source.messages[end].role === 'toolResult') end++
+      // 保留原消息 id / toolCallId:它们只在会话内寻址,深拷贝到新会话不会冲突
+      const messages = structuredClone(source.messages.slice(0, end))
+      const now = Date.now()
+      const branch = { sessionId: source.id, messageId: target.id, title: source.title }
+      const s: StoredSession = {
+        id: uid('s'),
+        title: branchTitle(source.title),
+        createdAt: now,
+        updatedAt: now,
+        messages,
+        branch
+      }
+      store.sessions.unshift(s)
+      pruneSessionAttachments(s)
+      pruneStoreAttachments(store.sessions)
+      save()
+      return {
+        id: s.id,
+        title: s.title,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        branch,
+        autoApprove: false
       }
     },
 
     abort() {
-      if (!run) return
-      run.abort.abort()
-      for (const [, done] of run.approvals) done('cancel')
-      run.approvals.clear()
+      abortRun()
     },
 
     respondApproval(input) {
       const r = run
-      if (!r || r.runId !== input.runId) return
-      const done = r.approvals.get(input.toolCallId)
-      if (done) done(input.decision)
+      if (!r || r.runId !== input.runId) return { autoApprove: false }
+      const entry = r.approvals.get(input.toolCallId)
+      if (!entry) return { autoApprove: autoApproveSessions.has(r.sessionId) }
+      // 只有普通写操作才能把「本会话自动允许」打开;危险操作上的标志一律忽略,
+      // 避免 renderer 误传或被绕过时把高风险操作也纳入豁免。
+      if (input.decision === 'approve' && input.rememberSession === true && !entry.dangerous) {
+        autoApproveSessions.add(r.sessionId)
+      }
+      entry.done(input.decision)
+      return { autoApprove: autoApproveSessions.has(r.sessionId) }
+    },
+
+    setAutoApprove(input) {
+      const sessionId = String(input.sessionId ?? '')
+      if (!findSession(sessionId)) throw new Error('AI_SESSION_MISSING')
+      if (input.enabled) autoApproveSessions.add(sessionId)
+      else autoApproveSessions.delete(sessionId)
+      return { autoApprove: autoApproveSessions.has(sessionId) }
     }
   }
 }
@@ -940,4 +1291,22 @@ function compactTitle(text: string): string {
   const first = text.split('\n')[0]?.trim() ?? ''
   const t = first === '' ? '新对话' : first
   return t.length > TITLE_MAX ? `${t.slice(0, TITLE_MAX)}…` : t
+}
+
+/** 首条消息的标题种子:优先文字,纯附件用文件名/类型兜底(与渲染层乐观标题保持一致) */
+function titleSeed(text: string, attachments: AiAttachment[], fallback = '图片对话'): string {
+  const first = text.split('\n')[0]?.trim() ?? ''
+  if (first !== '') return first
+  const textFile = attachments.find((a): a is Extract<AiAttachment, { type: 'text' }> => a.type === 'text')
+  if (textFile) return textFile.name
+  return fallback
+}
+
+/** 分支会话标题:来源标题截断后加后缀,总长仍受 TITLE_MAX 约束 */
+function branchTitle(sourceTitle: string): string {
+  const suffix = ' · 分支'
+  const base = sourceTitle.trim() === '' ? '新对话' : sourceTitle.trim()
+  const room = Math.max(1, TITLE_MAX - suffix.length)
+  const cut = base.length > room ? `${base.slice(0, Math.max(1, room - 1))}…` : base
+  return `${cut}${suffix}`
 }

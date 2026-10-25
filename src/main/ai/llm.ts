@@ -8,6 +8,7 @@ import type { StreamFn } from '@earendil-works/pi-agent-core'
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { ANTHROPIC_MODELS } from '@earendil-works/pi-ai/providers/anthropic.models'
+import { getBuiltinModel, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all'
 import type { AiProviderId, AiProvidersConfig } from '../../shared/settings'
 import type { AiTestResult } from '../../shared/ipc'
 import type { SecretStore } from './secret-store'
@@ -15,6 +16,43 @@ import type { SecretStore } from './secret-store'
 /** OpenAI 兼容端点连到哪家未知:目录里的 cost/contextWindow 都无从得知,给保守值并在界面说明 */
 const UNKNOWN_CONTEXT_WINDOW = 128_000
 const UNKNOWN_MAX_TOKENS = 8_192
+
+/**
+ * OpenAI 兼容端点的模型 id 往往能对上 pi 内置目录里的同名模型
+ * (openai / deepseek / google / groq … 的模型 id 基本是公开且唯一的)。
+ * 先按这个顺序找;同名冲突时优先常见官方模型,避免被某个网关的变体抢走。
+ */
+const BUILTIN_PROVIDER_PREFERENCE = [
+  'anthropic',
+  'openai',
+  'deepseek',
+  'google',
+  'xai',
+  'groq',
+  'mistral',
+  'moonshotai',
+  'zai'
+]
+
+let builtinProviderOrder: string[] | null = null
+
+function builtinContextWindow(modelId: string): number | undefined {
+  if (modelId === '') return undefined
+  if (builtinProviderOrder === null) {
+    const available = new Set<string>(getBuiltinProviders())
+    const preferred = BUILTIN_PROVIDER_PREFERENCE.filter((p) => available.has(p))
+    builtinProviderOrder = [...preferred, ...available].filter(
+      (p, i, arr) => arr.indexOf(p) === i
+    )
+  }
+  for (const provider of builtinProviderOrder) {
+    const known = getBuiltinModel(provider as never, modelId as never) as Model<Api> | undefined
+    if (known && Number.isFinite(known.contextWindow) && known.contextWindow > 0) {
+      return known.contextWindow
+    }
+  }
+  return undefined
+}
 
 /** 界面展示名(设置页协议卡标题用) */
 const PROVIDER_NAMES: Record<AiProviderId, string> = {
@@ -27,6 +65,8 @@ interface ResolvedConfig {
   modelId: string
   baseUrl: string
   apiKey: string | null
+  /** 手动覆盖的上下文窗口;undefined = 按内置目录自动判断 */
+  contextWindow: number | undefined
   /** 该协议的附加请求头(企业网关常按 User-Agent 之类放行) */
   headers: Record<string, string> | undefined
 }
@@ -39,14 +79,30 @@ export interface ResolvedModel {
 }
 
 export interface LlmClient {
-  /** 当前配置能否成行;不能则给出可读原因(界面进未配置态) */
-  resolve(): { ok: true; value: ResolvedModel } | { ok: false; reason: string }
+  /**
+   * 当前配置能否成行;不能则给出可读原因(界面进未配置态)。
+   * images = 本轮/历史是否含图片;OpenAI 兼容端点据此动态声明 image 能力。
+   */
+  resolve(
+    providerId?: AiProviderId,
+    opts?: { images?: boolean }
+  ): { ok: true; value: ResolvedModel } | { ok: false; reason: string }
   /** pi-agent-core 的 streamFn(每次调用现造,跟随最新设置) */
   streamFn(): StreamFn
   /** 真连一次端点(设置页「测试连接」);demo 里是假的,这里如实发一次最小请求 */
   testConnection(providerId: AiProviderId): Promise<AiTestResult>
   /** 该协议的模型目录(仅 Anthropic 有内置目录;OpenAI 兼容返回空数组) */
   catalog(providerId: AiProviderId): { id: string; name: string }[]
+  /**
+   * 当前模型元信息(不要求已填 Key)。
+   * contextWindow 的优先级:用户设置 > pi 内置目录同名模型 > 128k 估算。
+   */
+  modelMeta(providerId?: AiProviderId): {
+    modelId: string
+    modelLabel: string
+    contextWindow: number
+    maxTokens: number
+  }
   /** 协议展示名 */
   providerName(providerId: AiProviderId): string
 }
@@ -67,17 +123,20 @@ export function createLlmClient(deps: {
       modelId: (cfg.modelId ?? '').trim(),
       baseUrl: cfg.baseUrl,
       apiKey: deps.secrets.get(pid),
+      contextWindow: cfg.contextWindow,
       headers: cfg.headers
     }
   }
 
   /** 按内置目录造模型;目录里没有(OpenAI 兼容端点、或用户手填的新模型 id)则按保守值合成 */
-  const buildModel = (cfg: ResolvedConfig): Model<Api> => {
+  const buildModel = (cfg: ResolvedConfig, allowImages = false): Model<Api> => {
+    // 手动设置优先于一切目录:自定义网关的模型名可能恰巧与目录同名,但窗口并不相同。
+    const contextWindow = cfg.contextWindow ?? builtinContextWindow(cfg.modelId) ?? UNKNOWN_CONTEXT_WINDOW
     if (cfg.providerId === 'anthropic') {
       const known = (ANTHROPIC_MODELS as Record<string, Model<Api> | undefined>)[cfg.modelId]
       if (known) {
         // 端点可被用户改成自建网关:目录里的官方 baseUrl 只在用户没改时生效
-        return { ...known, baseUrl: cfg.baseUrl }
+        return { ...known, baseUrl: cfg.baseUrl, contextWindow }
       }
       return {
         id: cfg.modelId,
@@ -88,7 +147,7 @@ export function createLlmClient(deps: {
         reasoning: true,
         input: ['text', 'image'],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: UNKNOWN_CONTEXT_WINDOW,
+        contextWindow,
         maxTokens: UNKNOWN_MAX_TOKENS
       }
     }
@@ -99,10 +158,11 @@ export function createLlmClient(deps: {
       provider: 'openai-compatible',
       baseUrl: cfg.baseUrl,
       reasoning: false,
-      // 不声明 image:端点后面是什么模型未知,声明了会让 pi 放行图片输入
-      input: ['text'],
+      // 端点后面是什么模型未知:不含图片的请求保持 text-only;本轮/历史含图片时才声明 image。
+      // 声明后 pi 不会把图片静默替换成 "(image omitted...)",端点不支持会显式报错。
+      input: allowImages ? ['text', 'image'] : ['text'],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: UNKNOWN_CONTEXT_WINDOW,
+      contextWindow,
       maxTokens: UNKNOWN_MAX_TOKENS
     }
   }
@@ -127,7 +187,10 @@ export function createLlmClient(deps: {
     })
   }
 
-  const resolve = (providerId?: AiProviderId): ReturnType<LlmClient['resolve']> => {
+  const resolve = (
+    providerId?: AiProviderId,
+    opts?: { images?: boolean }
+  ): ReturnType<LlmClient['resolve']> => {
     const cfg = readConfig(providerId)
     if (!cfg.apiKey) return { ok: false, reason: 'missing-key' }
     if (!cfg.baseUrl) return { ok: false, reason: 'missing-base-url' }
@@ -135,7 +198,7 @@ export function createLlmClient(deps: {
     return {
       ok: true,
       value: {
-        model: buildModel(cfg),
+        model: buildModel(cfg, opts?.images === true),
         providerId: cfg.providerId,
         providerName: PROVIDER_NAMES[cfg.providerId],
         modelLabel: modelLabel(cfg.modelId)
@@ -152,6 +215,16 @@ export function createLlmClient(deps: {
   return {
     resolve,
     providerName: (id) => PROVIDER_NAMES[id],
+    modelMeta: (providerId) => {
+      const cfg = readConfig(providerId)
+      const model = buildModel(cfg)
+      return {
+        modelId: cfg.modelId,
+        modelLabel: modelLabel(cfg.modelId),
+        contextWindow: model.contextWindow,
+        maxTokens: model.maxTokens
+      }
+    },
     catalog: (providerId) => {
       if (providerId !== 'anthropic') return []
       return Object.values(ANTHROPIC_MODELS as Record<string, Model<Api>>).map((m) => ({

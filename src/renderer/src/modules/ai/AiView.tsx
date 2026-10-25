@@ -8,6 +8,7 @@ import { AiRail } from './AiRail'
 import { AiMessages } from './AiMessages'
 import { AiAnchors } from './AiAnchors'
 import { AiComposer } from './AiComposer'
+import { AiSelectionBar } from './AiSelectionBar'
 import { AiMcpModal } from './AiMcpModal'
 
 const RAIL_LS_KEY = 'launcherAiRailCollapsed'
@@ -34,6 +35,33 @@ export function AiView(): React.JSX.Element {
   const [showBot, setShowBot] = useState(false)
   const messages = useAiStore((s) => s.messages)
   const currentId = useAiStore((s) => s.currentId)
+  const selectionMode = useAiStore((s) => s.selectionMode)
+  const enterSelectionMode = useAiStore((s) => s.enterSelectionMode)
+  const exitSelectionMode = useAiStore((s) => s.exitSelectionMode)
+
+  // 拖放文件到输入框外时,Electron 默认可能导航到本地 file://;全局兜住默认行为。
+  // 输入框自己的 drop 处理器仍会先拿到事件(这里只 preventDefault,不 stopPropagation)。
+  useEffect(() => {
+    const block = (e: DragEvent): void => {
+      if (e.dataTransfer?.types.includes('Files')) e.preventDefault()
+    }
+    document.addEventListener('dragover', block)
+    document.addEventListener('drop', block)
+    return () => {
+      document.removeEventListener('dragover', block)
+      document.removeEventListener('drop', block)
+    }
+  }, [])
+
+  // Esc 退出多选
+  useEffect(() => {
+    if (!selectionMode) return
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') exitSelectionMode()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectionMode, exitSelectionMode])
 
   const onScroll = useCallback((): void => {
     const sc = scrollRef.current
@@ -107,12 +135,24 @@ export function AiView(): React.JSX.Element {
           >
             <i className="fa-solid fa-angles-right" />
           </button>
+          {messages.length > 0 && (
+            <button
+              className={`ai-select-toggle${selectionMode ? ' on' : ''}`}
+              type="button"
+              onClick={() => (selectionMode ? exitSelectionMode() : enterSelectionMode())}
+              title={t(selectionMode ? 'ai.select.exit' : 'ai.select.enter')}
+            >
+              <i className="fa-solid fa-list-check" />
+              <span>{t(selectionMode ? 'ai.select.exit' : 'ai.select.enter')}</span>
+            </button>
+          )}
           <div className="ai-scroll" id="aiScroll" ref={scrollRef} onScroll={onScroll}>
             <div className="ai-col" id="aiCol">
               <AiMessages />
             </div>
           </div>
           <AiAnchors scrollRef={scrollRef} />
+          <AiSelectionBar />
           <AiComposer showBot={showBot} scrollBottom={scrollBottom} />
         </section>
       </div>

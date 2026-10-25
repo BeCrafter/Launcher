@@ -101,6 +101,8 @@ export interface AiApproveCard {
   command: string
   /** 危险操作需二次确认 */
   dangerous?: boolean
+  /** 由「本会话自动允许」放行(不是本次点击授权),卡片上据此标明 */
+  auto?: boolean
   state: AiApproveState
 }
 
@@ -169,6 +171,11 @@ export interface AiMention {
    * 有它就只注入这段文字,不再读整篇正文 —— 用户选了一段,就是想只说这一段。
    */
   quote?: string
+  /**
+   * 同一条用户消息内的添加顺序(与附件共用一套序号)。
+   * 旧数据没有该字段时,按原数组/分组顺序处理。
+   */
+  order?: number
 }
 
 /**
@@ -177,11 +184,88 @@ export interface AiMention {
  */
 export const MAX_MENTIONS = 10
 
+/** 用户随消息附加的图片(渲染层压缩后的 base64,不含 data: 前缀) */
+export interface AiImageAttachment {
+  type: 'image'
+  key: string
+  name: string
+  mimeType: string
+  data: string
+  /** 会话保留策略裁剪后为 true,data 为空,仅保留占位 */
+  trimmed?: boolean
+  /** 同一条消息内与引用共用一套添加顺序 */
+  order?: number
+}
+
+/** 用户随消息附加的文本文件(附加时的快照,后续文件变化不会同步) */
+export interface AiTextAttachment {
+  type: 'text'
+  key: string
+  name: string
+  content: string
+  /** 落库内容的 UTF-8 字节数 */
+  bytes: number
+  truncated?: boolean
+  /** 会话保留策略裁剪后为 true,content 为空 */
+  trimmed?: boolean
+  /** 同一条消息内与引用共用一套添加顺序 */
+  order?: number
+}
+
+export type AiAttachment = AiImageAttachment | AiTextAttachment
+
+/**
+ * 用户消息的「内联排版」:引用/附件/技能与文字按真实顺序交错。
+ *
+ * `text` 仍然是送模型的纯文本(引用本身另走 mentions/attachments/skillIds),
+ * 这里只解决历史气泡如何还原「文字 + chip」的原始位置。旧消息没有该字段时,
+ * 气泡按原有分组方式展示(附件/引用在前,正文在后)。
+ */
+export type AiUserSegment =
+  | { type: 'text'; text: string }
+  | { type: 'ref'; refType: 'attachment' | 'mention'; key: string }
+  | { type: 'skill'; id: string }
+
+/**
+ * 附件上限。
+ * 不是防呆:图片/文本会随消息落进会话 JSON,并在之后每一轮被重放;
+ * 保留策略见 main/ai/attachments.ts(最近 3 条用户消息 + 全局硬上限)。
+ */
+export const MAX_ATTACHMENTS = 6
+export const MAX_IMAGE_ATTACHMENTS = 4
+export const MAX_TEXT_ATTACHMENTS = 4
+/** 单张图片 base64(编码后)上限 */
+export const MAX_IMAGE_BASE64_BYTES = 1.5 * 1024 * 1024
+/** 单个文本文件落库上限 */
+export const MAX_TEXT_ATTACHMENT_BYTES = 32 * 1024
+/** 单条消息内文本附件合计上限 */
+export const MAX_TEXT_ATTACHMENTS_TOTAL_BYTES = 64 * 1024
+/** 保留完整附件负载的最近用户消息条数 */
+export const KEEP_ATTACHMENT_TURNS = 3
+/** 全部会话附件负载的全局上限 */
+export const MAX_STORE_ATTACHMENT_BYTES = 32 * 1024 * 1024
+
 export interface AiUserMessage {
   role: 'user'
   id: string
   blocks: AiContentBlock[]
   mentions?: AiMention[]
+  /** 图片/文本文件快照;正文由 main 在发送时拼进模型上下文 */
+  attachments?: AiAttachment[]
+  /** 本次发送选中的内置技能(与 AiSendInput.skillIds 对应;顺序即视觉/选择顺序) */
+  skillIds?: string[]
+  /**
+   * 旧的单技能字段。新消息仍写首个技能以兼容旧读取方;
+   * 读取请用 skillIdsOf(),不要只读这一个字段。
+   */
+  skillId?: string
+  /** 输入框里的内联排版(仅用于气泡还原;旧的纯文本消息没有该字段) */
+  segments?: AiUserSegment[]
+  /**
+   * 宿主注入的内部消息(自动验证轮),不是用户实际发送的内容。
+   * 这类消息不能作为「撤回并编辑」的目标,否则用户会把宿主的验证轮误当成自己发的。
+   */
+  internal?: boolean
   timestamp: number
 }
 
@@ -196,6 +280,10 @@ export interface AiAssistantMessage {
   model?: string
   /** 服务商(展示用) */
   provider?: string
+  /** 本条回复完成时间(message_end 时写入) */
+  finishedAt?: number
+  /** 整轮耗时,仅该轮最后一条助手消息携带(含工具调用/授权等待) */
+  durationMs?: number
   timestamp: number
 }
 
@@ -225,11 +313,28 @@ export type AiMessage = AiUserMessage | AiAssistantMessage | AiToolResultMessage
 
 // ── 会话 ──
 
+/** 会话分支来源(仅作溯源,不要求来源会话仍存在) */
+export interface AiSessionBranch {
+  /** 来源会话 id */
+  sessionId: string
+  /** 分叉点的助手消息 id */
+  messageId: string
+  /** 分叉时来源会话标题快照 */
+  title: string
+}
+
 export interface AiSession {
   id: string
   title: string
   createdAt: number
   updatedAt: number
+  /**
+   * 当前应用运行期内的「普通写操作自动允许」状态。
+   * 只由 main 在 listSessions 时算出来,**不落盘**;重启应用后恢复逐条确认。
+   */
+  autoApprove?: boolean
+  /** 由某会话的某条助手回复分叉而来 */
+  branch?: AiSessionBranch
 }
 
 // ── 运行事件(main → renderer 流式推送) ──
@@ -260,12 +365,26 @@ export type AiRunEvent =
       errorMessage?: string
       model?: string
       provider?: string
+      finishedAt?: number
     })
   | (AiRunEventBase & { type: 'approval_request'; toolCallId: string; toolName: string; detail: string; command: string; dangerous: boolean })
   /** 宿主注入的用户消息(如载入后的自动验证轮)—— main 已落库,renderer 只需补进列表 */
   | (AiRunEventBase & { type: 'user_message'; messageId: string; text: string })
-  | (AiRunEventBase & { type: 'run_end'; stopReason: AiStopReason })
-  | (AiRunEventBase & { type: 'run_error'; message: string })
+  | (AiRunEventBase & {
+      type: 'run_end'
+      stopReason: AiStopReason
+      /** 本轮最后一条助手消息;无助手消息时省略 */
+      messageId?: string
+      durationMs?: number
+      finishedAt?: number
+    })
+  | (AiRunEventBase & {
+      type: 'run_error'
+      message: string
+      messageId?: string
+      durationMs?: number
+      finishedAt?: number
+    })
 
 // ── 授权应答(renderer → main) ──
 
@@ -284,6 +403,10 @@ export interface AiEngineState {
   hasKey: boolean
   /** 已配置 = 有 Key(切到没填 Key 的协议同样进未配置态) */
   configured: boolean
+  /** 当前模型的上下文窗口(token);目录内取真实值,目录外按端点配置/估算兜底 */
+  contextWindow: number
+  /** 单次输出上限(token);用于区分「上下文将满」与「输出配额」两种限制 */
+  maxTokens: number
 }
 
 // ── 技能(内置任务模板) ──

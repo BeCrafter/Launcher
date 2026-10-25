@@ -792,8 +792,11 @@ body.light-theme .skeleton-row {
 .ai-msg-meta {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  margin-top: 8px;
+  /* 在助手卡片外、紧贴卡片下方，和用户消息气泡下的操作行同一种层级 */
+  margin-top: 4px;
+  padding: 0 2px;
   font-size: 10px;
   color: var(--dim);
   flex-wrap: wrap;
@@ -801,6 +804,65 @@ body.light-theme .skeleton-row {
 
 .ai-msg-meta:empty {
   display: none;
+}
+
+.ai-msg-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.ai-msg-time,
+.ai-msg-dur {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ai-msg-dur {
+  color: var(--muted);
+}
+
+.ai-msg-acts {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.ai-msg:hover .ai-msg-acts,
+.ai-msg-acts:focus-within {
+  opacity: 1;
+}
+
+.ai-msg-act {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+}
+
+.ai-msg-act:hover:not(:disabled) {
+  color: var(--accent2);
+  background: var(--hover);
+  border-color: var(--border);
+}
+
+.ai-msg-act:disabled {
+  cursor: default;
+  opacity: 0.4;
 }
 
 .ai-msg-notice {
@@ -811,6 +873,9 @@ body.light-theme .skeleton-row {
 }
 
 .ai-msg-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 9.5px;
 }
@@ -1108,9 +1173,10 @@ body.light-theme .skeleton-row {
   }
 }
 
-/* 悬浮锚点时对应的消息:一层柔和描边,不改变布局(不改 padding/margin,避免跳动) */
-.ai-msg.is-anchor-hl {
-  border-radius: 10px;
+/* 悬浮锚点时对应的消息:一层柔和描边,不改变布局(不改 padding/margin,避免跳动)。
+   只描消息本体(用户气泡 / 助手卡片),不把下面的复制/撤回操作行圈进去。 */
+.ai-msg.is-anchor-hl .ai-bubble,
+.ai-msg.is-anchor-hl .ai-bot-card {
   box-shadow: 0 0 0 1px var(--accent2), 0 0 0 6px var(--wash-accent);
   transition: box-shadow 0.15s ease;
 }

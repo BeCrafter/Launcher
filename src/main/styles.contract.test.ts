@@ -280,3 +280,31 @@ describe('CSS 契约:滚动同步的两端都还在', () => {
     expect(readSrc('lib/scroll-sync.ts')).toContain('data-line')
   })
 })
+
+describe('CSS 契约:chip 边界的光标必须可测量', () => {
+  it('不能把 CodeMirror 的 cm-widgetBuffer 设为 display:none', () => {
+    // 事故:为了让 chip 前后「不多出占位」,把 widgetBuffer 隐藏了。
+    // 它是 CM 在 replaced widget 边界测量光标坐标的锚点,隐藏后
+    // coordsAtPos(chip 起点) 返回全 0 —— 光标从 chip 后面左移跨过来时直接消失。
+    const src = readSrc('modules/ai/AiComposerEditor.tsx')
+    const rule = src.match(/['"]\.cm-widgetBuffer['"]\s*:\s*\{([^}]*)\}/)
+    expect(rule, '找不到 .cm-widgetBuffer 规则').not.toBeNull()
+    expect(rule![1]).not.toMatch(/display\s*:\s*['"]none['"]/)
+    expect(rule![1]).toMatch(/display\s*:\s*['"]inline['"]/)
+  })
+
+  it('光标不能用强调色(会压在 chip 的同色边框上「消失」)', () => {
+    // 事故:光标沿用 --accent2,跨过技能 chip 后正好落在那条 accent 边框上,
+    // 同色叠同色 —— 看起来和「光标丢了」一模一样。chip 的主色就是强调色系
+    // (技能紫/定时黄/笔记绿),光标必须是中性前景色才能在任何 chip 上都有对比。
+    const src = readSrc('modules/ai/AiComposerEditor.tsx')
+    const rule = src.match(/['"]\.cm-cursor[^'"]*['"]\s*:\s*\{([^}]*)\}/)
+    expect(rule, '找不到 .cm-cursor 规则').not.toBeNull()
+    expect(rule![1], '光标颜色要走主题变量').toMatch(
+      /borderLeftColor\s*:\s*['"]var\(--[a-z0-9-]+\)['"]/
+    )
+    expect(rule![1], '光标不能和 chip 的主色同色').not.toMatch(
+      /borderLeftColor\s*:\s*['"]var\(--accent2?\)['"]/
+    )
+  })
+})

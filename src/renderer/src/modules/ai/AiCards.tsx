@@ -180,7 +180,7 @@ function ApproveCard({
   const [busy, setBusy] = useState(false)
   const icon = card.dangerous ? 'fa-triangle-exclamation' : 'fa-shield-halved'
 
-  const onApprove = async (): Promise<void> => {
+  const onApprove = async (rememberSession = false): Promise<void> => {
     if (!pendingToolCallId || busy) return
     // 危险操作先走应用内二次确认(demo confirmDangerousAction;系统级授权由工具执行时 osascript 负责)
     if (card.dangerous) {
@@ -189,7 +189,7 @@ function ApproveCard({
       setBusy(false)
       if (!ok) return
     }
-    void respond(pendingToolCallId, 'approve')
+    void respond(pendingToolCallId, 'approve', rememberSession)
   }
 
   const onCancel = (): void => {
@@ -205,6 +205,18 @@ function ApproveCard({
           <i className="fa-solid fa-check" />
           <span>{t('ai.appr.approve')}</span>
         </button>
+        {!card.dangerous && (
+          <button
+            className="d-btn"
+            type="button"
+            disabled={!pendingToolCallId || busy}
+            title={t('ai.appr.allowSessionHint')}
+            onClick={() => void onApprove(true)}
+          >
+            <i className="fa-solid fa-shield-halved" />
+            <span>{t('ai.appr.allowSession')}</span>
+          </button>
+        )}
         <button className="d-btn" type="button" disabled={!pendingToolCallId || busy} onClick={onCancel}>
           <span>{t('ai.appr.cancel')}</span>
         </button>
@@ -215,7 +227,7 @@ function ApproveCard({
       <div className="ai-appr-st done">
         <i className="fa-solid fa-circle-check" />
         <span>
-          {t('ai.appr.done')} · {card.tool}
+          {t(card.auto ? 'ai.appr.autoDone' : 'ai.appr.done')} · {card.tool}
         </span>
       </div>
     )
@@ -232,7 +244,7 @@ function ApproveCard({
     <div className="ai-card ai-appr">
       <div className="ai-card-hd">
         <i className={`fa-solid ${icon}`} style={{ color: 'var(--accent2)' }} />
-        {t('ai.appr.title')}
+        {t(card.auto ? 'ai.appr.autoTitle' : 'ai.appr.title')}
       </div>
       <div style={{ fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.6 }}>{card.detail}</div>
       <div className="ai-appr-cmd">{card.command}</div>

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, nativeTheme, net, shell } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { APP_NAME } from '../shared/constants'
 import { resolveNotesDir } from '../shared/notes'
 import { IPC, IPC_EVENTS, type BootPaintPhase, type InstallChannel } from '../shared/ipc'
@@ -264,6 +265,16 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // 拖文件到非 drop 区域时,Chromium 默认可能导航到本地文件;preload 会在该页面上暴露 IPC。
+  // 只允许应用入口自身(dev server 同 URL / 打包后的 index.html)。
+  const entryUrl =
+    process.env['ELECTRON_RENDERER_URL'] ??
+    pathToFileURL(join(__dirname, '../renderer/index.html')).href
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    const allowed = url === entryUrl || url.startsWith(`${entryUrl}#`) || url.startsWith(`${entryUrl}?`)
+    if (!allowed) e.preventDefault()
   })
 
   // dev 可见性：渲染层控制台错误转发到主进程输出，启动后自检 root 是否渲染

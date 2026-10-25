@@ -22,7 +22,8 @@ import type {
   AiToolResultMessage,
   AiUsage
 } from '../../shared/ai'
-import { mentionContext, type NoteContext } from './note-context'
+import type { NoteContext } from './note-context'
+import { lastUserImages, userMessageContext } from './user-context'
 
 /** 中断产生的合成结果文案(回放时补进 transcript,让后续轮次仍然合法) */
 const ABORTED_TOOL_RESULT = '（本轮已中断，该调用未执行）'
@@ -87,17 +88,12 @@ export function toPiMessages(messages: AiMessage[], notes?: Map<string, NoteCont
       continue
     }
     if (m.role === 'user') {
-      const texts = m.blocks
-        .filter((b): b is Extract<AiContentBlock, { type: 'text' }> => b.type === 'text')
-        .map((b) => b.text)
-        .join('\n')
-      const images = m.blocks
-        .filter((b): b is Extract<AiContentBlock, { type: 'image' }> => b.type === 'image')
-        .map((b) => ({ type: 'image' as const, data: b.data, mimeType: b.mimeType }))
-      const text = mentionContext(m.mentions, notes) + texts
+      // 引用 + 附件 + 原文的唯一拼接点;当前轮 runAgent 也调它
+      const text = userMessageContext(m, notes)
+      const images = lastUserImages(m)
       const user: PiUserMessage = {
         role: 'user',
-        // 只有图片时 content 以空串文本兜底:部分端点不接受纯空内容
+        // 有图片时用内容块数组;userMessageContext 已保证文本非空(纯图片也有兜底)
         content: images.length > 0 ? [{ type: 'text', text }, ...images] : text,
         timestamp: m.timestamp
       }

@@ -1,10 +1,18 @@
 // 对话服务的集成测试:用 pi 自带的 faux provider 驱动**真实**的 Agent 循环
 // (不 mock 运行器 —— 事件序列、工具执行、审批拦截、transcript 配对都是真跑的)
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { Type, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from '@earendil-works/pi-ai'
+import {
+  Type,
+  fauxAssistantMessage,
+  fauxProvider,
+  fauxText,
+  fauxToolCall,
+  getCurrentSystemMessage,
+  type TranscriptContext
+} from '@earendil-works/pi-ai'
 import type { StreamFn } from '@earendil-works/pi-agent-core'
 import { DEFAULT_SETTINGS, type LauncherSettings } from '../../shared/settings'
 import type { AiRunEvent } from '../../shared/ai'
@@ -85,6 +93,12 @@ function build(opts: {
     streamFn: (() => opts.faux.provider.streamSimple.bind(opts.faux.provider)) as unknown as () => StreamFn,
     providerName: () => 'Anthropic',
     catalog: () => [],
+    modelMeta: () => ({
+      modelId: settings.aiProviders[settings.aiProviderId]?.modelId ?? '',
+      modelLabel: 'faux',
+      contextWindow: 128_000,
+      maxTokens: 8_192
+    }),
     testConnection: async () => ({ ok: true, message: 'ok' })
   }
   return createChatService({
@@ -112,6 +126,18 @@ function transcriptText(m: { content: unknown }): string {
   if (typeof m.content === 'string') return m.content
   if (!Array.isArray(m.content)) return ''
   return m.content.map((c) => (c?.type === 'text' ? String(c.text) : '')).join('')
+}
+
+type ApprovalEvent = Extract<AiRunEvent, { type: 'approval_request' }>
+
+/** 等到第 n 个授权请求出现(测试里的运行是异步的,不能直接读事件数组) */
+async function waitApprovalCount(n: number): Promise<ApprovalEvent> {
+  for (let i = 0; i < 300; i += 1) {
+    const list = events.filter((e): e is ApprovalEvent => e.type === 'approval_request')
+    if (list.length >= n) return list[n - 1]
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error('approval timeout')
 }
 
 let ran = 0
@@ -343,6 +369,134 @@ describe('ChatService 运行链路', () => {
     expect(card && card.type === 'card' && card.card.kind === 'approve' ? card.card.state : null).toBe('cancelled')
   })
 
+  it('本会话自动允许普通写操作:一次授权后后续写入不再逐条询问', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('write_plist', { label: 'com.user.a' })]),
+      fauxAssistantMessage([fauxText('first done')]),
+      fauxAssistantMessage([fauxToolCall('write_plist', { label: 'com.user.b' })]),
+      fauxAssistantMessage([fauxText('second done')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool, writeTool] })
+    const s = svc.createSession()
+
+    const first = svc.send({ sessionId: s.id, text: 'first' })
+    const req = await waitApprovalCount(1)
+    const result = svc.respondApproval({
+      runId: req.runId,
+      toolCallId: req.toolCallId,
+      decision: 'approve',
+      rememberSession: true
+    })
+    expect(result.autoApprove).toBe(true)
+    await first
+    expect(ran).toBe(1)
+    expect(svc.listSessions().find((x) => x.id === s.id)?.autoApprove).toBe(true)
+
+    // 第二轮:同一个会话里的普通写入直接执行,不再发 approval_request
+    const before = events.filter((e) => e.type === 'approval_request').length
+    await svc.send({ sessionId: s.id, text: 'second' })
+    expect(ran).toBe(2)
+    expect(events.filter((e) => e.type === 'approval_request').length).toBe(before)
+
+    // 自动放行的卡片要留痕,而不是像用户点过一样只显示「已执行」
+    const cards = svc.getMessages(s.id).flatMap((m) => (m.role === 'assistant' ? m.blocks : []))
+    expect(cards.some((b) => b.type === 'card' && b.card.kind === 'approve' && b.card.auto === true)).toBe(true)
+  })
+
+  it('本会话自动允许不覆盖高风险操作:危险写入仍逐条询问', async () => {
+    let dangerousRan = 0
+    const dangerousWrite: ToolDef = {
+      name: 'delete_note',
+      label: '删除笔记',
+      description: '删除笔记',
+      parameters: Type.Object({ id: Type.String() }),
+      write: true,
+      summarize: (a) => ({
+        detail: `删除笔记 ${String(a['id'])}`,
+        command: `notes/${String(a['id'])}.md → 废纸篓`,
+        dangerous: true
+      }),
+      execute: async () => {
+        dangerousRan += 1
+        return { lines: [{ level: 'ok', text: 'deleted' }] }
+      }
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('write_plist', { label: 'com.user.a' })]),
+      fauxAssistantMessage([fauxText('first done')]),
+      fauxAssistantMessage([fauxToolCall('delete_note', { id: 'n1' })]),
+      fauxAssistantMessage([fauxText('second done')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool, writeTool, dangerousWrite] })
+    const s = svc.createSession()
+
+    const first = svc.send({ sessionId: s.id, text: 'first' })
+    const req1 = await waitApprovalCount(1)
+    expect(
+      svc.respondApproval({
+        runId: req1.runId,
+        toolCallId: req1.toolCallId,
+        decision: 'approve',
+        rememberSession: true
+      }).autoApprove
+    ).toBe(true)
+    await first
+    expect(ran).toBe(1)
+
+    const second = svc.send({ sessionId: s.id, text: 'second' })
+    const req2 = await waitApprovalCount(2)
+    expect(req2.dangerous).toBe(true)
+    expect(dangerousRan).toBe(0)
+    svc.respondApproval({ runId: req2.runId, toolCallId: req2.toolCallId, decision: 'approve' })
+    await second
+    expect(dangerousRan).toBe(1)
+  })
+
+  it('危险操作即使被误传 rememberSession 也不会开启会话豁免', async () => {
+    const dangerousWrite: ToolDef = {
+      name: 'delete_note',
+      label: '删除笔记',
+      description: '删除笔记',
+      parameters: Type.Object({ id: Type.String() }),
+      write: true,
+      summarize: (a) => ({ detail: `删除 ${String(a['id'])}`, command: 'rm', dangerous: true }),
+      execute: async () => ({ lines: [{ level: 'ok', text: 'deleted' }] })
+    }
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('delete_note', { id: 'n1' })]),
+      fauxAssistantMessage([fauxText('done')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool, dangerousWrite] })
+    const s = svc.createSession()
+
+    const sending = svc.send({ sessionId: s.id, text: 'delete' })
+    const req = await waitApprovalCount(1)
+    const result = svc.respondApproval({
+      runId: req.runId,
+      toolCallId: req.toolCallId,
+      decision: 'approve',
+      rememberSession: true
+    })
+    expect(result.autoApprove).toBe(false)
+    await sending
+    expect(svc.listSessions().find((x) => x.id === s.id)?.autoApprove).toBe(false)
+  })
+
+  it('setAutoApprove 可开关,且只存在于当前服务实例(不跨重启)', () => {
+    const svc = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    const s = svc.createSession()
+    expect(svc.setAutoApprove({ sessionId: s.id, enabled: true }).autoApprove).toBe(true)
+    expect(svc.listSessions().find((x) => x.id === s.id)?.autoApprove).toBe(true)
+    expect(svc.setAutoApprove({ sessionId: s.id, enabled: false }).autoApprove).toBe(false)
+    svc.setAutoApprove({ sessionId: s.id, enabled: true })
+
+    const svc2 = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    expect(svc2.listSessions().find((x) => x.id === s.id)?.autoApprove).toBeFalsy()
+  })
+
   it('会话按第一条用户消息起标题并持久化,重开服务后仍在', async () => {
     const faux = fauxProvider()
     faux.setResponses([fauxAssistantMessage([fauxText('hi')])])
@@ -386,6 +540,90 @@ describe('ChatService 运行链路', () => {
     // sk-refactor 是只读技能,工具表里不应出现写工具
     expect(events.some((e) => e.type === 'run_start')).toBe(true)
     expect(faux.state.callCount).toBe(1)
+  })
+
+  it('多技能合一:工具白名单取并集,系统提示词包含各技能任务', async () => {
+    const checkPortTool: ToolDef = {
+      name: 'check_port',
+      label: '检查端口',
+      description: '检查端口',
+      parameters: Type.Object({}),
+      write: false,
+      execute: async () => ({ lines: [{ level: 'ok', text: '空闲' }] })
+    }
+    const faux = fauxProvider()
+    let seen: TranscriptContext | undefined
+    faux.setResponses([
+      (context) => {
+        seen = context
+        return fauxAssistantMessage([fauxText('ok')])
+      }
+    ])
+    const svc = build({ faux, tools: [readonlyTool, checkPortTool, writeTool] })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '一起看看',
+      skillIds: ['sk-refactor', 'sk-import']
+    })
+
+    const user = svc.getMessages(s.id)[0]
+    if (user.role !== 'user') throw new Error('unreachable')
+    expect(user.skillIds).toEqual(['sk-refactor', 'sk-import'])
+    expect(user.skillId).toBe('sk-refactor')
+
+    const sys = seen ? getCurrentSystemMessage(seen.messages) : undefined
+    expect(sys?.content).toContain('严格只读')
+    expect(sys?.content).toContain('一律盘点')
+    expect(sys?.content).toContain('同时启用了 2 个技能')
+    const names = (sys?.toolsAdded ?? []).map((t) => t.name)
+    expect(names).toContain('list_services')
+    expect(names).toContain('check_port')
+    // sk-refactor 与 sk-import 都不允许写入;并集也不能把写工具放进来
+    expect(names).not.toContain('write_plist')
+  })
+
+  it('多技能撤回后原样带回,未知/重复技能在发送时收敛', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '一起看看',
+      skillIds: ['sk-import', 'sk-removed', 'sk-refactor', 'sk-import']
+    })
+    const user = svc.getMessages(s.id).find((m) => m.role === 'user')
+    if (!user) throw new Error('unreachable')
+    expect(user.skillIds).toEqual(['sk-import', 'sk-refactor'])
+
+    const out = await svc.retract({ sessionId: s.id, messageId: user.id })
+    expect(out.skillIds).toEqual(['sk-import', 'sk-refactor'])
+    expect(out.skillId).toBe('sk-import')
+  })
+
+  it('旧数据的 skillId 在载入时归一成 skillIds', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '看', skillIds: ['sk-refactor'] })
+
+    const storePath = join(dir, 'ai-sessions.json')
+    const store = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      sessions: Array<{ messages: Array<Record<string, unknown>> }>
+    }
+    const user = store.sessions[0]?.messages[0]
+    if (!user) throw new Error('unreachable')
+    delete user.skillIds
+    user.skillId = 'sk-import'
+    writeFileSync(storePath, JSON.stringify(store), 'utf8')
+
+    const reloaded = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    const msg = reloaded.getMessages(s.id)[0]
+    if (msg.role !== 'user') throw new Error('unreachable')
+    expect(msg.skillIds).toEqual(['sk-import'])
+    expect(msg.skillId).toBe('sk-import')
   })
 
   /** 轮询应答所有出现的授权卡(自动验证链路里可能连续出现多张) */
@@ -712,5 +950,600 @@ describe('ChatService 运行链路', () => {
     if (tr?.role !== 'toolResult') throw new Error('unreachable')
     expect(tr.blocks.some((b) => b.type === 'image')).toBe(false)
     expect(tr.blocks.some((b) => b.type === 'text' && b.text.includes('未存入历史'))).toBe(true)
+  })
+
+  it('撤回最后一条用户消息:删除其后的回复,并原样返回文本与引用', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('回复')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    const mention = { key: 'cron:backup', type: 'cron' as const, id: 'backup', label: '每日备份' }
+    await svc.send({
+      sessionId: s.id,
+      text: '误发的消息',
+      mentions: [mention],
+      clientMessageId: 'local-u-1'
+    })
+
+    const user = svc.getMessages(s.id).find((m) => m.role === 'user')
+    if (!user) throw new Error('unreachable')
+    expect(user.id).toBe('local-u-1')
+    await expect(svc.retract({ sessionId: s.id, messageId: user.id })).resolves.toEqual({
+      text: '误发的消息',
+      mentions: [mention]
+    })
+
+    expect(svc.getMessages(s.id)).toHaveLength(0)
+    expect(svc.listSessions()[0]?.title).toBe('')
+    // 重载后仍是撤回后的状态(main 已落盘,不只是内存)
+    const reloaded = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    expect(reloaded.getMessages(s.id)).toHaveLength(0)
+  })
+
+  it('撤回历史用户消息:删除该条及其后的所有轮次,保留更早的对话', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxText('第一条回复')]),
+      fauxAssistantMessage([fauxText('第二条回复')]),
+      fauxAssistantMessage([fauxText('第三条回复')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '第一条' })
+    await svc.send({ sessionId: s.id, text: '第二条' })
+    await svc.send({ sessionId: s.id, text: '第三条' })
+    const users = svc.getMessages(s.id).filter((m) => m.role === 'user')
+    const second = users[1]
+    if (!second) throw new Error('unreachable')
+
+    await expect(svc.retract({ sessionId: s.id, messageId: second.id })).resolves.toMatchObject({
+      text: '第二条'
+    })
+    expect(svc.getMessages(s.id).map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(svc.getMessages(s.id)[0]?.blocks).toMatchObject([{ type: 'text', text: '第一条' }])
+    expect(svc.listSessions()[0]?.title).toBe('第一条')
+
+    // 再撤回剩下的第一条(此时它是历史消息中的第一条):整段清空,标题复位
+    const first = svc.getMessages(s.id).find((m) => m.role === 'user')
+    if (!first) throw new Error('unreachable')
+    await svc.retract({ sessionId: s.id, messageId: first.id })
+    expect(svc.getMessages(s.id)).toHaveLength(0)
+    expect(svc.listSessions()[0]?.title).toBe('')
+  })
+
+  it('运行中撤回:先中止当前 run,再删掉已落库的消息', async () => {
+    const faux = fauxProvider({ tokensPerSecond: 10 })
+    faux.setResponses([fauxAssistantMessage([fauxText('很长'.repeat(200))])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    const sending = svc.send({
+      sessionId: s.id,
+      text: '误发后立刻撤回',
+      clientMessageId: 'local-u-live'
+    })
+    await new Promise<void>((resolve) => {
+      const timer = setInterval(() => {
+        if (events.some((e) => e.type === 'run_start')) {
+          clearInterval(timer)
+          resolve()
+        }
+      }, 5)
+    })
+    const user = svc.getMessages(s.id).find((m) => m.role === 'user')
+    if (!user) throw new Error('unreachable')
+    expect(user.id).toBe('local-u-live')
+
+    await expect(svc.retract({ sessionId: s.id, messageId: user.id })).resolves.toMatchObject({
+      text: '误发后立刻撤回'
+    })
+    await sending
+    expect(svc.isRunning()).toBe(false)
+    expect(svc.getMessages(s.id)).toHaveLength(0)
+    expect(events.some((e) => e.type === 'run_end' && e.stopReason === 'aborted')).toBe(true)
+  })
+
+  it('run 刚建立就停止:不再发起模型请求', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('不应出现')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    const sending = svc.send({ sessionId: s.id, text: '立刻停' })
+    // send 已同步跑到第一个 await,此时 abort 应能阻止 prompt 发出。
+    svc.abort()
+    await sending
+    expect(faux.state.callCount).toBe(0)
+    expect(svc.isRunning()).toBe(false)
+  })
+})
+
+describe('ChatService 附件', () => {
+  const image = {
+    type: 'image' as const,
+    key: 'i1',
+    name: 'shot.png',
+    mimeType: 'image/png',
+    data: 'iVBORw0KGgo='
+  }
+  const textFile = {
+    type: 'text' as const,
+    key: 't1',
+    name: 'notes.md',
+    content: '8080 被占用',
+    bytes: 12
+  }
+
+  it('附件随消息入库,当前轮只送一张图且文本进入上下文', async () => {
+    const faux = fauxProvider()
+    let imageCount = -1
+    let userText = ''
+    faux.setResponses([
+      (ctx) => {
+        const users = ctx.messages.filter((m) => m.role === 'user')
+        const last = users[users.length - 1] as { content: unknown }
+        const parts = Array.isArray(last.content)
+          ? (last.content as Array<{ type: string; text?: string }>)
+          : []
+        imageCount = parts.filter((p) => p.type === 'image').length
+        userText = parts.map((p) => (p.type === 'text' ? p.text ?? '' : '')).join('')
+        return fauxAssistantMessage([fauxText('ok')])
+      }
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '看看这些', attachments: [image, textFile] })
+
+    const user = svc.getMessages(s.id)[0]
+    if (user.role !== 'user') throw new Error('unreachable')
+    expect(user.attachments).toHaveLength(2)
+    expect(user.attachments?.[0]).toMatchObject({ type: 'image', name: 'shot.png' })
+    expect(imageCount).toBe(1)
+    expect(userText).toContain('8080 被占用')
+    expect(userText).toContain('看看这些')
+  })
+
+  it('下一轮历史回放仍带上一轮图片,且不会重复', async () => {
+    const faux = fauxProvider()
+    const counts: number[] = []
+    faux.setResponses([
+      fauxAssistantMessage([fauxText('收到')]),
+      (ctx) => {
+        let n = 0
+        for (const m of ctx.messages) {
+          if (!Array.isArray(m.content)) continue
+          n += m.content.filter((c) => c.type === 'image').length
+        }
+        counts.push(n)
+        return fauxAssistantMessage([fauxText('继续')])
+      }
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '第一轮', attachments: [image] })
+    await svc.send({ sessionId: s.id, text: '第二轮' })
+    expect(counts).toEqual([1])
+  })
+
+  it('拒绝空消息;纯附件可发送并用文件名作标题', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await expect(svc.send({ sessionId: s.id, text: '   ' })).rejects.toThrow(/AI_EMPTY_MESSAGE/)
+    expect(svc.getMessages(s.id)).toHaveLength(0)
+
+    await svc.send({ sessionId: s.id, text: '   ', attachments: [textFile] })
+    const listed = svc.listSessions().find((x) => x.id === s.id)
+    expect(listed?.title).toBe('notes.md')
+    expect(svc.getMessages(s.id).map((m) => m.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('非法附件拒绝发送,且不落库', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('不应出现')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await expect(
+      svc.send({
+        sessionId: s.id,
+        text: 'x',
+        attachments: [{ ...image, mimeType: 'image/svg+xml', name: 'x.svg' }]
+      })
+    ).rejects.toThrow(/AI_ATTACHMENT_INVALID/)
+    expect(svc.getMessages(s.id)).toHaveLength(0)
+    expect(faux.state.callCount).toBe(0)
+  })
+
+  it('撤回带回未裁剪的附件', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '带着文件', attachments: [image, textFile] })
+    const user = svc.getMessages(s.id).find((m) => m.role === 'user')
+    if (!user) throw new Error('unreachable')
+    const out = await svc.retract({ sessionId: s.id, messageId: user.id })
+    expect(out.attachments).toHaveLength(2)
+    expect(out.attachments?.[0]).toMatchObject({ key: 'i1', type: 'image' })
+  })
+
+  it('每一轮的附件按添加顺序绑定在该条用户消息上', async () => {
+    const faux = fauxProvider()
+    const seen: string[] = []
+    faux.setResponses([
+      (ctx) => {
+        seen.push(transcriptText(ctx.messages[ctx.messages.length - 1]))
+        return fauxAssistantMessage([fauxText('收到')])
+      },
+      (ctx) => {
+        const users = ctx.messages.filter((m) => m.role === 'user')
+        seen.push(users.map((m) => transcriptText(m)).join('\n===\n'))
+        return fauxAssistantMessage([fauxText('继续')])
+      }
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    const first = { type: 'text' as const, key: 't-first', name: 'first.md', content: 'FIRST', bytes: 5 }
+    const third = { type: 'text' as const, key: 't-third', name: 'third.log', content: 'THIRD', bytes: 5 }
+    const second = {
+      type: 'text' as const,
+      key: 't-second',
+      name: 'second.json',
+      content: 'SECOND',
+      bytes: 6
+    }
+
+    await svc.send({ sessionId: s.id, text: '第一轮', attachments: [first, image, third] })
+    await svc.send({ sessionId: s.id, text: '第二轮', attachments: [second] })
+
+    const users = svc.getMessages(s.id).filter((m) => m.role === 'user')
+    expect(users[0].attachments?.map((a) => a.key)).toEqual(['t-first', 'i1', 't-third'])
+    expect(users[1].attachments?.map((a) => a.key)).toEqual(['t-second'])
+
+    // 第二轮请求回放历史时,第一轮仍保持「文本 → 图片 → 文本」的添加顺序;
+    // 第二轮的上下文只出现自己的附件,不串到别的节点。
+    const historical = seen[1].split('\n===\n')
+    expect(historical).toHaveLength(2)
+    expect(historical[0].indexOf('first.md')).toBeLessThan(historical[0].indexOf('shot.png'))
+    expect(historical[0].indexOf('shot.png')).toBeLessThan(historical[0].indexOf('third.log'))
+    expect(historical[1]).toContain('second.json')
+    expect(historical[1]).not.toContain('first.md')
+    expect(historical[1]).not.toContain('third.log')
+
+    // 重新载入会话文件后,节点归属与顺序仍在
+    const reloaded = build({ faux, tools: [readonlyTool] })
+    const reloadedUsers = reloaded.getMessages(s.id).filter((m) => m.role === 'user')
+    expect(reloadedUsers[0].attachments?.map((a) => a.key)).toEqual(['t-first', 'i1', 't-third'])
+    expect(reloadedUsers[1].attachments?.map((a) => a.key)).toEqual(['t-second'])
+  })
+
+  it('引用与附件混排:按共用 order 落库,并在上下文里声明总顺序', async () => {
+    const faux = fauxProvider()
+    let seen = ''
+    faux.setResponses([
+      (ctx) => {
+        seen = transcriptText(ctx.messages[ctx.messages.length - 1])
+        return fauxAssistantMessage([fauxText('ok')])
+      }
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '按顺序看',
+      mentions: [
+        {
+          key: 'agent:user:com.foo',
+          type: 'agent',
+          id: 'user:com.foo',
+          label: 'com.foo',
+          scope: 'user',
+          order: 30
+        }
+      ],
+      attachments: [
+        { ...textFile, key: 't-mixed', name: 'first.md', order: 0 },
+        { ...image, key: 'i-mixed', name: 'shot.png', order: 20 }
+      ]
+    })
+
+    // 跨类别的总顺序必须显式写给模型:分类正文仍按各自的数组顺序成块。
+    expect(seen).toContain(
+      '[本条消息的引用顺序：文件「first.md」 → 图片「shot.png」 → 任务「com.foo」]'
+    )
+    const user = svc.getMessages(s.id)[0]
+    if (user.role !== 'user') throw new Error('unreachable')
+    expect(user.attachments?.map((a) => a.order)).toEqual([0, 20])
+    expect(user.mentions?.[0]?.order).toBe(30)
+  })
+
+  it('light 模式剥离附件负载,完整模式保留', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: 'x', attachments: [image, textFile] })
+
+    const full = svc.getMessages(s.id)[0]
+    if (full.role !== 'user') throw new Error('unreachable')
+    expect(full.attachments?.[0]).toMatchObject({ data: image.data })
+    expect(full.attachments?.[1]).toMatchObject({ content: textFile.content })
+
+    const light = svc.getMessages(s.id, { light: true })[0]
+    if (light.role !== 'user') throw new Error('unreachable')
+    expect(light.attachments?.every((a) => a.trimmed)).toBe(true)
+    for (const a of light.attachments ?? []) {
+      if (a.type === 'image') expect(a.data).toBe('')
+      else expect(a.content).toBe('')
+    }
+  })
+
+  it('落盘后不残留 .tmp 文件', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: 'x', attachments: [image] })
+    expect(existsSync(join(dir, 'ai-sessions.json'))).toBe(true)
+    expect(existsSync(join(dir, 'ai-sessions.json.tmp'))).toBe(false)
+  })
+})
+
+describe('ChatService 计时', () => {
+  it('run_end 带 messageId/durationMs/finishedAt,只有最后一条助手消息带整轮耗时', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('list_services', {})]),
+      fauxAssistantMessage([fauxText('完成')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '跑一下' })
+
+    const assistants = svc
+      .getMessages(s.id)
+      .filter((m): m is Extract<typeof m, { role: 'assistant' }> => m.role === 'assistant')
+    expect(assistants).toHaveLength(2)
+    expect(assistants[0].finishedAt).toBeGreaterThan(0)
+    expect(assistants[0].durationMs).toBeUndefined()
+    expect(assistants[1].finishedAt).toBeGreaterThan(0)
+    expect(assistants[1].durationMs).toBeGreaterThanOrEqual(0)
+
+    const end = events.find((e) => e.type === 'run_end')
+    if (end?.type !== 'run_end') throw new Error('unreachable')
+    expect(end.messageId).toBe(assistants[1].id)
+    expect(end.durationMs).toBe(assistants[1].durationMs)
+    expect(end.finishedAt).toBe(assistants[1].finishedAt)
+  })
+
+  it('重载会话文件后计时字段仍在', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: 'hi' })
+    const before = svc.getMessages(s.id).find((m) => m.role === 'assistant')
+    if (!before || before.role !== 'assistant') throw new Error('unreachable')
+
+    const reloaded = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    const after = reloaded.getMessages(s.id).find((m) => m.role === 'assistant')
+    if (!after || after.role !== 'assistant') throw new Error('unreachable')
+    expect(after.finishedAt).toBe(before.finishedAt)
+    expect(after.durationMs).toBe(before.durationMs)
+  })
+})
+
+describe('ChatService 分支', () => {
+  async function twoTurns(): Promise<{
+    svc: ChatService
+    ids: { session: string; firstUser: string; firstFinal: string; toolCall: string }
+  }> {
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall('list_services', {})]),
+      fauxAssistantMessage([fauxText('第一轮结论')]),
+      fauxAssistantMessage([fauxText('第二轮结论')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '第一轮' })
+    await svc.send({ sessionId: s.id, text: '第二轮' })
+    const msgs = svc.getMessages(s.id)
+    const firstUser = msgs.find((m) => m.role === 'user')
+    const assistants = msgs.filter(
+      (m): m is Extract<typeof m, { role: 'assistant' }> => m.role === 'assistant'
+    )
+    if (!firstUser) throw new Error('unreachable')
+    return {
+      svc,
+      ids: {
+        session: s.id,
+        firstUser: firstUser.id,
+        firstFinal: assistants[1].id,
+        toolCall: assistants[0].id
+      }
+    }
+  }
+
+  it('复制分叉点之前的上下文,排除之后的对话', async () => {
+    const { svc, ids } = await twoTurns()
+    const b = svc.branch({ sessionId: ids.session, messageId: ids.firstFinal })
+    expect(b.title).toBe('第一轮 · 分支')
+    expect(b.branch).toEqual({
+      sessionId: ids.session,
+      messageId: ids.firstFinal,
+      title: '第一轮'
+    })
+    expect(b.autoApprove).toBe(false)
+    const copied = svc.getMessages(b.id)
+    expect(copied.map((m) => m.role)).toEqual(['user', 'assistant', 'toolResult', 'assistant'])
+    expect(copied.map((m) => m.id)).toEqual([
+      ids.firstUser,
+      ids.toolCall,
+      expect.any(String),
+      ids.firstFinal
+    ])
+    expect(svc.listSessions().find((x) => x.id === b.id)?.branch).toEqual(b.branch)
+  })
+
+  it('从带工具调用的回复分叉时把紧随的 toolResult 一并复制', async () => {
+    const { svc, ids } = await twoTurns()
+    const b = svc.branch({ sessionId: ids.session, messageId: ids.toolCall })
+    expect(svc.getMessages(b.id).map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'toolResult'
+    ])
+  })
+
+  it('分支后可以继续发送', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxText('第一轮结论')]),
+      fauxAssistantMessage([fauxText('分叉后续写')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '第一轮' })
+    const a = svc.getMessages(s.id).find((m) => m.role === 'assistant')
+    if (!a) throw new Error('unreachable')
+    const b = svc.branch({ sessionId: s.id, messageId: a.id })
+    await svc.send({ sessionId: b.id, text: '继续' })
+    expect(svc.getMessages(b.id).map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant'
+    ])
+  })
+
+  it('目标不是助手回复时拒绝', async () => {
+    const { svc, ids } = await twoTurns()
+    expect(() => svc.branch({ sessionId: ids.session, messageId: ids.firstUser })).toThrow(
+      /AI_BRANCH_NOT_FOUND/
+    )
+    expect(() =>
+      svc.branch({ sessionId: 'missing', messageId: ids.firstFinal })
+    ).toThrow(/AI_SESSION_MISSING/)
+  })
+})
+
+
+describe('ChatService 内联分段与技能', () => {
+  const textAttachment = {
+    type: 'text' as const,
+    key: 't-seg',
+    name: 'seg.md',
+    content: 'SEG',
+    bytes: 3
+  }
+  const cronMention = {
+    key: 'cron:backup',
+    type: 'cron' as const,
+    id: 'backup',
+    label: '每日备份'
+  }
+  const segments = [
+    { type: 'text' as const, text: '先看 ' },
+    { type: 'ref' as const, refType: 'attachment' as const, key: 't-seg' },
+    { type: 'text' as const, text: ' 再查 ' },
+    { type: 'ref' as const, refType: 'mention' as const, key: 'cron:backup' },
+    { type: 'skill' as const, id: 'sk-refactor' }
+  ]
+
+  it('按输入时的交错顺序落库,丢弃不存在的引用键', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '先看 再查',
+      attachments: [textAttachment],
+      mentions: [cronMention],
+      segments: [
+        ...segments,
+        { type: 'ref', refType: 'attachment', key: 'ghost' },
+        { type: 'skill', id: 'sk-not-selected' }
+      ],
+      skillId: 'sk-refactor'
+    })
+
+    const user = svc.getMessages(s.id)[0]
+    if (user.role !== 'user') throw new Error('unreachable')
+    expect(user.segments).toEqual(segments)
+    expect(user.skillId).toBe('sk-refactor')
+    // 分段只用于回显;送给模型/写入正文的仍是干净的 text
+    expect(user.blocks).toEqual([{ type: 'text', text: '先看 再查' }])
+  })
+
+  it('只选技能、没有正文也可以发送(技能会先问目标)', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('你想生成什么任务？')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({ sessionId: s.id, text: '', skillId: 'sk-refactor' })
+
+    const user = svc.getMessages(s.id)[0]
+    if (user.role !== 'user') throw new Error('unreachable')
+    expect(user.blocks).toEqual([{ type: 'text', text: '' }])
+    expect(user.skillId).toBe('sk-refactor')
+    expect(svc.listSessions().find((x) => x.id === s.id)?.title).toBe('技能任务')
+  })
+
+  it('撤回带回内联分段与技能;被裁剪的附件不会留下幽灵 chip', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '先看 再查',
+      attachments: [textAttachment],
+      mentions: [cronMention],
+      segments,
+      skillId: 'sk-refactor'
+    })
+    const user = svc.getMessages(s.id).find((m) => m.role === 'user')
+    if (!user) throw new Error('unreachable')
+    const out = await svc.retract({ sessionId: s.id, messageId: user.id })
+    expect(out).toMatchObject({ text: '先看 再查', skillId: 'sk-refactor', segments })
+    expect(out.attachments?.[0]).toMatchObject({ key: 't-seg' })
+  })
+
+  it('载入历史数据时剔除已不存在的技能与引用键', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([fauxAssistantMessage([fauxText('ok')])])
+    const svc = build({ faux, tools: [readonlyTool] })
+    const s = svc.createSession()
+    await svc.send({
+      sessionId: s.id,
+      text: '先看',
+      attachments: [textAttachment],
+      segments: [segments[0]!, segments[1]!, { type: 'skill', id: 'sk-refactor' }],
+      skillId: 'sk-refactor'
+    })
+
+    const storePath = join(dir, 'ai-sessions.json')
+    const store = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      sessions: Array<{ messages: Array<Record<string, unknown>> }>
+    }
+    const user = store.sessions[0]?.messages[0]
+    if (!user) throw new Error('unreachable')
+    user.segments = [
+      { type: 'text', text: '先看 ' },
+      { type: 'ref', refType: 'attachment', key: 'ghost' },
+      { type: 'skill', id: 'sk-removed-in-new-version' }
+    ]
+    user.skillIds = ['sk-removed-in-new-version']
+    user.skillId = 'sk-removed-in-new-version'
+    writeFileSync(storePath, JSON.stringify(store), 'utf8')
+
+    const reloaded = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    const msg = reloaded.getMessages(s.id)[0]
+    if (msg.role !== 'user') throw new Error('unreachable')
+    expect(msg.skillId).toBeUndefined()
+    expect(msg.skillIds).toBeUndefined()
+    // 只剩文字时没有 ref/skill,分段本身也不再保留
+    expect(msg.segments).toBeUndefined()
   })
 })

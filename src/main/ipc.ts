@@ -34,7 +34,14 @@ import type {
   NoteSaveAssetInput,
   NoteSaveInput
 } from '../shared/notes'
-import type { AiApprovalInput, AiSendInput } from '../shared/ipc'
+import type {
+  AiApprovalInput,
+  AiAutoApproveInput,
+  AiBranchInput,
+  AiGetMessagesOpts,
+  AiRetractInput,
+  AiSendInput
+} from '../shared/ipc'
 import type { AiProviderId } from '../shared/settings'
 
 export interface IpcDeps {
@@ -247,10 +254,15 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.aiListSessions, () => deps.ai.chat.listSessions())
   ipcMain.handle(IPC.aiCreateSession, () => deps.ai.chat.createSession())
   ipcMain.handle(IPC.aiDeleteSession, (_e, id: string) => deps.ai.chat.deleteSession(String(id)))
-  ipcMain.handle(IPC.aiGetMessages, (_e, sessionId: string) => deps.ai.chat.getMessages(String(sessionId)))
+  ipcMain.handle(IPC.aiGetMessages, (_e, sessionId: string, opts?: AiGetMessagesOpts) =>
+    deps.ai.chat.getMessages(String(sessionId), opts)
+  )
   ipcMain.handle(IPC.aiSend, (_e, input: AiSendInput) => deps.ai.chat.send(input))
+  ipcMain.handle(IPC.aiRetract, (_e, input: AiRetractInput) => deps.ai.chat.retract(input))
+  ipcMain.handle(IPC.aiBranch, (_e, input: AiBranchInput) => deps.ai.chat.branch(input))
   ipcMain.handle(IPC.aiAbort, () => deps.ai.chat.abort())
   ipcMain.handle(IPC.aiRespondApproval, (_e, input: AiApprovalInput) => deps.ai.chat.respondApproval(input))
+  ipcMain.handle(IPC.aiSetAutoApprove, (_e, input: AiAutoApproveInput) => deps.ai.chat.setAutoApprove(input))
   ipcMain.handle(IPC.aiSkills, () => deps.ai.chat.skills())
   ipcMain.handle(IPC.aiCatalog, (_e, providerId: AiProviderId) => deps.ai.chat.catalog(providerId))
   ipcMain.handle(IPC.aiMcpInfo, () => deps.ai.mcpInfo())

@@ -26,6 +26,30 @@ describe('i18n dictionaries', () => {
       expect(enUS[k], `en-US 缺 ${k}`).toBeTruthy()
     }
   })
+
+  it('上下文明细卡的键在两份字典均存在', () => {
+    const keys = [
+      'ai.ctx.card.title',
+      'ai.ctx.card.summary',
+      'ai.ctx.card.remaining',
+      'ai.ctx.card.over',
+      'ai.ctx.card.anchor',
+      'ai.ctx.card.anchorSub',
+      'ai.ctx.card.trailing',
+      'ai.ctx.card.trailingSub',
+      'ai.ctx.card.draft',
+      'ai.ctx.card.draftSub',
+      'ai.ctx.card.draftAtt',
+      'ai.ctx.card.model',
+      'ai.ctx.card.window',
+      'ai.ctx.card.note',
+      'ai.ctx.card.earlierNotCounted'
+    ]
+    for (const k of keys) {
+      expect(zhCN[k], `zh-CN 缺 ${k}`).toBeTruthy()
+      expect(enUS[k], `en-US 缺 ${k}`).toBeTruthy()
+    }
+  })
 })
 
 describe('t / fmt', () => {

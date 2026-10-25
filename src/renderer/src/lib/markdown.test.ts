@@ -47,6 +47,37 @@ describe('renderMarkdown', () => {
     expect(el.props.children.props.children).toBe('const a = 1\nconst b = 2')
   })
 
+  it('缩进围栏(列表项下的代码块)仍按代码块渲染,并去掉围栏缩进', () => {
+    // 真实模型输出常见:代码块缩进在列表项下(例如「完整命令」)。
+    const nodes = renderMarkdown(
+      ['- **完整命令**：', '  ```bash', '  /Users/me/sail serve web', '  ```', '', '下一段'].join('\n')
+    )
+    const pre = findElement(nodes, 'pre') as {
+      props: { className: string; children: { props: { children: string } } }
+    }
+    expect(pre?.props.className).toBe('md-code')
+    expect(pre.props.children.props.children).toBe('/Users/me/sail serve web')
+    // 反引号不能再漏到正文里
+    expect(textOf(nodes)).not.toContain('```')
+  })
+
+  it('四反引号围栏里的三反引号不算闭合', () => {
+    const nodes = renderMarkdown(['````markdown', '```bash', 'ls', '```', '````'].join('\n'))
+    const pre = findElement(nodes, 'pre') as {
+      props: { children: { props: { children: string } } }
+    }
+    expect(pre.props.children.props.children).toBe('```bash\nls\n```')
+  })
+
+  it('~~~ 围栏同样按代码块渲染', () => {
+    const nodes = renderMarkdown('~~~js\nconst a = 1\n~~~')
+    const pre = findElement(nodes, 'pre') as {
+      props: { className: string; children: { props: { children: string } } }
+    }
+    expect(pre?.props.className).toBe('md-code')
+    expect(pre.props.children.props.children).toBe('const a = 1')
+  })
+
   it('nested bold + inline code', () => {
     const nodes = renderMarkdown('**bold with `code` inside**')
     const txt = textOf(nodes)

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import type { AssistantMessage } from '@earendil-works/pi-ai'
 import type { AiAssistantMessage, AiMessage, AiToolResultMessage, AiUserMessage } from '../../shared/ai'
 import { fromPiContent, fromPiToolResult, fromPiUsage, toPiMessages } from './message-map'
+import { userMessageContext } from './user-context'
 
 const userMsg = (text: string): AiUserMessage => ({
   role: 'user',
@@ -49,9 +50,8 @@ describe('toPiMessages', () => {
       mentions: [{ key: 'agent:1', type: 'agent', id: 'user:com.foo', label: 'com.foo', scope: 'user' }]
     }
     const out = toPiMessages([m])
-    expect((out[0] as { content: string }).content).toContain('[用户引用了本机任务')
-    expect((out[0] as { content: string }).content).toContain('com.foo')
-    expect((out[0] as { content: string }).content).toContain('LaunchAgent · user')
+    expect((out[0] as { content: string }).content).toContain('[用户引用了以下内容（按添加顺序）')
+    expect((out[0] as { content: string }).content).toContain('1. 本机任务：com.foo（LaunchAgent · user）')
     expect(m.blocks).toHaveLength(1) // 引用不污染落库的消息内容
   })
 
@@ -60,7 +60,8 @@ describe('toPiMessages', () => {
       ...userMsg('x'),
       mentions: [{ key: 'cron:1', type: 'cron', id: 'c1', label: '每日备份' }]
     }
-    expect((toPiMessages([m])[0] as { content: string }).content).toContain('每日备份（定时任务）')
+    expect((toPiMessages([m])[0] as { content: string }).content).toContain('1. 定时任务：每日备份')
+    expect((toPiMessages([m])[0] as { content: string }).content).not.toContain('LaunchAgent')
   })
 
   it('笔记引用把正文注入用户消息(引用是指路,正文不落进 blocks)', () => {
@@ -195,6 +196,71 @@ describe('toPiMessages', () => {
     const out = toPiMessages([m])[0] as AssistantMessage
     expect(out.api).toBe('openai-completions')
     expect(out.provider).toBe('openai-compatible')
+  })
+})
+
+describe('用户附件', () => {
+  const IMG = 'iVBORw0KGgo='
+
+  it('图片作为内容块随用户消息回放,文本只出现一次', () => {
+    const m: AiUserMessage = {
+      ...userMsg('看看这张图'),
+      attachments: [
+        { type: 'image', key: 'i1', name: 'shot.png', mimeType: 'image/png', data: IMG },
+        { type: 'text', key: 't1', name: 'notes.md', content: '8080 被占用', bytes: 12 }
+      ]
+    }
+    const out = toPiMessages([m])[0] as { content: unknown }
+    expect(Array.isArray(out.content)).toBe(true)
+    const parts = out.content as Array<{ type: string; text?: string; data?: string }>
+    expect(parts.map((p) => p.type)).toEqual(['text', 'image'])
+    expect(parts[0].text).toContain('8080 被占用')
+    expect(parts[0].text).toContain('看看这张图')
+    expect(parts[1].data).toBe(IMG)
+    // 当前轮 prompt 走同一个拼接函数,历史回放与当前轮文本一致
+    expect(parts[0].text).toBe(userMessageContext(m, undefined))
+    // 原始消息不被污染
+    expect(m.blocks).toHaveLength(1)
+  })
+
+  it('trimmed 图片不再进入内容块,只保留清理说明', () => {
+    const m: AiUserMessage = {
+      ...userMsg('旧图'),
+      attachments: [
+        { type: 'image', key: 'i1', name: 'old.png', mimeType: 'image/png', data: '', trimmed: true }
+      ]
+    }
+    const content = (toPiMessages([m])[0] as { content: unknown }).content
+    expect(typeof content).toBe('string')
+    expect(content).toContain('历史图片已清理')
+    expect(content).not.toContain('old.png（已作为图片输入')
+  })
+
+  it('纯图片消息的文本非空(避免 Anthropic 拒绝空文本块)', () => {
+    const m: AiUserMessage = {
+      ...userMsg(''),
+      attachments: [
+        { type: 'image', key: 'i1', name: 'shot.png', mimeType: 'image/png', data: IMG }
+      ]
+    }
+    const parts = (toPiMessages([m])[0] as { content: unknown }).content as Array<{
+      type: string
+      text?: string
+    }>
+    expect(parts[0].type).toBe('text')
+    expect(parts[0].text?.trim()).not.toBe('')
+    expect(parts[1]).toMatchObject({ type: 'image', data: IMG })
+  })
+
+  it('旧数据里的 user image block 仍然回放', () => {
+    const m: AiUserMessage = {
+      role: 'user',
+      id: 'u-legacy',
+      blocks: [{ type: 'image', data: IMG, mimeType: 'image/png' }],
+      timestamp: 1
+    }
+    const parts = (toPiMessages([m])[0] as { content: unknown }).content as Array<{ type: string }>
+    expect(parts.map((p) => p.type)).toEqual(['text', 'image'])
   })
 })
 

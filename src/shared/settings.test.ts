@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AI_CONTEXT_WINDOW_MAX,
+  AI_CONTEXT_WINDOW_MIN,
   DEFAULT_SETTINGS,
   SERVICE_OVERRIDE_MAX_ENTRIES,
   normalizeServiceOverrides,
@@ -212,5 +214,55 @@ describe('AI 协议配置:自定义请求头', () => {
 
   it('缺省时是 undefined,不影响既有配置', () => {
     expect(normalizeSettings({}).aiProviders.anthropic.headers).toBeUndefined()
+  })
+})
+
+
+// 上下文窗口:留空 = 按模型目录自动判断;手填值必须落在合理范围内,
+// 否则一个手滑的 0/NaN 会让输入框的用量环永远显示 100%。
+describe('AI 协议配置:上下文窗口覆盖', () => {
+  it('合法整数被保留,两条协议互不影响', () => {
+    const s = normalizeSettings({
+      aiProviders: {
+        anthropic: { contextWindow: 200_000 },
+        'openai-compatible': { contextWindow: 32_768 }
+      }
+    })
+    expect(s.aiProviders.anthropic.contextWindow).toBe(200_000)
+    expect(s.aiProviders['openai-compatible'].contextWindow).toBe(32_768)
+  })
+
+  it('小数按整数截断,边界值可用', () => {
+    const s = normalizeSettings({
+      aiProviders: {
+        anthropic: { contextWindow: 128_000.9 },
+        'openai-compatible': { contextWindow: AI_CONTEXT_WINDOW_MIN }
+      }
+    })
+    expect(s.aiProviders.anthropic.contextWindow).toBe(128_000)
+    expect(s.aiProviders['openai-compatible'].contextWindow).toBe(AI_CONTEXT_WINDOW_MIN)
+    expect(
+      normalizeSettings({ aiProviders: { anthropic: { contextWindow: AI_CONTEXT_WINDOW_MAX } } })
+        .aiProviders.anthropic.contextWindow
+    ).toBe(AI_CONTEXT_WINDOW_MAX)
+  })
+
+  it('越界/非数字/字符串被丢弃 = 自动', () => {
+    for (const value of [
+      AI_CONTEXT_WINDOW_MIN - 1,
+      AI_CONTEXT_WINDOW_MAX + 1,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      '128000',
+      null,
+      true
+    ]) {
+      const s = normalizeSettings({ aiProviders: { anthropic: { contextWindow: value } } })
+      expect(s.aiProviders.anthropic.contextWindow).toBeUndefined()
+    }
+  })
+
+  it('缺省时不写该字段(旧配置文件不被无意义地改写)', () => {
+    expect(normalizeSettings({}).aiProviders.anthropic.contextWindow).toBeUndefined()
   })
 })

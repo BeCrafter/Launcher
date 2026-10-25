@@ -140,8 +140,14 @@ function renderInline(parts: Inline[], keyBase: string, anchors = false): ReactN
  * 围栏开启行。**必须捕获反引号的个数** —— CommonMark 的规则是「闭合围栏的反引号
  * 不少于开启围栏」,所以 ````markdown 里面可以正常放 ``` 而不被提前截断。
  * 之前固定按三个反引号配对,导致文档里「四反引号包一段带围栏的示例」这种写法全渲染错了。
+ *
+ * 允许行首缩进与 `~~~`:
+ *   · LLM 经常把代码块缩进在列表项下面(如 `  ```bash`),不允许缩进会让整段围栏
+ *     退化成普通段落,用户看到的就是三个反引号和代码原文;
+ *   · `~~~` 是 CommonMark 的另一种围栏,和反引号一样常见。
+ * 第 1 组是缩进(闭合时用于剥掉正文的等量缩进),第 2 组是围栏标记,第 3 组是信息串。
  */
-const FENCE_RE = /^(`{3,})(\w*)/
+const FENCE_RE = /^([ \t]*)(`{3,}|~{3,})(.*)$/
 const HEAD_RE = /^(#{1,4})\s+(.*)$/
 const UL_RE = /^[-*]\s+(.*)$/
 const OL_RE = /^\d+[.)]\s+(.*)$/
@@ -317,11 +323,18 @@ function renderMarkdownBasic(src: string, keyPrefix: string, opts: MarkdownOptio
     // 围栏代码块:未闭合则吃到结尾(不静默丢弃后半段)
     const fence = line.match(FENCE_RE)
     if (fence) {
-      // 闭合围栏的反引号**不少于**开启的个数(CommonMark):``` 里的 ```` 不算闭合
-      const closeRe = new RegExp('^`{' + fence[1].length + ',}\\s*$')
+      // 闭合围栏的标记必须同种、个数**不少于**开启的个数(CommonMark):
+      // ``` 里的 ```` 不算闭合;缩进的闭合行同样有效。
+      const marker = fence[2][0]
+      const closeRe = new RegExp('^[ \\t]*' + marker + '{' + fence[2].length + ',}\\s*$')
+      const indent = fence[1].length
       const body: string[] = []
       i++
-      while (i < lines.length && !closeRe.test(lines[i])) body.push(lines[i++])
+      while (i < lines.length && !closeRe.test(lines[i])) {
+        // 去掉与开启围栏相同的缩进,否则列表里的代码块会整体多出两个空格
+        body.push(stripFenceIndent(lines[i], indent))
+        i++
+      }
       if (i < lines.length) i++ // 跳过闭合行
       out.push(
         <pre className="md-code" key={key()}>
@@ -452,6 +465,13 @@ function renderMarkdownBasic(src: string, keyPrefix: string, opts: MarkdownOptio
     )
   }
   return out
+}
+
+/** 围栏正文去掉与开启围栏相同的缩进(CommonMark:最多去掉开启围栏的缩进量) */
+function stripFenceIndent(line: string, n: number): string {
+  let i = 0
+  while (i < n && i < line.length && (line[i] === ' ' || line[i] === '\t')) i++
+  return line.slice(i)
 }
 
 function isBlockStart(line: string, next?: string): boolean {

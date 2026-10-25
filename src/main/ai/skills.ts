@@ -143,3 +143,56 @@ export function findSkill(id: string | undefined): SkillDef | undefined {
   if (!id) return undefined
   return SKILLS.find((s) => s.id === id)
 }
+
+/** 按 id 解析技能(忽略未知 id,保持传入顺序) */
+export function findSkills(ids: readonly string[]): SkillDef[] {
+  const out: SkillDef[] = []
+  for (const id of ids) {
+    const skill = findSkill(id)
+    if (skill && !out.includes(skill)) out.push(skill)
+  }
+  return out
+}
+
+/**
+ * 多技能合一的系统提示词。
+ * 单技能与原来的「专家提示词 + --- + 任务段」完全一致;多技能时每个任务前加一行标题,
+ * 并说明它们可以协同,避免模型把第二段任务误当成对第一段的补充说明。
+ */
+export function combineSkillTasks(base: string, skills: readonly SkillDef[]): string {
+  if (skills.length === 0) return base
+  if (skills.length === 1) return `${base}\n\n---\n\n${skills[0].task}`
+  const tasks = skills
+    .map((s, i) => `### 技能 ${i + 1}（${s.id}）\n\n${s.task}`)
+    .join('\n\n---\n\n')
+  return (
+    `${base}\n\n---\n\n` +
+    `当前消息同时启用了 ${skills.length} 个技能，请按用户请求协同使用；` +
+    `各技能的任务与约束都要遵守，彼此冲突时以用户的明确要求为准。\n\n` +
+    tasks
+  )
+}
+
+/**
+ * 多技能的工具白名单：任一技能不限制工具（tools === null）→ 不限制；
+ * 否则取并集，并按注册表顺序过滤（保持工具列表稳定，便于缓存与测试）。
+ */
+export function toolsForSkills<T extends { name: string }>(
+  allTools: T[],
+  skills: readonly SkillDef[]
+): T[] {
+  if (skills.length === 0) return allTools
+  if (skills.some((s) => s.tools === null)) return allTools
+  const allowed = new Set<string>()
+  for (const s of skills) for (const name of s.tools ?? []) allowed.add(name)
+  return allTools.filter((t) => allowed.has(t.name))
+}
+
+/** 多技能的轮数下限：取全局设置与各技能 turnLimit 的最大值 */
+export function turnLimitForSkills(base: number, skills: readonly SkillDef[]): number {
+  let limit = base
+  for (const s of skills) {
+    if (s.turnLimit && s.turnLimit > limit) limit = s.turnLimit
+  }
+  return limit
+}

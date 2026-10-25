@@ -2,6 +2,7 @@
 // 与 demo 的差异:预置会话来自 main 持久化(AiSession),正文按需拉取进 msgCache 供搜索扫描
 import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useT } from '../../hooks/useT'
+import { fmt } from '../../i18n'
 import { useAiStore, sessionTsLabel } from '../../state/ai-store'
 import { confirmDangerous } from '../../lib/elevation'
 import { useRailResize } from '../../lib/use-rail-resize'
@@ -111,6 +112,14 @@ export function AiRail({
               onClick={() => void select(s.id)}
             >
               <div className="ai-rail-item-title" title={s.title}>
+                {s.branch && (
+                  <i
+                    className="fa-solid fa-code-branch ai-rail-branch"
+                    title={fmt(t('ai.rail.branchFrom'), {
+                      TITLE: s.branch.title.trim() || t('ai.rail.untitled')
+                    })}
+                  />
+                )}
                 {s.title}
               </div>
               {hit ?? <div className="ai-rail-item-ts">{sessionTsLabel(s.updatedAt)}</div>}

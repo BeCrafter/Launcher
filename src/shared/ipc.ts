@@ -3,7 +3,7 @@
 import type { AgentScope, CronJob } from './models'
 import type { CronScope, DockerContainer, DockerUnavailableReason, PortService } from './models'
 import type { LauncherSettings } from './settings'
-import type { AiApprovalDecision, AiMention } from './ai'
+import type { AiApprovalDecision, AiAttachment, AiMention, AiUserSegment } from './ai'
 
 // ── invoke 通道 ──
 export const IPC = {
@@ -72,8 +72,12 @@ export const IPC = {
   aiDeleteSession: 'ai:deleteSession',
   aiGetMessages: 'ai:getMessages',
   aiSend: 'ai:send',
+  aiRetract: 'ai:retract',
+  /** 基于某条助手消息创建分支会话 */
+  aiBranch: 'ai:branch',
   aiAbort: 'ai:abort',
   aiRespondApproval: 'ai:respondApproval',
+  aiSetAutoApprove: 'ai:setAutoApprove',
   aiSkills: 'ai:skills',
   aiInstallMcpLink: 'ai:installMcpLink',
   aiCatalog: 'ai:catalog',
@@ -325,8 +329,49 @@ export interface AiSendInput {
   sessionId: string
   text: string
   mentions?: AiMention[]
-  /** 技能 id(欢迎态技能卡进入时带;决定注入的任务段与工具白名单) */
+  /** 图片/文本文件附件(渲染层已压缩/截断;main 会再收敛一次) */
+  attachments?: AiAttachment[]
+  /** 输入框内联排版;main 会校验引用确实存在后才落库 */
+  segments?: AiUserSegment[]
+  /** 技能 id 列表(欢迎态技能卡 / 输入框 `/` 选择时带;可多个,顺序即选择顺序) */
+  skillIds?: string[]
+  /** 旧的单技能字段;新代码读写 skillIds,这里只做兼容 */
   skillId?: string
+  /**
+   * 渲染层乐观上屏用的消息 id。main 落库时复用它,保证「发送后立即撤回」
+   * 能在库里找到同一条消息(否则本地临时 id 与 main 生成 id 对不上)。
+   */
+  clientMessageId?: string
+}
+
+/** ai:retract 的入参:撤回一条用户消息及其之后的全部回复,供输入框重新编辑 */
+export interface AiRetractInput {
+  sessionId: string
+  messageId: string
+}
+
+/** ai:retract 的结果:被撤回消息的原始内容(引用/附件一并带回输入框) */
+export interface AiRetractResult {
+  text: string
+  mentions?: AiMention[]
+  attachments?: AiAttachment[]
+  /** 回到输入框时还原文字与引用/附件/技能的原始交错位置 */
+  segments?: AiUserSegment[]
+  /** 被撤回消息选中的技能(可多个) */
+  skillIds?: string[]
+  /** 旧的单技能字段(首个技能) */
+  skillId?: string
+}
+
+/** ai:branch 的入参:从某条助手回复分叉出新会话 */
+export interface AiBranchInput {
+  sessionId: string
+  messageId: string
+}
+
+/** ai:getMessages 的可选参数;light = 只取正文,剥离附件负载(搜索缓存用) */
+export interface AiGetMessagesOpts {
+  light?: boolean
 }
 
 /** ai:testConnection 结果 */
@@ -340,6 +385,26 @@ export interface AiApprovalInput {
   runId: string
   toolCallId: string
   decision: AiApprovalDecision
+  /**
+   * true = 本次授权后,本会话内的**普通写操作**不再逐条询问。
+   * 危险操作(覆盖/删除/系统级等)由 main 侧继续逐条拦截,这个标志会被忽略。
+   */
+  rememberSession?: boolean
+}
+
+/** ai:respondApproval 的结果:应答后该会话是否处于普通写入自动允许状态 */
+export interface AiApprovalResult {
+  autoApprove: boolean
+}
+
+/** ai:setAutoApprove 入参:开启/关闭某会话的普通写入自动允许 */
+export interface AiAutoApproveInput {
+  sessionId: string
+  enabled: boolean
+}
+
+export interface AiAutoApproveResult {
+  autoApprove: boolean
 }
 
 /** PATH 上 launcher-mcp 链接的状态 */
