@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   artifactUrl,
   fetchUpdateManifest,
+  MANIFEST_MAX_BYTES,
   manifestUrl,
   parseUpdateManifest
 } from './update-manifest'
@@ -133,5 +134,20 @@ describe('fetchUpdateManifest', () => {
       timeoutMs: 20
     })
     expect(r).toMatchObject({ ok: false, error: '清单请求超时' })
+  })
+
+  it('没有 content-length 的超大响应体按块截断,不会先整份读进内存', async () => {
+    // 不 close:旧实现会一直等到超时;新实现应在第一块超限时立即返回。
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MANIFEST_MAX_BYTES + 1))
+      }
+    })
+    const oversized = (async () => new Response(body)) as unknown as typeof fetch
+    const r = await fetchUpdateManifest('0.3.0', {
+      fetchImpl: oversized,
+      timeoutMs: 1_000
+    })
+    expect(r).toMatchObject({ ok: false, error: expect.stringContaining('偏大') })
   })
 })

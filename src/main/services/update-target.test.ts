@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -139,6 +139,45 @@ describe('validateAppBundle', () => {
     expect(await validateAppBundle(app, deps())).toMatchObject({
       ok: false,
       error: expect.stringContaining('可执行')
+    })
+  })
+
+  it('CFBundleExecutable 带路径/.. → 拒绝,不会去包外找文件', async () => {
+    const app = makeApp()
+    const r = await validateAppBundle(
+      app,
+      deps({ runner: fakeRunner({ info: { ...GOOD_INFO, CFBundleExecutable: '../Resources/launcher-mcp' } }) })
+    )
+    expect(r).toMatchObject({ ok: false, error: expect.stringContaining('文件名不合法') })
+  })
+
+  it('主可执行文件或 launcher-mcp 是符号链接 → 拒绝', async () => {
+    const app = makeApp()
+    const exe = join(app, 'Contents', 'MacOS', 'Launcher')
+    unlinkSync(exe)
+    symlinkSync('/bin/true', exe)
+    expect(await validateAppBundle(app, deps())).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('普通文件')
+    })
+
+    const app2 = makeApp()
+    const mcp = join(app2, 'Contents', 'Resources', 'launcher-mcp')
+    unlinkSync(mcp)
+    symlinkSync('/bin/true', mcp)
+    expect(await validateAppBundle(app2, deps())).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('launcher-mcp')
+    })
+  })
+
+  it('包根是符号链接 → 拒绝,不能把包外目录当更新包', async () => {
+    const app = makeApp()
+    const link = join(tmp(), 'Launcher.app')
+    symlinkSync(app, link)
+    expect(await validateAppBundle(link, deps())).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('不是目录')
     })
   })
 

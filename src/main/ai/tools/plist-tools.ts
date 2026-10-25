@@ -735,7 +735,9 @@ export function createPlistTools(deps: {
             (logs.length > 0 ? ` · 日志：${logs.join(' / ')}` : ' · 日志：未配置') +
             (outside ? ' · ⚠ 日志路径不在标准目录' : ''),
           command: argv.length > 0 ? argv.join(' ') : `写入 ${label}.plist`,
-          dangerous: a['overwrite'] === true || outside || runAs !== ''
+          // system/daemon 写入要提权、影响所有用户;即使内容看着普通也不能被
+          // 「本会话自动允许」静默放行。overwrite/非标准日志/指定用户仍是危险项。
+          dangerous: a['overwrite'] === true || outside || runAs !== '' || scope !== 'user'
         }
       },
       execute: async (args) => {

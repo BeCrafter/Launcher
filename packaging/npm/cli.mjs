@@ -38,6 +38,7 @@ import {
   fetchLatestVersion,
   fetchReleases,
   parseArgs,
+  parseVersion,
   plistVersion,
   zipUrl
 } from './lib.mjs'
@@ -256,6 +257,10 @@ async function install({ version, dir, force, relaunch }) {
   const r2Base = r2BaseUrl()
   const wantLatest = version === 'latest'
   const explicit = version !== null && !wantLatest
+  // 显式版本会拼进下载 URL:必须是完整 X.Y.Z[-后缀],不能带 `/`/`..` 改变路径。
+  if (explicit && !parseVersion(String(version))) {
+    fail(`版本号不合法：${JSON.stringify(version)}（需形如 0.2.0 或 0.3.0-rc.1）`)
+  }
   const url = zipUrl(r2Base, explicit ? String(version).replace(/^v/, '') : null, arch)
 
   const target = resolveInstallDir(dir)
@@ -350,10 +355,17 @@ async function upgrade({ dir, relaunch }) {
   const latest = r.latestStable
   if (!latest) fail('仓库尚未发布正式版（只有预发布）；预发布请用 install --version 指定')
 
-  if (current && compareVersions(latest, current) <= 0) {
-    out(`已是最新版本 ${current}（${appPath}）。`)
-    if (relaunch) await run('/usr/bin/open', [appPath])
-    return
+  if (current) {
+    const cmp = compareVersions(latest, current)
+    // null 表示版本号不可解析;直接和 0 比较会得到 false → 误报「已是最新」
+    if (cmp === null) {
+      fail(`无法解析已安装版本 ${JSON.stringify(current)}（${appPath}），请重新安装`)
+    }
+    if (cmp <= 0) {
+      out(`已是最新版本 ${current}（${appPath}）。`)
+      if (relaunch) await run('/usr/bin/open', [appPath])
+      return
+    }
   }
 
   out(`升级 ${current ?? '未知'} → ${latest}（${appPath}）`)

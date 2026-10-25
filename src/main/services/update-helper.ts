@@ -11,11 +11,20 @@
 // 所有路径都经 shQuote 编码,脚本文件 0700 —— 脚本里不含任何未转义的用户数据。
 
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import type { UpdateArch, UpdateManifestFile } from './update-manifest'
 import type { UpdateResultInfo } from '../../shared/ipc'
 import { shQuote } from './elevation'
+import { isSafeVersion } from './update-check'
 
 /** 助手等待新版本写 ready 标记的时长 */
 export const READY_TIMEOUT_SEC = 30
@@ -35,6 +44,18 @@ export interface UpdatePaths {
   helperScript: string
 }
 
+/**
+ * 版本号进入文件名前的最后一道闸门。
+ *
+ * 调用方(UpdateController)已校验来源,但 updatePaths 是「远端字符串 → 路径」的
+ * 唯一转换点:在这里再拒绝一次,避免未来新增调用时绕过校验,把 `rmSync` 指到
+ * updates/ 之外。抛错发生在任何文件操作之前。
+ */
+function versionSegment(version: string): string {
+  if (!isSafeVersion(version)) throw new Error(`版本号不合法,拒绝拼路径: ${version}`)
+  return version
+}
+
 export function updatePaths(userDataDir: string): UpdatePaths {
   const dir = join(userDataDir, 'updates')
   return {
@@ -42,10 +63,10 @@ export function updatePaths(userDataDir: string): UpdatePaths {
     log: join(dir, 'update.log'),
     result: join(dir, 'result.tsv'),
     ready: join(dir, 'ready.marker'),
-    zip: (version, arch) => join(dir, `Launcher-${version}-${arch}.zip`),
-    part: (version, arch) => join(dir, `Launcher-${version}-${arch}.zip.part`),
-    stagingDir: (version) => join(dir, `staging-${version}`),
-    stagedApp: (version) => join(dir, `staging-${version}`, 'Launcher.app'),
+    zip: (version, arch) => join(dir, `Launcher-${versionSegment(version)}-${arch}.zip`),
+    part: (version, arch) => join(dir, `Launcher-${versionSegment(version)}-${arch}.zip.part`),
+    stagingDir: (version) => join(dir, `staging-${versionSegment(version)}`),
+    stagedApp: (version) => join(dir, `staging-${versionSegment(version)}`, 'Launcher.app'),
     backupApp: join(dir, 'backup', 'Launcher.app'),
     helperScript: join(dir, 'apply-update.sh')
   }
@@ -103,7 +124,17 @@ if ! mv "$STAGED" "$APP" >> "$LOG" 2>&1; then
   if [ -e "$BACKUP" ]; then
     # 新包可能只写了一半:$APP 若还在,mv 会把备份塞进它里面,必须先清掉
     rm -rf "$APP" >> "$LOG" 2>&1 || true
-    mv "$BACKUP" "$APP" >> "$LOG" 2>&1 || true
+    if mv "$BACKUP" "$APP" >> "$LOG" 2>&1; then
+      result rolled-back "$FROM" "$TO" ""
+      log "已回滚到 $FROM"
+      open "$APP" >> "$LOG" 2>&1 || true
+      exit 1
+    fi
+    # 回滚也没成功:至少把备份目录揭示给用户,不能只留一句日志
+    log "回滚失败,原版本备份在 $BACKUP"
+    open "$(dirname "$BACKUP")" >> "$LOG" 2>&1 || true
+    result failed "$FROM" "$TO" "$BACKUP"
+    exit 1
   fi
   result failed "$FROM" "$TO" ""
   open "$APP" >> "$LOG" 2>&1 || true
@@ -123,8 +154,25 @@ fi
     mode === 'self'
       ? `
 if [ -e "$BACKUP" ]; then
-  rm -rf "$APP.rollback-failed" >> "$LOG" 2>&1 || true
-  mv "$APP" "$APP.rollback-failed" >> "$LOG" 2>&1 || rm -rf "$APP" >> "$LOG" 2>&1 || true
+  # 先确保目标路径真的空了。$APP 仍在时 mv 会把备份塞进坏包内部,却仍返回 0;
+  # 这种「假回滚」比失败更糟,必须显式挡住。
+  if [ -e "$APP" ]; then
+    rm -rf "$APP.rollback-failed" >> "$LOG" 2>&1 || true
+    if ! mv "$APP" "$APP.rollback-failed" >> "$LOG" 2>&1; then
+      if ! rm -rf "$APP" >> "$LOG" 2>&1; then
+        log "无法清空目标路径,回滚失败;原版本备份在 $BACKUP"
+        result failed "$FROM" "$TO" "$BACKUP"
+        open "$(dirname "$BACKUP")" >> "$LOG" 2>&1 || true
+        exit 1
+      fi
+    fi
+  fi
+  if [ -e "$APP" ]; then
+    log "目标路径仍存在,放弃回滚;原版本备份在 $BACKUP"
+    result failed "$FROM" "$TO" "$BACKUP"
+    open "$(dirname "$BACKUP")" >> "$LOG" 2>&1 || true
+    exit 1
+  fi
   if mv "$BACKUP" "$APP" >> "$LOG" 2>&1; then
     result rolled-back "$FROM" "$TO" ""
     log "已回滚到 $FROM"
@@ -132,6 +180,7 @@ if [ -e "$BACKUP" ]; then
   else
     log "回滚失败,原版本备份在 $BACKUP"
     result failed "$FROM" "$TO" "$BACKUP"
+    open "$(dirname "$BACKUP")" >> "$LOG" 2>&1 || true
   fi
 else
   log "找不到备份,无法回滚"
@@ -292,4 +341,35 @@ export function cleanupStaged(paths: UpdatePaths, version: string, arch: UpdateA
       /* ignore */
     }
   }
+}
+
+/**
+ * 启动时清掉历史升级留下的安装包/解压目录。
+ *
+ * 只删 updates/ 下由本应用命名的 `Launcher-*.zip(.part)` 与 `staging-*`;备份目录
+ * (backup/) 保留 —— 成功启动说明回滚已不需要它,但留着多一份安全网,下一次升级开始
+ * 时会自然覆盖。正在下载的文件在应用刚启动时不存在,不会误删。
+ */
+export function cleanupUpdateArtifacts(userDataDir: string): number {
+  let names: string[]
+  try {
+    names = readdirSync(updatePaths(userDataDir).dir)
+  } catch {
+    return 0
+  }
+  const dir = updatePaths(userDataDir).dir
+  let removed = 0
+  for (const name of names) {
+    const isArtifact =
+      /^Launcher-[0-9A-Za-z._-]+\.zip(?:\.part)?$/.test(name) ||
+      /^staging-[0-9A-Za-z._-]+$/.test(name)
+    if (!isArtifact) continue
+    try {
+      rmSync(join(dir, name), { recursive: true, force: true })
+      removed++
+    } catch {
+      /* 清理失败不影响启动 */
+    }
+  }
+  return removed
 }

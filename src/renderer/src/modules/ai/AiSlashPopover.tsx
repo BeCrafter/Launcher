@@ -38,6 +38,8 @@ export function AiSlashPopover({
     setActive(0)
   }, [open, query])
 
+  // query/rows 变化时输入框会增高或换行,锚点顶部随之移动;只监听 resize
+  // 会让菜单停在旧位置。
   useLayoutEffect(() => {
     if (!open) {
       setPos(null)
@@ -58,7 +60,7 @@ export function AiSlashPopover({
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
     }
-  }, [open, anchorRef])
+  }, [open, anchorRef, query, rows.length])
 
   useEffect(() => {
     if (!open) return
@@ -93,7 +95,14 @@ export function AiSlashPopover({
       }
       if (e.key === 'Enter') {
         const row = rows[active]
-        if (!row) return
+        // 没有匹配项时 Enter 只负责收起菜单,不能落到编辑器里把 `/zzz` 当成
+        // 一条消息直接发出去。
+        if (!row) {
+          e.preventDefault()
+          e.stopPropagation()
+          onClose()
+          return
+        }
         e.preventDefault()
         e.stopPropagation()
         if (row.type === 'skill') onPickSkill(row.skill.id)

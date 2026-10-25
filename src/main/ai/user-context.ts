@@ -4,6 +4,7 @@
 // 否则「历史里的用户消息」和「当前这轮的同一句话」会拼出两种内容(引用/附件各缺一块)。
 import type { AiContentBlock, AiMention, AiUserMessage } from '../../shared/ai'
 import type { ImageContent } from '@earendil-works/pi-ai'
+import { skillIdsOf } from '../../shared/ai-inline'
 import { attachmentContext, hasImageAttachments, toPiImages } from './attachments'
 import { mentionContext, type NoteContext } from './note-context'
 
@@ -28,11 +29,16 @@ export function userMessageContext(
     mentionContext(m.mentions, notes) +
     attachmentContext(m.attachments) +
     userTextBlocks(m)
-  // 只有图片/旧版 image block 时,文本必须非空 —— Anthropic 会拒绝空文本块
-  if (text.trim() === '' && (hasImageAttachments(m.attachments) || hasLegacyImages(m))) {
+  if (text.trim() !== '') return text
+  // 文本必须非空:Anthropic 会直接丢弃空 user turn(新会话第一轮就 400),
+  // OpenAI 兼容端则会收到空字符串。图片/技能/历史脏数据都要有可读的兜底。
+  if (hasImageAttachments(m.attachments) || hasLegacyImages(m)) {
     return '（用户发送了图片）'
   }
-  return text
+  if (skillIdsOf(m).length > 0) {
+    return '（用户已启用技能，请按技能说明执行）'
+  }
+  return '（用户未输入文字）'
 }
 
 /**

@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { checkForUpdate, compareVersions, parseManifest } from './update-check'
+import {
+  checkForUpdate,
+  compareVersions,
+  isSafeVersion,
+  parseManifest,
+  VERSIONS_MAX_BYTES
+} from './update-check'
 
 const MANIFEST = '0.4.0-rc.1 pre\n0.3.0\n0.2.0\n0.1.0\n'
 
@@ -59,6 +65,16 @@ describe('parseManifest', () => {
   it('空文本 → 空清单,不崩', () => {
     expect(parseManifest('')).toMatchObject({ all: [], stable: [], latestStable: null })
   })
+
+  it('带路径/越界字符的版本号当噪声丢弃(会进入文件名)', () => {
+    const r = parseManifest('0.3.0/../../Documents\n0.3.0\n0.2.0\n')
+    expect(r.all).toEqual(['0.3.0', '0.2.0'])
+    expect(r.latestStable).toBe('0.3.0')
+    expect(isSafeVersion('0.3.0')).toBe(true)
+    expect(isSafeVersion('v0.3.0-rc.1')).toBe(true)
+    expect(isSafeVersion('0.3.0/../../x')).toBe(false)
+    expect(isSafeVersion('0.3.0\n')).toBe(false)
+  })
 })
 
 describe('checkForUpdate(读 cdn 清单)', () => {
@@ -116,6 +132,20 @@ describe('checkForUpdate(读 cdn 清单)', () => {
     const r = await checkForUpdate('0.1.0', { fetchImpl: hanging as unknown as typeof fetch, timeoutMs: 20 })
     expect(r.status).toBe('error')
     expect(r.errorMessage).toBe('请求超时')
+  })
+
+  it('清单流式超大且没有 content-length → 报错,不把内存读爆', async () => {
+    const huge = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(new Uint8Array(VERSIONS_MAX_BYTES + 1))
+      }
+    })
+    const r = await checkForUpdate('0.1.0', {
+      fetchImpl: (async () => new Response(huge, { status: 200 })) as unknown as typeof fetch,
+      timeoutMs: 5000
+    })
+    expect(r.status).toBe('error')
+    expect(r.errorMessage).toBe('版本清单异常偏大')
   })
 
   it('没探测到来源时给 manual 那条命令(不猜)', async () => {

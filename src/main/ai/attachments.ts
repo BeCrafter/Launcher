@@ -36,8 +36,14 @@ function bad(): never {
 function safeName(v: unknown, fallback: string): string {
   if (typeof v !== 'string') return fallback
   // 文件名只作展示/上下文标题,不能带换行/控制字符去伪造结构
-  const cleaned = v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, 120)
-  return cleaned === '' ? fallback : cleaned
+  const cleaned = v.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()
+  if (cleaned === '') return fallback
+  if (cleaned.length <= 120) return cleaned
+  // 截断时保留扩展名:渲染层按完整文件名判断类型,main 若把 `.md`/`.png` 截掉
+  // 就会在发送时突然报 AI_ATTACHMENT_INVALID(文件明明已经读进来了)。
+  const dot = cleaned.lastIndexOf('.')
+  const ext = dot > 0 && cleaned.length - dot <= 16 ? cleaned.slice(dot) : ''
+  return `${cleaned.slice(0, Math.max(1, 120 - ext.length))}${ext}`
 }
 
 function isStrictBase64(s: string): boolean {

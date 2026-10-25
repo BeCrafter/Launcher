@@ -534,11 +534,13 @@ body.light-theme .ai-main {
   animation: ai-fade-in 0.22s ease;
 }
 
-/* 多选态:勾选框只点自身,点正文不会误切换(见 AiMessages) */
+/* 多选态:勾选框只点自身,点正文不会误切换(见 AiMessages)。
+   一律贴消息行右上角 —— 用户消息靠 align-self: flex-end 把右边缘对齐到整行,
+   所以气泡宽度变化不会带动勾选框;不要再按 user/bot 分侧。 */
 .ai-msg-check {
   position: absolute;
   top: -8px;
-  left: -8px;
+  right: -8px;
   z-index: 2;
   width: 22px;
   height: 22px;
@@ -552,11 +554,6 @@ body.light-theme .ai-main {
   font-size: 12px;
   cursor: pointer;
   transition: color 0.2s, border-color 0.2s, background 0.2s;
-}
-
-.ai-msg.bot .ai-msg-check {
-  left: auto;
-  right: -8px;
 }
 
 .ai-msg-check:hover {

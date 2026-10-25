@@ -11,7 +11,7 @@
 // 解压必须用 `ditto -x -k`(见 design 讨论):JS zip 库与 unzip 会丢符号链接/扩展属性,
 // 破坏 .app 内部结构。
 
-import { accessSync, constants, existsSync, statSync } from 'node:fs'
+import { accessSync, constants, existsSync, lstatSync } from 'node:fs'
 import { dirname, join, sep } from 'node:path'
 import type { ShellRunner } from './shell-runner'
 import { compareVersions } from './update-check'
@@ -108,7 +108,9 @@ export async function validateAppBundle(
 ): Promise<ValidateBundleResult> {
   if (!existsSync(appPath)) return { ok: false, error: '更新包不存在' }
   try {
-    if (!statSync(appPath).isDirectory()) return { ok: false, error: '更新包不是目录' }
+    // 用 lstat:zip 里的 `Launcher.app` 若是符号链接,stat 会把目标目录当成包,
+    // 后续 mv 就能把任意本地路径/半成品挂到应用位置。包根必须是真实目录。
+    if (!lstatSync(appPath).isDirectory()) return { ok: false, error: '更新包不是目录' }
   } catch {
     return { ok: false, error: '更新包不可读' }
   }
@@ -124,14 +126,30 @@ export async function validateAppBundle(
     return { ok: false, error: `更新包版本为 ${info.version || '未知'},期望 ${deps.expectedVersion}` }
   }
   if (!info.executable) return { ok: false, error: '更新包缺少主可执行文件声明' }
+  // CFBundleExecutable 只是包内文件名:带 / 或 .. 会让 join 指到包外,
+  // 符号链接则能让 access/lipo 校验的是另一个文件。只接受 MacOS/ 下的普通文件。
+  if (
+    info.executable === '.' ||
+    info.executable === '..' ||
+    info.executable.includes('/') ||
+    info.executable.includes('\\') ||
+    info.executable.includes('\0')
+  ) {
+    return { ok: false, error: '更新包的主可执行文件名不合法' }
+  }
   const exe = join(appPath, 'Contents', 'MacOS', info.executable)
   try {
+    if (!lstatSync(exe).isFile()) return { ok: false, error: '更新包的主可执行文件不是普通文件' }
     accessSync(exe, constants.X_OK)
   } catch {
     return { ok: false, error: '更新包的主可执行文件缺失或不可执行' }
   }
-  // MCP stdio 入口是产物的一部分;缺它说明打包结构不对,不应替换
-  if (!existsSync(join(appPath, 'Contents', 'Resources', 'launcher-mcp'))) {
+  // MCP stdio 入口是产物的一部分;缺它说明打包结构不对,不应替换。
+  // 同样拒绝符号链接:校验时必须确认包内真的有这个文件。
+  const mcpEntry = join(appPath, 'Contents', 'Resources', 'launcher-mcp')
+  try {
+    if (!lstatSync(mcpEntry).isFile()) return { ok: false, error: '更新包缺少 launcher-mcp' }
+  } catch {
     return { ok: false, error: '更新包缺少 launcher-mcp' }
   }
   if (info.minimumSystemVersion && compareVersions(info.minimumSystemVersion, deps.hostVersion) > 0) {

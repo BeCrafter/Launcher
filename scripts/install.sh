@@ -74,6 +74,14 @@ done
 
 [ "$SHOW_PRE" = 0 ] || [ "$DO_LIST" = 1 ] || die "--pre 只配合 --list 使用"
 
+# 显式版本会拼进下载 URL:必须是完整 X.Y.Z[-后缀],不能带 `/`/`..` 改变路径。
+# 与 packaging/npm/cli.mjs 的 install() 保持同一口径。
+if [ -n "$VERSION" ]; then
+  if ! printf '%s\n' "$VERSION" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'; then
+    die "版本号不合法：${VERSION}（需形如 0.2.0 或 0.3.0-rc.1）"
+  fi
+fi
+
 command -v curl >/dev/null 2>&1 || die "未找到 curl"
 
 # 架构判据必须与 packaging/npm/cli.mjs 同源（都走 uname -m），命令行得出一致结果

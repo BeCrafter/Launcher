@@ -10,15 +10,31 @@
 // 本文件保留自己的轻量解析:主进程不需要 CLI 那套「预发布数值段比较」之外的任何能力。
 
 import { UPGRADE_COMMAND, type InstallChannel, type UpdateCheckResult } from '../../shared/ipc'
+import { readCappedText } from './http-capped'
 
 /** cdn 根地址 + 清单文件名(与 scripts/install.sh 的 R2_BASE、cli.mjs 的 DEFAULT_R2_BASE 同值) */
 export const CDN_BASE = 'https://repo.iskill.site/launcher'
 export const UPDATE_CHECK_TIMEOUT_MS = 8000
+/** 一行一版的纯文本清单;超过这个大小一定是拿错了东西(比如把产物当清单发回来了) */
+export const VERSIONS_MAX_BYTES = 256 * 1024
 
 /** 生效的清单地址;`LAUNCHER_R2_BASE` 与三条通道同名同义(镜像/自建 cdn),也用于本地端到端验证 */
 export function versionsUrl(env: NodeJS.ProcessEnv = process.env): string {
   const base = (env['LAUNCHER_R2_BASE'] || CDN_BASE).replace(/\/+$/, '')
   return `${base}/versions.txt`
+}
+
+/**
+ * 允许出现在清单里的版本号(与 scripts/release-version.mjs 的 VERSION_RE 同形)。
+ *
+ * 版本号会被拼进下载/解压路径,所以这里必须严格:只允许 X.Y.Z 与字母数字前缀的
+ * 预发布后缀,`/`、`..`、空字节等一律拒绝。compareVersions 本身保持宽松(测试/CLI
+ * 会喂 `v1.2` 这类输入),但「从远端拿到的版本」进入状态机之前必须先过这一关。
+ */
+export const VERSION_RE = /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$/
+
+export function isSafeVersion(version: unknown): version is string {
+  return typeof version === 'string' && VERSION_RE.test(version)
 }
 
 /** 版本倒序比较;预发布按数值段比(rc.10 > rc.9 —— 纯字典序会判反) */
@@ -67,7 +83,8 @@ export function parseManifest(text: string): { all: string[]; stable: string[]; 
   const seen = new Set<string>()
   for (const line of String(text ?? '').split('\n')) {
     const [version, flag] = line.trim().split(/\s+/)
-    if (!version || !/^[0-9]/.test(version) || seen.has(version)) continue
+    // 版本号不仅要是数字开头:它会进入文件名,`0.3.0/../../x` 这种必须当噪声丢弃
+    if (!isSafeVersion(version) || seen.has(version)) continue
     seen.add(version)
     all.push(version)
     // 清单显式标了 pre,或版本号自带后缀(例如手工维护时漏标),都算预发布
@@ -102,7 +119,14 @@ async function fetchManifest(
     const res = await fetchImpl(url, { signal: controller.signal })
     if (res.status === 404) return { ok: false, error: '清单不存在(尚未发版?)' }
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` }
-    return { ok: true, text: await res.text() }
+    // content-length 可能是假的/缺失,真正兜底的是 readCappedText 的流式累计
+    const len = Number(res.headers.get('content-length'))
+    if (Number.isFinite(len) && len > VERSIONS_MAX_BYTES) {
+      return { ok: false, error: '版本清单异常偏大' }
+    }
+    const text = await readCappedText(res, VERSIONS_MAX_BYTES)
+    if (text === null) return { ok: false, error: '版本清单异常偏大' }
+    return { ok: true, text }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     return { ok: false, error: controller.signal.aborted ? '请求超时' : msg }

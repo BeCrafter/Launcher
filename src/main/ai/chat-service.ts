@@ -13,12 +13,16 @@ import type {
   AiAssistantMessage,
   AiAttachment,
   AiContentBlock,
+  AiDomainCard,
   AiEngineState,
   AiMessage,
+  AiReportItem,
   AiRunEvent,
   AiSession,
   AiSkillInfo,
+  AiStopReason,
   AiToolResultMessage,
+  AiUsage,
   AiUserMessage
 } from '../../shared/ai'
 import type {
@@ -58,6 +62,299 @@ import { sanitizeUserSegments, skillIdsOf, uniqueSkillIds } from '../../shared/a
 const MAX_SESSIONS = 100
 const MAX_MESSAGES_PER_SESSION = 400
 const TITLE_MAX = 24
+
+/**
+ * 主进程生成的会话标题必须跟随界面语言。
+ *
+ * 这里不能用渲染层的 i18n 字典(main 不加载 renderer 模块),但也不能硬编码中文:
+ * 首轮消息发送后 main 会覆盖渲染层的乐观标题,en-US 用户会看到中文标题。
+ * 只放「标题兜底」这几个短词,真正的文案仍在渲染层字典里。
+ */
+const TITLE_LABELS = {
+  'zh-CN': { newChat: '新对话', image: '图片对话', skill: '技能任务', branch: ' · 分支' },
+  'en-US': { newChat: 'New chat', image: 'Image chat', skill: 'Skill task', branch: ' · Branch' }
+} as const
+
+type TitleLabels = (typeof TITLE_LABELS)[keyof typeof TITLE_LABELS]
+
+function titleLabels(language: LauncherSettings['language']): TitleLabels {
+  return TITLE_LABELS[language] ?? TITLE_LABELS['zh-CN']
+}
+
+// ── 历史消息收敛 ──
+//
+// 会话 JSON 可能来自旧版本、手工编辑或写盘时被打断。只校验 role 是不够的:
+// renderer 会直接 map blocks,`{role:'user'}` 这种半截消息会让整个 AI 页面崩;
+// assistant 的 usage.cost 若被改成字符串,`.toFixed()` 也会在渲染时抛错。
+// 这里把每条消息收敛成宿主模型的最小合法形态,坏块/坏卡丢弃而不是猜测。
+
+function recordOf(v: unknown): Record<string, unknown> | null {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null
+}
+
+function finiteNumber(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+function nonNegativeNumber(v: unknown): number | undefined {
+  const n = finiteNumber(v)
+  return n !== undefined && n >= 0 ? n : undefined
+}
+
+function stringList(v: unknown, max = 50): string[] {
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === 'string').slice(0, max)
+    : []
+}
+
+function sanitizeReportItem(raw: unknown): AiReportItem | null {
+  const o = recordOf(raw)
+  if (!o || typeof o.text !== 'string') return null
+  if (o.level !== 'ok' && o.level !== 'warn' && o.level !== 'err') return null
+  const goto = o.goto
+  return {
+    level: o.level,
+    text: o.text,
+    ...(goto === 'agents' || goto === 'crontab' || goto === 'services' ? { goto } : {})
+  }
+}
+
+function sanitizeStoredCard(raw: unknown): AiDomainCard | null {
+  const o = recordOf(raw)
+  if (!o) return null
+
+  if (o.kind === 'report') {
+    return {
+      kind: 'report',
+      items: (Array.isArray(o.items) ? o.items : [])
+        .map(sanitizeReportItem)
+        .filter((x): x is AiReportItem => x !== null)
+        .slice(0, 200)
+    }
+  }
+  if (o.kind === 'cron') {
+    if (typeof o.cmd !== 'string' || typeof o.expr !== 'string') return null
+    return { kind: 'cron', cmd: o.cmd, expr: o.expr }
+  }
+  if (o.kind === 'plist') {
+    if (typeof o.xml !== 'string') return null
+    return {
+      kind: 'plist',
+      xml: o.xml,
+      ...(typeof o.path === 'string' && o.path !== '' ? { path: o.path } : {})
+    }
+  }
+  if (o.kind === 'agentPreparation') {
+    const readiness = o.readiness === 'blocked' ? 'blocked' : o.readiness === 'ready' ? 'ready' : null
+    const scope = o.scope === 'user' || o.scope === 'system' || o.scope === 'daemon' ? o.scope : null
+    if (
+      readiness === null ||
+      scope === null ||
+      typeof o.label !== 'string' ||
+      typeof o.command !== 'string' ||
+      typeof o.trigger !== 'string'
+    ) {
+      return null
+    }
+    const p = recordOf(o.port)
+    const portValue = p ? finiteNumber(p.value) : undefined
+    const portState: 'free' | 'occupied' | null =
+      p && (p.state === 'free' || p.state === 'occupied') ? p.state : null
+    const port =
+      p && portValue !== undefined && portState !== null && typeof p.detail === 'string'
+        ? { value: portValue, state: portState, detail: p.detail }
+        : undefined
+    return {
+      kind: 'agentPreparation',
+      readiness,
+      label: o.label,
+      scope,
+      command: o.command,
+      trigger: o.trigger,
+      logs: stringList(o.logs),
+      risks: stringList(o.risks),
+      questions: stringList(o.questions),
+      verification: stringList(o.verification),
+      ...(port ? { port } : {})
+    }
+  }
+  if (o.kind === 'approve') {
+    const state =
+      o.state === 'approved' || o.state === 'cancelled' || o.state === 'pending' ? o.state : null
+    if (
+      state === null ||
+      typeof o.tool !== 'string' ||
+      typeof o.toolCallId !== 'string' ||
+      typeof o.detail !== 'string' ||
+      typeof o.command !== 'string'
+    ) {
+      return null
+    }
+    const card: AiApproveCard = {
+      kind: 'approve',
+      tool: o.tool,
+      toolCallId: o.toolCallId,
+      detail: o.detail,
+      command: o.command,
+      state,
+      ...(o.dangerous === true ? { dangerous: true } : {}),
+      ...(o.auto === true ? { auto: true } : {})
+    }
+    return card
+  }
+  return null
+}
+
+function sanitizeStoredBlock(raw: unknown): AiContentBlock | null {
+  const o = recordOf(raw)
+  if (!o) return null
+  if (o.type === 'text') {
+    return typeof o.text === 'string' ? { type: 'text', text: o.text } : null
+  }
+  if (o.type === 'thinking') {
+    if (typeof o.thinking !== 'string') return null
+    return {
+      type: 'thinking',
+      thinking: o.thinking,
+      ...(o.redacted === true ? { redacted: true } : {}),
+      ...(typeof o.thinkingSignature === 'string'
+        ? { thinkingSignature: o.thinkingSignature }
+        : {})
+    }
+  }
+  if (o.type === 'image') {
+    return typeof o.data === 'string' && typeof o.mimeType === 'string'
+      ? { type: 'image', data: o.data, mimeType: o.mimeType }
+      : null
+  }
+  if (o.type === 'toolCall') {
+    if (typeof o.id !== 'string' || typeof o.name !== 'string') return null
+    return {
+      type: 'toolCall',
+      id: o.id,
+      name: o.name,
+      ...(typeof o.label === 'string' ? { label: o.label } : {}),
+      args: recordOf(o.args) ?? {},
+      ...(typeof o.thoughtSignature === 'string'
+        ? { thoughtSignature: o.thoughtSignature }
+        : {})
+    }
+  }
+  if (o.type === 'card') {
+    const card = sanitizeStoredCard(o.card)
+    return card ? { type: 'card', card } : null
+  }
+  if (o.type === 'suggest') {
+    const items = stringList(o.items, 20)
+    return items.length > 0 ? { type: 'suggest', items } : null
+  }
+  return null
+}
+
+const STOP_REASONS = new Set<AiStopReason>([
+  'pending',
+  'stop',
+  'length',
+  'toolUse',
+  'error',
+  'aborted',
+  'deferred'
+])
+
+function sanitizeUsage(raw: unknown): AiUsage | undefined {
+  const o = recordOf(raw)
+  if (!o) return undefined
+  const n = (v: unknown): number => nonNegativeNumber(v) ?? 0
+  const c = recordOf(o.cost)
+  return {
+    input: n(o.input),
+    output: n(o.output),
+    cacheRead: n(o.cacheRead),
+    cacheWrite: n(o.cacheWrite),
+    totalTokens: n(o.totalTokens),
+    ...(nonNegativeNumber(o.reasoning) !== undefined ? { reasoning: n(o.reasoning) } : {}),
+    ...(c
+      ? {
+          cost: {
+            input: n(c.input),
+            output: n(c.output),
+            cacheRead: n(c.cacheRead),
+            cacheWrite: n(c.cacheWrite),
+            total: n(c.total)
+          }
+        }
+      : {})
+  }
+}
+
+function sanitizeStoredMessage(raw: unknown): AiMessage | null {
+  const o = recordOf(raw)
+  if (!o || typeof o.id !== 'string' || o.id === '') return null
+  const timestamp = nonNegativeNumber(o.timestamp) ?? 0
+  const blocks = Array.isArray(o.blocks)
+    ? o.blocks
+        .map(sanitizeStoredBlock)
+        .filter((b): b is AiContentBlock => b !== null)
+    : []
+
+  if (o.role === 'user') {
+    // 附件/引用/技能/分段在 loadStore 的下一步逐项收敛,这里只清掉会直接崩渲染层的字段。
+    const m = { ...o, role: 'user', id: o.id, timestamp, blocks } as unknown as AiUserMessage
+    if (m.internal !== true) delete m.internal
+    return m
+  }
+
+  if (o.role === 'assistant') {
+    // 载入只发生在启动时,那时必然没有进行中的 run:落盘的 pending 只可能来自
+    // 上次运行被强杀/崩溃。留成 pending 会让该条永远不可分支、也不收起流式态,
+    // 故一律按正常结束收敛。
+    const stored = o.stopReason === 'pending' ? 'stop' : o.stopReason
+    const stopReason = STOP_REASONS.has(stored as AiStopReason) ? (stored as AiStopReason) : 'stop'
+    const m: AiAssistantMessage = { role: 'assistant', id: o.id, timestamp, blocks, stopReason }
+    const usage = sanitizeUsage(o.usage)
+    if (usage) m.usage = usage
+    if (typeof o.errorMessage === 'string') m.errorMessage = o.errorMessage
+    if (typeof o.model === 'string') m.model = o.model
+    if (typeof o.provider === 'string') m.provider = o.provider
+    const finishedAt = nonNegativeNumber(o.finishedAt)
+    if (finishedAt !== undefined) m.finishedAt = finishedAt
+    const durationMs = nonNegativeNumber(o.durationMs)
+    if (durationMs !== undefined) m.durationMs = durationMs
+    return m
+  }
+
+  if (o.role === 'toolResult') {
+    if (
+      typeof o.toolCallId !== 'string' ||
+      o.toolCallId === '' ||
+      typeof o.toolName !== 'string' ||
+      o.toolName === ''
+    ) {
+      return null
+    }
+    const status =
+      o.status === 'warn' || o.status === 'err' || o.status === 'ok' ? o.status : 'ok'
+    const m: AiToolResultMessage = {
+      role: 'toolResult',
+      id: o.id,
+      toolCallId: o.toolCallId,
+      toolName: o.toolName,
+      blocks,
+      isError: o.isError === true,
+      status,
+      durationMs: nonNegativeNumber(o.durationMs) ?? 0,
+      timestamp
+    }
+    if (typeof o.label === 'string') m.label = o.label
+    if (o.write === true) m.write = true
+    if (o.cardOnly === true) m.cardOnly = true
+    return m
+  }
+
+  return null
+}
 
 interface StoredSession extends AiSession {
   messages: AiMessage[]
@@ -191,7 +488,17 @@ export function createChatService(deps: {
       const list = Array.isArray(o.sessions) ? o.sessions : []
       const sessions = list
         .filter((s): s is StoredSession => isSessionLike(s))
-        .map((s) => ({ ...s, messages: Array.isArray(s.messages) ? s.messages : [] }))
+        .map((s) => ({
+          ...s,
+          // 外部编辑/旧版本可能留下 null/字符串/半截消息。逐条收敛成宿主模型的
+          // 最小合法形态,否则下面按 m.role/blocks 读取会抛错,整个 store 被
+          // catch 成空数组后下一次 save() 会把所有会话覆盖掉。
+          messages: Array.isArray(s.messages)
+            ? s.messages
+                .map(sanitizeStoredMessage)
+                .filter((m): m is AiMessage => m !== null)
+            : []
+        }))
         .slice(0, MAX_SESSIONS)
       // 历史 JSON 可能来自旧版本/外部编辑:附件与分支元数据都要逐项收敛,
       // 坏数据绝不能进渲染层(渲染层会 map 附件,形态不对会直接崩)
@@ -1018,7 +1325,12 @@ export function createChatService(deps: {
 
     async send(input) {
       if (run) throw new Error('AI_BUSY')
-      const session = findSession(input.sessionId)
+      // IPC 入参没有运行时类型保证:renderer 传 null/缺字段时给稳定错误码,
+      // 不要让 `input.sessionId` 变成一个难以归类的 TypeError。
+      if (typeof input !== 'object' || input === null) throw new Error('AI_SESSION_MISSING')
+      const sessionId = typeof input.sessionId === 'string' ? input.sessionId : ''
+      const text = typeof input.text === 'string' ? input.text : ''
+      const session = findSession(sessionId)
       if (!session) throw new Error('AI_SESSION_MISSING')
       // 唯一的"能否开跑"判据:引擎层解析得出模型(缺 Key / 缺端点 / 缺模型名都在这里挡下)
       const resolved = deps.llm.resolve()
@@ -1035,7 +1347,7 @@ export function createChatService(deps: {
         ])
       ).map((s) => s.id)
       // 只选了技能、还没写任务描述也可以发:技能提示词会先向用户确认目标。
-      if (input.text.trim() === '' && attachments.length === 0 && skillIds.length === 0) {
+      if (text.trim() === '' && attachments.length === 0 && skillIds.length === 0) {
         throw new Error('AI_EMPTY_MESSAGE')
       }
       // 内联排版只用于回显;main 只保留确实存在于本次引用/附件/技能里的 key。
@@ -1049,7 +1361,7 @@ export function createChatService(deps: {
           requestedId !== '' && !session.messages.some((m) => m.id === requestedId)
             ? requestedId
             : uid('u'),
-        blocks: [{ type: 'text', text: input.text }],
+        blocks: [{ type: 'text', text }],
         ...(mentions.length ? { mentions } : {}),
         ...(attachments.length ? { attachments } : {}),
         ...(segments.length ? { segments } : {}),
@@ -1059,7 +1371,12 @@ export function createChatService(deps: {
       const isFirst = session.messages.length === 0
       session.messages.push(user)
       if (isFirst) {
-        session.title = compactTitle(titleSeed(input.text, attachments, skillIds.length ? '技能任务' : ''))
+        // 与渲染层乐观标题同一优先级:文字 > 文本文件名 > 图片 > 技能。
+        // 纯技能发送有文字时仍用文字;只有 chip 时才落到技能兜底。
+        const labels = titleLabels(deps.getSettings().language)
+        const fallback =
+          attachments.length > 0 ? labels.image : skillIds.length > 0 ? labels.skill : ''
+        session.title = compactTitle(titleSeed(text, attachments, fallback), labels)
       }
       session.updatedAt = Date.now()
       // 新消息进来后,更早的附件负载先裁掉,别让它跟着本轮事件反复写盘
@@ -1088,9 +1405,11 @@ export function createChatService(deps: {
         generatedAgentDrafts: new Map()
       }
       run = r
-      emit({ type: 'run_start', sessionId: r.sessionId, runId: r.runId })
 
       try {
+        // 放进 try:即便窗口已销毁、推送抛错,也能走 finally 清掉 run,
+        // 否则后续 send 永远 AI_BUSY,retract 的 waitForRunIdle 也会挂住。
+        emit({ type: 'run_start', sessionId: r.sessionId, runId: r.runId })
         await runAgent(r, skillIds)
         const timing = finalizeRunTiming(r)
         emit({
@@ -1144,8 +1463,8 @@ export function createChatService(deps: {
     },
 
     async retract(input) {
-      const sessionId = String(input.sessionId ?? '')
-      const messageId = String(input.messageId ?? '')
+      const sessionId = String(input?.sessionId ?? '')
+      const messageId = String(input?.messageId ?? '')
       const findTarget = (): { session: StoredSession; index: number; msg: AiUserMessage } => {
         const session = findSession(sessionId)
         if (!session) throw new Error('AI_SESSION_MISSING')
@@ -1195,8 +1514,8 @@ export function createChatService(deps: {
     },
 
     branch(input) {
-      const sessionId = String(input.sessionId ?? '')
-      const messageId = String(input.messageId ?? '')
+      const sessionId = String(input?.sessionId ?? '')
+      const messageId = String(input?.messageId ?? '')
       const source = findSession(sessionId)
       if (!source) throw new Error('AI_SESSION_MISSING')
       // 运行中的消息还在增长,复制出来的上下文可能缺块/半截;让用户等本轮收尾
@@ -1218,7 +1537,7 @@ export function createChatService(deps: {
       const branch = { sessionId: source.id, messageId: target.id, title: source.title }
       const s: StoredSession = {
         id: uid('s'),
-        title: branchTitle(source.title),
+        title: branchTitle(source.title, titleLabels(deps.getSettings().language)),
         createdAt: now,
         updatedAt: now,
         messages,
@@ -1244,22 +1563,27 @@ export function createChatService(deps: {
 
     respondApproval(input) {
       const r = run
-      if (!r || r.runId !== input.runId) return { autoApprove: false }
+      if (!r || typeof input !== 'object' || input === null || r.runId !== input.runId) {
+        return { autoApprove: false }
+      }
+      // 只接受两个合法决策;其它值一律按取消处理,不能把任意字符串透传给执行层。
+      const decision: AiApprovalDecision = input.decision === 'approve' ? 'approve' : 'cancel'
       const entry = r.approvals.get(input.toolCallId)
       if (!entry) return { autoApprove: autoApproveSessions.has(r.sessionId) }
       // 只有普通写操作才能把「本会话自动允许」打开;危险操作上的标志一律忽略,
       // 避免 renderer 误传或被绕过时把高风险操作也纳入豁免。
-      if (input.decision === 'approve' && input.rememberSession === true && !entry.dangerous) {
+      if (decision === 'approve' && input.rememberSession === true && !entry.dangerous) {
         autoApproveSessions.add(r.sessionId)
       }
-      entry.done(input.decision)
+      entry.done(decision)
       return { autoApprove: autoApproveSessions.has(r.sessionId) }
     },
 
     setAutoApprove(input) {
-      const sessionId = String(input.sessionId ?? '')
+      const sessionId = String(input?.sessionId ?? '')
       if (!findSession(sessionId)) throw new Error('AI_SESSION_MISSING')
-      if (input.enabled) autoApproveSessions.add(sessionId)
+      // 只认 true:IPC 传来的 "false"/1 等值不能把自动允许打开。
+      if (input?.enabled === true) autoApproveSessions.add(sessionId)
       else autoApproveSessions.delete(sessionId)
       return { autoApprove: autoApproveSessions.has(sessionId) }
     }
@@ -1287,14 +1611,14 @@ function cancelledReason(text: string): boolean {
 }
 
 /** 会话标题:首行 + 截断(过长标题在 232px 会话栏里会被压成省略号,先截到可辨识长度) */
-function compactTitle(text: string): string {
+function compactTitle(text: string, labels: TitleLabels): string {
   const first = text.split('\n')[0]?.trim() ?? ''
-  const t = first === '' ? '新对话' : first
+  const t = first === '' ? labels.newChat : first
   return t.length > TITLE_MAX ? `${t.slice(0, TITLE_MAX)}…` : t
 }
 
 /** 首条消息的标题种子:优先文字,纯附件用文件名/类型兜底(与渲染层乐观标题保持一致) */
-function titleSeed(text: string, attachments: AiAttachment[], fallback = '图片对话'): string {
+function titleSeed(text: string, attachments: AiAttachment[], fallback: string): string {
   const first = text.split('\n')[0]?.trim() ?? ''
   if (first !== '') return first
   const textFile = attachments.find((a): a is Extract<AiAttachment, { type: 'text' }> => a.type === 'text')
@@ -1303,9 +1627,9 @@ function titleSeed(text: string, attachments: AiAttachment[], fallback = '图片
 }
 
 /** 分支会话标题:来源标题截断后加后缀,总长仍受 TITLE_MAX 约束 */
-function branchTitle(sourceTitle: string): string {
-  const suffix = ' · 分支'
-  const base = sourceTitle.trim() === '' ? '新对话' : sourceTitle.trim()
+function branchTitle(sourceTitle: string, labels: TitleLabels): string {
+  const suffix = labels.branch
+  const base = sourceTitle.trim() === '' ? labels.newChat : sourceTitle.trim()
   const room = Math.max(1, TITLE_MAX - suffix.length)
   const cut = base.length > room ? `${base.slice(0, Math.max(1, room - 1))}…` : base
   return `${cut}${suffix}`

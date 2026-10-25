@@ -63,6 +63,12 @@ interface AiState {
   selectedIds: string[]
   /** 撤回/发送失败后待填回输入框的草稿;composer 消费后清空 */
   composerDraft: AiComposerDraft | null
+  /**
+   * 当前输入框是否有未发送内容(文字/chip/附件)。
+   * 只用于升级自动重启前的保护:有草稿时暂停倒计时,别把用户正在写的内容带走。
+   */
+  composerHasDraft: boolean
+  setComposerHasDraft: (has: boolean) => void
   railSearch: string // 会话栏搜索词(选中会话不清,仅新对话清空 —— demo 语义)
   connectPulse: number // 未配置引导卡的脉冲计数(发送/技能卡被拦时 +1;卡片重挂载重启动画)
   mcpOpen: boolean
@@ -142,6 +148,10 @@ export const useAiStore = create<AiState>((set, get) => ({
   selectionMode: false,
   selectedIds: [],
   composerDraft: null,
+  composerHasDraft: false,
+  setComposerHasDraft: (has) => {
+    if (get().composerHasDraft !== has) set({ composerHasDraft: has })
+  },
   railSearch: '',
   connectPulse: 0,
   mcpOpen: false,
@@ -383,7 +393,17 @@ export const useAiStore = create<AiState>((set, get) => ({
     try {
       const r = await dataSource().ai.retract({ sessionId, messageId })
       // main 是事实来源:撤回后重取,而不是在本地猜哪些消息被删了。
-      const messages = await dataSource().ai.getMessages(sessionId)
+      // 但重取失败不能把「撤回已成功」误报成失败:退回本地缓存,按同一语义
+      // 删掉目标消息及其之后的内容,草稿仍然照常还原。
+      let messages: AiMessage[]
+      try {
+        messages = await dataSource().ai.getMessages(sessionId)
+      } catch (err) {
+        console.error('[ai] retract refresh failed', err)
+        const cached = st.msgCache[sessionId] ?? (st.currentId === sessionId ? st.messages : [])
+        const index = cached.findIndex((m) => m.id === messageId)
+        messages = index >= 0 ? cached.slice(0, index) : cached
+      }
       const skillIds = skillIdsOf(r)
       const draft = {
         sessionId,

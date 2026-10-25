@@ -117,7 +117,16 @@ function logoDir(): string {
 
 // main → renderer 推送(applier 事件与 settings:changed 共用;renderer 侧经 preload 白名单订阅)
 function broadcast(channel: string, payload?: unknown): void {
-  for (const win of BrowserWindow.getAllWindows()) win.webContents.send(channel, payload)
+  for (const win of BrowserWindow.getAllWindows()) {
+    // 窗口正在关闭时 webContents 可能已销毁;这里抛错会把调用方(例如一次
+    // AI 运行)带进错误分支,不能让它影响主流程。
+    if (win.isDestroyed() || win.webContents.isDestroyed()) continue
+    try {
+      win.webContents.send(channel, payload)
+    } catch {
+      /* 单个窗口推送失败不影响其它窗口 */
+    }
+  }
 }
 
 /** 启动打点:每条 [boot] 日志带相对进程启动的毫秒数(排查「首启慢/白屏」时唯一可量化的依据) */

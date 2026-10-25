@@ -55,11 +55,19 @@ describe('内联 token', () => {
     expect(parseInlineItems(doc)).toEqual([])
   })
 
-  it('stripInlineTokens 用空格替换 chip,并收敛连续空白', () => {
+  it('stripInlineTokens 只在 chip 粘连两个词时补空格', () => {
     expect(stripInlineTokens(`  ${attToken('a')}  看  ${mentionToken('note:n')}   日志  `)).toBe(
-      '看 日志'
+      '看  日志'
     )
     expect(stripInlineTokens(`a${attToken('a')}b`)).toBe('a b')
+    expect(stripInlineTokens(`${attToken('a')}a${attToken('b')}`)).toBe('a')
+    expect(stripInlineTokens(`a${attToken('a')}\n${attToken('b')}b`)).toBe('a\nb')
+  })
+
+  it('stripInlineTokens 保留用户粘贴的代码缩进与连续空格', () => {
+    const code = 'function x() {\n  if (a) {\n    return    1\n  }\n}'
+    expect(stripInlineTokens(code)).toBe(code)
+    expect(stripInlineTokens(`x\n  ${attToken('log')}  code`)).toBe('x\n  code')
   })
 
   it('inlineRefKeys 按视觉顺序去重,技能可以多个', () => {

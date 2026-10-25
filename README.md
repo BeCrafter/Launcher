@@ -139,14 +139,16 @@ claude mcp add launcher -- launcher-mcp
 
 ## 从源码构建
 
-要求：macOS 12+、Node ≥ 22（CI 用 24）。
+要求：macOS 12+、Node ≥ 22.12（CI 用 24；jsdom 28 的 engines 下限）。
 
 ```bash
 npm ci              # 安装依赖（本项目 dependencies 为空，全部是 devDependencies）
 
 npm run dev         # 开发模式（electron-vite，热更新）
-npm test            # vitest 单测（600+ 用例）
-npm run typecheck   # tsc 双配置类型检查
+npm test              # vitest 单测（node + jsdom 两个 project）
+npm run test:node     # 只跑 node project（主进程 / 纯逻辑 / 脚本）
+npm run test:renderer # 只跑 jsdom project（渲染层组件）
+npm run typecheck     # tsc 双配置类型检查
 
 npm run build:app         # 打包本机架构到 dist/（含架构/asar 断言与真实启动校验）
 npm run build:app:all     # arm64 + x64 依次打包

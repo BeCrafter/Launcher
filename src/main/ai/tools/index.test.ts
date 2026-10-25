@@ -796,6 +796,19 @@ describe('write_plist 覆盖守卫', () => {
     expect(s.command).toContain('/bin/sleep')
     expect(s.dangerous).toBe(true)
   })
+
+  it('system/daemon 作用域的写入即使内容普通也标 dangerous(自动允许不能静默提权)', () => {
+    const { registry } = makeRegistry()
+    const t = byName(registry, 'write_plist')
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+<key>Label</key><string>com.user.alpha</string>
+<key>ProgramArguments</key><array><string>/bin/true</string></array>
+</dict></plist>`
+    expect(t.summarize!({ label: 'com.user.alpha', xml, scope: 'system' }).dangerous).toBe(true)
+    expect(t.summarize!({ label: 'com.user.alpha', xml, scope: 'daemon' }).dangerous).toBe(true)
+    expect(t.summarize!({ label: 'com.user.alpha', xml, scope: 'user' }).dangerous).toBe(false)
+  })
 })
 
 describe('日志与触发方式的取证口径', () => {

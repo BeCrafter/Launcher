@@ -177,6 +177,13 @@ describe('cli 冒烟', () => {
     expect(r.err).not.toMatch(CRASH)
   })
 
+  it('install --version 带路径 → 拒绝,不拼进下载 URL', async () => {
+    const r = await cli(['install', '--version', '0.2.0/../../x'], DEAD)
+    expect(r.code).toBe(1)
+    expect(r.err).toMatch(/版本号不合法/)
+    expect(r.err).not.toMatch(CRASH)
+  })
+
   it('参数错误退出 2，不是崩溃', async () => {
     for (const bad of [
       ['bogus'],

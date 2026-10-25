@@ -61,3 +61,19 @@ describe('userMessageContext 混合引用顺序', () => {
     expect(text).toContain('引用顺序：文件「b.md」 → 笔记「A」')
   })
 })
+
+describe('userMessageContext 空文本兜底', () => {
+  it('纯技能发送必须给模型一个非空 user turn(Anthropic 会丢弃空 user 消息)', () => {
+    const text = userMessageContext(
+      userMsg({ blocks: [{ type: 'text', text: '' }], skillIds: ['sk-plist'], skillId: 'sk-plist' }),
+      new Map()
+    )
+    expect(text.trim()).not.toBe('')
+    expect(text).toContain('技能')
+  })
+
+  it('完全空的历史脏数据也不返回空串', () => {
+    const text = userMessageContext(userMsg({ blocks: [{ type: 'text', text: '' }] }), new Map())
+    expect(text.trim()).not.toBe('')
+  })
+})

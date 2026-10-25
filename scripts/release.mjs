@@ -35,6 +35,7 @@ import {
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PKG = join(ROOT, 'package.json')
+const LOCK = join(ROOT, 'package-lock.json')
 const REMOTE = 'origin'
 
 // ── 小工具 ──
@@ -106,6 +107,17 @@ function writePkgVersion(version) {
   const out = src.replace(/("version"\s*:\s*")[^"]*(")/, `$1${version}$2`)
   if (out === src) fail('package.json 里没找到 version 字段')
   writeFileSync(PKG, out)
+
+  // package-lock 的根版本号也要跟着走，否则每次发版后又会漂移
+  // (3008481 就是手工补的)。只改最前面两处：顶层 version 与 packages[""].version。
+  const lockSrc = readFileSync(LOCK, 'utf8')
+  let seen = 0
+  const lockOut = lockSrc.replace(/("version"\s*:\s*")[^"]*(")/g, (m, a, b) => {
+    seen += 1
+    return seen <= 2 ? `${a}${version}${b}` : m
+  })
+  if (seen < 2) fail('package-lock.json 里没找到根 version 字段')
+  writeFileSync(LOCK, lockOut)
 }
 
 async function confirm(question) {
@@ -259,8 +271,8 @@ if (verify) {
 if (bumpsPkg) {
   step(`写入版本号并提交`)
   writePkgVersion(version)
-  git(['add', 'package.json'], { capture: false })
-  // 只 add package.json：仓库里可能有并行会话的半成品，绝不能 -A 一把梭
+  git(['add', 'package.json', 'package-lock.json'], { capture: false })
+  // 只 add 这两个文件：仓库里可能有并行会话的半成品，绝不能 -A 一把梭
   git(['commit', '-m', `chore(release): ${tag}`], { capture: false })
 }
 

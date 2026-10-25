@@ -20,6 +20,7 @@
 // 当前信任根与三条安装通道相同(https://repo.iskill.site)。
 
 import { CDN_BASE } from './update-check'
+import { readCappedText } from './http-capped'
 
 export type UpdateArch = 'arm64' | 'x64'
 
@@ -149,8 +150,8 @@ export async function fetchUpdateManifest(
     if (Number.isFinite(len) && len > MANIFEST_MAX_BYTES) {
       return { ok: false, error: '清单文件异常偏大' }
     }
-    const text = await res.text()
-    if (text.length > MANIFEST_MAX_BYTES) return { ok: false, error: '清单文件异常偏大' }
+    const text = await readCappedText(res, MANIFEST_MAX_BYTES)
+    if (text === null) return { ok: false, error: '清单文件异常偏大' }
     return parseUpdateManifest(text, version)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

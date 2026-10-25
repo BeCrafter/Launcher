@@ -3,7 +3,7 @@
 // 不用 contenteditable 自己拼:输入法、撤销、选区、软换行、粘贴这些行为 CodeMirror
 // 已经处理得足够好;我们只接管「Enter 发送 / 粘贴文件 / 触发词」三处。
 import { useEffect, useRef } from 'react'
-import { Compartment, EditorState, Prec, StateEffect, type Extension } from '@codemirror/state'
+import { Compartment, EditorState, Prec, StateEffect, Transaction, type Extension } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -384,9 +384,12 @@ export function AiComposerEditor({
     apiRef.current = {
       setDoc(doc) {
         if (doc === view.state.doc.toString()) return
+        // 发送后清空 / 撤回草稿回填 / 新对话都是程序行为,不该进 undo 栈:
+        // 否则 Cmd+Z 会把已经发出去的 chip 恢复成一颗找不到数据的空壳。
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: doc },
-          selection: { anchor: doc.length }
+          selection: { anchor: doc.length },
+          annotations: Transaction.addToHistory.of(false)
         })
       },
       getDoc: () => view.state.doc.toString(),
@@ -464,7 +467,8 @@ export function AiComposerEditor({
     if (value !== view.state.doc.toString()) {
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: value },
-        selection: { anchor: value.length }
+        selection: { anchor: value.length },
+        annotations: Transaction.addToHistory.of(false)
       })
     }
   }, [value])

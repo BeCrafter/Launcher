@@ -204,6 +204,60 @@ describe('UpdateController(自动下载 → ready)', () => {
     env.controller.dispose()
   })
 
+  it('慢速下载只要持续有数据就不会被判超时(stall 计时器按块重置)', async () => {
+    const normal = makeDeps()
+    const baseFetch = normal.deps.fetchImpl!
+    const parts = Array.from({ length: ZIP.length }, (_, i) => ZIP.subarray(i, i + 1))
+    const slowBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        let i = 0
+        const push = (): void => {
+          if (i >= parts.length) {
+            controller.close()
+            return
+          }
+          controller.enqueue(new Uint8Array(parts[i++]))
+          setTimeout(push, 12)
+        }
+        setTimeout(push, 12)
+      }
+    })
+    const env = makeDeps({
+      stallTimeoutMs: 40,
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('.zip')) return new Response(slowBody)
+        return baseFetch(input, init)
+      }) as typeof fetch
+    })
+    await env.controller.check()
+    const s = await waitFor(env.controller, 'ready', 5000)
+    expect(s.phase).toBe('ready')
+    env.controller.dispose()
+    normal.controller.dispose()
+  })
+
+  it('响应体超过清单 size → 立即中止下载并删除 .part', async () => {
+    const normal = makeDeps()
+    const baseFetch = normal.deps.fetchImpl!
+    const env = makeDeps({
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('.zip')) {
+          return new Response(Buffer.concat([ZIP, Buffer.from('extra-bytes')]))
+        }
+        return baseFetch(input, init)
+      }) as typeof fetch
+    })
+    await env.controller.check()
+    const s = await waitFor(env.controller, 'error')
+    expect(s.error?.code).toBe('download')
+    expect(s.error?.message).toContain('超过清单')
+    expect(existsSync(updatePaths(env.userDataDir).part(VERSION, 'arm64'))).toBe(false)
+    env.controller.dispose()
+    normal.controller.dispose()
+  })
+
   it('sha256 不符 → error/verify,不进入 ready', async () => {
     const env = makeDeps()
     env.setFailSha()

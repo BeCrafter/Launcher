@@ -124,8 +124,9 @@ export function parseVersionsFile(text) {
   const all = []
   for (const line of String(text ?? '').split('\n')) {
     const [version, flag] = line.trim().split(/\s+/)
-    // 版本号一律以数字开头（tag 去掉 v 前缀后即如此）；不满足的行是噪声，不是版本
-    if (!version || !/^[0-9]/.test(version) || seen.has(version)) continue
+    // 版本号必须是完整 X.Y.Z[-后缀]:它会被拼进下载 URL,`0.3.0/../../x`
+    // 这种行不能让 CLI 去请求别的路径,也不能展示成可用版本。
+    if (!version || !parseVersion(version) || seen.has(version)) continue
     seen.add(version)
     all.push({ version, prerelease: flag === 'pre' || isPrerelease(version) })
   }

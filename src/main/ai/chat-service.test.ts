@@ -497,6 +497,17 @@ describe('ChatService 运行链路', () => {
     expect(svc2.listSessions().find((x) => x.id === s.id)?.autoApprove).toBeFalsy()
   })
 
+  it('IPC 入参形态不合法时给稳定错误,不把任意值当开关或文本', async () => {
+    const svc = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    const s = svc.createSession()
+    // 字符串 "yes" 不能被当成 true 打开自动允许
+    expect(
+      svc.setAutoApprove({ sessionId: s.id, enabled: 'yes' as never }).autoApprove
+    ).toBe(false)
+    await expect(svc.send(null as never)).rejects.toThrow('AI_SESSION_MISSING')
+    await expect(svc.send({ sessionId: s.id } as never)).rejects.toThrow('AI_EMPTY_MESSAGE')
+  })
+
   it('会话按第一条用户消息起标题并持久化,重开服务后仍在', async () => {
     const faux = fauxProvider()
     faux.setResponses([fauxAssistantMessage([fauxText('hi')])])
@@ -512,6 +523,42 @@ describe('ChatService 运行链路', () => {
     const svc2 = build({ faux: faux2, tools: [readonlyTool] })
     expect(svc2.listSessions().map((x) => x.id)).toContain(s.id)
     expect(svc2.getMessages(s.id).length).toBe(2)
+  })
+
+  it('en-US 下 main 生成的兜底标题与分支后缀跟随语言', async () => {
+    const faux = fauxProvider()
+    faux.setResponses([
+      fauxAssistantMessage([fauxText('ok')]),
+      fauxAssistantMessage([fauxText('ok')])
+    ])
+    const svc = build({ faux, tools: [readonlyTool], settings: { language: 'en-US' } })
+
+    const skillSession = svc.createSession()
+    await svc.send({ sessionId: skillSession.id, text: '', skillId: 'sk-refactor' })
+    expect(svc.listSessions().find((x) => x.id === skillSession.id)?.title).toBe('Skill task')
+
+    const imageSession = svc.createSession()
+    await svc.send({
+      sessionId: imageSession.id,
+      text: '',
+      attachments: [
+        {
+          type: 'image',
+          key: 'i-title',
+          name: 'shot.png',
+          mimeType: 'image/png',
+          data: 'iVBORw0KGgo='
+        }
+      ]
+    })
+    expect(svc.listSessions().find((x) => x.id === imageSession.id)?.title).toBe('Image chat')
+
+    const assistant = svc
+      .getMessages(skillSession.id)
+      .find((m) => m.role === 'assistant')
+    if (!assistant) throw new Error('unreachable')
+    const branch = svc.branch({ sessionId: skillSession.id, messageId: assistant.id })
+    expect(branch.title).toBe('Skill task · Branch')
   })
 
   it('删除会话后不再列出', async () => {
@@ -600,6 +647,124 @@ describe('ChatService 运行链路', () => {
     const out = await svc.retract({ sessionId: s.id, messageId: user.id })
     expect(out.skillIds).toEqual(['sk-import', 'sk-refactor'])
     expect(out.skillId).toBe('sk-import')
+  })
+
+  it('会话文件里混入 null/字符串消息时只丢弃坏项,不会清空整个 store', async () => {
+    const storePath = join(dir, 'ai-sessions.json')
+    writeFileSync(
+      storePath,
+      JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            id: 's-broken',
+            title: '旧会话',
+            createdAt: 1,
+            updatedAt: 1,
+            messages: [
+              null,
+              'not-a-message',
+              { role: 'user', id: 'u1', timestamp: 1, blocks: [{ type: 'text', text: '保留我' }] }
+            ]
+          }
+        ]
+      }),
+      'utf8'
+    )
+    const svc = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    expect(svc.listSessions().map((x) => x.id)).toEqual(['s-broken'])
+    expect(svc.getMessages('s-broken')).toHaveLength(1)
+
+    // 再写盘时旧会话仍在(修复前 loadStore 会整体回空,下一次 save 清掉全部数据)
+    svc.createSession()
+    const saved = JSON.parse(readFileSync(storePath, 'utf8')) as {
+      sessions: Array<{ id: string }>
+    }
+    expect(saved.sessions.map((x) => x.id)).toContain('s-broken')
+  })
+
+  it('半截消息/坏块/坏卡在载入时收敛,不会把坏数据送进渲染层', async () => {
+    const storePath = join(dir, 'ai-sessions.json')
+    writeFileSync(
+      storePath,
+      JSON.stringify({
+        version: 1,
+        sessions: [
+          {
+            id: 's-shape',
+            title: '半截消息',
+            createdAt: 1,
+            updatedAt: 1,
+            messages: [
+              // 没有 blocks 的用户消息
+              { role: 'user', id: 'u-no-blocks', timestamp: 'bad' },
+              // blocks 不是数组;usage.cost 是字符串(渲染层会 .toFixed)
+              {
+                role: 'assistant',
+                id: 'a-bad-usage',
+                timestamp: 2,
+                blocks: 'not-blocks',
+                stopReason: 'weird',
+                usage: { totalTokens: 'x', cost: { total: 'x' } }
+              },
+              // 缺少 toolName → 无法配对,整条丢弃
+              { role: 'toolResult', id: 't-bad', toolCallId: 'tc', timestamp: 3, blocks: [] },
+              // 未知 role
+              { role: 'system', id: 'sys', timestamp: 4, blocks: [] },
+              // 合法卡保留,坏 item 丢弃
+              {
+                role: 'assistant',
+                id: 'a-card',
+                timestamp: 5,
+                stopReason: 'stop',
+                blocks: [
+                  {
+                    type: 'card',
+                    card: { kind: 'report', items: [{ level: 'ok', text: '保留' }, { level: 'ok' }] }
+                  },
+                  { type: 'text', text: 42 }
+                ]
+              },
+              // 上次运行中被强杀:落盘的 pending 在载入时必须收敛,否则永远不可分支
+              {
+                role: 'assistant',
+                id: 'a-crashed',
+                timestamp: 6,
+                stopReason: 'pending',
+                blocks: [{ type: 'text', text: '半截回答' }]
+              }
+            ]
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    const svc = build({ faux: fauxProvider(), tools: [readonlyTool] })
+    const messages = svc.getMessages('s-shape')
+    expect(messages.map((m) => m.id)).toEqual(['u-no-blocks', 'a-bad-usage', 'a-card', 'a-crashed'])
+
+    const user = messages[0]
+    expect(user).toMatchObject({ role: 'user', blocks: [], timestamp: 0 })
+
+    const assistant = messages[1]
+    if (assistant.role !== 'assistant') throw new Error('unreachable')
+    expect(assistant.blocks).toEqual([])
+    expect(assistant.stopReason).toBe('stop')
+    expect(assistant.usage).toMatchObject({ totalTokens: 0, cost: { total: 0 } })
+
+    const cardMsg = messages[2]
+    if (cardMsg.role !== 'assistant') throw new Error('unreachable')
+    expect(cardMsg.blocks).toHaveLength(1)
+    expect(cardMsg.blocks[0]).toEqual({
+      type: 'card',
+      card: { kind: 'report', items: [{ level: 'ok', text: '保留' }] }
+    })
+
+    const crashed = messages[3]
+    if (crashed.role !== 'assistant') throw new Error('unreachable')
+    expect(crashed.stopReason).toBe('stop')
+    expect(crashed.blocks).toEqual([{ type: 'text', text: '半截回答' }])
   })
 
   it('旧数据的 skillId 在载入时归一成 skillIds', async () => {
@@ -1478,10 +1643,20 @@ describe('ChatService 内联分段与技能', () => {
 
   it('只选技能、没有正文也可以发送(技能会先问目标)', async () => {
     const faux = fauxProvider()
-    faux.setResponses([fauxAssistantMessage([fauxText('你想生成什么任务？')])])
+    let seen = ''
+    faux.setResponses([
+      (ctx) => {
+        seen = transcriptText(ctx.messages[ctx.messages.length - 1])
+        return fauxAssistantMessage([fauxText('你想生成什么任务？')])
+      }
+    ])
     const svc = build({ faux, tools: [readonlyTool] })
     const s = svc.createSession()
     await svc.send({ sessionId: s.id, text: '', skillId: 'sk-refactor' })
+
+    // Anthropic 会丢弃空 user turn:发给模型的文本必须有兜底,不能是空串
+    expect(seen.trim()).not.toBe('')
+    expect(seen).toContain('技能')
 
     const user = svc.getMessages(s.id)[0]
     if (user.role !== 'user') throw new Error('unreachable')

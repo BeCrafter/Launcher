@@ -174,6 +174,11 @@ describe('parseVersionsFile（cdn 上的 versions.txt）', () => {
     expect(r.all.map((x) => x.version)).toEqual(['0.2.0', '0.1.0'])
   })
 
+  it('带路径/越界字符的版本号当噪声丢弃(会拼进下载 URL)', () => {
+    const r = parseVersionsFile(['0.3.0/../../x', '0.3.0', '0.2.0'].join('\n'))
+    expect(r.all.map((x) => x.version)).toEqual(['0.3.0', '0.2.0'])
+  })
+
   it('缺 pre 标记但带后缀的，仍判为预发布（宁保守）', () => {
     expect(parseVersionsFile('1.0.0-rc.2').all[0].prerelease).toBe(true)
     expect(parseVersionsFile('1.0.0-rc.2').latestStable).toBeNull()

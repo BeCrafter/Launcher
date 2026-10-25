@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   buildHelperScript,
+  cleanupUpdateArtifacts,
   consumeUpdateResult,
   markAppReady,
   parseUpdateResult,
@@ -60,6 +61,11 @@ describe('buildHelperScript', () => {
     expect(script).toContain('ready.marker')
     // 等旧进程退出,不能一上来就替换正在运行的可执行文件
     expect(script).toContain('kill -0 "$PID"')
+    // 替换失败但备份恢复成功时,结果必须是 rolled-back,不能误报 failed
+    const start = script.indexOf('if ! mv "$STAGED" "$APP"')
+    const end = script.indexOf('xattr -dr', start)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(script.slice(start, end)).toContain('result rolled-back "$FROM" "$TO" ""')
   })
 
   it('brew 模式执行 brew upgrade --cask,不自行搬包', () => {
@@ -94,6 +100,37 @@ describe('buildHelperScript', () => {
       writeFileSync(file, script)
       expect(() => execFileSync('/bin/sh', ['-n', file])).not.toThrow()
     }
+  })
+})
+
+describe('updatePaths 版本号边界', () => {
+  it('拒绝把 ../ 或斜杠拼进下载/解压路径', () => {
+    const paths = updatePaths(tmp())
+    expect(() => paths.zip('0.3.0/../../Documents', 'arm64')).toThrow()
+    expect(() => paths.part('..', 'arm64')).toThrow()
+    expect(() => paths.stagingDir('0.3.0/..')).toThrow()
+    expect(paths.zip('0.3.0', 'arm64').endsWith('updates/Launcher-0.3.0-arm64.zip')).toBe(true)
+  })
+})
+
+describe('cleanupUpdateArtifacts', () => {
+  it('只清 zip/part/staging,保留日志、结果与备份', () => {
+    const userData = tmp()
+    const paths = updatePaths(userData)
+    mkdirSync(paths.dir, { recursive: true })
+    writeFileSync(paths.zip('0.1.0', 'arm64'), 'zip')
+    writeFileSync(paths.part('0.2.0', 'arm64'), 'part')
+    mkdirSync(paths.stagingDir('0.2.0'), { recursive: true })
+    writeFileSync(paths.log, 'log')
+    writeFileSync(paths.result, 'result')
+    mkdirSync(join(paths.dir, 'backup'), { recursive: true })
+    expect(cleanupUpdateArtifacts(userData)).toBe(3)
+    expect(existsSync(paths.zip('0.1.0', 'arm64'))).toBe(false)
+    expect(existsSync(paths.part('0.2.0', 'arm64'))).toBe(false)
+    expect(existsSync(paths.stagingDir('0.2.0'))).toBe(false)
+    expect(existsSync(paths.log)).toBe(true)
+    expect(existsSync(paths.result)).toBe(true)
+    expect(existsSync(join(paths.dir, 'backup'))).toBe(true)
   })
 })
 

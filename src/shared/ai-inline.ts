@@ -83,15 +83,38 @@ export function parseInlineItems(doc: string): InlineItem[] {
 
 /**
  * token → 送给模型的纯文本。
- * token 两边是用户文字时,直接删掉会粘成一个词(`看` + chip + `日志` → `看日志` 反而可读),
- * 但英文 `read` + chip + `this` 会变成 `readthis`。统一替换成一个空格再收敛连续空格最稳。
+ *
+ * 只在「chip 真的把两个非空白字符粘在一起」时补一个空格;其余空白原样保留。
+ * 之前全局收敛 `[ \t]{2,}` 会把用户粘贴的代码/日志缩进压平 —— 界面里显示的是
+ * 原文,模型收到的却是压缩版,属于静默篡改。chip 两侧已有空白时保留左侧那份,
+ * 丢掉右侧那份,避免删掉 chip 后凭空多出一段间距。
  */
 export function stripInlineTokens(doc: string): string {
-  return doc
-    .replace(inlineTokenRe(), ' ')
-    .replace(/[ \t]{2,}/g, ' ')
-    .replace(/[ \t]+\n/g, '\n')
-    .trim()
+  let out = ''
+  let last = 0
+  const re = inlineTokenRe()
+  let m: RegExpExecArray | null
+  while ((m = re.exec(doc)) !== null) {
+    out += doc.slice(last, m.index)
+    const after = m.index + m[0].length
+    const left = /[ \t]*$/.exec(out)?.[0] ?? ''
+    const right = /^[ \t]*/.exec(doc.slice(after))?.[0] ?? ''
+    if (left === '') {
+      if (right !== '') {
+        out += right
+      } else {
+        const prev = out[out.length - 1]
+        const next = doc[after]
+        // 行首/行尾的 chip 不需要空格;两个词中间的才需要
+        if (prev !== undefined && next !== undefined && !/\s/.test(prev) && !/\s/.test(next)) {
+          out += ' '
+        }
+      }
+    }
+    last = after + right.length
+  }
+  out += doc.slice(last)
+  return out.trim()
 }
 
 /** 归一化技能 id 列表:只保留非空字符串,按首次出现去重 */

@@ -28,6 +28,7 @@ import { UPGRADE_COMMAND } from '../../shared/ipc'
 import { CASK_REF, prepareBrewUpdate } from './brew-update'
 import {
   cleanupStaged,
+  cleanupUpdateArtifacts,
   consumeUpdateResult,
   ensureUpdateDir,
   markAppReady,
@@ -38,7 +39,7 @@ import {
 import { artifactUrl, fetchUpdateManifest, type UpdateArch, type UpdateManifest } from './update-manifest'
 import { resolveUpdateMode, type ResolvedUpdateMode } from './update-mode'
 import type { ShellRunner } from './shell-runner'
-import { checkForUpdate, compareVersions } from './update-check'
+import { checkForUpdate, compareVersions, isSafeVersion } from './update-check'
 import { canReplaceBundle, validateAppBundle } from './update-target'
 
 export interface UpdateControllerDeps {
@@ -224,6 +225,11 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
         emit()
         return snapshot()
       }
+      // 纵深防御:parseManifest 已经过滤过,但 targetVersion 是后续所有文件路径的
+      // 来源,进入状态机前再断言一次(清单版本也走同一个字符串)。
+      if (!isSafeVersion(target)) {
+        return fail('manifest', `版本号不合法,拒绝升级: ${target}`)
+      }
 
       targetVersion = target
       message = '正在确认升级方式…'
@@ -314,10 +320,17 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     const controller = new AbortController()
     abort = controller
     cancelRequested = false
-    const stall = setTimeout(() => {
-      controller.abort()
-      cancelRead?.()
-    }, deps.stallTimeoutMs ?? DOWNLOAD_STALL_MS)
+    // 真正的 idle timeout:每收到一块数据就重新计时。固定总时长会把「慢但一直在
+    // 下载」的正常链路也判超时(100MB 在 200KB/s 下就要 8 分钟以上)。
+    let stallTimer: ReturnType<typeof setTimeout> | null = null
+    const armStall = (): void => {
+      if (stallTimer) clearTimeout(stallTimer)
+      stallTimer = setTimeout(() => {
+        controller.abort()
+        cancelRead?.()
+      }, deps.stallTimeoutMs ?? DOWNLOAD_STALL_MS)
+    }
+    armStall()
     let received = 0
     let lastEmit = 0
     const hash = createHash('sha256')
@@ -332,8 +345,8 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       if (!res.body) throw new Error('响应没有内容')
 
-      const headerLen = Number(res.headers.get('content-length'))
-      const total = Number.isFinite(headerLen) && headerLen > 0 ? headerLen : file.size
+      // 清单里的 size 是唯一可信的总量:content-length 只是对端声明,不能拿来放宽上限
+      const total = file.size
       handle = await fsp.open(part, 'w')
 
       // 用 reader 而不是 async iteration:Electron net.fetch 返回的 body 不保证实现
@@ -348,9 +361,12 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
           if (cancelRequested) throw new Error('下载已取消')
           if (done) break
           if (!value) continue
+          armStall()
           const buf = Buffer.from(value)
           hash.update(buf)
           received += buf.length
+          // 流式上限:不能等下载完再比对 size,否则恶意/错误对端可以先把磁盘写满
+          if (received > file.size) throw new Error('安装包超过清单声明的大小')
           // FileHandle.write 可能短写;循环到整块落盘,否则文件尾会缺字节
           let off = 0
           while (off < buf.length) {
@@ -376,7 +392,8 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
         await handle.close().catch(() => undefined)
       }
       cancelRead = null
-      clearTimeout(stall)
+      if (stallTimer) clearTimeout(stallTimer)
+      stallTimer = null
       abort = null
       if (cancelRequested) {
         await fsp.rm(part, { force: true }).catch(() => undefined)
@@ -388,6 +405,8 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
         emit()
         return snapshot()
       }
+      // 网络错误/超时/超限也删掉半成品:否则它会一直留到下次重试
+      await fsp.rm(part, { force: true }).catch(() => undefined)
       const reason = controller.signal.aborted
         ? '下载超时(长时间没有数据)'
         : err instanceof Error
@@ -395,7 +414,8 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
           : String(err)
       return fail('download', reason)
     } finally {
-      clearTimeout(stall)
+      if (stallTimer) clearTimeout(stallTimer)
+      stallTimer = null
       cancelRead = null
     }
     abort = null
@@ -626,7 +646,12 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     cancel,
     consumeResult: () => consumeUpdateResult(deps.userDataDir),
     logPath: logFile,
-    onBoot: () => markAppReady(deps.userDataDir, deps.currentVersion()),
+    onBoot: () => {
+      markAppReady(deps.userDataDir, deps.currentVersion())
+      // 新版本已经起来:上一轮的 zip/staging 不再需要,启动时顺手清掉。
+      // backup/ 故意保留到下一次升级开始,多留一份可回退的副本。
+      cleanupUpdateArtifacts(deps.userDataDir)
+    },
     dispose: () => {
       cancelRequested = true
       abort?.abort()

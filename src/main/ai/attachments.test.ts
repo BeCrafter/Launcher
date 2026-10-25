@@ -100,6 +100,13 @@ describe('sanitizeIncomingAttachments', () => {
     ).toThrow(ATTACHMENT_INVALID)
   })
 
+  it('超长文件名截断后仍保留扩展名(与渲染层的类型判断一致)', () => {
+    const name = `${'x'.repeat(200)}.md`
+    const out = sanitizeIncomingAttachments([textFile({ name })])
+    expect(out[0].name.length).toBe(120)
+    expect(out[0].name.endsWith('.md')).toBe(true)
+  })
+
   it('文件名去控制字符/换行,重复 key 自动换新', () => {
     const out = sanitizeIncomingAttachments([
       image({ key: 'same', name: 'a\r\nb.png' }),

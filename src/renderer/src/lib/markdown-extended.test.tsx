@@ -3,6 +3,7 @@
 //   ② **基础模式一点没变** —— 帮助页与 AI 消息不传 extended,走的是 renderMarkdownBasic。
 
 import { describe, expect, it } from 'vitest'
+import { fireEvent, render } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { ReactNode } from 'react'
 import { parseCallout, parseEmbed, renderMarkdown, type DiagramBlock } from './markdown'
@@ -13,7 +14,7 @@ const html = (md: string, opts: Parameters<typeof renderMarkdown>[2] = { extende
 const basic = (md: string, anchors = false): string =>
   renderToStaticMarkup(<>{renderMarkdown(md, 't', { anchors })}</>)
 
-/** 直接走 React 元素树,不依赖 DOM(项目没有 jsdom) */
+/** 直接走 React 元素树,不做 DOM 挂载(SSR 字符串断言,与运行环境无关) */
 function collect(nodes: ReactNode[], type: string): Array<{ props: Record<string, unknown> }> {
   const out: Array<{ props: Record<string, unknown> }> = []
   const walk = (n: unknown): void => {
@@ -321,12 +322,23 @@ describe('图片', () => {
   })
 
   it('加载失败时的降级路径可达(盗链防护的图床很常见,不该留个碎图标)', () => {
-    // ⚠ 这里只验「降级形态本身是对的」:真正的 onError 要浏览器事件,
-    //    本项目没有 jsdom。渲染出来的 <img> 上确实挂了 onError(见下面的断言)。
+    // 这里验「resolveImage 明确拒绝」的降级形态;真正的 onError 事件路径见下一条
     const fallback = html('![封面](https://i1.hdslb.com/a.jpg)', { extended: true, resolveImage: () => null })
     expect(fallback).toContain('md-img-chip')
     expect(fallback).toContain('封面')
     expect(fallback).toContain('md-link-icon')
+  })
+
+  it('图片 onError 后原地降级成 chip(jsdom 事件路径)', () => {
+    const { container } = render(
+      <>{renderMarkdown('![封面](https://i1.hdslb.com/a.jpg)', 't', { extended: true, resolveImage: (s) => s })}</>
+    )
+    const img = container.querySelector('img')
+    expect(img).not.toBeNull()
+
+    fireEvent.error(img!)
+    expect(container.querySelector('.md-img-chip')).not.toBeNull()
+    expect(container.textContent).toContain('封面')
   })
 
   it('resolveImage 给出地址才渲染 <img>', () => {

@@ -118,6 +118,7 @@ export function AiComposer({
   const connectPulse = useAiStore((s) => s.connectPulse)
   const composerDraft = useAiStore((s) => s.composerDraft)
   const clearComposerDraft = useAiStore((s) => s.clearComposerDraft)
+  const setComposerHasDraft = useAiStore((s) => s.setComposerHasDraft)
   const retracting = useAiStore((s) => s.retractingId !== null)
   const autoApprove = useAiStore((s) =>
     s.sessions.some((x) => x.id === s.currentId && x.autoApprove === true)
@@ -139,6 +140,18 @@ export function AiComposer({
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashHit, setSlashHit] = useState<QueryHit | null>(null)
 
+  // 升级倒计时据此暂停:输入框里的内容只存在组件状态,应用重启就没了。
+  useEffect(() => {
+    setComposerHasDraft(
+      doc.trim() !== '' ||
+        attachments.length > 0 ||
+        selectedSkillIds.length > 0 ||
+        attachBusy > 0
+    )
+  }, [doc, attachments.length, selectedSkillIds.length, attachBusy, setComposerHasDraft])
+  // 切走/卸载 AI 视图时输入框内容本来就会丢,不再阻止升级
+  useEffect(() => () => setComposerHasDraft(false), [setComposerHasDraft])
+
   const text = useMemo(() => stripInlineTokens(doc), [doc])
   const editorApiRef = useRef<AiComposerEditorApi | null>(null)
   const mentionBtnRef = useRef<HTMLButtonElement | null>(null)
@@ -148,6 +161,15 @@ export function AiComposer({
   /** 同步维护数组快照:异步读取/编辑器回调不能依赖 React 状态的闭包 */
   const attachmentsRef = useRef<AiAttachment[]>([])
   const mentionsRef = useRef<AiMention[]>([])
+  /**
+   * chip 被删掉后暂时保留的数据。
+   *
+   * 文档是唯一的 token 事实来源,但引用数据不在文档里;如果删 chip 时立刻丢掉,
+   * 用户按 Cmd+Z 撤销回来就只剩一颗查不到数据的空 chip。缓存到本次输入框生命周期
+   * 结束即可:体积有上限,且只有「token 再次出现」时才会重新挂回状态。
+   */
+  const detachedAttachmentsRef = useRef(new Map<string, AiAttachment>())
+  const detachedMentionsRef = useRef(new Map<string, AiMention>())
   const pendingRef = useRef<Record<string, PendingFile>>({})
   const selectedSkillRef = useRef<string[]>([])
   const mentionHitRef = useRef<QueryHit | null>(null)
@@ -389,9 +411,29 @@ export function AiComposer({
       setDoc(nextDoc)
       const keys = inlineRefKeys(nextDoc)
       const aKeys = new Set(keys.attachments)
-      if (attachmentsRef.current.some((a) => !aKeys.has(a.key))) {
-        updateAttachments((prev) => prev.filter((a) => aKeys.has(a.key)))
+      let nextAttachments = attachmentsRef.current.filter((a) => aKeys.has(a.key))
+      let attachmentsChanged = nextAttachments.length !== attachmentsRef.current.length
+      for (const a of attachmentsRef.current) {
+        if (!aKeys.has(a.key)) detachedAttachmentsRef.current.set(a.key, a)
       }
+      for (const key of keys.attachments) {
+        if (nextAttachments.some((a) => a.key === key)) {
+          detachedAttachmentsRef.current.delete(key)
+          continue
+        }
+        const cached = detachedAttachmentsRef.current.get(key)
+        if (!cached) continue
+        nextAttachments = [...nextAttachments, cached]
+        detachedAttachmentsRef.current.delete(key)
+        attachmentsChanged = true
+      }
+      if (attachmentsChanged) {
+        updateAttachments(nextAttachments)
+        // 深度变化时装饰器是先用旧 refs 画的;撤销恢复 chip 的同一帧里 refs 还没
+        // 更新完,下一帧补一次 refresh,chip 才不会停在「找不到数据」。
+        requestAnimationFrame(() => editorApiRef.current?.refresh())
+      }
+
       if (Object.keys(pendingRef.current).some((key) => !aKeys.has(key))) {
         const nextPending = { ...pendingRef.current }
         for (const key of Object.keys(nextPending)) {
@@ -399,9 +441,27 @@ export function AiComposer({
         }
         pendingRef.current = nextPending
       }
+
       const mKeys = new Set(keys.mentions)
-      if (mentionsRef.current.some((m) => !mKeys.has(m.key))) {
-        updateMentions((prev) => prev.filter((m) => mKeys.has(m.key)))
+      let nextMentions = mentionsRef.current.filter((m) => mKeys.has(m.key))
+      let mentionsChanged = nextMentions.length !== mentionsRef.current.length
+      for (const m of mentionsRef.current) {
+        if (!mKeys.has(m.key)) detachedMentionsRef.current.set(m.key, m)
+      }
+      for (const key of keys.mentions) {
+        if (nextMentions.some((m) => m.key === key)) {
+          detachedMentionsRef.current.delete(key)
+          continue
+        }
+        const cached = detachedMentionsRef.current.get(key)
+        if (!cached) continue
+        nextMentions = [...nextMentions, cached]
+        detachedMentionsRef.current.delete(key)
+        mentionsChanged = true
+      }
+      if (mentionsChanged) {
+        updateMentions(nextMentions)
+        requestAnimationFrame(() => editorApiRef.current?.refresh())
       }
       if (!sameSkillIds(keys.skillIds, selectedSkillRef.current)) {
         selectedSkillRef.current = keys.skillIds
@@ -561,6 +621,10 @@ export function AiComposer({
     editorApiRef.current?.setDoc('')
     updateAttachments([])
     updateMentions([])
+    // 发送/新对话已经结束本次内容的生命周期;程序化 setDoc 也不进 undo 栈,
+    // 这里必须释放缓存,否则每次发送的附件都会在组件内存里累积。
+    detachedAttachmentsRef.current.clear()
+    detachedMentionsRef.current.clear()
     pendingRef.current = {}
     selectedSkillRef.current = []
     setSelectedSkillIds([])
@@ -578,12 +642,14 @@ export function AiComposer({
   }
 
   const doSend = (): void => {
-    // 撤回还在进行时不要开新 run:main 正在删消息,此时发送会竞争状态。
-    if (retracting || attachBusy > 0) return
+    // 停止生成优先于附件读取:大图还在压缩时也必须能立刻停下当前 run,
+    // 否则用户只能等读取结束(此时 doSend 原本会直接 return)。
     if (running) {
       void stop()
       return
     }
+    // 撤回还在进行时不要开新 run:main 正在删消息,此时发送会竞争状态。
+    if (retracting || attachBusy > 0) return
     if (!guard()) return
     const api = editorApiRef.current
     const currentDoc = api?.getDoc() ?? doc
@@ -948,7 +1014,7 @@ export function AiComposer({
                 id="aiSendBtn"
                 type="button"
                 title={sendTitle}
-                disabled={retracting || attachBusy > 0}
+                disabled={retracting || (!running && attachBusy > 0)}
                 onClick={doSend}
               >
                 <i className={`fa-solid ${running ? 'fa-stop' : 'fa-arrow-up'}`} />
