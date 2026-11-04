@@ -74,8 +74,10 @@ export interface UpdateController {
   cancel(): Promise<UpdateState>
   consumeResult(): UpdateResultInfo | null
   logPath(): string | null
-  /** 应用启动时调用:写 ready 标记,让升级助手知道新版本真的起来了 */
-  onBoot(): void
+  /** 启动时清理上一轮安装包/解压残留(不写 ready 标记) */
+  cleanupOnBoot(): void
+  /** 启动序完成且渲染层已画出界面后调用:写 ready 标记,解除助手的回滚看门狗 */
+  markReady(): void
   dispose(): void
 }
 
@@ -323,9 +325,12 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     // 真正的 idle timeout:每收到一块数据就重新计时。固定总时长会把「慢但一直在
     // 下载」的正常链路也判超时(100MB 在 200KB/s 下就要 8 分钟以上)。
     let stallTimer: ReturnType<typeof setTimeout> | null = null
+    /** 看门狗显式标记:abort/cancel 在某些 fetch 实现上表现为 EOF 而不是 reject */
+    let stalled = false
     const armStall = (): void => {
       if (stallTimer) clearTimeout(stallTimer)
       stallTimer = setTimeout(() => {
+        stalled = true
         controller.abort()
         cancelRead?.()
       }, deps.stallTimeoutMs ?? DOWNLOAD_STALL_MS)
@@ -358,9 +363,14 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
       try {
         for (;;) {
           const { done, value } = await reader.read()
+          // 看门狗触发后 read 可能以 done 收尾(net.fetch/自定义 fetch 行为不同),不能直接
+          // 进入校验;显式抛错,让错误码落到 download 而不是 verify。
+          if (stalled) throw new Error('下载超时(长时间没有数据)')
           if (cancelRequested) throw new Error('下载已取消')
           if (done) break
-          if (!value) continue
+          // 空块不算「有进展」:Uint8Array(0) 是 truthy,若照常 armStall 会让持续空转的
+          // 响应体永远不触发空闲超时。只有真正收到字节才重置计时。
+          if (!value || value.byteLength === 0) continue
           armStall()
           const buf = Buffer.from(value)
           hash.update(buf)
@@ -407,7 +417,7 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
       }
       // 网络错误/超时/超限也删掉半成品:否则它会一直留到下次重试
       await fsp.rm(part, { force: true }).catch(() => undefined)
-      const reason = controller.signal.aborted
+      const reason = stalled || controller.signal.aborted
         ? '下载超时(长时间没有数据)'
         : err instanceof Error
           ? err.message
@@ -646,11 +656,14 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     cancel,
     consumeResult: () => consumeUpdateResult(deps.userDataDir),
     logPath: logFile,
-    onBoot: () => {
-      markAppReady(deps.userDataDir, deps.currentVersion())
-      // 新版本已经起来:上一轮的 zip/staging 不再需要,启动时顺手清掉。
+    cleanupOnBoot: () => {
+      // 上一轮的 zip/staging 不再需要,启动时顺手清掉。
       // backup/ 故意保留到下一次升级开始,多留一份可回退的副本。
       cleanupUpdateArtifacts(deps.userDataDir)
+    },
+    markReady: () => {
+      // 必须等启动序完成且渲染层真的画出界面后再写:这是助手回滚看门狗的唯一解除信号。
+      markAppReady(deps.userDataDir, deps.currentVersion())
     },
     dispose: () => {
       cancelRequested = true

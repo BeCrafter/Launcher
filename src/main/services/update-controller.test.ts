@@ -177,6 +177,37 @@ describe('UpdateController(自动下载 → ready)', () => {
     controller.dispose()
   })
 
+  it('启动清理与 ready 标记分离:cleanupOnBoot 不解除回滚保护', async () => {
+    const { controller, userDataDir } = makeDeps()
+    await controller.check()
+    await waitFor(controller, 'ready')
+    const paths = updatePaths(userDataDir)
+    expect(existsSync(paths.zip(VERSION, 'arm64'))).toBe(true)
+
+    controller.cleanupOnBoot()
+    expect(existsSync(paths.zip(VERSION, 'arm64'))).toBe(false)
+    expect(existsSync(paths.stagedApp(VERSION))).toBe(false)
+    expect(existsSync(paths.ready)).toBe(false)
+
+    controller.markReady()
+    expect(existsSync(paths.ready)).toBe(true)
+    controller.dispose()
+  })
+
+  it('ready 阶段取消会删除安装包和解压目录,回到 available', async () => {
+    const { controller, userDataDir } = makeDeps()
+    await controller.check()
+    await waitFor(controller, 'ready')
+    const paths = updatePaths(userDataDir)
+
+    const s = await controller.cancel()
+    expect(s.phase).toBe('available')
+    expect(s.canApply).toBe(false)
+    expect(existsSync(paths.zip(VERSION, 'arm64'))).toBe(false)
+    expect(existsSync(paths.stagedApp(VERSION))).toBe(false)
+    controller.dispose()
+  })
+
   it('助手启动失败可直接重试,不重新下载', async () => {
     let failSpawn = true
     const spawnCalls: unknown[] = []
@@ -233,6 +264,40 @@ describe('UpdateController(自动下载 → ready)', () => {
     await env.controller.check()
     const s = await waitFor(env.controller, 'ready', 5000)
     expect(s.phase).toBe('ready')
+    env.controller.dispose()
+    normal.controller.dispose()
+  })
+
+  it('持续收到空块不算有进展 → 仍按 idle 超时中止', async () => {
+    const normal = makeDeps()
+    const baseFetch = normal.deps.fetchImpl!
+    let timer: ReturnType<typeof setInterval> | null = null
+    const emptyBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        timer = setInterval(() => {
+          try {
+            controller.enqueue(new Uint8Array(0))
+          } catch {
+            if (timer) clearInterval(timer)
+          }
+        }, 8)
+      },
+      cancel() {
+        if (timer) clearInterval(timer)
+      }
+    })
+    const env = makeDeps({
+      stallTimeoutMs: 40,
+      fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('.zip')) return new Response(emptyBody)
+        return baseFetch(input, init)
+      }) as typeof fetch
+    })
+    await env.controller.check()
+    const s = await waitFor(env.controller, 'error', 2000)
+    expect(s.error?.code).toBe('download')
+    expect(s.error?.message).toContain('下载超时')
     env.controller.dispose()
     normal.controller.dispose()
   })

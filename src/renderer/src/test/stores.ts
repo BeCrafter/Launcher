@@ -27,6 +27,7 @@ import { useSettingsNav } from '../state/settings-nav-store'
 import { useSettingsStore } from '../state/settings-store'
 import { useSvcConfigStore } from '../state/svc-config-store'
 import { useUiStore } from '../state/ui-store'
+import { useUnsavedStore } from '../state/unsaved-store'
 import { useUpdateStore } from '../state/update-store'
 
 interface ResettableStore<T> {
@@ -48,6 +49,7 @@ export function resetRendererStores(): void {
   resetStore(useServicesStore)
   resetStore(useNotesStore)
   resetStore(useUpdateStore)
+  resetStore(useUnsavedStore)
   resetStore(useDrawerStore)
   resetStore(useSvcConfigStore)
   resetStore(useCardMenuStore)

@@ -90,4 +90,11 @@ describe('启动过渡页与启动期契约', () => {
     expect(splashModule).toContain('useLayoutEffect')
     expect(splashModule).toContain("getElementById('boot-splash')")
   })
+
+  it('只有正常应用树才上报 ready(诊断页不能解除升级回滚看门狗)', () => {
+    const app = read('src/renderer/src/App.tsx')
+    expect(app).toContain("notifyBootPainted('ready')")
+    // preload 缺失/引导失败分支不满足这个条件,因此不会上报 'ready'
+    expect(app).toContain('bootError === null')
+  })
 })

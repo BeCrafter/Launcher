@@ -1,6 +1,7 @@
 // 新建 Cron 模态(demo newCronModal + createCronJob:预设 chips + 表达式实时预览 + 提权分流)
 import { useState } from 'react'
 import { useT } from '../../hooks/useT'
+import { useUnsavedEditor } from '../../hooks/useUnsavedEditor'
 import { Modal } from '../../components/Modal'
 import { Toggle } from '../../components/ui/Toggle'
 import { parseCronExpr, formatNextRun, cronErrorToast } from '../../lib/cron'
@@ -39,6 +40,17 @@ export function NewCronModal(): React.JSX.Element {
 
   const expr = fields.map((f) => f || '*').join(' ')
   const exprDesc = desc.trim() || parseCronExpr(expr, lang, t)
+
+  // 表单全是组件内草稿(不走 store);升级自动重启前必须先让用户保存或取消。
+  useUnsavedEditor(
+    'new-cron',
+    open &&
+      (cmd.trim() !== '' ||
+        desc.trim() !== '' ||
+        log ||
+        scope !== 'user' ||
+        fields.join(' ') !== '0 9 * * *')
+  )
 
   const applyPreset = (expr2: string): void => {
     setFields(expr2.split(' '))

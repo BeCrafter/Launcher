@@ -2,6 +2,7 @@
 // 三项覆写:名称(别名)/ Host / 路径。留空 = 使用自动值(placeholder 直接展示该自动值)。
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../hooks/useT'
+import { useUnsavedEditor } from '../../hooks/useUnsavedEditor'
 import { useSvcConfigStore } from '../../state/svc-config-store'
 import { useSettingsStore } from '../../state/settings-store'
 import { connectHost, serviceIdentityKey } from '../../lib/svc-override'
@@ -25,21 +26,28 @@ export function SvcConfigMenu(): React.JSX.Element | null {
   const [alias, setAlias] = useState('')
   const [host, setHost] = useState('')
   const [path, setPath] = useState('')
+  // 草稿载入完成前的字段值来自上一个服务,不能拿来判断 dirty
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
 
   const overrides = useSettingsStore((s) => s.settings?.serviceOverrides ?? EMPTY_OVERRIDES)
+  const svcKey = svc ? serviceIdentityKey(svc) : ''
   // svc 为 null 时给一个空键(计数自然是 0);hook 不能条件调用
   const noteCount = useNoteCountForRef(
-    svc ? refForService(svc, overrides[serviceIdentityKey(svc)]) : { type: 'service', key: '', label: '' }
+    svc ? refForService(svc, overrides[svcKey]) : { type: 'service', key: '', label: '' }
   )
 
   // 打开/切换目标时把当前覆写载入草稿(同一次打开内自由编辑)
   useEffect(() => {
-    if (!svc) return
-    const o = useSettingsStore.getState().settings?.serviceOverrides?.[serviceIdentityKey(svc)]
+    if (!svc) {
+      setLoadedKey(null)
+      return
+    }
+    const o = useSettingsStore.getState().settings?.serviceOverrides?.[svcKey]
     setAlias(o?.alias ?? '')
     setHost(o?.host ?? '')
     setPath(o?.path ?? '')
-  }, [svc])
+    setLoadedKey(svcKey)
+  }, [svc, svcKey])
 
   // 点外部 / Esc 关闭(丢弃草稿)
   useEffect(() => {
@@ -58,9 +66,19 @@ export function SvcConfigMenu(): React.JSX.Element | null {
     }
   }, [svc, close])
 
+  // 浮层内的三项覆写是本地草稿;升级自动重启会退出应用,必须先登记到未保存状态。
+  const saved = svc ? overrides[svcKey] : undefined
+  const dirty =
+    svc !== null &&
+    loadedKey === svcKey &&
+    (alias.trim() !== (saved?.alias ?? '') ||
+      host.trim() !== (saved?.host ?? '') ||
+      path.trim() !== (saved?.path ?? ''))
+  useUnsavedEditor('svc-config', dirty)
+
   if (!svc) return null
 
-  const key = serviceIdentityKey(svc)
+  const key = svcKey
   const save = (): void => {
     saveServiceOverride(key, {
       alias: alias.trim() || undefined,

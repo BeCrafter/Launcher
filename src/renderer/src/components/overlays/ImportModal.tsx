@@ -1,6 +1,7 @@
 // 导入 plist 模态(demo importModal + doImport:剪贴板预填 → 解析 → 草稿入抽屉)
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../hooks/useT'
+import { useUnsavedEditor } from '../../hooks/useUnsavedEditor'
 import { Modal } from '../Modal'
 import { XmlEditor } from '../XmlEditor'
 import { parsePlistXml } from '../../lib/plist'
@@ -15,6 +16,10 @@ export function ImportModal(): React.JSX.Element | null {
   const closeOverlay = useUiStore((s) => s.closeOverlay)
   const [xml, setXml] = useState('')
   const prefilled = useRef(false)
+
+  // 粘贴/选择进来的 plist 只是草稿;升级自动重启前必须先让用户导入或取消。
+  // hook 必须放在下面的 `if (!open) return null` 之前,否则打开/关闭会改变 hook 顺序。
+  useUnsavedEditor('import-plist', open && xml.trim().length > 0)
 
   // demo showImportModal:打开时剪贴板含 plist 且文本区为空 → 自动预填(权限受限静默降级)
   useEffect(() => {

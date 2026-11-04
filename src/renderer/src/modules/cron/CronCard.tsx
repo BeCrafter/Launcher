@@ -2,6 +2,7 @@
 // #cronGrid > .cron-cell > (.cron-col-card + .row-expand + .cron-edit-expand) 嵌套为 CSS hover 契约,逐字保留
 import { useMemo, useState } from 'react'
 import { useT } from '../../hooks/useT'
+import { useUnsavedEditor } from '../../hooks/useUnsavedEditor'
 import { StatusDot } from '../../components/ui/StatusDot'
 import { TagChip } from '../../components/ui/TagChip'
 import { ActBtn } from '../../components/ui/ActBtn'
@@ -67,6 +68,12 @@ export function CronCard({ job }: { job: CronJob }): React.JSX.Element {
 
   const liveExpr = fields.map((f) => f || '*').join(' ')
   const liveDesc = parseCronExpr(liveExpr, lang, t)
+
+  // 升级自动重启会退出应用;内联编辑器只在展开时才算未保存,收起/保存后自动注销。
+  useUnsavedEditor(
+    `cron:${job.id}`,
+    isEditing && (liveExpr !== job.expr || cmd !== job.cmd || desc !== job.desc)
+  )
 
   const onSave = async (): Promise<void> => {
     try {

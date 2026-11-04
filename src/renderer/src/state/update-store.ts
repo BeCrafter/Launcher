@@ -2,17 +2,21 @@
 //
 // 状态本身归 main(UpdateController),这里只做三件事:
 //   1. 订阅 appUpdateChanged / 首帧拉一次 getState
-//   2. ready 后 10s 自动重启;笔记或 AI 输入框有未保存内容时暂停(绝不把用户正在写的字带走)
+//   2. ready 后 10s 自动重启;笔记、AI 输入框、Agent 抽屉/内联编辑有未保存内容时暂停
+//      (绝不把用户正在写的内容带走)
 //   3. 把上次升级的结果(installed / rolled-back / failed)提示一次
 //
 // 倒计时放在 store 而不是设置页组件里:用户点完检查就切走时,升级也应该能完成。
+// 窗口不可见时倒计时暂停,等用户回来再继续 —— 否则用户在其他页面/后台时会毫无提示地被重启。
 
 import { create } from 'zustand'
 import { IPC_EVENTS, type UpdateResultInfo, type UpdateState } from '@shared/ipc'
 import { getCurrentLang, makeT } from '../i18n'
 import { showToast } from '../lib/utils'
 import { useAiStore } from './ai-store'
+import { useDrawerStore } from './drawer-store'
 import { useNotesStore } from './notes-store'
+import { useUnsavedStore } from './unsaved-store'
 
 const t = (): ((k: string) => string) => makeT(getCurrentLang())
 
@@ -50,12 +54,42 @@ export const useUpdateStore = create<UpdateStore>((set, get) => {
     if (get().countdown !== null) set({ countdown: null })
   }
 
-  /** 笔记、AI 草稿、进行中的回复都只活在渲染进程,重启会丢 */
-  const hasUnsavedContent = (): boolean => {
+  type UnsavedReason = 'notes' | 'aiDraft' | 'aiRun' | 'editor'
+
+  /** 未保存内容的原因;null = 可以立即重启。顺序决定提示优先级。 */
+  const unsavedReason = (): UnsavedReason | null => {
     const notes = useNotesStore.getState()
-    if (notes.dirty || notes.saving) return true
+    if (notes.dirty || notes.saving) return 'notes'
     const ai = useAiStore.getState()
-    return ai.composerHasDraft || ai.composerDraft !== null || ai.runSessionId !== null
+    if (ai.composerHasDraft || ai.composerDraft !== null) return 'aiDraft'
+    if (ai.runSessionId !== null) return 'aiRun'
+    // Agent 抽屉:表单触碰过字段,或 XML 原文偏离最后一次读/写的版本
+    const drawer = useDrawerStore.getState()
+    if (
+      drawer.open &&
+      (drawer.dirtyFields.length > 0 ||
+        (drawer.document !== null && drawer.xml !== drawer.document.sourceXml))
+    ) {
+      return 'editor'
+    }
+    // crontab 内联编辑 / 服务覆写浮层等组件内联草稿
+    if (useUnsavedStore.getState().hasUnsaved()) return 'editor'
+    return null
+  }
+
+  /** 笔记、AI、编辑器草稿都只活在渲染进程,重启会丢 */
+  const hasUnsavedContent = (): boolean => unsavedReason() !== null
+
+  const showUnsavedToast = (reason: UnsavedReason): void => {
+    const key =
+      reason === 'notes'
+        ? 'toast.update.notesPending'
+        : reason === 'aiDraft'
+          ? 'toast.update.draftPending'
+          : reason === 'aiRun'
+            ? 'toast.update.aiPending'
+            : 'toast.update.editorPending'
+    showToast(t()(key), '#f59e0b', reason === 'notes' ? 'fa-floppy-disk' : 'fa-keyboard')
   }
 
   const startCountdown = (): void => {
@@ -73,12 +107,15 @@ export const useUpdateStore = create<UpdateStore>((set, get) => {
         stopCountdown()
         return
       }
-      // 笔记或 AI 草稿未保存 —— 暂停倒计时,不让升级吞掉正在敲的字
+      // 笔记、AI 或内联编辑尚未保存 —— 暂停倒计时,不让升级吞掉正在敲的内容
       if (hasUnsavedContent()) {
         stopCountdown()
         set({ dirtyBlocked: true })
         return
       }
+      // 窗口在后台/最小化时暂停倒计时:用户看不到全局提示,重启会像「应用自己退了」。
+      // 等窗口重新可见后从当前秒数继续。
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       remaining -= 1
       if (remaining <= 0) {
         stopCountdown()
@@ -140,6 +177,8 @@ export const useUpdateStore = create<UpdateStore>((set, get) => {
       }
       useNotesStore.subscribe(resumeIfUnblocked)
       useAiStore.subscribe(resumeIfUnblocked)
+      useDrawerStore.subscribe(resumeIfUnblocked)
+      useUnsavedStore.subscribe(resumeIfUnblocked)
       void window.launcher.updates
         .consumeResult()
         .then((r) => {
@@ -183,18 +222,14 @@ export const useUpdateStore = create<UpdateStore>((set, get) => {
       }
       if (useNotesStore.getState().dirty) {
         set({ dirtyBlocked: true })
-        showToast(t()('toast.update.notesPending'), '#f59e0b', 'fa-floppy-disk')
+        showUnsavedToast('notes')
         return
       }
-      // 输入框草稿/进行中的回复没有落盘通道:只能明确拦住,让用户先处理完
-      const ai = useAiStore.getState()
-      if (ai.composerHasDraft || ai.composerDraft !== null || ai.runSessionId !== null) {
+      // 输入框草稿/进行中的回复/内联编辑没有统一的落盘通道:只能明确拦住,让用户先处理完
+      const reason = unsavedReason()
+      if (reason !== null) {
         set({ dirtyBlocked: true })
-        showToast(
-          t()(ai.composerHasDraft ? 'toast.update.draftPending' : 'toast.update.aiPending'),
-          '#f59e0b',
-          'fa-keyboard'
-        )
+        showUnsavedToast(reason)
         return
       }
       await invoke(() => window.launcher.updates.apply(), 'toast.update.applyError')

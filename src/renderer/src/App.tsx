@@ -1,7 +1,9 @@
 // 应用组合根:引导(设置生效 + splash 摘除)→ 外壳 + 浮层
+import { useEffect } from 'react'
 import { bootstrap } from './state/bootstrap'
 import { useBootSplash } from './boot/splash'
 import { AppShell } from './layout/AppShell'
+import { UpdateReadyBanner } from './components/ui/UpdateReadyBanner'
 import { AgentDrawer } from './modules/drawer/AgentDrawer'
 import { AgentCardMenu } from './components/overlays/AgentCardMenu'
 import { SvcConfigMenu } from './components/overlays/SvcConfigMenu'
@@ -43,6 +45,12 @@ function BootFailure({ title, detail }: { title: string; detail: string }): Reac
 export default function App(): React.JSX.Element {
   // 摘除过渡页要在**所有**分支上发生,故放在最前、无条件调用(与本次 commit 同帧)
   useBootSplash()
+  // 只有正常应用树才上报 'ready':preload 缺失/引导失败虽然也画出了诊断页(并且已经上报 'app'),
+  // 但不能让升级助手误以为新版本可用而跳过回滚。
+  const bootOk = !!window.launcher && bootError === null
+  useEffect(() => {
+    if (bootOk) window.launcher?.notifyBootPainted('ready')
+  }, [bootOk])
   // preload 未成功注入时给出可诊断的错误页而非白屏
   if (!window.launcher) {
     return (
@@ -58,6 +66,7 @@ export default function App(): React.JSX.Element {
   return (
     <>
       <AppShell />
+      <UpdateReadyBanner />
       <AgentDrawer />
       <AgentCardMenu />
       <SvcConfigMenu />

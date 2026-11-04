@@ -80,8 +80,10 @@ export interface LauncherApi {
   // 运行中 Agent 计数上报(menubarBadge 角标;数据在 renderer,阶段 1 换真实源后由 main 自算)
   reportBadgeCount: (count: number) => Promise<void>
   /**
-   * 启动进度上报(单向上报,无回执):'splash' = 过渡页已产出第一帧,'app' = 应用已首次 commit。
-   * main 据此决定**何时**把窗口显示出来 —— 详见 main/services/boot-gate.ts。
+   * 启动进度上报(单向上报,无回执):'splash' = 过渡页已产出第一帧,'app' = 应用已首次 commit,
+   * 'ready' = 正常应用树已 commit(诊断失败页不发)。
+   * main 据此决定**何时**把窗口显示出来、以及升级助手是否可以解除回滚看门狗 ——
+   * 详见 main/services/boot-gate.ts 与 update-boot-ready.ts。
    */
   notifyBootPainted: (phase: BootPaintPhase) => void
   /**

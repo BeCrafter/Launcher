@@ -4,6 +4,7 @@
 // 数据 = store.headers[scope].headerRaw(main 解析产物);保存只替换头部区块,任务区原样
 import { useState } from 'react'
 import { useT } from '../../hooks/useT'
+import { useUnsavedEditor } from '../../hooks/useUnsavedEditor'
 import { cronErrorToast } from '../../lib/cron'
 import { useCronStore } from '../../state/cron-store'
 import { ELEVATION } from '../../lib/elevation'
@@ -18,6 +19,9 @@ export function CronHeaderPanel(): React.JSX.Element {
   const [text, setText] = useState('')
 
   const data = headers[scope]
+
+  // crontab 头部也是本地草稿;升级自动重启前必须先让用户保存/取消。
+  useUnsavedEditor('cron-header', open && text !== data.headerRaw)
 
   const openPanel = (): void => {
     setText(data.headerRaw)

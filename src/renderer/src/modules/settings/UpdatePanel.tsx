@@ -200,10 +200,16 @@ export function UpdatePanel(): React.JSX.Element | null {
               <i className="fa-solid fa-rotate-right" />
               <span>{t('settings.update.btn.restartNow')}</span>
             </button>
-            {countdown !== null && (
+            {!postponed && (
               <button className="d-btn" type="button" onClick={postpone}>
                 <i className="fa-solid fa-clock" />
                 <span>{t('settings.update.btn.later')}</span>
+              </button>
+            )}
+            {state?.canCancel && (
+              <button className="d-btn" type="button" onClick={() => void cancel()}>
+                <i className="fa-solid fa-xmark" />
+                <span>{t('settings.update.btn.cancelUpdate')}</span>
               </button>
             )}
           </>

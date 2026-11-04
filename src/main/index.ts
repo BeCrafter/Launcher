@@ -17,6 +17,7 @@ import { createElevationExecutor } from './services/elevation'
 import { toServicesPayload } from './services/process-discovery'
 import { detectInstallChannel } from './services/install-channel'
 import { createUpdateController } from './services/update-controller'
+import { createUpdateBootReady, type UpdateBootReadyGate } from './services/update-boot-ready'
 import { appBundleFromExecutable } from './services/update-target'
 import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
@@ -30,6 +31,8 @@ let mainWindow: BrowserWindow | null = null
 let store: SettingsStore
 /** 窗口显示门控(每个窗口一份;见 services/boot-gate.ts 的说明) */
 let bootGate: BootGate | null = null
+/** 新版本 ready 标记的门控:启动序完成 + 渲染层进入正常应用树后,才解除助手的回滚看门狗 */
+let updateBootReady: UpdateBootReadyGate | null = null
 /**
  * 「whenReady 的启动序已走完」。
  * 在这之前收到 second-instance / Dock activate(用户在启动途中又点了一次图标)时**不要**建窗 ——
@@ -149,6 +152,8 @@ ipcMain.on(IPC.appBootPainted, (e, phase: BootPaintPhase) => {
   if (!mainWindow || mainWindow.isDestroyed() || e.sender !== mainWindow.webContents) return
   if (phase === 'splash') bootGate?.splashPainted()
   else if (phase === 'app') bootGate?.appPainted()
+  // 'app' 只代表「画了一帧」,引导失败/诊断页也会发;升级 ready 标记要求正常应用树已 commit。
+  else if (phase === 'ready') updateBootReady?.appReady()
 })
 
 /**
@@ -427,6 +432,8 @@ async function startApp(): Promise<void> {
     log: (m) => console.log(`[update] ${m}`)
   })
   app.once('before-quit', () => updater.dispose())
+  // ready 标记必须等「启动序完成 + 渲染层正常应用树」两个信号都到齐;两个信号谁先来都行。
+  updateBootReady = createUpdateBootReady(() => updater.markReady())
 
   // AI 助手(阶段 4):pi 引擎 + ToolRegistry + 内置会话 —— 同步装配,不含网络/重磁盘活
   const ai = createAiStack({
@@ -460,8 +467,9 @@ async function startApp(): Promise<void> {
 
   createWindow()
   startupDone = true
-  // 让升级助手知道新版本确实起来了(它等这个标记,超时会自动回滚)
-  updater.onBoot()
+  // 只清理上一轮安装残留;ready 标记要等启动序完成且渲染层进入正常应用树后再写
+  // (见 update-boot-ready.ts:建完窗就写会让升级助手的 30s 回滚看门狗提前失效)。
+  updater.cleanupOnBoot()
 
   // 建窗后才跑:全量 applier(各 applier 幂等;此前只落位过主题)+ 设置变更订阅
   registry.apply(store.get())
@@ -539,6 +547,11 @@ async function startApp(): Promise<void> {
 
   // Dock 图标点击 / 重新打开应用 → 唤起(Dock 点击由 macOS 的 applicationShouldHandleReopen 触发,必发此事件)
   app.on('activate', () => showMainWindow())
+
+  // 最后再放行 ready 标记:到这里建窗后的关键初始化(registry / notes / discovery / 文件监听)
+  // 都已成功执行;这之前任何同步抛错都会跳过它(升级助手会按启动失败回滚)。
+  // 若渲染层还没上报 ready,门控会继续等它;两者都到齐才写 ready 标记。
+  updateBootReady?.startupComplete()
 }
 
 app.whenReady().then(async () => {

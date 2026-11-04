@@ -124,10 +124,13 @@ export const IPC_EVENTS = {
 export type IpcEventChannel = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]
 
 /**
- * 启动进度('splash' = 过渡页已产出第一帧;'app' = 应用已首次 commit)。
- * 这是 main 显示窗口的唯一依据 —— 窗口可见时屏幕上必须是这两者之一,不能是未绘制的底色。
+ * 启动进度:
+ *   'splash' = 过渡页已产出第一帧
+ *   'app'    = 应用已首次 commit(仅用于显示窗口;失败诊断页也会发)
+ *   'ready'  = 正常应用树已 commit,不是 preload 缺失/引导失败诊断页
+ * 窗口显示只看 splash/app;升级助手是否回滚看 ready(见 main/services/update-boot-ready.ts)。
  */
-export type BootPaintPhase = 'splash' | 'app'
+export type BootPaintPhase = 'splash' | 'app' | 'ready'
 
 export interface AppInfo {
   arch: string

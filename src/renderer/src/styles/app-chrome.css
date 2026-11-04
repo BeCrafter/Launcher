@@ -1322,3 +1322,73 @@ body.rail-resizing .ai-rail *,
     display: none;
   }
 }
+
+/* ── 全局升级就绪提示条 ──
+   ready 后自动重启倒计时不能只藏在设置 › 关于里:用户切到别的页面时也要看得见、点得到「稍后」。
+   固定在右下角,与底部居中的 toast 错开;窄窗口下铺开并让按钮换行。 */
+.update-ready-banner {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  /* 高于常规浮层/卡片菜单,但低于 modal-mask(1000):弹窗打开时不应盖在授权确认上 */
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 36px));
+  padding: 11px 14px;
+  border: 1px solid var(--toast-border);
+  border-radius: 12px;
+  background: var(--toast-bg);
+  color: var(--text);
+  box-shadow: var(--toast-shadow);
+  backdrop-filter: blur(20px);
+}
+
+.update-ready-icon {
+  color: var(--green);
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.update-ready-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.update-ready-copy strong {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.update-ready-copy span {
+  color: var(--muted);
+}
+
+.update-ready-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .update-ready-banner {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .update-ready-copy {
+    flex: 1;
+  }
+
+  .update-ready-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
