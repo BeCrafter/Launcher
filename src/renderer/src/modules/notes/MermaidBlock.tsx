@@ -14,6 +14,7 @@ import { useT } from '../../hooks/useT'
 import { useEffectiveTheme } from '../../hooks/useEffectiveTheme'
 import { renderMermaid, type MermaidResult } from '../../lib/mermaid-render'
 import { showToast } from '../../lib/utils'
+import { useLightboxStore } from '../../state/lightbox-store'
 
 /** 源码 + 主题 → 结果。跨组件实例共享,所以放在模块级而不是 useRef。 */
 const CACHE_MAX = 32
@@ -65,7 +66,6 @@ export function MermaidBlock({
   const [async_, setAsync] = useState<{ key: string; result: MermaidResult } | null>(null)
   const result = cached ?? (async_?.key === key ? async_.result : null)
 
-  const [zoomed, setZoomed] = useState(false)
   const hostRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -89,6 +89,16 @@ export function MermaidBlock({
       .catch(() => showToast(t('notes.diagram.copyFailed'), '#f87171', 'fa-circle-exclamation'))
   }
 
+  // 正文图与工具条按钮同一个入口:全屏查看器负责缩放/拖动,本组件不再自带遮罩
+  const openSvg = (): void => {
+    if (result?.svg == null) return
+    useLightboxStore.getState().open({
+      kind: 'svg',
+      svg: result.svg,
+      label: t('lightbox.diagram')
+    })
+  }
+
   return (
     <div className="md-mermaid">
       <div className="md-mermaid-tools">
@@ -96,7 +106,7 @@ export function MermaidBlock({
           <i className="fa-regular fa-copy" />
         </button>
         {result?.svg != null && (
-          <button type="button" title={t('notes.diagram.zoom')} onClick={() => setZoomed(true)}>
+          <button type="button" title={t('notes.diagram.zoom')} onClick={openSvg}>
             <i className="fa-solid fa-up-right-and-down-left-from-center" />
           </button>
         )}
@@ -129,36 +139,10 @@ export function MermaidBlock({
 
       {/* 有图才挂这个容器:空容器会把 SVG 的宽度撑成 0,后续布局会跳 */}
       {result?.svg != null && (
-        <div className="md-mermaid-canvas">
+        <div className="md-mermaid-canvas" onClick={openSvg}>
           <div className="md-mermaid-svg" ref={hostRef} />
         </div>
       )}
-
-      {zoomed && result?.svg != null && (
-        <ZoomOverlay svg={result.svg} onClose={() => setZoomed(false)} />
-      )}
-    </div>
-  )
-}
-
-/** 放大查看:大图在预览的窄栏里挤成一团,需要一个能看全的地方 */
-function ZoomOverlay({ svg, onClose }: { svg: string; onClose: () => void }): React.JSX.Element {
-  const hostRef = useRef<HTMLDivElement | null>(null)
-  useSvg(hostRef, svg)
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  return (
-    <div className="md-mermaid-zoom" role="dialog" aria-modal="true" onClick={onClose}>
-      <div className="md-mermaid-zoom-inner" onClick={(e) => e.stopPropagation()}>
-        <div className="md-mermaid-zoom-svg" ref={hostRef} />
-      </div>
     </div>
   )
 }

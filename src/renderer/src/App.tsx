@@ -4,6 +4,7 @@ import { bootstrap } from './state/bootstrap'
 import { useBootSplash } from './boot/splash'
 import { AppShell } from './layout/AppShell'
 import { UpdateReadyBanner } from './components/ui/UpdateReadyBanner'
+import { MediaLightbox } from './components/ui/MediaLightbox'
 import { AgentDrawer } from './modules/drawer/AgentDrawer'
 import { AgentCardMenu } from './components/overlays/AgentCardMenu'
 import { SvcConfigMenu } from './components/overlays/SvcConfigMenu'
@@ -67,6 +68,7 @@ export default function App(): React.JSX.Element {
     <>
       <AppShell />
       <UpdateReadyBanner />
+      <MediaLightbox />
       <AgentDrawer />
       <AgentCardMenu />
       <SvcConfigMenu />

@@ -26,6 +26,7 @@ import { referenceNoteInAi } from '../../lib/ai-nav'
 import { confirmDangerous } from '../../lib/elevation'
 import { useNotesStore } from '../../state/notes-store'
 import { useNoteRefPickerStore } from '../../state/note-ref-picker-store'
+import { useLightboxStore } from '../../state/lightbox-store'
 import { DiagramDialog, type DiagramDialogTarget } from './DiagramDialog'
 import { EmbedDialog } from './EmbedDialog'
 import { MermaidBlock } from './MermaidBlock'
@@ -902,11 +903,29 @@ function NotePreview({
       tableLabels
     ]
   )
+
+  // 点图片 → 全屏查看。事件委托放在预览容器上,markdown 渲染层保持无副作用
+  // (AI 消息 / 帮助页共用同一份渲染器,不该被笔记的交互污染)。
+  const onPreviewClick = (e: React.MouseEvent<HTMLDivElement>): void => {
+    if (e.defaultPrevented || e.button !== 0) return
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    const img = (e.target as HTMLElement).closest('img.md-img') as HTMLImageElement | null
+    if (img === null) return
+    // 链接包图 / 缩放角柄上不抢原有交互
+    if (img.closest('a') !== null || img.closest('.md-resize-handle') !== null) return
+    e.preventDefault()
+    useLightboxStore.getState().open({
+      kind: 'image',
+      src: img.currentSrc || img.src,
+      alt: img.alt || undefined
+    })
+  }
+
   if (body.trim() === '') {
     return <div className="notes-preview-empty">{t('notes.preview.empty')}</div>
   }
   return (
-    <div className="notes-preview-body md-scope" style={tableVars}>
+    <div className="notes-preview-body md-scope" style={tableVars} onClick={onPreviewClick}>
       {rendered}
     </div>
   )

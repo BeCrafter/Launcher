@@ -20,6 +20,7 @@ import { useAiStore } from '../state/ai-store'
 import { useCardMenuStore } from '../state/card-menu-store'
 import { useCronStore } from '../state/cron-store'
 import { useDrawerStore } from '../state/drawer-store'
+import { useLightboxStore } from '../state/lightbox-store'
 import { useNoteRefPickerStore } from '../state/note-ref-picker-store'
 import { useNotesStore } from '../state/notes-store'
 import { useServicesStore } from '../state/services-store'
@@ -54,6 +55,7 @@ export function resetRendererStores(): void {
   resetStore(useSvcConfigStore)
   resetStore(useCardMenuStore)
   resetStore(useNoteRefPickerStore)
+  resetStore(useLightboxStore)
 
   setRuntimeLang('zh-CN')
   document.documentElement.lang = 'zh-CN'
