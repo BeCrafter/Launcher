@@ -15,16 +15,18 @@
 //   配色词表与预览共用(lib/code-tokens.ts),同一个 `const` 在两边是同一个颜色。
 
 import { useEffect, useImperativeHandle, useRef, type RefObject } from 'react'
-import { EditorState, type Extension } from '@codemirror/state'
+import { EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state'
 import {
   EditorView,
+  crosshairCursor,
   drawSelection,
   highlightActiveLine,
   keymap,
-  placeholder as placeholderExt
+  placeholder as placeholderExt,
+  rectangularSelection
 } from '@codemirror/view'
 import { indentUnit, syntaxHighlighting, unfoldAll } from '@codemirror/language'
-import { autocompletion } from '@codemirror/autocomplete'
+import { autocompletion, completionStatus } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { dataSource } from '../../data'
@@ -32,11 +34,15 @@ import { cleanIpcErrorMessage } from '../../lib/ipc-error'
 import { encodeNoteAssetPath } from '../../lib/note-asset'
 import { languageFor } from '../../lib/code-langs'
 import { TOKEN_STYLE } from '../../lib/code-tokens'
+import { inCodeBlock } from '../../lib/editor-code-block'
+import { markdownFenceInput } from '../../lib/editor-fence'
 import { setBlockAlign } from '../../lib/note-align'
+import { planMarkdownContinuation } from '../../lib/md-list-continuation'
+import { indentMarkdownLine, listMarkerOf, parseListLine } from '../../lib/md-list-syntax'
 import { toggleTaskLine } from '../../lib/note-task'
 import { showToast } from '../../lib/utils'
 import { getCurrentLang, makeT } from '../../i18n'
-import { calloutCompletion, calloutMarks, syntaxMarks } from './editor-marks'
+import { calloutCompletion, calloutMarks, lenientTaskMarks, syntaxMarks } from './editor-marks'
 import { applyWrap, suppressSelectionBubble } from '../../lib/note-marks'
 import { markdownSelectionBubble } from '../../lib/editor-bubble'
 import {
@@ -107,6 +113,104 @@ function applyDocText(view: EditorView, next: string): void {
     endNext -= 1
   }
   view.dispatch({ changes: { from: start, to: endPrev, insert: next.slice(start, endNext) } })
+}
+
+/**
+ * 回车:接管上游不认的宽松任务写法(`-[]` / `- []` / `- [x]文字` / 有序任务)。
+ * 规整当前行前缀与插入新行放在同一个 transaction 里 —— 一次撤销回到输入前。
+ * 标准写法返回 false,继续走 `insertNewlineContinueMarkup`。
+ */
+function continueMarkdownMarkup(view: EditorView): boolean {
+  if (view.composing) return false
+  if (view.state.selection.ranges.length !== 1) return false
+  if (completionStatus(view.state) === 'active') return false
+
+  const head = view.state.selection.main.head
+  const line = view.state.doc.lineAt(head)
+  if (inCodeBlock(view, head)) return false
+
+  const plan = planMarkdownContinuation(line.text, head - line.from)
+  if (plan === null) return false
+
+  const changes: { from: number; to: number; insert: string }[] = []
+  if (plan.normalize !== undefined) {
+    changes.push({
+      from: line.from + plan.normalize.from,
+      to: line.from + plan.normalize.to,
+      insert: plan.normalize.insert
+    })
+  }
+  changes.push({
+    from: line.from + plan.insertAt,
+    to: line.from + plan.insertAt,
+    insert: plan.insert
+  })
+  view.dispatch({
+    changes,
+    selection: EditorSelection.cursor(line.from + plan.caret),
+    userEvent: 'input'
+  })
+  return true
+}
+
+/**
+ * Tab / Shift+Tab:有选区(单行或多行)就整批增减一级缩进;
+ * 光标折叠时只接管列表项与代码块,普通段落仍让 Tab 把焦点移出编辑器。
+ */
+function indentSelection(view: EditorView, dir: 'in' | 'out'): boolean {
+  if (view.composing) return false
+  if (completionStatus(view.state) === 'active') return false
+
+  const { doc, selection } = view.state
+  const hasSelection = selection.ranges.some((range) => !range.empty)
+  if (!hasSelection) {
+    const head = selection.main.head
+    const line = doc.lineAt(head)
+    if (!inCodeBlock(view, head) && parseListLine(line.text) === null) return false
+  }
+
+  // 多光标时把每个光标覆盖的行并起来,同一行只改一次
+  const lineNumbers = new Set<number>()
+  for (const range of selection.ranges) {
+    const first = doc.lineAt(range.from).number
+    const last = doc.lineAt(range.to).number
+    for (let n = first; n <= last; n += 1) lineNumbers.add(n)
+  }
+
+  const changes: { from: number; to: number; insert: string }[] = []
+  for (const n of [...lineNumbers].sort((a, b) => a - b)) {
+    const line = doc.line(n)
+    if (line.text.trim() === '') continue
+    const next = indentMarkdownLine(line.text, dir)
+    if (next !== line.text) changes.push({ from: line.from, to: line.to, insert: next })
+  }
+  if (changes.length > 0) view.dispatch({ changes, userEvent: 'input' })
+  // 有选区时即使没有行可缩进也吃掉按键:Shift+Tab 不该把焦点移出编辑器
+  return true
+}
+
+/**
+ * 列编辑:多行选区时,在主光标所在列给每一行放一个光标。
+ * 配合 `allowMultipleSelections` 后,输入 / 删除会同时作用于所有光标。
+ */
+function addColumnCursors(view: EditorView): boolean {
+  const { doc, selection } = view.state
+  if (selection.ranges.length !== 1) return false
+  const main = selection.main
+  const first = doc.lineAt(main.from)
+  const last = doc.lineAt(main.to)
+  if (first.number === last.number) return false
+
+  // 列以**主光标所在行**为准:多行选区的头通常落在最后一行
+  const column = main.head - doc.lineAt(main.head).from
+  const ranges: ReturnType<typeof EditorSelection.cursor>[] = []
+  for (let n = first.number; n <= last.number; n += 1) {
+    const line = doc.line(n)
+    ranges.push(EditorSelection.cursor(line.from + Math.min(column, line.length)))
+  }
+  view.dispatch({ selection: EditorSelection.create(ranges), userEvent: 'select' })
+  view.focus()
+  return true
 }
 
 /** 编辑器对外的命令式接口(预览勾选任务项、底部工具条排版按钮、滚动同步) */
@@ -245,9 +349,18 @@ const MD_EXTENSIONS: Extension[] = [
   // 语法树没覆盖到的那几处(表格分隔符 / 表头 / 任务标记)与提示块标记 ——
   // 只有着色,不改变行高,见 editor-marks.ts 顶部
   syntaxMarks,
+  lenientTaskMarks,
   calloutMarks,
   // 输入 `> ` 后提示五种提示块(GitHub / Obsidian 的 `> [!NOTE]`)
   autocompletion({ override: [calloutCompletion((kind) => t()(`notes.callout.${kind}`))] }),
+  // 列选择 / 多光标:Option(Alt)+拖动是矩形选择,多光标输入天然同时生效。
+  // 不开 allowMultipleSelections 的话,多选区会被折回单光标。
+  EditorState.allowMultipleSelections.of(true),
+  rectangularSelection(),
+  crosshairCursor(),
+  // 反引号:行首第三个自动补成对围栏;有选区时第一下包行内、第三下升级成围栏。
+  // 代码块内部不介入(见 editor-fence.ts 顶部)。
+  markdownFenceInput(),
   EditorView.lineWrapping
 ]
 
@@ -496,11 +609,19 @@ export function NoteEditor({
         const doc = view.state.doc
         const n = Math.min(Math.max(line, 0), doc.lines - 1)
         const cur = doc.line(n + 1)
-        const m = /^(\s*)(?:[-+*] |\d+[.)] |[-+*] \[[ xX]\] )?/.exec(cur.text)
-        const indent = m?.[1] ?? ''
-        const current = m?.[0].slice(indent.length) ?? ''
-        const rest = cur.text.slice(indent.length + current.length)
-        const insert = current === marker ? `${indent}${rest}` : `${indent}${marker}${rest}`
+        const syntax = parseListLine(cur.text)
+        if (syntax === null) {
+          // 普通行:保留前导空白,把标记插在正文前
+          const indent = /^[ \t]*/.exec(cur.text)?.[0] ?? ''
+          const rest = cur.text.slice(indent.length)
+          view.dispatch({ changes: { from: cur.from, to: cur.to, insert: `${indent}${marker}${rest}` } })
+          view.focus()
+          return
+        }
+        const head = `${syntax.quote}${syntax.indent}`
+        const content = cur.text.slice(syntax.contentStart)
+        const insert =
+          listMarkerOf(cur.text) === marker ? `${head}${content}` : `${head}${marker}${content}`
         view.dispatch({ changes: { from: cur.from, to: cur.to, insert } })
         view.focus()
       },
@@ -511,12 +632,8 @@ export function NoteEditor({
         const doc = view.state.doc
         const n = Math.min(Math.max(line, 0), doc.lines - 1)
         const cur = doc.line(n + 1)
-        if (dir === 'in') {
-          view.dispatch({ changes: { from: cur.from, to: cur.from, insert: '  ' } })
-        } else {
-          const m = /^(?: {1,2}|\t)/.exec(cur.text)
-          if (m !== null) view.dispatch({ changes: { from: cur.from, to: cur.from + m[0].length, insert: '' } })
-        }
+        const next = indentMarkdownLine(cur.text, dir)
+        if (next !== cur.text) view.dispatch({ changes: { from: cur.from, to: cur.to, insert: next } })
         view.focus()
       },
 
@@ -532,12 +649,8 @@ export function NoteEditor({
           const line = view.state.doc.line(n)
           // 空行不加空格:缩进本来就没有意义,还会在正文里留下看不见的尾随空白
           if (line.text.trim() === '') continue
-          if (dir === 'in') {
-            changes.push({ from: line.from, to: line.from, insert: '  ' })
-          } else {
-            const m = /^(?: {1,2}|\t)/.exec(line.text)
-            if (m !== null) changes.push({ from: line.from, to: line.from + m[0].length, insert: '' })
-          }
+          const next = indentMarkdownLine(line.text, dir)
+          if (next !== line.text) changes.push({ from: line.from, to: line.to, insert: next })
         }
         if (changes.length === 0) return
         view.dispatch({ changes })
@@ -747,6 +860,19 @@ export function NoteEditor({
             { key: 'Mod-i', run: (v) => { applyWrap(v, '*'); return true } },
             { key: 'Mod-k', run: (v) => { applyWrap(v, '[', '](https://)'); return true } }
           ]),
+          // 最高优先级:只接管上游不认的宽松任务回车、批量缩进、同列光标;
+          // 其余情况返回 false,原样落回 CodeMirror 的默认键位。
+          Prec.highest(
+            keymap.of([
+              { key: 'Enter', run: continueMarkdownMarkup },
+              {
+                key: 'Tab',
+                run: (v) => indentSelection(v, 'in'),
+                shift: (v) => indentSelection(v, 'out')
+              },
+              { key: 'Mod-Alt-c', run: addColumnCursors }
+            ])
+          ),
           EditorView.domEventHandlers({
             dragover: (e, v) => handleBlockDragOver(v, e),
             dragend: (e, v) => handleBlockDragEnd(v, e),

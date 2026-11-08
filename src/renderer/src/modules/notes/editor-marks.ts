@@ -19,6 +19,8 @@ import {
 import { RangeSetBuilder } from '@codemirror/state'
 import { syntaxTree } from '@codemirror/language'
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
+import { inCodeBlock } from '../../lib/editor-code-block'
+import { parseListLine } from '../../lib/md-list-syntax'
 import { CALLOUT_KINDS, type CalloutKind } from '../../lib/markdown'
 
 /** 按语法树节点名给一段文字上色。值必须是在 notes.css 里有定义的 class */
@@ -58,6 +60,44 @@ export const syntaxMarks = ViewPlugin.fromClass(
     }
     update(u: ViewUpdate): void {
       if (u.docChanged || u.viewportChanged) this.decorations = buildMarks(u.view)
+    }
+  },
+  { decorations: (v) => v.decorations }
+)
+
+/**
+ * 宽松任务标记的着色:`- []` / `- [x]文字` / 有序任务。
+ *
+ * Lezer 只认 `[ ]` 后面还带空白的 TaskMarker,这几种写法在源码里没有颜色。
+ * 补一层正则判据,range 与 `md-list-syntax` 的 taskFrom/taskTo 完全一致。
+ */
+function buildLenientTaskMarks(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  const last = view.state.doc.lineAt(view.viewport.to).number
+  let line = view.state.doc.lineAt(view.viewport.from)
+  for (;;) {
+    const syntax = parseListLine(line.text)
+    if (syntax !== null && syntax.task && !syntax.canonical && !inCodeBlock(view, line.from)) {
+      builder.add(
+        line.from + syntax.taskFrom,
+        line.from + syntax.taskTo,
+        Decoration.mark({ class: 'tk-task' })
+      )
+    }
+    if (line.number >= last) break
+    line = view.state.doc.line(line.number + 1)
+  }
+  return builder.finish()
+}
+
+export const lenientTaskMarks = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+    constructor(view: EditorView) {
+      this.decorations = buildLenientTaskMarks(view)
+    }
+    update(u: ViewUpdate): void {
+      if (u.docChanged || u.viewportChanged) this.decorations = buildLenientTaskMarks(u.view)
     }
   },
   { decorations: (v) => v.decorations }

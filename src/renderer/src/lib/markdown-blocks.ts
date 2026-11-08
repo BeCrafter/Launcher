@@ -1,6 +1,7 @@
 import { noteAssetKindOfUrl, type NoteAssetKind } from '@shared/notes'
 import type { CalloutKind } from './markdown'
 import { alignOpenOf, isAlignClose, type TextAlign } from './note-align'
+import { parseListLine } from './md-list-syntax'
 
 export type MarkdownBlockKind =
   | 'frontmatter'
@@ -72,7 +73,6 @@ interface ConsumedBlock {
 
 const HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+|$)/
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(?:[^`~]*)$/
-const LIST_RE = /^ {0,3}(?:[-+*]|\d+[.)])[ \t]+/
 const QUOTE_RE = /^ {0,3}>/
 const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/
 const CALLOUT_RE = /^ {0,3}>[ \t]*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i
@@ -166,32 +166,36 @@ function consumeQuote(lines: string[], start: number, limit: number): ConsumedBl
 // ul/ol 混排算两层、空行在预览里会把列表断开。唯一放宽的是**条目之间容忍空行**
 // （空行归前一个条目的 `to`，于是拖拽槽位仍然严丝合缝）。
 
-/** 列表标记：无序 `-+*`、有序 `1.` / `1)`、任务项 `- [ ]`。缩进不设上限。 */
-const ITEM_RE = /^([ \t]*)(?:([-+*])|(\d+[.)]))([ \t]+)/
-
-/**
- * 任务项标记。与预览的 `TASK_EXT_RE` 同一口径:标记之后紧跟 `[ ]` / `[x]`。
- * 只看标记行 —— 任务项的子项未必也是任务,不能顺着子树传染。
- */
-const TASK_ITEM_RE = /^[ \t]*(?:[-+*]|\d+[.)])[ \t]+\[[ xX]\]/
-
 interface ItemMark {
   /** 标记前导空白宽度（字符数，与预览 parseListExt 同口径） */
   indent: number
-  /** 内容列 = 前导空白 + 标记宽度 + 标记后空白 */
+  /** 内容列 = 前导空白 + 标记 + 空白（任务标记不计，与旧口径一致） */
   content: number
   ordered: boolean
+  /** 标记行是否是任务项（`[ ]` / `[x]`，含宽松写法） */
+  task: boolean
 }
 
+/**
+ * 列表标记的识别口径统一在 `md-list-syntax.ts`（与预览、勾选共用）。
+ * 引用行（`> - x`）整体由 consumeQuote 处理，这里必须返回 null，
+ * 否则它会被当成列表项、从引用里拆出来。
+ */
 function itemMarkOf(line: string): ItemMark | null {
-  const match = ITEM_RE.exec(line)
-  if (match === null) return null
-  const width = (match[2] ?? match[3]).length
+  const syntax = parseListLine(line)
+  if (syntax === null || syntax.quote !== '') return null
   return {
-    indent: match[1].length,
-    content: match[1].length + width + match[4].length,
-    ordered: match[3] !== undefined
+    indent: syntax.indent.length,
+    content: syntax.taskFrom,
+    ordered: syntax.ordered,
+    task: syntax.task
   }
+}
+
+/** 顶格列表行（0–3 个前导空格；4 个空格仍是代码块）。 */
+function isRootListLine(line: string): boolean {
+  const syntax = parseListLine(line)
+  return syntax !== null && syntax.quote === '' && /^ {0,3}$/.test(syntax.indent)
 }
 
 /**
@@ -286,7 +290,7 @@ function parseItemRun(
       contentTo: children.length > 0 ? children[children.length - 1].contentTo : ownEnd,
       indent: mark.indent,
       ordered: mark.ordered,
-      task: TASK_ITEM_RE.test(lines[i]),
+      task: mark.task,
       children
     })
     i = regionEnd
@@ -475,7 +479,7 @@ function collectBlocks(
     }
 
     // 列表：逐项成块（每项带自己的子项），不再整段算一块
-    if (LIST_RE.test(lines[i])) {
+    if (isRootListLine(lines[i])) {
       const mark = itemMarkOf(lines[i])
       const run = mark === null ? null : parseItemRun(lines, i, to, mark.indent, mark.ordered)
       // run.end 必须前进，否则这里的 while 会原地打转（渲染进程直接卡死）

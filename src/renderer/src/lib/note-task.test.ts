@@ -52,9 +52,27 @@ describe('toggleTaskLine', () => {
     )
   })
 
-  it('`[]` 中间有空格以外的字符就不算任务项', () => {
+  it('括号里不是空格 / x 就不算任务项', () => {
     expect(toggleTaskLine('- [y] 甲', 0, true)).toBeNull()
-    expect(toggleTaskLine('- [] 甲', 0, true)).toBeNull()
+  })
+
+  it('宽松写法也认:`[]`、`- [x]文字`、`-[]`', () => {
+    expect(toggleTaskLine('- [] 甲', 0, true)).toBe('- [x] 甲')
+    expect(toggleTaskLine('- []', 0, true)).toBe('- [x]')
+    expect(toggleTaskLine('- [x]文字', 0, false)).toBe('- [ ]文字')
+    expect(toggleTaskLine('-[]', 0, true)).toBe('-[x]')
+  })
+
+  it('有序任务也能勾(预览里本来就会画出复选框)', () => {
+    expect(toggleTaskLine('1. [ ] 甲', 0, true)).toBe('1. [x] 甲')
+    expect(toggleTaskLine('3) [x] 甲', 0, false)).toBe('3) [ ] 甲')
+    expect(toggleTaskLine('> 1. [ ] 甲', 0, true)).toBe('> 1. [x] 甲')
+  })
+
+  it('链接不是任务(括号后紧跟 `(` 或 `[`)', () => {
+    expect(toggleTaskLine('- [x](https://x)', 0, false)).toBeNull()
+    expect(toggleTaskLine('- [x][ref]', 0, false)).toBeNull()
+    expect(toggleTaskLine('- [](https://x)', 0, true)).toBeNull()
   })
 })
 

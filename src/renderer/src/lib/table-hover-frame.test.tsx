@@ -16,7 +16,7 @@ const SRC = '| a | b |\n|---|---|\n| 1 | 2 |'
 
 function renderTable(): HTMLElement {
   const { container } = render(
-    <>{renderMarkdown(SRC, 't', { extended: true, body: SRC, onEditTable: () => {} })}</>
+    <>{renderMarkdown(SRC, 't', { extended: true, onEditTable: () => {} })}</>
   )
   return container
 }

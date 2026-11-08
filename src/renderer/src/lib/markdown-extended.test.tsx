@@ -150,6 +150,43 @@ describe('块级:任务清单', () => {
     const out = html('- 普通\n- [ ] 任务')
     expect(out.match(/class="md-task"/g)?.length).toBe(1)
   })
+
+  it('宽松写法也识别:`-[]` / `- []` / `- [x]文字` / 有序任务', () => {
+    const out = html('-[] 甲\n- [] 乙\n- [x]文字\n1. [ ] 有序')
+    expect(out.match(/<input[^>]*type="checkbox"/g)?.length).toBe(4)
+    expect(out.match(/<input[^>]*checked=""/g)?.length).toBe(1)
+    expect(out).toContain('甲')
+    expect(out).toContain('乙')
+    expect(out).toContain('文字')
+    expect(out).toContain('有序')
+  })
+
+  it('链接 / 引用式链接不会被误判成任务', () => {
+    expect(html('- [text](https://x)')).not.toContain('md-task-box')
+    expect(html('- [x](https://x)')).not.toContain('md-task-box')
+    expect(html('- [x][ref]')).not.toContain('md-task-box')
+  })
+
+  it('宽松任务也能按行号回写', () => {
+    const calls: Array<[number, boolean]> = []
+    const nodes = renderMarkdown('前言\n\n-[] 甲\n- [] 乙', 't', {
+      extended: true,
+      onToggleTask: (line, next) => calls.push([line, next])
+    })
+    const inputs = collect(nodes, 'input')
+    expect(inputs).toHaveLength(2)
+    ;(inputs[0].props.onChange as () => void)()
+    ;(inputs[1].props.onChange as () => void)()
+    expect(calls).toEqual([
+      [2, true],
+      [3, true]
+    ])
+  })
+
+  it('引用里的宽松任务照常渲染;引用允许最多 3 个前导空格', () => {
+    expect(html('> - [] 待办')).toContain('md-task-box')
+    expect(html('   > 引用正文')).toContain('<blockquote class="md-quote"')
+  })
 })
 
 describe('块级:嵌套列表', () => {

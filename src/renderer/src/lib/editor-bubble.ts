@@ -112,6 +112,8 @@ function clearMarks(view: EditorView): void {
  */
 function planBubble(view: EditorView): BubblePlan | null {
   if (suppressed.has(view) || composing.has(view) || view.compositionStarted) return null
+  // 列选择 / 多光标:气泡只对主选区操作,会误导「全都改」—— 干脆不弹
+  if (view.state.selection.ranges.length > 1) return null
   const sel = view.state.selection.main
   if (sel.empty || !view.hasFocus) return null
   const vp = view.viewport

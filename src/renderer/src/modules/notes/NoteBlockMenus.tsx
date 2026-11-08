@@ -4,6 +4,7 @@ import { tableSkeleton } from '../../lib/note-table'
 import { showToast } from '../../lib/utils'
 import type { MarkdownBlock } from '../../lib/markdown-blocks'
 import { CALLOUT_KINDS, parseCallout, type CalloutKind } from '../../lib/markdown'
+import { listMarkerOf } from '../../lib/md-list-syntax'
 import { Icon } from '../../components/ui/Icon'
 import { blockIconName, CALLOUT_ICON_NAMES } from '../../lib/block-icons'
 import type { IconName } from '../../lib/icon-paths'
@@ -441,10 +442,9 @@ export function NoteBlockMenu({
   // 当前引用样式:块首行剥掉 `> ` 后认提示块标记;认不出就是普通引用
   const quoteFirst = (lines[block.from] ?? '').replace(/^\s*>\s?/, '')
   const currentCallout = block.kind === 'quote' || block.kind === 'callout' ? parseCallout(quoteFirst)?.kind ?? null : null
-  // 当前行的列表标记(缩进保留,只看标记段)
+  // 当前行的列表标记(宽松语法与预览/编辑器同口径)
   const lineText = lines[line] ?? ''
-  const markerMatch = /^(\s*)(?:[-+*] |\d+[.)] |[-+*] \[[ xX]\] )?/.exec(lineText)
-  const currentMarker = (markerMatch?.[0].slice(markerMatch[1].length) ?? '') as '- ' | '1. ' | '- [ ] ' | ''
+  const currentMarker = listMarkerOf(lineText)
   const copy = (): void => {
     const text = lines.slice(block.from, block.contentTo).join('\n')
     void navigator.clipboard?.writeText(text)

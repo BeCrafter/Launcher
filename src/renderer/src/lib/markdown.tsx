@@ -36,6 +36,7 @@ import {
   type MediaTarget
 } from './note-media-size'
 import { alignOpenOf, isAlignClose } from './note-align'
+import { isListLine, parseListLine } from './md-list-syntax'
 import { openExternal } from './utils'
 import {
   clampTableCol,
@@ -1072,9 +1073,8 @@ function renderInlineExt(parts: InlineExt[], keyBase: string, ctx: ExtCtx): Reac
 const FENCE_EXT_RE = /^\s*(`{3,}|~{3,})(.*)$/
 const HEAD_EXT_RE = /^(#{1,6})\s+(.*)$/
 const HR_EXT_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/
-const QUOTE_EXT_RE = /^>\s?/
-/** 列表项:缩进 + 无序(- * +)或有序(1. / 1))标记 + 内容 */
-const LIST_EXT_RE = /^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)$/
+// 与块模型对齐:引用最多 3 个前导空格(4 个空格是代码块)。
+const QUOTE_EXT_RE = /^ {0,3}>\s?/
 /**
  * 段落对齐的包裹行。**这是全项目第二处、也是最后一处「认一小段 HTML」**
  * (第一处是表格单元格里的 `<br>`)—— 同样是字面量匹配 + 产 React 节点,
@@ -1094,7 +1094,6 @@ const DETAILS_OPEN_RE = /^\s*<details(\s+open)?\s*>\s*$/i
 const DETAILS_ONE_LINE_RE = /^\s*<details(\s+open)?\s*>\s*<summary>([\s\S]*?)<\/summary>\s*>?\s*$/i
 const SUMMARY_RE = /^\s*<summary>([\s\S]*?)<\/summary>\s*$/i
 const DETAILS_CLOSE_RE = /^\s*<\/details>\s*$/i
-const TASK_EXT_RE = /^\[([ xX])\]\s*(.*)$/
 
 interface ListItemExt {
   /** 该行在**原文档**里的下标 —— 任务项勾选要按它回写源文件 */
@@ -1109,39 +1108,37 @@ interface ListNodeExt {
   items: ListItemExt[]
 }
 
-/** `baseLine` 把子数组里的下标换算回原文档的行号(提示块正文会用到) */
+/**
+ * `baseLine` 把子数组里的下标换算回原文档的行号(提示块正文会用到)。
+ * 宽松语法(`-[]` / `- []` / `- [x]文字`)由 `md-list-syntax` 统一识别,这里只做分组。
+ */
 function parseListExt(lines: string[], start: number, baseLine = 0): { list: ListNodeExt; next: number } {
-  const first = LIST_EXT_RE.exec(lines[start])!
-  const indent = first[1].length
-  const ordered = first[3] !== undefined
+  const first = parseListLine(lines[start])!
+  const indent = first.indent.length
+  const ordered = first.ordered
   const items: ListItemExt[] = []
   let i = start
 
   while (i < lines.length) {
-    const m = LIST_EXT_RE.exec(lines[i])
-    if (!m || m[1].length !== indent) break
+    const m = parseListLine(lines[i])
+    // 引用行整体由 renderBlocks 的引用分支处理,不能在这里当列表项
+    if (m === null || m.quote !== '' || m.indent.length !== indent) break
     // 同层混排 ul/ol → 另起一个列表(渲染成两个相邻列表,与 GFM 的松列表行为一致)
-    if ((m[3] !== undefined) !== ordered) break
+    if (m.ordered !== ordered) break
     const line = baseLine + i
-    let text = m[4]
-    let task: boolean | undefined
-    const t = TASK_EXT_RE.exec(text)
-    if (t) {
-      task = t[1].toLowerCase() === 'x'
-      text = t[2]
-    }
+    const task: boolean | undefined = m.task ? m.checked : undefined
     i++
     // 子列表:紧随其后、缩进更深的那一串
     let children: ListNodeExt | null = null
     if (i < lines.length) {
-      const n = LIST_EXT_RE.exec(lines[i])
-      if (n && n[1].length > indent) {
+      const n = parseListLine(lines[i])
+      if (n !== null && n.quote === '' && n.indent.length > indent) {
         const sub = parseListExt(lines, i, baseLine)
         children = sub.list
         i = sub.next
       }
     }
-    items.push({ line, text, task, children })
+    items.push({ line, text: m.content, task, children })
   }
   return { list: { ordered, items }, next: i }
 }
@@ -2511,7 +2508,7 @@ function isBlockStartExt(line: string, next?: string): boolean {
     FENCE_EXT_RE.test(line) ||
     HR_EXT_RE.test(line) ||
     HEAD_EXT_RE.test(line) ||
-    LIST_EXT_RE.test(line) ||
+    isListLine(line) ||
     QUOTE_EXT_RE.test(line) ||
     (isTableRow(line) && next !== undefined && isTableSep(next))
   )
@@ -2836,7 +2833,7 @@ function renderBlocks(
       continue
     }
 
-    if (LIST_EXT_RE.test(line)) {
+    if (isListLine(line)) {
       const parsed = parseListExt(lines, i, baseLine)
       out.push(renderListExt(parsed.list, key(), ctx))
       i = parsed.next
