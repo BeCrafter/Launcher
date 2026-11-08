@@ -2524,6 +2524,11 @@ video.md-media {
 .md-table-block {
   position: relative;
   margin: 8px 0;
+  /*
+   * 盖在表格线上的那条线宽:行 / 列手柄框与悬停高亮框共用。
+   * 无框表(bw=0)退回 1px —— 手柄和高亮框总得看得见。
+   */
+  --md-table-line: max(1px, var(--md-table-bw, 1px));
 }
 .md-table-block.framed {
   /* 行手柄占左侧（叠在预览留白里），列手柄占表头上方；右侧 / 底部是新增条 */
@@ -2589,11 +2594,8 @@ video.md-media {
 
 /* 手柄的框永远存在:表格无框(bw=0)时退回标准 1px,有框时跟随表格线宽。
    框本身画在 ::before 上并向外扩半个线宽 —— 表格的 collapsed border 是以格线为中心
-   画 ±半个线宽的,两者这样才会落在同一条线上(1px/2px/3px 都成立)。 */
-.md-table-row-handle,
-.md-table-col-handle {
-  --md-handle-bw: max(1px, var(--md-table-bw, 1px));
-}
+   画 ±半个线宽的,两者这样才会落在同一条线上(1px/2px/3px 都成立)。
+   线宽来自 .md-table-block 上的 --md-table-line,悬停高亮框用的是同一条。 */
 /* 行手柄:贴在表格左侧外面,与行高/边框对齐,看起来像这一行多出来的一格。
    按钮盒严格等于单元格的 border box;视觉边框由 ::before 承担。 */
 .md-table-row-handle {
@@ -2622,8 +2624,8 @@ video.md-media {
 .md-table-row-handle::before {
   content: '';
   position: absolute;
-  inset: calc(-0.5 * var(--md-handle-bw));
-  border: var(--md-handle-bw) solid var(--md-table-bc, var(--border));
+  inset: calc(-0.5 * var(--md-table-line, 1px));
+  border: var(--md-table-line, 1px) solid var(--md-table-bc, var(--border));
   border-right: 0;
   border-radius: 4px 0 0 4px;
   pointer-events: none;
@@ -2685,8 +2687,8 @@ video.md-media {
 .md-table-col-handle::before {
   content: '';
   position: absolute;
-  inset: calc(-0.5 * var(--md-handle-bw));
-  border: var(--md-handle-bw) solid var(--md-table-bc, var(--border));
+  inset: calc(-0.5 * var(--md-table-line, 1px));
+  border: var(--md-table-line, 1px) solid var(--md-table-bc, var(--border));
   border-bottom: 0;
   border-radius: 5px 5px 0 0;
   pointer-events: none;
@@ -2763,13 +2765,14 @@ video.md-media {
   background: color-mix(in srgb, var(--accent2) 15%, transparent);
 }
 
-/* 悬停行 / 列手柄时的高亮框：与表格自身同宽(1px)、同色，不加粗、不加外发光。
-   直角收边 —— 贴着行 / 列手柄的那条边不能是圆角，否则衔接处会露出缺口。 */
+/* 悬停行 / 列手柄时的高亮框:线宽跟随表格线(无框表退回 1px),不加外发光。
+   位置由 JS 算:框的盒向外扩半个线宽,让边框正好压住格线 —— 与手柄框同一条线。
+   直角收边 —— 贴着行 / 列手柄的那条边不能是圆角,否则衔接处会露出缺口。 */
 .md-table-hover-frame {
   position: absolute;
   z-index: 4;
   pointer-events: none;
-  border: 1px solid var(--accent2);
+  border: var(--md-table-line, 1px) solid var(--accent2);
   border-radius: 0;
   background: color-mix(in srgb, var(--accent2) 10%, transparent);
   animation: md-table-frame-in 0.12s ease-out;

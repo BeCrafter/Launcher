@@ -2231,9 +2231,15 @@ function TableView({
               })()
             ))}
 
-          {/* 悬停手柄时给整行 / 整列套一圈高亮框 */}
+          {/*
+            悬停手柄时给整行 / 整列套一圈高亮框。
+            表格的 collapsed border 以**格线为中心**画 ±半个线宽,而这里的坐标是格子边;
+            所以框的盒要向外扩半个线宽,1px 的框才会正好压住表格线(与手柄框同一条线)。
+            贴住表格外框的那一侧不再外扩 —— 那里的坐标本来就是表格盒的边。
+          */}
           {hoverFrame !== null &&
             (() => {
+              const line = 'var(--md-table-line, 1px)'
               if (hoverFrame.kind === 'row') {
                 const top = guides.rows[hoverFrame.index] ?? 0
                 const bottom = guides.rows[hoverFrame.index + 1] ?? guides.h
@@ -2241,23 +2247,26 @@ function TableView({
                   <span
                     className="md-table-hover-frame"
                     style={{
-                      top: `calc(var(--md-table-col-gutter, 20px) + ${top}px)`,
+                      top: `calc(var(--md-table-col-gutter, 20px) + ${top}px - ${line} / 2)`,
                       left: 0,
                       width: `${guides.w}px`,
-                      height: `${Math.max(0, bottom - top)}px`
+                      height: `calc(${Math.max(0, bottom - top)}px + ${line})`
                     }}
                   />
                 )
               }
-              const left = hoverFrame.index === 0 ? 0 : (guides.cols[hoverFrame.index - 1] ?? 0)
+              const first = hoverFrame.index === 0
+              const left = first ? 0 : (guides.cols[hoverFrame.index - 1] ?? 0)
               const right = guides.cols[hoverFrame.index] ?? guides.w
               return (
                 <span
                   className="md-table-hover-frame"
                   style={{
                     top: 'var(--md-table-col-gutter, 20px)',
-                    left: `${left}px`,
-                    width: `${Math.max(0, right - left)}px`,
+                    left: first ? 0 : `calc(${left}px - ${line} / 2)`,
+                    width: first
+                      ? `calc(${right - left}px + ${line} / 2)`
+                      : `calc(${right - left}px + ${line})`,
                     height: `${guides.h}px`
                   }}
                 />
