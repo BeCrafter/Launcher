@@ -52,12 +52,15 @@ import { NoteRefChips } from './NoteRefChips'
 import { NoteRefPicker } from './NoteRefPicker'
 import { NotesRail } from './NotesRail'
 import { NoteToolbar } from './NoteToolbar'
+import { FileView } from './FileView'
+import { useActiveDocKind } from './doc-actions'
 
 /** 渲染器引用必须是稳定的:预览的 memo 依赖它,每次新建函数会让整篇重解析 */
 const HIGHLIGHT = highlightCodeNodes
 
 export function NotesView(): React.JSX.Element {
   const t = useT()
+  const activeDocKind = useActiveDocKind()
   const railCollapsed = useNotesStore((s) => s.railCollapsed)
   const setRailCollapsed = useNotesStore((s) => s.setRailCollapsed)
   const draft = useNotesStore((s) => s.draft)
@@ -571,6 +574,17 @@ export function NotesView(): React.JSX.Element {
         'fa-wand-magic-sparkles'
       )
     })()
+  }
+
+  // 文件视图:左栏保留,主体交给 FileView。放在笔记的空态早退之前 ——
+  // 关闭笔记不会影响文件文档,反之亦然。
+  if (activeDocKind === 'file') {
+    return (
+      <div id="view-notes" className="notes-view">
+        {!railCollapsed && <NotesRail />}
+        <FileView />
+      </div>
+    )
   }
 
   if (draft === null) {

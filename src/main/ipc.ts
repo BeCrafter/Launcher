@@ -29,6 +29,9 @@ import type { NotesService } from './services/notes-service'
 import type { UpdateController } from './services/update-controller'
 import type {
   NoteCreateInput,
+  NoteFileCreateInput,
+  NoteFileRenameInput,
+  NoteFileSaveInput,
   NoteImportInput,
   NoteRemoveInput,
   NoteRenameInput,
@@ -300,6 +303,31 @@ export function registerIpc(deps: IpcDeps): void {
   )
   ipcMain.handle(IPC.notesRemoveFile, (_e, path: string) =>
     deps.notes.removeFile(String(path ?? ''))
+  )
+  ipcMain.handle(IPC.notesStatFile, (_e, path: string) => deps.notes.statFile(String(path ?? '')))
+  ipcMain.handle(IPC.notesReadFile, (_e, path: string) => deps.notes.readFile(String(path ?? '')))
+  ipcMain.handle(IPC.notesReadFileBytes, (_e, path: string, maxBytes?: number) =>
+    deps.notes.readFileBytes(String(path ?? ''), typeof maxBytes === 'number' ? maxBytes : undefined)
+  )
+  ipcMain.handle(IPC.notesSaveFile, (_e, input: NoteFileSaveInput) =>
+    deps.notes.saveFile({
+      path: String(input?.path ?? ''),
+      text: typeof input?.text === 'string' ? input.text : '',
+      expectedRevision: String(input?.expectedRevision ?? ''),
+      force: input?.force === true
+    })
+  )
+  ipcMain.handle(IPC.notesCreateFile, (_e, input: NoteFileCreateInput) =>
+    deps.notes.createFile({
+      parent: String(input?.parent ?? ''),
+      name: String(input?.name ?? '')
+    })
+  )
+  ipcMain.handle(IPC.notesRenameFile, (_e, input: NoteFileRenameInput) =>
+    deps.notes.renameFile({
+      path: String(input?.path ?? ''),
+      name: String(input?.name ?? '')
+    })
   )
   ipcMain.handle(IPC.notesOpenFile, async (_e, path: string) => {
     const abs = deps.notes.resolveNoteFile(String(path ?? ''))

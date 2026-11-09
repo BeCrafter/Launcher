@@ -49,7 +49,16 @@ import type { AiEngineState, AiMessage, AiSession, AiSkillInfo } from './ai'
 import type {
   Note,
   NoteCreateInput,
+  NoteFileBytesOutcome,
   NoteFileOutcome,
+  NoteFileReadOutcome,
+  NoteFileCreateInput,
+  NoteFileCreateOutcome,
+  NoteFileRenameInput,
+  NoteFileRenameOutcome,
+  NoteFileSaveInput,
+  NoteFileSaveOutcome,
+  NoteFileStat,
   NoteImportInput,
   NoteImportResult,
   NoteMeta,
@@ -225,6 +234,18 @@ export interface LauncherApi {
     removeFile: (path: string) => Promise<NoteFileOutcome>
     /** 用系统默认应用打开文件 */
     openFile: (path: string) => Promise<NoteFileOutcome>
+    /** 文件元信息与类型(不读内容);不存在 → null */
+    statFile: (path: string) => Promise<NoteFileStat | null>
+    /** 读文本文件(按 BOM 探测编码;二进制/超限回占位而不是抛错) */
+    readFile: (path: string) => Promise<NoteFileReadOutcome>
+    /** 读原始字节(Office / 压缩包 / PSD / 3D 查看器);超过 maxBytes 回 too-large */
+    readFileBytes: (path: string, maxBytes?: number) => Promise<NoteFileBytesOutcome>
+    /** 按原编码/EOL 写回文本文件;expectedRevision 做 CAS */
+    saveFile: (input: NoteFileSaveInput) => Promise<NoteFileSaveOutcome>
+    /** 在指定目录新建空文件(非 .md;Markdown 笔记走 create) */
+    createFile: (input: NoteFileCreateInput) => Promise<NoteFileCreateOutcome>
+    /** 重命名文件(只改主名,扩展名固定) */
+    renameFile: (input: NoteFileRenameInput) => Promise<NoteFileRenameOutcome>
   }
   /**
    * 从拖入的 File 取本地绝对路径(Electron 44 已移除 File.path)。

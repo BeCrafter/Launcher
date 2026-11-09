@@ -24,7 +24,7 @@ function clickRow(title) {
  */
 function rowExpr(title) {
   return `[...document.querySelectorAll('.notes-row[data-note-id]')]
-    .find((el) => el.querySelector('.notes-row-title')?.textContent === ${JSON.stringify(title)})`
+    .find((el) => el.querySelector('.notes-row-title')?.textContent === ${JSON.stringify(`${title}.md`)})`
 }
 
 function railRowExpr(title) {
@@ -53,6 +53,65 @@ function actsVisibleExpr(title) {
   })()`
 }
 
+/** 点目录行的第 index 个悬停动作(0 新建笔记 / 1 新建子目录 / 2 改名 / 3 删除)。 */
+async function indentFolderAct(ctx, path, index) {
+  const clicked = await ctx.cdp.eval(`(() => {
+    const row = [...document.querySelectorAll('.notes-folder-row')]
+      .find((el) => el.dataset.folderPath === ${JSON.stringify(path)})
+    if (row === undefined) return false
+    row.querySelectorAll('.notes-folder-acts button')[${index}]?.click()
+    return true
+  })()`)
+  ok(clicked, `找到目录行:${path}`)
+}
+
+async function indentCreateRootFolder(ctx, name) {
+  await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[1]?.click()`)
+  await ctx.cdp.waitFor(`document.querySelector('.notes-folder-edit .notes-folder-input') !== null`, {
+    timeout: 5000,
+    message: '出现新建目录输入框'
+  })
+  await ctx.cdp.type(name)
+  await ctx.press('Enter')
+  await ctx.cdp.waitFor(
+    `document.querySelector('.notes-folder-row[data-folder-path=${JSON.stringify(name)}]') !== null`,
+    { timeout: 10_000, message: `目录「${name}」出现` }
+  )
+}
+
+async function indentCreateSubFolder(ctx, parent, name) {
+  await indentFolderAct(ctx, parent, 1)
+  await ctx.cdp.waitFor(`document.querySelector('.notes-folder-edit .notes-folder-input') !== null`, {
+    timeout: 5000,
+    message: '出现子目录输入框'
+  })
+  await ctx.cdp.type(name)
+  await ctx.press('Enter')
+  const path = `${parent}/${name}`
+  await ctx.cdp.waitFor(
+    `document.querySelector('.notes-folder-row[data-folder-path=${JSON.stringify(path)}]') !== null`,
+    { timeout: 10_000, message: `子目录「${path}」出现` }
+  )
+}
+
+async function indentCreateNote(ctx, parent, name) {
+  await indentFolderAct(ctx, parent, 0)
+  await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
+    timeout: 5000,
+    message: '出现新建笔记输入框'
+  })
+  await ctx.cdp.eval(
+    `(() => { const el = document.querySelector('.notes-create-name'); el?.focus(); el?.select() })()`
+  )
+  await ctx.cdp.type(name)
+  await ctx.press('Enter')
+  const id = `${parent}/${name}`
+  await ctx.cdp.waitFor(
+    `document.querySelector('.notes-row[data-note-id=${JSON.stringify(id)}]') !== null`,
+    { timeout: 10_000, message: `笔记「${id}」出现` }
+  )
+}
+
 export default [
   {
     id: 'basics/open-note-split',
@@ -70,6 +129,27 @@ export default [
       )
       eq(modes, ['true', 'false', 'false'], '默认选中「分栏」')
       includes(await ctx.previewText(), '第一节第一段。', '预览渲染出正文')
+    }
+  },
+
+  {
+    id: 'basics/rail-note-suffix',
+    area: 'basics',
+    title: '左侧目录:笔记行显示完整文件名(标题 + .md),与文件行一样带后缀',
+    tags: ['smoke', 'rail'],
+    fixture: BASIC,
+    async run(ctx) {
+      const titles = await ctx.cdp.json(
+        `[...document.querySelectorAll('.notes-row[data-note-id] .notes-row-title')]
+          .map((el) => el.textContent)`
+      )
+      ok(Array.isArray(titles) && titles.length >= 2, `目录里有两篇夹具笔记(实际: ${JSON.stringify(titles)})`)
+      ok(
+        titles.every((t) => typeof t === 'string' && t.endsWith('.md')),
+        `所有笔记行都带 .md 后缀(实际: ${JSON.stringify(titles)})`
+      )
+      ok(titles.includes(`${MAIN_NOTE.title}.md`), '主笔记行显示「标题.md」')
+      ok(titles.includes(`${LINK_NOTE.title}.md`), '链接目标笔记行显示「标题.md」')
     }
   },
 
@@ -254,7 +334,7 @@ export default [
       await waitTitle(LINK_NOTE.title)
       eq(await ctx.cdp.eval(`document.querySelectorAll('.notes-row-spin').length`), 0, '打开结束后没有残留转圈')
 
-      // 2) 左侧 18px 缩进也在标题按钮之外。旧行为同样点不中。
+      // 2) 左侧 10px 缩进也在标题按钮之外。旧行为同样点不中。
       rect = await ctx.cdp.json(railRowExpr(MAIN_NOTE.title))
       ok(rect !== null, '找到主笔记行')
       await ctx.cdp.click(rect.left + 8, rect.top + rect.height / 2)
@@ -319,50 +399,80 @@ export default [
   },
 
   {
-    id: 'basics/rail-opening-lead',
+    id: 'basics/rail-opening-spinner-slot',
     area: 'basics',
-    title: '打开笔记:转圈浮在行首留白里,标题全程不位移、不占标题宽度',
+    title: '打开笔记:转圈替换行首类型图标(同一槽位),标题全程不位移,完成后图标恢复',
     tags: ['smoke'],
     fixture: BASIC,
     async run(ctx, t) {
-      // 基准:空闲时标题的 x;此刻行首不应有转圈。
+      // 基准:空闲时类型图标与标题的位置
       const base = await ctx.cdp.json(`(() => {
         const el = ${rowExpr(LINK_NOTE.title)}
         if (!el) return null
-        const r = el.querySelector('.notes-row-title').getBoundingClientRect()
+        const icon = el.querySelector('.notes-row-main .notes-file-icon')
+        const ir = icon?.getBoundingClientRect()
+        const tr = el.querySelector('.notes-row-title').getBoundingClientRect()
         return {
-          titleLeft: r.left,
-          titleTop: r.top,
-          titleHeight: r.height,
+          iconPresent: icon !== null,
+          iconKind: icon?.dataset.kind ?? null,
+          iconClass: icon?.className ?? '',
+          iconLeft: ir ? ir.left : null,
+          iconTop: ir ? ir.top : null,
+          iconWidth: ir ? ir.width : null,
+          iconHeight: ir ? ir.height : null,
+          titleLeft: tr.left,
+          titleCenterY: tr.top + tr.height / 2,
           spin: el.querySelector('.notes-row-spin') !== null
         }
       })()`)
       ok(base !== null, '找到链接笔记行')
-      eq(base.spin, false, '空闲时行首没有转圈')
+      eq(base.spin, false, '空闲时没有转圈')
+      eq(base.iconPresent, true, '空闲时显示类型图标')
+      eq(base.iconKind, 'markdown', '笔记行图标是 markdown')
+      includes(base.iconClass, 'fa-file-lines', '图标字形是 fa-file-lines')
 
-      // 探针:打开很快时转圈只存在一两帧,固定 sleep 采不到。
-      // 挂在目标行上的 MutationObserver 会在 IPC 读取回来之前的渲染帧里采到它,
-      // 同时记录每一帧标题的 x —— 这正是「文字有没有动」的判据。
+      // 探针挂在稳定的列表容器上:打开时祖先目录自动展开可能重建行,
+      // 所以每次采样都重新查询目标行,不缓存节点。
+      // 转圈是瞬时状态,固定 sleep 采不到;MutationObserver 能捕获每次 DOM 提交。
       await ctx.cdp.eval(`(() => {
-        const el = ${rowExpr(LINK_NOTE.title)}
-        const title = el.querySelector('.notes-row-title')
+        const list = document.querySelector('.notes-rail-list')
         const probe = { samples: [] }
         const take = () => {
+          const el = [...document.querySelectorAll('.notes-row[data-note-id]')]
+            .find((row) => row.querySelector('.notes-row-title')?.textContent === ${JSON.stringify(`${LINK_NOTE.title}.md`)})
+          if (!el) {
+            probe.samples.push({ missing: true })
+            return
+          }
+          const main = el.querySelector('.notes-row-main')
           const spin = el.querySelector('.notes-row-spin')
+          const icon = el.querySelector('.notes-row-main .notes-file-icon')
           const sr = spin?.getBoundingClientRect()
-          const tr = title.getBoundingClientRect()
+          const tr = el.querySelector('.notes-row-title')?.getBoundingClientRect()
           probe.samples.push({
+            missing: false,
             spin: spin !== null,
-            titleLeft: tr.left,
-            titleCenterY: tr.top + tr.height / 2,
+            spinInMain: spin?.closest('.notes-row-main') === main,
+            iconPresent: icon !== null,
+            opening: el.classList.contains('opening'),
+            busy: main?.getAttribute('aria-busy') === 'true',
+            titleLeft: tr ? tr.left : null,
+            titleCenterY: tr ? tr.top + tr.height / 2 : null,
             spinLeft: sr ? sr.left : null,
-            spinRight: sr ? sr.right : null,
+            spinTop: sr ? sr.top : null,
+            spinWidth: sr ? sr.width : null,
+            spinHeight: sr ? sr.height : null,
             spinCenterY: sr ? sr.top + sr.height / 2 : null
           })
         }
         take()
         const obs = new MutationObserver(take)
-        obs.observe(el, { childList: true, subtree: true })
+        obs.observe(list, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['class', 'aria-busy']
+        })
         probe.stop = () => obs.disconnect()
         window.__railOpeningProbe = probe
       })()`)
@@ -380,26 +490,175 @@ export default [
         delete window.__railOpeningProbe
         return out
       })()`)
+      const present = samples.filter((s) => !s.missing)
 
-      ok(samples.length >= 2, `探针应采到打开中与完成两帧(实际 ${samples.length} 帧)`)
-      const spinSample = samples.find((s) => s.spin)
+      ok(present.length >= 2, `探针应采到打开中与完成两帧(实际 ${present.length} 帧)`)
+      const spinSample = present.find((s) => s.spin)
       ok(spinSample !== undefined, '探针应采到打开中的转圈')
-      for (const s of samples) {
+
+      ok(spinSample.spinInMain === true, '转圈位于 .notes-row-main 内(替换图标槽位,不是行首浮层)')
+      eq(spinSample.iconPresent, false, '转圈出现时类型图标被替换,不并存')
+      eq(spinSample.opening, true, '打开中的行带 opening 状态')
+      eq(spinSample.busy, true, '打开中的行 aria-busy=true')
+
+      for (const s of present) {
         ok(
           Math.abs(s.titleLeft - base.titleLeft) <= 0.5,
           `标题 x 应全程不变:基准 ${base.titleLeft},实际 ${s.titleLeft}(样本 ${JSON.stringify(s)})`
         )
       }
       ok(
-        spinSample.spinRight <= base.titleLeft + 0.5,
-        `转圈应在标题左侧留白里:转圈右缘 ${spinSample.spinRight},标题左缘 ${base.titleLeft}`
+        Math.abs(spinSample.spinLeft - base.iconLeft) <= 0.5 &&
+          Math.abs(spinSample.spinWidth - base.iconWidth) <= 0.5 &&
+          Math.abs(spinSample.spinTop - base.iconTop) <= 0.5 &&
+          Math.abs(spinSample.spinHeight - base.iconHeight) <= 0.5,
+        `转圈应与类型图标占同一槽位:图标 ${JSON.stringify(base)} ,转圈 ${JSON.stringify(spinSample)}`
       )
       ok(
         Math.abs(spinSample.spinCenterY - spinSample.titleCenterY) <= 1,
         `转圈应与标题垂直居中对齐:转圈中心 y=${spinSample.spinCenterY},标题中心 y=${spinSample.titleCenterY}`
       )
-      eq(samples[samples.length - 1].spin, false, '打开完成后转圈消失')
+
+      eq(present[present.length - 1].spin, false, '打开完成后转圈消失')
       eq(await ctx.cdp.eval(`document.querySelectorAll('.notes-row-spin').length`), 0, '打开完成后没有残留转圈')
+      const restored = await ctx.cdp.json(`(() => {
+        const el = ${rowExpr(LINK_NOTE.title)}
+        const icon = el?.querySelector('.notes-row-main .notes-file-icon')
+        return { kind: icon?.dataset.kind ?? null, cls: icon?.className ?? '' }
+      })()`)
+      eq(restored?.kind, 'markdown', '完成后类型图标恢复')
+      includes(restored?.cls ?? '', 'fa-file-lines', '恢复的仍是 Markdown 文件图标')
+    }
+  },
+
+  {
+    id: 'basics/rail-indent-compact',
+    area: 'basics',
+    title:
+      '左侧目录树:去掉折叠三角后目录与文件同列,父子步进 12px、图标/标题同层对齐,点目录名仍可开合',
+    tags: ['rail', 'layout'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 共享实例:目录会保留,名字必须全组唯一。
+      const A = '缩进甲'
+      const B = `${A}/缩进乙`
+      const N1 = `${A}/缩进笔记`
+      const N2 = `${B}/缩进深层`
+
+      await indentCreateRootFolder(ctx, A)
+      await indentCreateSubFolder(ctx, A, '缩进乙')
+      await indentCreateNote(ctx, A, '缩进笔记')
+      await indentCreateNote(ctx, B, '缩进深层')
+
+      const g = await ctx.cdp.json(`(() => {
+        const box = (el) => {
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return { left: r.left, top: r.top, width: r.width, height: r.height }
+        }
+        const folder = (path) => {
+          const row = [...document.querySelectorAll('.notes-folder-row')]
+            .find((el) => el.dataset.folderPath === path)
+          if (!row) return null
+          return {
+            row: box(row),
+            toggle: box(row.querySelector('.notes-folder-toggle')),
+            name: box(row.querySelector('.notes-folder-name')),
+            icon: box(row.querySelector('.notes-folder-name i')),
+            label: box(row.querySelector('.notes-folder-name span')),
+            expanded: row.querySelector('.notes-folder-name')?.getAttribute('aria-expanded') ?? null,
+            guides: [...row.querySelectorAll(':scope > .notes-guide')].map((el) => el.getBoundingClientRect().left)
+          }
+        }
+        const note = (id) => {
+          const row = [...document.querySelectorAll('.notes-row[data-note-id]')]
+            .find((el) => el.dataset.noteId === id)
+          if (!row) return null
+          return {
+            row: box(row),
+            icon: box(row.querySelector('.notes-row-main .notes-file-icon')),
+            title: box(row.querySelector('.notes-row-title')),
+            guides: [...row.querySelectorAll(':scope > .notes-guide')].map((el) => el.getBoundingClientRect().left)
+          }
+        }
+        return {
+          A: folder(${JSON.stringify(A)}),
+          B: folder(${JSON.stringify(B)}),
+          N1: note(${JSON.stringify(N1)}),
+          N2: note(${JSON.stringify(N2)}),
+          main: note(${JSON.stringify(MAIN_NOTE.title)})
+        }
+      })()`)
+
+      ok(
+        g !== null && [g.A, g.B, g.N1, g.N2, g.main].every((v) => v !== null),
+        `根目录、子目录、同层笔记、深层笔记都已渲染(实际:${JSON.stringify(g)})`
+      )
+      const near = (a, b, eps = 0.6) => Math.abs(a - b) <= eps
+      const rel = (el, row) => el.left - row.left
+
+      // 1) 前置空隙收窄:根层目录和笔记同一个内容列,标题列也一致
+      ok(near(rel(g.A.icon, g.A.row), 10), `根目录图标应在行内 10px(实际 ${rel(g.A.icon, g.A.row)})`)
+      ok(near(rel(g.main.icon, g.main.row), 10), `根笔记图标应在行内 10px(实际 ${rel(g.main.icon, g.main.row)})`)
+      ok(near(rel(g.main.title, g.main.row), 30), `根笔记标题应在行内 30px(实际 ${rel(g.main.title, g.main.row)})`)
+
+      // 2) 父子步进 = 12
+      ok(near(g.B.icon.left - g.A.icon.left, 12), `目录图标步进应为 12(实际 ${g.B.icon.left - g.A.icon.left})`)
+      ok(near(g.N2.icon.left - g.N1.icon.left, 12), `笔记图标步进应为 12(实际 ${g.N2.icon.left - g.N1.icon.left})`)
+
+      // 3) 同层跨类型同列
+      ok(near(g.B.icon.left, g.N1.icon.left), `同层目录图标/笔记图标应同列(${g.B.icon.left} vs ${g.N1.icon.left})`)
+      ok(near(g.B.label.left, g.N1.title.left), `同层目录名/笔记标题应同列(${g.B.label.left} vs ${g.N1.title.left})`)
+
+      // 4) 目录行不再有折叠三角槽,内容从同一列开始
+      eq(g.A.toggle, null, '根目录行没有折叠三角')
+      eq(g.B.toggle, null, '子目录行没有折叠三角')
+      ok(near(rel(g.A.name, g.A.row), 10), `根目录名按钮应在行内 10px(实际 ${rel(g.A.name, g.A.row)})`)
+      ok(near(rel(g.B.name, g.B.row), 22), `子目录名按钮应在行内 22px(实际 ${rel(g.B.name, g.B.row)})`)
+      ok(near(rel(g.B.icon, g.B.row), 22), `目录图标应贴着内容列(实际 ${rel(g.B.icon, g.B.row)})`)
+
+      // 5) 层级仍可读:导引线数量随层级,落在祖先图标槽中线上
+      eq(g.A.guides.length, 0, '根目录没有导引线')
+      eq(g.B.guides.length, 1, '子目录有一条导引线')
+      eq(g.N1.guides.length, 1, '同层笔记有一条导引线')
+      eq(g.N2.guides.length, 2, '深层笔记有两条导引线')
+      ok(near(g.N2.guides[0] - g.N2.row.left, 17), `首条导引线应在行内 17px(实际 ${g.N2.guides[0] - g.N2.row.left})`)
+      ok(near(g.N2.guides[1] - g.N2.guides[0], 12), `导引线步进应为 12(实际 ${g.N2.guides[1] - g.N2.guides[0]})`)
+      ok(near(g.N2.guides[0], g.A.icon.left + 7), '首条导引线对齐根目录图标槽中线')
+      ok(near(g.N2.guides[1], g.B.icon.left + 7), '第二条导引线对齐子目录图标槽中线')
+
+      // 6) 行高没有因为去掉三角而变化
+      ok(near(g.N1.row.height, 28), `笔记行高应仍为 28(实际 ${g.N1.row.height})`)
+
+      // 7) 三角去掉后,点目录名仍能开合,状态通过 aria-expanded / 文件夹图标表达
+      const nameSel = `.notes-folder-row[data-folder-path=${JSON.stringify(B)}] .notes-folder-name`
+      let nameRect = await ctx.elementRect(nameSel)
+      await ctx.cdp.click(nameRect.x + nameRect.width / 2, nameRect.y + nameRect.height / 2)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const row = document.querySelector('.notes-folder-row[data-folder-path=${JSON.stringify(B)}]')
+          const name = row?.querySelector('.notes-folder-name')
+          return name?.getAttribute('aria-expanded') === 'false' &&
+            name.querySelector('i')?.classList.contains('fa-folder') === true &&
+            ![...document.querySelectorAll('.notes-row[data-note-id]')]
+              .some((el) => el.dataset.noteId === ${JSON.stringify(N2)})
+        })()`,
+        { timeout: 3000, message: '折叠后深层笔记行消失、三角位置变成合上的文件夹图标' }
+      )
+
+      nameRect = await ctx.elementRect(nameSel)
+      await ctx.cdp.click(nameRect.x + nameRect.width / 2, nameRect.y + nameRect.height / 2)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const row = document.querySelector('.notes-folder-row[data-folder-path=${JSON.stringify(B)}]')
+          const name = row?.querySelector('.notes-folder-name')
+          return name?.getAttribute('aria-expanded') === 'true' &&
+            name.querySelector('i')?.classList.contains('fa-folder-open') === true &&
+            [...document.querySelectorAll('.notes-row[data-note-id]')]
+              .some((el) => el.dataset.noteId === ${JSON.stringify(N2)})
+        })()`,
+        { timeout: 3000, message: '再点目录名后深层笔记行恢复' }
+      )
     }
   }
 ]

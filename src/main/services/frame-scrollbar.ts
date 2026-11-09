@@ -9,16 +9,17 @@
 
 import type { WebFrameMain } from 'electron'
 
-/** 附件协议前缀(见 services/notes-protocol.ts) */
-const NOTES_ASSET_PREFIX = 'launcher-note://asset/'
+/** 笔记协议的两个 host(见 services/notes-protocol.ts) */
+const NOTES_PREFIXES = ['launcher-note://asset/', 'launcher-note://file/']
 
 /**
  * 只处理会在预览里以 iframe 出现、滚动条由**第三方文档自己画**的两类:
  * PDF(Chromium 阅读器包装页)与本地网页。图片/音视频不产生文档滚动;外部 https 页面是别人的页面,不动。
  */
 export function isEmbeddedDocUrl(url: string): boolean {
-  if (!url.startsWith(NOTES_ASSET_PREFIX)) return false
-  const rest = url.slice(NOTES_ASSET_PREFIX.length)
+  const prefix = NOTES_PREFIXES.find((p) => url.startsWith(p))
+  if (prefix === undefined) return false
+  const rest = url.slice(prefix.length)
   const path = rest.split(/[?#]/, 1)[0] ?? ''
   return /\.(?:pdf|html?)$/i.test(path)
 }

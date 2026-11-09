@@ -4,7 +4,7 @@
 // `c++` 不能被截成 `c`。指错了不会报错,只会把整段配置染成另一个语言的配色。
 
 import { describe, expect, it } from 'vitest'
-import { languageFor, normalizeLang, parserFor } from './code-langs'
+import { languageFor, languageForFile, normalizeLang, parserFor } from './code-langs'
 
 describe('normalizeLang', () => {
   it('取第一个词,后面的属性丢掉', () => {
@@ -105,5 +105,35 @@ describe('languageFor(编辑器要的是 Language,不是 Parser)', () => {
   it('别名照样落到同一个 Language 实例上', () => {
     expect(languageFor('plist')).toBe(languageFor('xml'))
     expect(languageFor('yml')).toBe(languageFor('yaml'))
+  })
+})
+
+describe('languageForFile', () => {
+  it('扩展名映射到与围栏语言相同的对象', () => {
+    expect(languageForFile('js')).toBe(languageFor('javascript'))
+    expect(languageForFile('mjs')).toBe(languageFor('javascript'))
+    expect(languageForFile('tsx')).toBe(languageFor('tsx'))
+    expect(languageForFile('json')).toBe(languageFor('json'))
+    expect(languageForFile('html')).toBe(languageFor('html'))
+    expect(languageForFile('css')).toBe(languageFor('css'))
+    expect(languageForFile('svg')).toBe(languageFor('xml'))
+    expect(languageForFile('py')).toBe(languageFor('python'))
+    expect(languageForFile('yml')).toBe(languageFor('yaml'))
+  })
+
+  it('无扩展名时看文件名', () => {
+    expect(languageForFile('', 'Dockerfile')).toBe(languageFor('dockerfile'))
+    expect(languageForFile('', 'Gemfile')).toBe(languageFor('ruby'))
+    expect(languageForFile('', 'Makefile')).toBeNull()
+    expect(languageForFile('', 'LICENSE')).toBeNull()
+  })
+
+  it('不认识的扩展名 → null(按纯文本编辑,不猜语法)', () => {
+    expect(languageForFile('weird')).toBeNull()
+    expect(languageForFile('php')).toBeNull()
+  })
+
+  it('大小写不敏感', () => {
+    expect(languageForFile('JS')).toBe(languageFor('javascript'))
   })
 })

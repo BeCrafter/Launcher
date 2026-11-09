@@ -28,21 +28,39 @@ import {
   MAX_FILES,
   MAX_FOLDER_DEPTH,
   MAX_NOTE_BYTES,
+  MAX_TEXT_FILE_BYTES,
+  MAX_FILE_BYTES_READ,
   MAX_NOTES,
   MAX_TITLE,
   NOTES_ASSETS_DIR,
   NOTES_TRASH_DIR,
   isNoteImageExt,
+  isNoteFileEditable,
   baseNameOf,
   isSafeNoteId,
+  isSafeNoteSegment,
   joinNoteId,
   noteAssetMime,
+  noteFileKind,
+  noteFileMime,
   notesAssetsDir,
   parentOf,
+  splitFileExt,
   type Note,
   type NoteCreateInput,
+  type NoteFileBinaryDoc,
+  type NoteFileBytesOutcome,
+  type NoteFileCreateInput,
+  type NoteFileCreateOutcome,
   type NoteFileMeta,
   type NoteFileOutcome,
+  type NoteFileReadOutcome,
+  type NoteFileRenameInput,
+  type NoteFileRenameOutcome,
+  type NoteFileSaveInput,
+  type NoteFileSaveOutcome,
+  type NoteFileStat,
+  type NoteFileTextDoc,
   type NoteImportInput,
   type NoteImportResult,
   type NoteMeta,
@@ -53,6 +71,8 @@ import {
   type NoteSaveOutcome,
   type NotesListPayload
 } from '../../shared/notes'
+import { decodeTextBytes, encodeTextBytes, normalizeEol } from '../../shared/text-file'
+import { resolveContainedFile } from '../domains/note-file'
 import { importPathsIntoNotes, resolveNoteFile as resolveFileInNotes } from './note-import'
 import { scanInlineTags } from '../../shared/inline-tags'
 import {
@@ -120,6 +140,24 @@ export interface NotesService {
   importPaths(input: NoteImportInput): Promise<NoteImportResult>
   /** 文件相对路径 → 绝对路径;越界 / 根层 assets / 非普通文件返回 null */
   resolveNoteFile(rel: string): string | null
+  /** 文件元信息与类型(不读内容);不存在/越界 → null */
+  statFile(rel: string): NoteFileStat | null
+  /**
+   * 读文件用于查看/编辑。
+   * 可编辑类型按 BOM 探测解码;二进制 / 未知编码 / 超限回 binary 占位而不是报错。
+   */
+  readFile(rel: string): Promise<NoteFileReadOutcome>
+  /**
+   * 读原始字节(Office / 压缩包 / PSD / 3D 查看器用)。
+   * `maxBytes` 只用于提前拦截,实际不会超过 MAX_FILE_BYTES_READ。
+   */
+  readFileBytes(rel: string, maxBytes?: number): Promise<NoteFileBytesOutcome>
+  /** 按原编码 / BOM / EOL 写回;带 sha1(原始字节) CAS,冲突不覆盖 */
+  saveFile(input: NoteFileSaveInput): Promise<NoteFileSaveOutcome>
+  /** 在指定目录新建空文件(非 .md;Markdown 笔记走 create) */
+  createFile(input: NoteFileCreateInput): Promise<NoteFileCreateOutcome>
+  /** 重命名文件:只改主名,扩展名固定沿用原文件 */
+  renameFile(input: NoteFileRenameInput): Promise<NoteFileRenameOutcome>
   /** 删除文件(应用内走系统废纸篓) */
   removeFile(rel: string): Promise<NoteFileOutcome>
   /** 正文(供 AI 工具用;超长已截断并给出说明) */
@@ -192,6 +230,46 @@ export function createNotesService(opts: {
   let watcher: DebouncedDirWatcher | null = null
 
   const sha1 = (text: string): string => createHash('sha1').update(text, 'utf8').digest('hex')
+  const sha1Bytes = (bytes: Uint8Array): string => createHash('sha1').update(bytes).digest('hex')
+
+  /** 文件行元信息 → stat 结果(不读内容,只看扩展名分类) */
+  function fileStatOf(rel: string, st: { size: number; mtimeMs: number }): NoteFileStat {
+    const name = baseNameOf(rel)
+    const dot = name.lastIndexOf('.')
+    const ext = dot < 0 ? '' : name.slice(dot + 1).toLowerCase()
+    const kind = noteFileKind(ext, name)
+    const editable = isNoteFileEditable(kind)
+    // 文本(含未知扩展名的「先按文本试读」)按 64 MiB,二进制按整读硬上限
+    const textLike = editable || kind === 'unsupported'
+    const tooLarge = st.size > (textLike ? MAX_TEXT_FILE_BYTES : MAX_FILE_BYTES_READ)
+    return { path: rel, name, ext, kind, size: st.size, mtimeMs: st.mtimeMs, editable, tooLarge, mime: noteFileMime(ext) }
+  }
+
+  function binaryDoc(stat: NoteFileStat, reason: NoteFileBinaryDoc['reason']): NoteFileBinaryDoc {
+    return { ...stat, editable: false, revision: null, reason }
+  }
+
+  function textDoc(
+    stat: NoteFileStat,
+    input: {
+      kind?: NoteFileStat['kind']
+      revision: string
+      encoding: NoteFileTextDoc['encoding']
+      eol: NoteFileTextDoc['eol']
+      text: string
+    }
+  ): NoteFileTextDoc {
+    return {
+      ...stat,
+      kind: input.kind ?? stat.kind,
+      editable: true,
+      tooLarge: false,
+      revision: input.revision,
+      encoding: input.encoding,
+      eol: input.eol,
+      text: input.text
+    }
+  }
 
   function fileOf(dir: string, id: string): string {
     return join(dir, `${id}.md`)
@@ -924,6 +1002,272 @@ export function createNotesService(opts: {
 
     resolveNoteFile(rel) {
       return resolveFileInNotes(opts.getDir(), String(rel ?? ''))
+    },
+
+    statFile(rel) {
+      const relS = String(rel ?? '')
+      const abs = resolveContainedFile(opts.getDir(), relS)
+      if (abs === null) return null
+      try {
+        const st = statSync(abs)
+        if (!st.isFile()) return null
+        return fileStatOf(relS, st)
+      } catch {
+        return null
+      }
+    },
+
+    async createFile(input) {
+      const parentRaw = String(input?.parent ?? '')
+      const parent = parentRaw === '' ? '' : isSafeNoteId(parentRaw) ? parentRaw : null
+      if (parent === null) {
+        return { ok: false, kind: 'invalid', message: `非法目录 id:${parentRaw}` }
+      }
+      const name = String(input?.name ?? '').trim()
+      // 只接受单段文件名:isSafeNoteSegment 已挡 / \ . .. 与超长
+      if (!isSafeNoteSegment(name)) {
+        return { ok: false, kind: 'invalid', message: `文件名不合法:${name}` }
+      }
+      const dot = name.lastIndexOf('.')
+      // 没有扩展名 / 以 . 开头(如 .env)都不在这里建:前者更像笔记,后者是隐藏文件
+      if (dot <= 0 || dot === name.length - 1) {
+        return { ok: false, kind: 'invalid', message: '文件名需要包含扩展名,如 app.js' }
+      }
+      const ext = name.slice(dot + 1).toLowerCase()
+      if (ext === 'md' || ext === 'markdown') {
+        return { ok: false, kind: 'invalid', message: 'Markdown 笔记请使用「新建笔记」' }
+      }
+      // 根层 assets/ 是附件保留目录,那里面的文件不会出现在目录里
+      if (parent === NOTES_ASSETS_DIR || parent.startsWith(`${NOTES_ASSETS_DIR}/`)) {
+        return { ok: false, kind: 'invalid', message: 'assets 目录只用于存放附件' }
+      }
+      const rel = joinNoteId(parent, name)
+      if (!isSafeNoteId(rel)) {
+        return { ok: false, kind: 'invalid', message: `路径不合法:${rel}` }
+      }
+      const dir = opts.getDir()
+      try {
+        mkdirSync(join(dir, parent), { recursive: true })
+        // wx:同名文件已存在时报错,绝不覆盖用户内容
+        writeFileSync(join(dir, rel), '', { encoding: 'utf8', flag: 'wx' })
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        if (code === 'EEXIST') return { ok: false, kind: 'exists', message: '同名文件已存在' }
+        return { ok: false, kind: 'io', message: `创建失败:${String(err)}` }
+      }
+      log(`created file ${rel}`)
+      return { ok: true, file: fileStatOf(rel, statSync(join(dir, rel))) }
+    },
+
+    async renameFile(input) {
+      const oldRel = String(input?.path ?? '')
+      const dir = opts.getDir()
+      const absOld = resolveContainedFile(dir, oldRel)
+      if (absOld === null) {
+        return { ok: false, kind: 'not-found', message: '文件不存在或不在笔记目录内' }
+      }
+
+      // 类型 = 扩展名:从旧文件名原样取(保留大小写),调用方只给主名
+      const { ext } = splitFileExt(baseNameOf(oldRel))
+      let base = String(input?.name ?? '').trim()
+      if (ext !== '') {
+        // 主名里自带了同扩展名(用户把 app.js 整个粘进来)→ 去掉,避免 app.js.js
+        const suffix = `.${ext}`
+        if (base.toLowerCase().endsWith(suffix.toLowerCase())) base = base.slice(0, -suffix.length)
+      }
+      if (!isSafeNoteSegment(base)) {
+        return { ok: false, kind: 'invalid', message: `文件名不合法:${base}` }
+      }
+      // 无扩展名的文件不能借改名长出扩展名(那就等于改类型了)
+      if (ext === '' && base.includes('.')) {
+        return { ok: false, kind: 'invalid', message: '无扩展名的文件不能添加扩展名' }
+      }
+      const newRel = joinNoteId(parentOf(oldRel), ext === '' ? base : `${base}.${ext}`)
+      if (!isSafeNoteId(newRel)) {
+        return { ok: false, kind: 'invalid', message: `路径不合法:${newRel}` }
+      }
+      if (newRel === oldRel) {
+        try {
+          return { ok: true, file: fileStatOf(oldRel, statSync(absOld)) }
+        } catch (err) {
+          return { ok: false, kind: 'io', message: `读取文件信息失败:${String(err)}` }
+        }
+      }
+
+      const absNew = join(dir, newRel)
+      if (existsSync(absNew)) {
+        // 大小写不敏感卷上,仅改大小写时目标「已存在」—— 那是同一个 inode,允许改名
+        try {
+          const a = statSync(absOld)
+          const b = statSync(absNew)
+          if (a.dev !== b.dev || a.ino !== b.ino) {
+            return { ok: false, kind: 'exists', message: '同名文件已存在' }
+          }
+        } catch {
+          return { ok: false, kind: 'exists', message: '同名文件已存在' }
+        }
+      }
+      try {
+        renameSync(absOld, absNew)
+      } catch (err) {
+        return { ok: false, kind: 'io', message: `重命名失败:${String(err)}` }
+      }
+      log(`renamed file ${oldRel} -> ${newRel}`)
+      try {
+        return { ok: true, file: fileStatOf(newRel, statSync(absNew)) }
+      } catch (err) {
+        return { ok: false, kind: 'io', message: `读取文件信息失败:${String(err)}` }
+      }
+    },
+
+    async readFile(rel) {
+      const relS = String(rel ?? '')
+      const abs = resolveContainedFile(opts.getDir(), relS)
+      if (abs === null) {
+        return { ok: false, kind: 'not-found', message: '文件不存在或不在笔记目录内' }
+      }
+      let st: Stats
+      let bytes: Buffer
+      try {
+        st = statSync(abs)
+        if (!st.isFile()) {
+          return { ok: false, kind: 'not-found', message: '文件不存在或不是普通文件' }
+        }
+        const stat = fileStatOf(relS, st)
+        // 已知的二进制类型不读正文:调用方应走 readFileBytes / 预览协议
+        if (!stat.editable && stat.kind !== 'unsupported') {
+          return { ok: true, doc: binaryDoc(stat, 'unsupported') }
+        }
+        if (st.size > MAX_TEXT_FILE_BYTES) {
+          return { ok: true, doc: binaryDoc(stat, 'too-large') }
+        }
+        bytes = readFileSync(abs)
+        const decoded = decodeTextBytes(bytes)
+        if (!decoded.ok) return { ok: true, doc: binaryDoc(stat, decoded.reason) }
+        return {
+          ok: true,
+          doc: textDoc(stat, {
+            // 未知扩展名读成功 → 它就是可编辑纯文本
+            kind: stat.kind === 'unsupported' ? 'text' : stat.kind,
+            revision: sha1Bytes(bytes),
+            encoding: decoded.decoded.encoding,
+            eol: decoded.decoded.eol,
+            text: decoded.decoded.text
+          })
+        }
+      } catch (err) {
+        return { ok: false, kind: 'io', message: `读取失败:${String(err)}` }
+      }
+    },
+
+    async readFileBytes(rel, maxBytes) {
+      const relS = String(rel ?? '')
+      const abs = resolveContainedFile(opts.getDir(), relS)
+      if (abs === null) {
+        return { ok: false, kind: 'not-found', message: '文件不存在或不在笔记目录内' }
+      }
+      const cap = Math.min(
+        Math.max(1, typeof maxBytes === 'number' && Number.isFinite(maxBytes) ? maxBytes : MAX_FILE_BYTES_READ),
+        MAX_FILE_BYTES_READ
+      )
+      try {
+        const st = statSync(abs)
+        if (!st.isFile()) {
+          return { ok: false, kind: 'not-found', message: '文件不存在或不是普通文件' }
+        }
+        if (st.size > cap) {
+          return {
+            ok: false,
+            kind: 'too-large',
+            message: `文件超过 ${Math.round(cap / 1024 / 1024)} MiB 上限`,
+            size: st.size
+          }
+        }
+        const buf = readFileSync(abs)
+        return { ok: true, data: new Uint8Array(buf), size: st.size, mtimeMs: st.mtimeMs }
+      } catch (err) {
+        return { ok: false, kind: 'io', message: `读取失败:${String(err)}` }
+      }
+    },
+
+    async saveFile(input) {
+      const relS = String(input?.path ?? '')
+      if (typeof input?.expectedRevision !== 'string' || input.expectedRevision === '') {
+        return { ok: false, kind: 'invalid', message: '缺少 expectedRevision,拒绝写入' }
+      }
+      const abs = resolveContainedFile(opts.getDir(), relS)
+      if (abs === null) {
+        return { ok: false, kind: 'not-found', message: '文件不存在或不在笔记目录内' }
+      }
+
+      let st: Stats
+      let current: Buffer
+      try {
+        st = statSync(abs)
+        if (!st.isFile()) {
+          return { ok: false, kind: 'not-found', message: '文件不存在或不是普通文件' }
+        }
+        current = readFileSync(abs)
+      } catch (err) {
+        return { ok: false, kind: 'io', message: `读取失败:${String(err)}` }
+      }
+
+      const revision = sha1Bytes(current)
+      if (input.force !== true && input.expectedRevision !== revision) {
+        return {
+          ok: false,
+          kind: 'conflict',
+          latest: { revision, size: current.byteLength, mtimeMs: st.mtimeMs }
+        }
+      }
+
+      // 外部可能改过编码:以**写盘前的磁盘字节**为准探测,再按用户当前文本重建
+      const decoded = decodeTextBytes(current)
+      if (!decoded.ok) {
+        return { ok: false, kind: 'not-text', message: '当前文件不是可编辑文本,未写入' }
+      }
+      const text = typeof input.text === 'string' ? input.text : ''
+      let out: Uint8Array
+      try {
+        out = encodeTextBytes(decoded.decoded.encoding, decoded.decoded.eol, text)
+      } catch (err) {
+        return { ok: false, kind: 'io', message: `编码失败:${String(err)}` }
+      }
+      if (out.byteLength > MAX_TEXT_FILE_BYTES) {
+        return { ok: false, kind: 'too-large', message: '正文超过 64 MiB 上限,未写入' }
+      }
+
+      const tmp = `${abs}.tmp`
+      try {
+        // 保留原文件权限位;tmp + rename 保证读者永远看不到半份文件
+        writeFileSync(tmp, out, { mode: st.mode })
+        renameSync(tmp, abs)
+      } catch (err) {
+        try {
+          rmSync(tmp, { force: true })
+        } catch {
+          /* 清理失败不掩盖真正的写错误 */
+        }
+        return { ok: false, kind: 'io', message: `写入失败:${String(err)}` }
+      }
+
+      let after: { size: number; mtimeMs: number }
+      try {
+        after = statSync(abs)
+      } catch {
+        after = { size: out.byteLength, mtimeMs: now() }
+      }
+      const stat = fileStatOf(relS, after)
+      return {
+        ok: true,
+        doc: textDoc(stat, {
+          kind: stat.kind === 'unsupported' ? 'text' : stat.kind,
+          revision: sha1Bytes(out),
+          encoding: decoded.decoded.encoding,
+          eol: decoded.decoded.eol,
+          text: normalizeEol(text)
+        })
+      }
     },
 
     async removeFile(rel) {

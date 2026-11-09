@@ -1429,3 +1429,278 @@ describe('非 Markdown 文件与批量导入', () => {
     expect(svc.resolveNoteFile('../a.txt')).toBeNull()
   })
 })
+
+describe('非 Markdown 文件:stat / read / save / bytes', () => {
+  it('statFile 按扩展名分类,并拒绝根层 assets 与越界路径', async () => {
+    const svc = makeService()
+    const dir = svc.dir()
+    mkdirSync(join(dir, 'assets'), { recursive: true })
+    writeFileSync(join(dir, 'app.js'), 'const a = 1\n')
+    writeFileSync(join(dir, 'shot.png'), 'png')
+    writeFileSync(join(dir, 'Makefile'), 'all:\n')
+    writeFileSync(join(dir, 'LICENSE'), 'MIT\n')
+    writeFileSync(join(dir, 'assets', 'x.png'), 'x')
+
+    expect(svc.statFile('app.js')).toMatchObject({ kind: 'code', editable: true, ext: 'js' })
+    expect(svc.statFile('shot.png')).toMatchObject({ kind: 'image', editable: false })
+    expect(svc.statFile('Makefile')).toMatchObject({ kind: 'code', editable: true })
+    expect(svc.statFile('LICENSE')).toMatchObject({ kind: 'text', editable: true })
+    expect(svc.statFile('assets/x.png')).toBeNull()
+    expect(svc.statFile('../x')).toBeNull()
+    expect(svc.statFile('none.txt')).toBeNull()
+  })
+
+  it('readFile 解码文本、保留 EOL 与 BOM;未知扩展名读成纯文本', async () => {
+    const svc = makeService()
+    const dir = svc.dir()
+    writeFileSync(
+      join(dir, 'bom.js'),
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('a\r\nb\r\n')])
+    )
+    writeFileSync(join(dir, 'notes.mystery'), 'plain\n')
+
+    const bom = await svc.readFile('bom.js')
+    expect(bom.ok).toBe(true)
+    if (!bom.ok || !bom.doc.editable) throw new Error('expected text')
+    expect(bom.doc).toMatchObject({
+      kind: 'code',
+      editable: true,
+      encoding: 'utf8-bom',
+      eol: '\r\n',
+      text: 'a\nb\n',
+      tooLarge: false
+    })
+    expect(bom.doc.revision).toMatch(/^[0-9a-f]{40}$/)
+
+    const unknown = await svc.readFile('notes.mystery')
+    expect(unknown.ok).toBe(true)
+    if (!unknown.ok) throw new Error('expected read')
+    expect(unknown.doc.editable).toBe(true)
+    expect(unknown.doc.kind).toBe('text')
+  })
+
+  it('readFile 对已知二进制返回占位而不是乱码', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'x.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]))
+    const r = await svc.readFile('x.png')
+    expect(r.ok).toBe(true)
+    if (!r.ok) throw new Error('expected read')
+    expect(r.doc).toMatchObject({ kind: 'image', editable: false, revision: null, reason: 'unsupported' })
+
+    writeFileSync(join(svc.dir(), 'bad.txt'), Buffer.from([0x41, 0x00, 0x42]))
+    const bad = await svc.readFile('bad.txt')
+    expect(bad.ok && !bad.doc.editable ? bad.doc.reason : null).toBe('binary')
+  })
+
+  it('saveFile 用原始字节 sha1 做 CAS,冲突时不覆盖', async () => {
+    const svc = makeService()
+    const dir = svc.dir()
+    writeFileSync(join(dir, 'a.txt'), 'old')
+    const first = await svc.readFile('a.txt')
+    if (!first.ok || !first.doc.editable) throw new Error('expected text')
+
+    const saved = await svc.saveFile({
+      path: 'a.txt',
+      text: 'new\n',
+      expectedRevision: first.doc.revision
+    })
+    expect(saved.ok).toBe(true)
+    expect(read(dir, 'a.txt')).toBe('new\n')
+
+    const stale = await svc.saveFile({
+      path: 'a.txt',
+      text: 'stale',
+      expectedRevision: first.doc.revision
+    })
+    expect(stale.ok).toBe(false)
+    if (stale.ok || stale.kind !== 'conflict') throw new Error('expected conflict')
+    expect(stale.latest.revision).not.toBe(first.doc.revision)
+    expect(read(dir, 'a.txt')).toBe('new\n')
+  })
+
+  it('saveFile 按原编码 / BOM / EOL 还原(UTF-8 BOM + CRLF、UTF-16LE)', async () => {
+    const svc = makeService()
+    const dir = svc.dir()
+    const bomPath = join(dir, 'bom.js')
+    writeFileSync(
+      bomPath,
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('a\r\nb\r\n')])
+    )
+    const bom = await svc.readFile('bom.js')
+    if (!bom.ok || !bom.doc.editable) throw new Error('expected text')
+    const out = await svc.saveFile({
+      path: 'bom.js',
+      text: 'x\ny\n',
+      expectedRevision: bom.doc.revision
+    })
+    expect(out.ok).toBe(true)
+    expect(Array.from(readFileSync(bomPath))).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('x\r\ny\r\n')]))
+    )
+
+    const u16Path = join(dir, 'u16.txt')
+    const u16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('a\nb\n', 'utf16le')
+    ])
+    writeFileSync(u16Path, u16)
+    const doc = await svc.readFile('u16.txt')
+    if (!doc.ok || !doc.doc.editable) throw new Error('expected text')
+    expect(doc.doc).toMatchObject({ encoding: 'utf16le', eol: '\n', text: 'a\nb\n' })
+    const saved = await svc.saveFile({
+      path: 'u16.txt',
+      text: 'c\nd\n',
+      expectedRevision: doc.doc.revision
+    })
+    expect(saved.ok).toBe(true)
+    expect(Array.from(readFileSync(u16Path))).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('c\nd\n', 'utf16le')]))
+    )
+  })
+
+  it('saveFile 拒绝二进制文件与越界路径', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'x.bin'), Buffer.from([0x41, 0x00]))
+    const bin = await svc.saveFile({ path: 'x.bin', text: 'text', expectedRevision: 'x', force: true })
+    expect(bin).toMatchObject({ ok: false, kind: 'not-text' })
+
+    const outside = await svc.saveFile({ path: '../x.txt', text: 'x', expectedRevision: 'x' })
+    expect(outside).toMatchObject({ ok: false, kind: 'not-found' })
+    const noRev = await svc.saveFile({ path: 'x.bin', text: 'x', expectedRevision: '' })
+    expect(noRev).toMatchObject({ ok: false, kind: 'invalid' })
+  })
+
+  it('readFileBytes 返回原始字节,并支持按调用方上限拦截', async () => {
+    const svc = makeService()
+    const dir = svc.dir()
+    writeFileSync(join(dir, 'a.bin'), Buffer.from([1, 2, 3]))
+    const ok = await svc.readFileBytes('a.bin')
+    expect(ok.ok).toBe(true)
+    if (!ok.ok) throw new Error('expected bytes')
+    expect(Array.from(ok.data)).toEqual([1, 2, 3])
+
+    const limited = await svc.readFileBytes('a.bin', 2)
+    expect(limited).toMatchObject({ ok: false, kind: 'too-large', size: 3 })
+  })
+})
+
+describe('createFile(新建任意类型的空文件)', () => {
+  it('根层与子目录都能建;落盘为空文件并出现在列表里', async () => {
+    const svc = makeService()
+    const rootFile = await svc.createFile({ parent: '', name: 'app.js' })
+    expect(rootFile.ok).toBe(true)
+    if (!rootFile.ok) throw new Error('expected file')
+    expect(rootFile.file.path).toBe('app.js')
+    expect(rootFile.file.kind).toBe('code')
+    expect(rootFile.file.editable).toBe(true)
+    expect(readFileSync(join(svc.dir(), 'app.js'), 'utf8')).toBe('')
+
+    const nested = await svc.createFile({ parent: 'docs', name: 'notes.txt' })
+    expect(nested.ok && nested.file.path).toBe('docs/notes.txt')
+    expect(existsSync(join(svc.dir(), 'docs', 'notes.txt'))).toBe(true)
+
+    const list = await svc.list()
+    expect(list.files.map((f) => f.path)).toEqual(expect.arrayContaining(['app.js', 'docs/notes.txt']))
+  })
+
+  it('同名不覆盖;.md 交给笔记创建;非法目录 / 名字 / assets 被拒', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'app.js'), 'keep')
+
+    const exists = await svc.createFile({ parent: '', name: 'app.js' })
+    expect(exists).toMatchObject({ ok: false, kind: 'exists' })
+    expect(read(svc.dir(), 'app.js')).toBe('keep')
+
+    expect(await svc.createFile({ parent: '', name: 'x.md' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.createFile({ parent: '', name: 'noext' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.createFile({ parent: '', name: 'a/b.txt' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.createFile({ parent: '../evil', name: 'x.txt' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.createFile({ parent: 'assets', name: 'x.png' })).toMatchObject({ ok: false, kind: 'invalid' })
+  })
+})
+
+describe('renameFile(重命名文件,扩展名固定)', () => {
+  it('只改主名:目录保留、扩展名不变、内容不动', async () => {
+    const svc = makeService()
+    mkdirSync(join(svc.dir(), 'docs'), { recursive: true })
+    writeFileSync(join(svc.dir(), 'docs', 'old.txt'), 'hello')
+
+    const out = await svc.renameFile({ path: 'docs/old.txt', name: 'new' })
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error('expected renamed')
+    expect(out.file.path).toBe('docs/new.txt')
+    expect(out.file.name).toBe('new.txt')
+    expect(out.file.ext).toBe('txt')
+    expect(out.file.kind).toBe('text')
+
+    expect(existsSync(join(svc.dir(), 'docs', 'old.txt'))).toBe(false)
+    expect(read(svc.dir(), 'docs/new.txt')).toBe('hello')
+    const list = await svc.list()
+    expect(list.files.map((f) => f.path)).toContain('docs/new.txt')
+  })
+
+  it('主名自带同扩展名时去重;扩展名大小写原样保留', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'ic.PNG'), 'x')
+
+    const out = await svc.renameFile({ path: 'ic.PNG', name: 'image.png' })
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error('expected renamed')
+    expect(out.file.path).toBe('image.PNG')
+    expect(out.file.ext).toBe('png')
+    expect(out.file.kind).toBe('image')
+  })
+
+  it('同名目标拒绝且原文件不动;缺失文件 not-found', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'a.txt'), 'A')
+    writeFileSync(join(svc.dir(), 'b.txt'), 'B')
+
+    const exists = await svc.renameFile({ path: 'a.txt', name: 'b' })
+    expect(exists).toMatchObject({ ok: false, kind: 'exists' })
+    expect(read(svc.dir(), 'a.txt')).toBe('A')
+    expect(read(svc.dir(), 'b.txt')).toBe('B')
+
+    expect(await svc.renameFile({ path: 'missing.txt', name: 'x' })).toMatchObject({
+      ok: false,
+      kind: 'not-found'
+    })
+    expect(await svc.renameFile({ path: '../a.txt', name: 'x' })).toMatchObject({
+      ok: false,
+      kind: 'not-found'
+    })
+    mkdirSync(join(svc.dir(), 'assets'), { recursive: true })
+    writeFileSync(join(svc.dir(), 'assets', 'x.png'), 'x')
+    expect(await svc.renameFile({ path: 'assets/x.png', name: 'y' })).toMatchObject({
+      ok: false,
+      kind: 'not-found'
+    })
+  })
+
+  it('非法主名被拒;无扩展名的文件不能借改名长出扩展名', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'a.txt'), 'A')
+
+    expect(await svc.renameFile({ path: 'a.txt', name: '' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.renameFile({ path: 'a.txt', name: '   ' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.renameFile({ path: 'a.txt', name: '.hidden' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.renameFile({ path: 'a.txt', name: 'a/b' })).toMatchObject({ ok: false, kind: 'invalid' })
+
+    // 无扩展名文件名:允许改主名,但不允许加扩展名
+    writeFileSync(join(svc.dir(), 'Makefile'), 'x')
+    const keepExt = await svc.renameFile({ path: 'Makefile', name: 'Buildfile' })
+    expect(keepExt.ok && keepExt.file.path).toBe('Buildfile')
+    expect(await svc.renameFile({ path: 'Buildfile', name: 'Buildfile.sh' })).toMatchObject({
+      ok: false,
+      kind: 'invalid'
+    })
+  })
+
+  it('主名没变时直接返回当前元信息', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'a.txt'), 'A')
+    const out = await svc.renameFile({ path: 'a.txt', name: 'a' })
+    expect(out.ok && out.file.path).toBe('a.txt')
+    expect(read(svc.dir(), 'a.txt')).toBe('A')
+  })
+})

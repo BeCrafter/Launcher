@@ -9,7 +9,8 @@ import { BASIC } from '../lib/fixtures.mjs'
  * 从系统拖入本地文件 / 文件夹。
  *
  * 拖拽用 CDP 把真实文件塞进隐藏 input（File 因此带本地路径），再把同一份
- * DataTransfer 派发到 rail 上；双击文件行打开的是应用 IPC 链路，E2E 下
+ * DataTransfer 派发到 rail 上；文件行的行为见 files 分组：单击在应用内打开，
+ * 只有悬停动作里的「用默认应用打开」才走 IPC。E2E 下
  * LAUNCHER_E2E_STUB_OPEN=1 只把解析后的绝对路径写进应用日志，不真拉外部应用。
  */
 
@@ -43,8 +44,8 @@ async function expandFolder(ctx, path) {
     const row = [...document.querySelectorAll('.notes-folder-row')]
       .find((el) => el.dataset.folderPath === ${JSON.stringify(path)})
     if (row === undefined) return 'missing'
-    const open = row.querySelector('.notes-folder-toggle .fa-caret-down') !== null
-    if (!open) row.querySelector('.notes-folder-toggle')?.click()
+    const open = row.querySelector('.notes-folder-name')?.getAttribute('aria-expanded') === 'true'
+    if (!open) row.querySelector('.notes-folder-name')?.click()
     return open ? 'open' : 'opened'
   })()`)
   if (state === 'missing') throw new Error(`列表里找不到目录:${path}`)
@@ -199,7 +200,8 @@ export default [
   {
     id: 'import/file-row-open-delete',
     area: 'import',
-    title: '文件行:双击走默认应用打开链路，删除确认后文件与行一起消失',
+    title:
+      '文件行:单击在应用内打开、悬停按钮才交给默认应用,删除确认后文件与行一起消失',
     tags: ['import', 'file-row'],
     fixture: BASIC,
     async run(ctx) {
@@ -212,10 +214,28 @@ export default [
         message: '导入的文件出现在列表里'
       })
 
-      await ctx.doubleClick('[data-file-path="open-me.txt"] .notes-file-main')
+      // 行为按新需求变更:单击文件行在应用内打开,不再直接拉外部应用。
+      await ctx.cdp.eval(`document.querySelector('[data-file-path="open-me.txt"]')?.click()`)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === 'open-me.txt'`,
+        { message: '单击文件行在应用内打开文件视图' }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-editor .cm-content')?.textContent?.includes('打开我') === true`,
+        { message: '文本文件在文件编辑器里显示正文' }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('[data-file-path="open-me.txt"]')?.classList.contains('active') === true`,
+        { message: '当前文件行是活动态' }
+      )
+
+      // 「用默认应用打开」改为文件行上的显式按钮(悬停动作第一项)。
+      await ctx.cdp.eval(
+        `document.querySelector('[data-file-path="open-me.txt"] [data-file-action="open-external"]')?.click()`
+      )
       await ctx.waitForLog(
         `[note-open] ${join(notesDir(ctx), 'open-me.txt')}`,
-        '双击文件行解析出绝对路径并交给系统默认应用'
+        '悬停按钮解析出绝对路径并交给系统默认应用'
       )
 
       await ctx.cdp.eval(

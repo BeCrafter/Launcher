@@ -4,8 +4,11 @@
 // 白名单从「只有图片」扩到了视频 / 音频 / PDF / 本地网页 —— 每加一类都要在这里点名,
 // 尤其是**必须继续拒绝**的那几类(svg、js、md…)。
 
-import { describe, expect, it } from 'vitest'
-import { parseRange, resolveAssetPath } from './notes-protocol'
+import { afterEach, describe, expect, it } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileHeadersFor, parseRange, resolveAssetPath, resolveFilePath } from './notes-protocol'
 
 const DIR = '/Users/tester/.config/launcher/notes'
 
@@ -131,5 +134,68 @@ describe('parseRange', () => {
 
   it('单字节文件', () => {
     expect(parseRange('bytes=0-0', 1)).toEqual({ start: 0, end: 0 })
+  })
+})
+
+describe('launcher-note://file/ host', () => {
+  const roots: string[] = []
+  afterEach(() => {
+    for (const d of roots.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+  function makeDir(): string {
+    const d = mkdtempSync(join(tmpdir(), 'launcher-proto-file-'))
+    roots.push(d)
+    return d
+  }
+  const fileUrl = (p: string): string => `launcher-note://file/${p}`
+
+  it('解析目录内文件,允许根层 assets/,忽略查询串', () => {
+    const dir = makeDir()
+    mkdirSync(join(dir, 'assets'), { recursive: true })
+    writeFileSync(join(dir, 'assets', 'logo.png'), 'x')
+    mkdirSync(join(dir, 'site'), { recursive: true })
+    writeFileSync(join(dir, 'site', 'index.html'), '<h1>x</h1>')
+
+    expect(resolveFilePath(dir, fileUrl('assets/logo.png'))).toBe(join(dir, 'assets', 'logo.png'))
+    expect(resolveFilePath(dir, `${fileUrl('site/index.html')}?v=3`)).toBe(join(dir, 'site', 'index.html'))
+    // 查询串里的穿越不能参与解析
+    expect(resolveFilePath(dir, `${fileUrl('site/index.html')}?x=../../etc`)).toBe(
+      join(dir, 'site', 'index.html')
+    )
+  })
+
+  it('拒绝越界、asset host、绝对路径与目录', () => {
+    const dir = makeDir()
+    mkdirSync(join(dir, 'sub'))
+    writeFileSync(join(dir, 'a.txt'), 'a')
+    // URL 解析本身会把 `..` 夹在 host 根,拿不到目录外;剩下 decode 出来的
+    // `%2f` 变成相对段,最终仍走同一条包含性检查
+    expect(resolveFilePath(dir, fileUrl('../a.txt'))).toBe(join(dir, 'a.txt'))
+    expect(resolveFilePath(dir, fileUrl('%2e%2e/%2e%2e/etc/passwd'))).toBeNull()
+    expect(resolveFilePath(dir, `launcher-note://asset/assets/a.png`)).toBeNull()
+    expect(resolveFilePath(dir, fileUrl('sub'))).toBeNull()
+    expect(resolveFilePath(dir, 'not a url')).toBeNull()
+  })
+})
+
+describe('fileHeadersFor', () => {
+  it('HTML 用 scheme 源 CSP(iframe 无同源,不能用 self)', () => {
+    const h = fileHeadersFor('/notes/site/index.html')
+    expect(h['Content-Type']).toBe('text/html; charset=utf-8')
+    expect(h['Content-Security-Policy']).toContain('default-src launcher-note:')
+    expect(h['Content-Security-Policy']).not.toContain("'self'")
+    expect(h['X-Content-Type-Options']).toBe('nosniff')
+    expect(h['Access-Control-Allow-Origin']).toBe('*')
+    expect(h['Content-Disposition']).toContain("filename*=UTF-8''index.html")
+  })
+
+  it('SVG 按图片档收紧,其余类型不发 CSP', () => {
+    expect(fileHeadersFor('/n/logo.svg')['Content-Security-Policy']).toBe("default-src 'none'; sandbox")
+    expect(fileHeadersFor('/n/app.js')['Content-Security-Policy']).toBeUndefined()
+    expect(fileHeadersFor('/n/app.js')['Content-Type']).toBe('text/javascript; charset=utf-8')
+    expect(fileHeadersFor('/n/x.weird')['Content-Type']).toBe('application/octet-stream')
+    expect(fileHeadersFor('/n/中文 图.png')['Content-Disposition']).toContain(
+      `filename*=UTF-8''${encodeURIComponent('中文 图.png')}`
+    )
   })
 })

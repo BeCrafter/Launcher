@@ -8,6 +8,7 @@ import picker from './cases/picker.mjs'
 import keyboard from './cases/keyboard.mjs'
 import meta from './cases/meta.mjs'
 import fileImport from './cases/import.mjs'
+import files from './cases/files.mjs'
 import find from './cases/find.mjs'
 
 /**
@@ -27,6 +28,7 @@ export const CASES = [
   ...keyboard,
   ...meta,
   ...fileImport,
+  ...files,
   ...find
 ]
 
@@ -41,5 +43,6 @@ export const AREA_TITLES = {
   keyboard: 'Alt / Shift+Alt 键盘移动',
   meta: '笔记列表、标签、关联',
   import: '拖入本地文件 / 文件夹批量导入、文件行',
+  files: '文件查看与编辑:代码、HTML、CSV、图片、PDF/音视频、Office、压缩包、3D、占位与图标',
   find: '编辑器内查找替换、匹配导航、选项与撤销'
 }

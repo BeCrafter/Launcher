@@ -9,6 +9,7 @@ import {
   notesAssetsDir,
   parentOf,
   resolveNotesDir,
+  splitFileExt,
   MAX_FOLDER_DEPTH,
   NOTE_ID_MAX,
   NOTE_SEGMENT_MAX
@@ -141,6 +142,15 @@ describe('路径助手', () => {
   it('joinNoteId:父为空就是子', () => {
     expect(joinNoteId('', 'x')).toBe('x')
     expect(joinNoteId('a/b', 'x')).toBe('a/b/x')
+  })
+
+  it('splitFileExt:拆最后一个点,保留原始大小写;点开头 / 无扩展名不外扩', () => {
+    expect(splitFileExt('app.js')).toEqual({ base: 'app', ext: 'js' })
+    expect(splitFileExt('ic.PNG')).toEqual({ base: 'ic', ext: 'PNG' })
+    expect(splitFileExt('archive.tar.gz')).toEqual({ base: 'archive.tar', ext: 'gz' })
+    expect(splitFileExt('Makefile')).toEqual({ base: 'Makefile', ext: '' })
+    expect(splitFileExt('.env')).toEqual({ base: '.env', ext: '' })
+    expect(splitFileExt('trailing.')).toEqual({ base: 'trailing.', ext: '' })
   })
 })
 

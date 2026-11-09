@@ -20,11 +20,11 @@ import {
   MAX_IMPORT_DIRS,
   MAX_IMPORT_FILES,
   MAX_IMPORT_ROOTS,
-  NOTES_ASSETS_DIR,
   isSafeNoteId,
   isSafeNoteSegment,
   type NoteImportResult
 } from '../../shared/notes'
+import { resolveContainedFile } from '../domains/note-file'
 
 export interface NoteImportOptions {
   /** 笔记根目录(绝对路径) */
@@ -264,20 +264,9 @@ export async function importPathsIntoNotes(
 /**
  * 列表里的文件相对路径 → 绝对路径。根层 `assets/` 是内部附件目录,
  * 不允许从文件行走这条入口(它有自己的预览协议与更严格的扩展名白名单)。
+ *
+ * 实现收在 domains/note-file.ts,读写与预览协议共用同一套闸门。
  */
 export function resolveNoteFile(dir: string, rel: string): string | null {
-  if (rel === '' || !isSafeNoteId(rel)) return null
-  if (rel === NOTES_ASSETS_DIR || rel.startsWith(`${NOTES_ASSETS_DIR}/`)) return null
-  const root = resolve(dir)
-  const abs = resolve(root, rel)
-  if (abs === root || !inside(root, abs)) return null
-  try {
-    const st = lstatSync(abs)
-    if (!st.isFile() || st.isSymbolicLink()) return null
-    // 真实路径也必须还在笔记目录里(防祖先目录是指向外部的符号链接)
-    if (!inside(realpathSync(root), realpathSync(abs))) return null
-  } catch {
-    return null
-  }
-  return abs
+  return resolveContainedFile(dir, rel)
 }

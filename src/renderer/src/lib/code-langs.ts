@@ -215,3 +215,21 @@ export function languageFor(lang: string): Language | null {
 export function parserFor(lang: string): Parser | null {
   return languageFor(lang)?.parser ?? null
 }
+
+/** 扩展名/文件名 → 文件编辑器用的语言;不认识返回 null(按纯文本编辑) */
+export function languageForFile(ext: string, name?: string): Language | null {
+  const e = ext.toLowerCase()
+  if (e !== '') return languageFor(e)
+  const base = (name ?? '').toLowerCase()
+  switch (base) {
+    case 'dockerfile':
+      return languageFor('dockerfile')
+    case 'gemfile':
+    case 'rakefile':
+    case 'vagrantfile':
+    case 'brewfile':
+      return languageFor('ruby')
+    default:
+      return null
+  }
+}

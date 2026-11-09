@@ -16,8 +16,16 @@
 import { protocol } from 'electron'
 import { open, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
-import { NOTES_ASSET_SCHEME, noteAssetMime, type NoteAssetKind } from '../../shared/notes'
+import {
+  MAX_FILE_BYTES_READ,
+  NOTES_ASSET_SCHEME,
+  NOTES_FILE_HOST,
+  noteAssetMime,
+  noteFileMime,
+  type NoteAssetKind
+} from '../../shared/notes'
 import { resolveAssetRel, type ResolvedAsset } from '../domains/note-asset'
+import { resolveReadableFile } from '../domains/note-file'
 
 export type { ResolvedAsset }
 
@@ -36,6 +44,30 @@ const CSP: Partial<Record<NoteAssetKind, string>> = {
     "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' data:; " +
     "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; " +
     "font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'"
+}
+
+/**
+ * `launcher-note://file/` 上的 HTML 页面 CSP。
+ *
+ * 页面跑在**没有 allow-same-origin** 的 sandbox iframe 里,origin 是 opaque,
+ * 所以 `'self'` 匹配不到任何东西 —— 必须用 scheme 源 `launcher-note:`。
+ * 只放开同目录资源与内联脚本/样式;外网一律不放行(CDN 页面会缺资源,这是刻意的)。
+ */
+const FILE_PAGE_CSP =
+  'default-src launcher-note: data: blob:; ' +
+  "script-src launcher-note: 'unsafe-inline' data:; " +
+  "style-src launcher-note: 'unsafe-inline' data:; " +
+  'img-src launcher-note: data: blob:; ' +
+  'media-src launcher-note: data: blob:; ' +
+  'font-src launcher-note: data:; ' +
+  'connect-src launcher-note: data: blob:; ' +
+  "object-src 'none'; base-uri 'none'; form-action 'none'"
+
+/** SVG 作为图片查看(不进文档上下文执行脚本) */
+const FILE_SVG_CSP = "default-src 'none'; sandbox"
+
+function isHtmlExt(ext: string): boolean {
+  return ext === 'html' || ext === 'htm' || ext === 'xhtml'
 }
 
 /** 不带 Range 时允许整份读进内存的上限。超过就让它走 Range —— 浏览器播放器本来就会发 */
@@ -64,6 +96,30 @@ export function resolveAssetPath(dir: string, rawUrl: string): ResolvedAsset | n
     return null // 非法百分号编码
   }
   return resolveAssetRel(dir, rel)
+}
+
+/**
+ * `launcher-note://file/<relPath>` → 笔记目录内的绝对路径。
+ * 与文件行共用 `resolveReadableFile`:额外允许根层 `assets/`(页面引用附件很常见),
+ * 其余越界 / 符号链接 / 目录一律拒绝。只读,不开写入口。
+ *
+ * 查询串只用于缓存版本(`?v=nonce`),不参与路径解析。
+ */
+export function resolveFilePath(dir: string, rawUrl: string): string | null {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return null
+  }
+  if (url.hostname !== NOTES_FILE_HOST) return null
+  let rel: string
+  try {
+    rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
+  } catch {
+    return null // 非法百分号编码
+  }
+  return resolveReadableFile(dir, rel)
 }
 
 export interface ByteRange {
@@ -112,13 +168,15 @@ export function registerNotesScheme(): void {
         supportFetchAPI: true,
         // stream 是 `<video>` 能边下边播的前提
         stream: true,
+        // 沙箱 iframe 是不透明 origin:字体 / ES module / fetch 兄弟资源需要 CORS
+        corsEnabled: true,
         bypassCSP: false
       }
     }
   ])
 }
 
-function headersFor(kind: NoteAssetKind, full: string, size: number): Record<string, string> {
+function headersFor(kind: NoteAssetKind, full: string): Record<string, string> {
   const h: Record<string, string> = {
     'Content-Type': noteAssetMime(extname(full).slice(1)),
     'Accept-Ranges': 'bytes',
@@ -129,47 +187,91 @@ function headersFor(kind: NoteAssetKind, full: string, size: number): Record<str
   return h
 }
 
+export function fileHeadersFor(full: string): Record<string, string> {
+  const ext = extname(full).slice(1).toLowerCase()
+  const h: Record<string, string> = {
+    'Content-Type': noteFileMime(ext),
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-cache',
+    // 扩展名即事实:不许浏览器再嗅探成别的类型
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(full.split('/').pop() ?? '')}`,
+    // iframe 无同源(opaque origin):字体、module、fetch 兄弟资源都要 CORS
+    'Access-Control-Allow-Origin': '*',
+    'Cross-Origin-Resource-Policy': 'cross-origin'
+  }
+  if (isHtmlExt(ext)) h['Content-Security-Policy'] = FILE_PAGE_CSP
+  else if (ext === 'svg') h['Content-Security-Policy'] = FILE_SVG_CSP
+  return h
+}
+
+/** 单文件的 Range / 整份读取与响应组装(asset 与 file 两个 host 共用) */
+async function serveFile(
+  path: string,
+  req: Request,
+  headersForPath: (full: string) => Record<string, string>,
+  fullReadCap: number
+): Promise<Response> {
+  try {
+    const st = await stat(path)
+    if (!st.isFile()) return new Response('not found', { status: 404 })
+    const headers = headersForPath(path)
+
+    // 只读请求的那一段,不把整个文件读进内存 —— 视频动辄几百 MB
+    const range = parseRange(req.headers.get('range'), st.size)
+    if (range !== null) {
+      const length = range.end - range.start + 1
+      const fh = await open(path, 'r')
+      try {
+        const buf = Buffer.alloc(length)
+        await fh.read(buf, 0, length, range.start)
+        return new Response(buf, {
+          status: 206,
+          headers: { ...headers, 'Content-Range': `bytes ${range.start}-${range.end}/${st.size}` }
+        })
+      } finally {
+        await fh.close()
+      }
+    }
+
+    if (st.size > fullReadCap) return new Response('too large', { status: 413 })
+    const fh = await open(path, 'r')
+    try {
+      const buf = Buffer.alloc(st.size)
+      await fh.read(buf, 0, st.size, 0)
+      return new Response(buf, { status: 200, headers })
+    } finally {
+      await fh.close()
+    }
+  } catch {
+    return new Response('not found', { status: 404 })
+  }
+}
+
 /** ready 之后调用。getDir 每次现取 —— 用户改了笔记目录设置要立刻生效 */
 export function handleNotesProtocol(getDir: () => string, log?: (msg: string) => void): void {
   protocol.handle(NOTES_ASSET_SCHEME, async (req) => {
+    let host = ''
+    try {
+      host = new URL(req.url).hostname
+    } catch {
+      return new Response('forbidden', { status: 403 })
+    }
+
+    if (host === NOTES_FILE_HOST) {
+      const path = resolveFilePath(getDir(), req.url)
+      if (path === null) {
+        log?.(`拒绝:${req.url}`)
+        return new Response('forbidden', { status: 403 })
+      }
+      return serveFile(path, req, fileHeadersFor, MAX_FILE_BYTES_READ)
+    }
+
     const hit = resolveAssetPath(getDir(), req.url)
     if (hit === null) {
       log?.(`拒绝:${req.url}`)
       return new Response('forbidden', { status: 403 })
     }
-    try {
-      const st = await stat(hit.path)
-      if (!st.isFile()) return new Response('not found', { status: 404 })
-      const headers = headersFor(hit.kind, hit.path, st.size)
-
-      // 只读请求的那一段,不把整个文件读进内存 —— 视频动辄几百 MB
-      const range = parseRange(req.headers.get('range'), st.size)
-      if (range !== null) {
-        const length = range.end - range.start + 1
-        const fh = await open(hit.path, 'r')
-        try {
-          const buf = Buffer.alloc(length)
-          await fh.read(buf, 0, length, range.start)
-          return new Response(buf, {
-            status: 206,
-            headers: { ...headers, 'Content-Range': `bytes ${range.start}-${range.end}/${st.size}` }
-          })
-        } finally {
-          await fh.close()
-        }
-      }
-
-      if (st.size > MAX_FULL_READ) return new Response('too large', { status: 413 })
-      const fh = await open(hit.path, 'r')
-      try {
-        const buf = Buffer.alloc(st.size)
-        await fh.read(buf, 0, st.size, 0)
-        return new Response(buf, { status: 200, headers })
-      } finally {
-        await fh.close()
-      }
-    } catch {
-      return new Response('not found', { status: 404 })
-    }
+    return serveFile(hit.path, req, (full) => headersFor(hit.kind, full), MAX_FULL_READ)
   })
 }

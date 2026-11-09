@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   baseNameOf,
   parentOf,
+  splitFileExt,
   type NoteFileMeta,
   type NoteMeta,
   type NoteRef
@@ -18,43 +19,164 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { useT } from '../../hooks/useT'
 import { buildNoteTree, sortNotes, type NoteFolderNode } from '../../lib/note-tree'
-import { noteFileIcon } from '../../lib/note-file'
+import { fileKind, noteFileIcon } from '../../lib/note-file'
 import { refTypeLabel } from '../../lib/note-refs'
 import { rankByTagHits, tagHitsOf } from '../../lib/note-search'
 import { aggregateTags, noteHasTag } from '../../lib/note-tags'
 import { relTime } from '../../lib/rel-time'
 import { confirmDangerous } from '../../lib/elevation'
 import { useRailResize } from '../../lib/use-rail-resize'
+import { useFilesStore } from '../../state/files-store'
 import { useNotesStore } from '../../state/notes-store'
+import { openFileDoc, openNoteDoc } from './doc-actions'
 
 /**
- * 缩进栅格。目录与笔记共用同一套步进,并让笔记标题对齐到**目录图标**那一列 ——
- * 层级靠缩进表达,而不是靠字号差。
+ * 缩进栅格。目录与笔记/文件共用同一列:
+ *   · 内容列 = ROW_PAD + depth·INDENT;
+ *   · 目录图标与笔记/文件图标同列,目录名与笔记标题同列。
+ * 展开状态由开/合文件夹图标、加粗与导引线表达,不再占折叠三角槽。
  */
-const INDENT = 15
-const folderPad = (depth: number): number => 2 + depth * INDENT
-const notePad = (depth: number): number => 18 + depth * INDENT
+const INDENT = 12
+const ROW_PAD = 10
+/** 图标槽宽,与 notes.css 的 14px 图标槽保持一致 */
+const ICON_SLOT = 14
+const rowPad = (depth: number): number => ROW_PAD + depth * INDENT
+/** 导引线落在祖先图标槽的中线上 */
+const GUIDE_LEFT = ROW_PAD + ICON_SLOT / 2
 
 /** 每一层祖先画一条竖线,让嵌套关系可追踪(光靠缩进,深了就看不出谁属于谁) */
 function IndentGuides({ depth }: { depth: number }): React.JSX.Element {
   return (
     <>
       {Array.from({ length: depth }, (_, i) => (
-        <span key={i} className="notes-guide" style={{ left: 9 + i * INDENT }} />
+        <span key={i} className="notes-guide" style={{ left: GUIDE_LEFT + i * INDENT }} />
       ))}
     </>
   )
 }
 
-/** 正在编辑的目录名(新建或改名);null = 没有 */
+/** 正在编辑的目录名/文件名(新建或改名);null = 没有 */
 interface NameEdit {
   mode: 'create' | 'rename'
-  /** 改名时改的是目录还是笔记(两者的提交走不同的动作) */
-  kind: 'folder' | 'note'
+  /** create 时是新建什么(笔记/文件 vs 目录);rename 时改的是目录、笔记还是文件 */
+  kind: 'folder' | 'note' | 'file'
   /** 新建时的父目录 */
   parent: string
-  /** 改名时的目标 id */
+  /** 改名时的目标 id / 路径 */
   path: string
+}
+
+/** 新建文档时的默认主名与类型;类型是独立字段,编辑名字不会改类型 */
+const NEW_DOC_NAME = '未命名'
+const NEW_DOC_EXT = 'md'
+
+/**
+ * 行内的名字输入(改名 / 新建目录共用)。空名提交视为取消。
+ */
+function NameField({
+  value,
+  placeholder,
+  onChange,
+  onCommit,
+  onCancel
+}: {
+  value: string
+  placeholder: string
+  onChange(value: string): void
+  onCommit(): void
+  onCancel(): void
+}): React.JSX.Element {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (el === null) return
+    el.focus()
+    // 只在挂载时定位一次:每次重渲染都重选会把用户刚打的字吃掉
+    const end = el.value.length
+    el.setSelectionRange(end, end)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return (
+    <input
+      ref={ref}
+      className="notes-folder-input"
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onCommit()
+        if (e.key === 'Escape') onCancel()
+      }}
+    />
+  )
+}
+
+/**
+ * 新建文档(笔记 / 其他文件)的行内输入:主名 + 独立的扩展名字段。
+ * 类型不写在名字里,所以改名字不可能改变类型;默认 `未命名` + `md`。
+ * 两个字段之间切换焦点不算离开(容器 onBlur 判断 relatedTarget),不会提前提交。
+ */
+function CreateDocFields({
+  name,
+  ext,
+  placeholder,
+  extLabel,
+  onName,
+  onExt,
+  onCommit,
+  onCancel
+}: {
+  name: string
+  ext: string
+  placeholder: string
+  extLabel: string
+  onName(value: string): void
+  onExt(value: string): void
+  onCommit(): void
+  onCancel(): void
+}): React.JSX.Element {
+  const nameRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const el = nameRef.current
+    if (el === null) return
+    el.focus()
+    el.select()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const keys = (e: React.KeyboardEvent): void => {
+    if (e.key === 'Enter') onCommit()
+    if (e.key === 'Escape') onCancel()
+  }
+  return (
+    <div
+      className="notes-create-fields"
+      onBlur={(e) => {
+        // 在两个字段之间移动焦点不提交;真正离开这一行才提交
+        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+        onCommit()
+      }}
+    >
+      <input
+        ref={nameRef}
+        className="notes-folder-input notes-create-name"
+        value={name}
+        placeholder={placeholder}
+        onChange={(e) => onName(e.target.value)}
+        onKeyDown={keys}
+      />
+      <span className="notes-create-ext" title={extLabel}>
+        <span className="notes-create-dot">.</span>
+        <input
+          className="notes-create-ext-input"
+          value={ext}
+          aria-label={extLabel}
+          onChange={(e) => onExt(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase())}
+          onKeyDown={keys}
+        />
+      </span>
+    </div>
+  )
 }
 
 export function NotesRail(): React.JSX.Element {
@@ -74,13 +196,16 @@ export function NotesRail(): React.JSX.Element {
   const tagFilter = useNotesStore((s) => s.tagFilter)
   const currentId = useNotesStore((s) => s.currentId)
   const openingId = useNotesStore((s) => s.openingId)
+  // 文件是「同一时刻只开一个文档」的另一半:文件打开时笔记行不再高亮
+  const activeFilePath = useFilesStore((s) => s.file?.path ?? null)
+  const openingFilePath = useFilesStore((s) => s.openingPath)
+  const leaveFile = useFilesStore((s) => s.leave)
   const dir = useNotesStore((s) => s.dir)
   const setQuery = useNotesStore((s) => s.setQuery)
   const pinnedCollapsed = useNotesStore((s) => s.pinnedCollapsed)
   const setPinnedCollapsed = useNotesStore((s) => s.setPinnedCollapsed)
   const filterByRef = useNotesStore((s) => s.filterByRef)
   const setTagFilter = useNotesStore((s) => s.setTagFilter)
-  const open = useNotesStore((s) => s.open)
   const toggleFolder = useNotesStore((s) => s.toggleFolder)
   const setSelectedFolder = useNotesStore((s) => s.setSelectedFolder)
   const setRailCollapsed = useNotesStore((s) => s.setRailCollapsed)
@@ -95,6 +220,8 @@ export function NotesRail(): React.JSX.Element {
   const renameFolder = useNotesStore((s) => s.renameFolder)
   const removeFolder = useNotesStore((s) => s.removeFolder)
   const create = useNotesStore((s) => s.create)
+  const createFile = useNotesStore((s) => s.createFile)
+  const renameFile = useNotesStore((s) => s.renameFile)
   const moveNote = useNotesStore((s) => s.moveNote)
   const importPaths = useNotesStore((s) => s.importPaths)
   const openFile = useNotesStore((s) => s.openFile)
@@ -105,6 +232,13 @@ export function NotesRail(): React.JSX.Element {
 
   const [edit, setEdit] = useState<NameEdit | null>(null)
   const [draftName, setDraftName] = useState('')
+  /** 新建文档时独立的扩展名字段(默认 md) */
+  const [draftExt, setDraftExt] = useState(NEW_DOC_EXT)
+  /**
+   * Enter 与 blur 可能在同一轮里各调一次 commitEdit:第二次拿着已经改过名的旧路径去提交,
+   * 会白撞一次 not-found。用一个同步 ref 挡住(下一次 startEdit 才重新放开)。
+   */
+  const committingRef = useRef(false)
   /** 标签面板默认收起 —— 标签会越来越多,常驻铺开太占地方 */
   const [tagsOpen, setTagsOpen] = useState(false)
   // 滚动条只在滚动时露出来(见 .notes-rail-list 的 CSS)。停手约 0.9s 后自己隐去 ——
@@ -273,37 +407,87 @@ export function NotesRail(): React.JSX.Element {
   /** 首次使用:一篇笔记、一个目录都没有 */
   const isEmpty = !loading && notes.length === 0 && folders.length === 0 && files.length === 0
   const startEdit = (next: NameEdit, initial = ''): void => {
+    committingRef.current = false
     setEdit(next)
     setDraftName(initial)
+    if (next.mode === 'create' && next.kind === 'note') setDraftExt(NEW_DOC_EXT)
   }
-  const commitEdit = (): void => {
-    const name = draftName.trim()
-    if (edit === null) return
-    const cur = edit
+  const cancelEdit = (): void => {
+    committingRef.current = false
     setEdit(null)
     setDraftName('')
+  }
+  /**
+   * 新建文档:主名 + 扩展名分开提交。md(或留空)走笔记,其他扩展名按文件创建。
+   * 名字里若已经带了同名后缀(如 `app.js` + js)先去掉,避免 `app.js.js`。
+   */
+  const createDoc = async (parent: string, rawName: string, rawExt: string): Promise<void> => {
+    const ext = rawExt.trim().toLowerCase() || NEW_DOC_EXT
+    const suffix = `.${ext}`
+    const stripped = rawName.toLowerCase().endsWith(suffix) ? rawName.slice(0, -suffix.length) : rawName
+    const name = stripped.trim()
     if (name === '') return
-    if (cur.mode === 'create') void createFolder(cur.parent, name)
-    else if (cur.kind === 'note') void renameNote(cur.path, name)
-    else if (name !== baseNameOf(cur.path)) void renameFolder(cur.path, name)
+    if (ext === 'md' || ext === 'markdown') {
+      await create(name, parent)
+      return
+    }
+    const path = await createFile(parent, `${name}.${ext}`)
+    if (path !== null) openFileDoc(path)
+  }
+  /**
+   * 文件改名:先把打开中的缓冲落到旧路径,再让主进程改名,最后让文档跟随新路径。
+   * 类型(扩展名)由主进程沿用旧文件,调用方只给主名。
+   */
+  const renameFileDoc = async (path: string, base: string): Promise<void> => {
+    const fstate = useFilesStore.getState()
+    if (fstate.file?.path === path) await fstate.flush()
+    const stat = await renameFile(path, base)
+    if (stat !== null) useFilesStore.getState().repath(path, stat)
+  }
+  const commitEdit = (): void => {
+    if (edit === null || committingRef.current) return
+    committingRef.current = true
+    const name = draftName.trim()
+    const cur = edit
+    const ext = draftExt
+    setEdit(null)
+    setDraftName('')
+    if (cur.mode === 'create') {
+      if (cur.kind === 'folder') {
+        if (name !== '') void createFolder(cur.parent, name)
+      } else void createDoc(cur.parent, name, ext)
+    } else if (name !== '') {
+      if (cur.kind === 'note') void renameNote(cur.path, name)
+      else if (cur.kind === 'folder') {
+        if (name !== baseNameOf(cur.path)) void renameFolder(cur.path, name)
+      } else if (name !== splitFileExt(baseNameOf(cur.path)).base) {
+        void renameFileDoc(cur.path, name)
+      }
+    }
   }
 
-  /** 目录行内的名字输入(新建与改名共用) */
+  /** 目录行内的名字输入(改名 / 新建目录共用) */
   const nameInput = (placeholder: string): React.JSX.Element => (
-    <input
-      className="notes-folder-input"
-      autoFocus
+    <NameField
       value={draftName}
       placeholder={placeholder}
-      onChange={(e) => setDraftName(e.target.value)}
-      onBlur={commitEdit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') commitEdit()
-        if (e.key === 'Escape') {
-          setEdit(null)
-          setDraftName('')
-        }
-      }}
+      onChange={setDraftName}
+      onCommit={commitEdit}
+      onCancel={cancelEdit}
+    />
+  )
+
+  /** 新建文档的两个输入框(主名 + 扩展名) */
+  const createDocFields = (): React.JSX.Element => (
+    <CreateDocFields
+      name={draftName}
+      ext={draftExt}
+      placeholder={t('notes.field.fileNamePlaceholder')}
+      extLabel={t('notes.field.extLabel')}
+      onName={setDraftName}
+      onExt={setDraftExt}
+      onCommit={commitEdit}
+      onCancel={cancelEdit}
     />
   )
 
@@ -311,16 +495,18 @@ export function NotesRail(): React.JSX.Element {
   const noteRow = (n: NoteMeta, depth: number): React.JSX.Element => {
     const renaming = edit !== null && edit.mode === 'rename' && edit.kind === 'note' && edit.path === n.id
     const opening = n.id === openingId
+    // 与文件行统一:目录里显示完整文件名。笔记都是 .md,标题里已经写了就不重复
+    const fileName = /\.md$/i.test(n.title) ? n.title : `${n.title}.md`
     return (
     <div
       key={n.id}
       className={
         'notes-row' +
-        (n.id === currentId ? ' active' : '') +
+        (n.id === currentId && activeFilePath === null ? ' active' : '') +
         (opening ? ' opening' : '') +
         (draggingId === n.id ? ' dragging' : '')
       }
-      style={{ paddingLeft: notePad(depth) }}
+      style={{ paddingLeft: rowPad(depth) }}
       data-note-id={n.id}
       data-drop-folder={parentOf(n.id)}
       draggable
@@ -329,7 +515,7 @@ export function NotesRail(): React.JSX.Element {
       // 改名时点别处只该失焦/提交,不能把笔记切走。
       onClick={() => {
         if (renaming) return
-        void open(n.id)
+        openNoteDoc(n.id)
       }}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', n.id)
@@ -344,15 +530,6 @@ export function NotesRail(): React.JSX.Element {
       }}
     >
       <IndentGuides depth={depth} />
-      {/* 加载指示浮在行首缩进留白里(标题左侧 2px):不参与 flex 布局,
-          出现/消失都不会推挤标题,空闲时也不占标题宽度。 */}
-      {opening && (
-        <i
-          className="fa-solid fa-circle-notch fa-spin notes-row-spin notes-row-lead"
-          style={{ left: notePad(depth) - 14 }}
-          aria-hidden="true"
-        />
-      )}
       {renaming ? (
         <span className="notes-row-rename">{nameInput(t('notes.field.titlePlaceholder'))}</span>
       ) : (
@@ -362,8 +539,19 @@ export function NotesRail(): React.JSX.Element {
           title={opening ? t('notes.opening') : `${n.id} · ${relTime(n.updated, t)}`}
           aria-busy={opening || undefined}
         >
+          {/* 加载中占用类型图标的位置,加载完恢复图标;两者同宽,标题不会移动 */}
+          {opening ? (
+            <i key="spin" className="fa-solid fa-circle-notch fa-spin notes-row-spin" aria-hidden="true" />
+          ) : (
+            <i
+              key="icon"
+              className="fa-solid fa-file-lines notes-file-icon"
+              data-kind="markdown"
+              aria-hidden="true"
+            />
+          )}
           {n.pinned && <i className="fa-solid fa-thumbtack notes-row-pin" />}
-          <span className="notes-row-title">{n.title}</span>
+          <span className="notes-row-title">{fileName}</span>
           {n.frontmatterIssues.length > 0 && (
             <i className="fa-solid fa-triangle-exclamation notes-row-warn" title={t('notes.fm.issues')} />
           )}
@@ -416,63 +604,135 @@ export function NotesRail(): React.JSX.Element {
     )
   }
 
-  /** 文件行:不是笔记,不参与打开/编辑;双击交给系统默认应用 */
-  const fileRow = (f: NoteFileMeta, depth: number): React.JSX.Element => (
-    <div
-      key={`file:${f.path}`}
-      className="notes-row notes-file-row"
-      style={{ paddingLeft: notePad(depth) }}
-      data-file-path={f.path}
-      data-drop-folder={parentOf(f.path)}
-      title={f.path}
-      onDoubleClick={() => void openFile(f.path)}
-    >
-      <IndentGuides depth={depth} />
+  /** 文件行:单击在应用内打开;系统默认应用是悬停动作里的显式按钮 */
+  const fileRow = (f: NoteFileMeta, depth: number): React.JSX.Element => {
+    const active = f.path === activeFilePath
+    const opening = f.path === openingFilePath
+    const kind = fileKind(f.ext, f.name)
+    const renaming = edit !== null && edit.mode === 'rename' && edit.kind === 'file' && edit.path === f.path
+    const ext = splitFileExt(f.name).ext
+    return (
       <div
-        className="notes-row-main notes-file-main"
-        role="button"
-        tabIndex={0}
-        title={t('notes.file.open')}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            void openFile(f.path)
-          }
+        key={`file:${f.path}`}
+        className={
+          'notes-row notes-file-row' +
+          (active ? ' active' : '') +
+          (opening ? ' opening' : '')
+        }
+        style={{ paddingLeft: rowPad(depth) }}
+        data-file-path={f.path}
+        data-file-kind={kind}
+        data-drop-folder={parentOf(f.path)}
+        title={f.path}
+        // 整行热区(与笔记行一致):行的留白、缩进与悬停浮层都算点击范围
+        // 改名时点别处只该提交,不能把文件切走
+        onClick={() => {
+          if (renaming) return
+          openFileDoc(f.path)
         }}
       >
-        <i className={`fa-solid ${noteFileIcon(f.ext)} notes-file-icon`} />
-        <span className="notes-row-title">{f.name}</span>
-      </div>
-      <span className="notes-row-acts" onDoubleClick={(e) => e.stopPropagation()}>
-        <button
-          type="button"
-          title={t('notes.file.reveal')}
-          onClick={(e) => {
-            e.stopPropagation()
-            void window.launcher.notes.reveal(f.path)
-          }}
+        <IndentGuides depth={depth} />
+        {renaming ? (
+          <span className="notes-file-rename">
+            {nameInput(t('notes.field.fileNamePlaceholder'))}
+            {ext !== '' && <span className="notes-file-rename-ext">.{ext}</span>}
+          </span>
+        ) : (
+          <div
+            className="notes-row-main notes-file-main"
+            role="button"
+            tabIndex={0}
+            title={t('notes.file.open')}
+            aria-busy={opening || undefined}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                openFileDoc(f.path)
+              }
+            }}
+          >
+            {/* 加载中占用类型图标的位置,加载完恢复图标;两者同宽,标题不会移动 */}
+            {opening ? (
+              <i
+                key="spin"
+                className="fa-solid fa-circle-notch fa-spin notes-row-spin"
+                aria-hidden="true"
+              />
+            ) : (
+              <i
+                key="icon"
+                className={`fa-solid ${noteFileIcon(f.ext, f.name)} notes-file-icon`}
+                data-kind={kind}
+                aria-hidden="true"
+              />
+            )}
+            <span className="notes-row-title">{f.name}</span>
+          </div>
+        )}
+        <span
+          className="notes-row-acts"
+          onClick={(e) => e.stopPropagation()}
+          style={renaming ? { display: 'none' } : undefined}
         >
-          <i className="fa-solid fa-folder-open" />
-        </button>
-        <button
-          type="button"
-          className="danger"
-          title={t('notes.file.delete')}
-          onClick={(e) => {
-            e.stopPropagation()
-            void (async () => {
-              const ok = await confirmDangerous.request(
-                t('notes.file.deleteMessage').replace('{NAME}', f.name)
+          <button
+            type="button"
+            data-file-action="open-external"
+            title={t('notes.file.openExternal')}
+            onClick={(e) => {
+              e.stopPropagation()
+              void openFile(f.path)
+            }}
+          >
+            <i className="fa-solid fa-arrow-up-right-from-square" />
+          </button>
+          <button
+            type="button"
+            data-file-action="rename"
+            title={t('notes.file.rename')}
+            onClick={(e) => {
+              e.stopPropagation()
+              startEdit(
+                { mode: 'rename', kind: 'file', parent: '', path: f.path },
+                splitFileExt(f.name).base
               )
-              if (ok) await removeFile(f.path)
-            })()
-          }}
-        >
-          <i className="fa-solid fa-trash-can" />
-        </button>
-      </span>
-    </div>
-  )
+            }}
+          >
+            <i className="fa-solid fa-pen" />
+          </button>
+          <button
+            type="button"
+            data-file-action="reveal"
+            title={t('notes.file.reveal')}
+            onClick={(e) => {
+              e.stopPropagation()
+              void window.launcher.notes.reveal(f.path)
+            }}
+          >
+            <i className="fa-solid fa-folder-open" />
+          </button>
+          <button
+            type="button"
+            data-file-action="delete"
+            className="danger"
+            title={t('notes.file.delete')}
+            onClick={(e) => {
+              e.stopPropagation()
+              void (async () => {
+                const ok = await confirmDangerous.request(
+                  t('notes.file.deleteMessage').replace('{NAME}', f.name)
+                )
+                if (!ok) return
+                if (active) await leaveFile()
+                await removeFile(f.path)
+              })()
+            }}
+          >
+            <i className="fa-solid fa-trash-can" />
+          </button>
+        </span>
+      </div>
+    )
+  }
 
   /**
    * 递归铺目录。**刻意用命令式的 if + push,不写 `{isOpen && out.push(...)}`** ——
@@ -493,7 +753,7 @@ export function NotesRail(): React.JSX.Element {
             (fileDragTarget === f.path ? ' file-drop-target' : '') +
             (draggingId === f.path ? ' dragging' : '')
           }
-          style={{ paddingLeft: folderPad(depth) }}
+          style={{ paddingLeft: rowPad(depth) }}
           data-folder-path={f.path}
           data-drop-folder={f.path}
           draggable
@@ -527,20 +787,13 @@ export function NotesRail(): React.JSX.Element {
           }}
         >
           <IndentGuides depth={depth} />
-          <button
-            type="button"
-            className="notes-folder-toggle"
-            onClick={() => toggleFolder(f.path)}
-            title={isOpen ? t('notes.folder.collapse') : t('notes.folder.expand')}
-          >
-            <i className={isOpen ? 'fa-solid fa-caret-down' : 'fa-solid fa-caret-right'} />
-          </button>
           {renaming ? (
             <span className="notes-folder-rename">{nameInput(t('notes.folder.namePlaceholder'))}</span>
           ) : (
             <button
               type="button"
               className="notes-folder-name"
+              aria-expanded={isOpen}
               onClick={() => {
                 setSelectedFolder(f.path)
                 toggleFolder(f.path)
@@ -552,7 +805,15 @@ export function NotesRail(): React.JSX.Element {
             </button>
           )}
           <span className="notes-folder-acts" style={renaming ? { display: 'none' } : undefined}>
-            <button type="button" title={t('notes.folder.newNote')} onClick={() => void create('', f.path)}>
+            <button
+              type="button"
+              title={t('notes.folder.newNote')}
+              onClick={() => {
+                setSelectedFolder(f.path)
+                useNotesStore.getState().setExpanded(f.path, true)
+                startEdit({ mode: 'create', kind: 'note', parent: f.path, path: '' }, NEW_DOC_NAME)
+              }}
+            >
               <i className="fa-solid fa-plus" />
             </button>
             <button
@@ -592,13 +853,14 @@ export function NotesRail(): React.JSX.Element {
         </div>
       )
       if (edit !== null && edit.mode === 'create' && edit.parent === f.path) {
+        const creatingDoc = edit.kind === 'note'
         out.push(
           <div
             key={`ec:${f.path}`}
             className="notes-folder-edit"
-            style={{ paddingLeft: folderPad(depth + 1) }}
+            style={{ paddingLeft: rowPad(depth + 1) }}
           >
-            {nameInput(t('notes.folder.namePlaceholder'))}
+            {creatingDoc ? createDocFields() : nameInput(t('notes.folder.namePlaceholder'))}
           </div>
         )
       }
@@ -790,14 +1052,20 @@ export function NotesRail(): React.JSX.Element {
         )}
 
         {edit !== null && edit.mode === 'create' && edit.parent === '' ? (
-          <div className="notes-folder-edit" style={{ paddingLeft: folderPad(0) }}>
-            {nameInput(t('notes.folder.namePlaceholder'))}
+          <div className="notes-folder-edit" style={{ paddingLeft: rowPad(0) }}>
+            {edit.kind === 'note'
+              ? createDocFields()
+              : nameInput(t('notes.folder.namePlaceholder'))}
           </div>
         ) : (
           <div className={'notes-new-row' + (isEmpty ? ' prominent' : '')}>
             {/* 根层两个入口并排:上面那颗 + 是「建到当前选中的目录里」,
                 这里明确是「建在根层」—— 否则一旦选过某个目录,就再也没法在根层新建了 */}
-            <button type="button" className="notes-new-folder" onClick={() => void create('', '')}>
+            <button
+              type="button"
+              className="notes-new-folder"
+              onClick={() => startEdit({ mode: 'create', kind: 'note', parent: '', path: '' }, NEW_DOC_NAME)}
+            >
               <i className="fa-solid fa-plus" />
               <span>{t('notes.action.new')}</span>
             </button>

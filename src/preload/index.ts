@@ -138,7 +138,13 @@ const api: LauncherApi = {
     move: (input) => ipcRenderer.invoke(IPC.notesMove, input),
     import: (input) => ipcRenderer.invoke(IPC.notesImport, input),
     removeFile: (path) => ipcRenderer.invoke(IPC.notesRemoveFile, path),
-    openFile: (path) => ipcRenderer.invoke(IPC.notesOpenFile, path)
+    openFile: (path) => ipcRenderer.invoke(IPC.notesOpenFile, path),
+    statFile: (path) => ipcRenderer.invoke(IPC.notesStatFile, path),
+    readFile: (path) => ipcRenderer.invoke(IPC.notesReadFile, path),
+    readFileBytes: (path, maxBytes) => ipcRenderer.invoke(IPC.notesReadFileBytes, path, maxBytes),
+    saveFile: (input) => ipcRenderer.invoke(IPC.notesSaveFile, input),
+    createFile: (input) => ipcRenderer.invoke(IPC.notesCreateFile, input),
+    renameFile: (input) => ipcRenderer.invoke(IPC.notesRenameFile, input)
   }
 }
 

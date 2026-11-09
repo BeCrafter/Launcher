@@ -109,7 +109,19 @@ export const IPC = {
   /** 删除文件(进系统废纸篓) */
   notesRemoveFile: 'notes:removeFile',
   /** 用系统默认应用打开文件(相对笔记目录的路径) */
-  notesOpenFile: 'notes:openFile'
+  notesOpenFile: 'notes:openFile',
+  /** 文件元信息与类型(不读内容) */
+  notesStatFile: 'notes:statFile',
+  /** 读文本文件(按 BOM 探测编码;二进制/超限回占位) */
+  notesReadFile: 'notes:readFile',
+  /** 读原始字节(Office / 压缩包 / PSD / 3D 查看器) */
+  notesReadFileBytes: 'notes:readFileBytes',
+  /** 按原编码/EOL 写回文本文件(CAS) */
+  notesSaveFile: 'notes:saveFile',
+  /** 在指定目录新建空文件(非 Markdown) */
+  notesCreateFile: 'notes:createFile',
+  /** 重命名文件(只改主名,扩展名固定) */
+  notesRenameFile: 'notes:renameFile'
 } as const
 
 // ── main → renderer 推送事件(preload onEvent 白名单) ──

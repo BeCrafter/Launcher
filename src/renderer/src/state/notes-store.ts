@@ -12,6 +12,7 @@ import {
   baseNameOf,
   type Note,
   type NoteFileMeta,
+  type NoteFileStat,
   type NoteMeta,
   type NoteRef
 } from '@shared/notes'
@@ -160,6 +161,12 @@ interface NotesState {
   load(): Promise<void>
   open(id: string): Promise<void>
   close(): Promise<void>
+  /**
+   * 切到别的文档(文件行)时用:先让挂起的打开作废,把缓冲交给后台保存;
+   * 只有在等待期间没有新打开的笔记、也没有留存改动时才清空视图。
+   * 保存失败会留下 draft(dirty),下次打开该笔记时仍能看到并继续保存 —— 绝不静默丢字。
+   */
+  leave(): Promise<void>
   setBody(v: string): void
   setTitle(v: string): void
   setTags(tags: string[]): void
@@ -168,6 +175,13 @@ interface NotesState {
   removeRef(ref: NoteRef): void
   toggleTask(line: number, next: boolean): void
   create(title?: string, parent?: string): Promise<void>
+  /** 新建空文件(非 Markdown);成功返回文件相对路径,失败返回 null */
+  createFile(parent: string, name: string): Promise<string | null>
+  /**
+   * 重命名文件(只改主名,扩展名由主进程沿用原文件)。
+   * 成功返回服务端的权威元信息(路径已变),失败返回 null。
+   */
+  renameFile(path: string, name: string): Promise<NoteFileStat | null>
   createFolder(parent: string, name: string): Promise<void>
   removeFolder(id: string): Promise<void>
   renameFolder(id: string, name: string): Promise<void>
@@ -398,6 +412,18 @@ export const useNotesStore = create<NotesState>((set, get) => {
       set({ currentId: null, draft: null, dirty: false, conflict: null, externalChanged: false })
     },
 
+    async leave() {
+      const seq = ++openSeq // 让挂起的 open 结果作废
+      set({ openingId: null })
+      await get().flush()
+      clearTimer()
+      // 等保存期间用户可能又打开了别的笔记或继续输入:两种情况下都不能清视图
+      if (seq !== openSeq) return
+      const s = get()
+      if (s.dirty || s.saving || s.openingId !== null) return
+      set({ currentId: null, draft: null, dirty: false, conflict: null, externalChanged: false })
+    },
+
     setBody(v) {
       const d = get().draft
       if (!d) return
@@ -477,8 +503,55 @@ export const useNotesStore = create<NotesState>((set, get) => {
       }
     },
 
-    async createFolder(parent, name) {
+    async createFile(parent, name) {
       try {
+        const outcome = await dataSource().notes.createFile({ parent, name })
+        if (!outcome.ok) {
+          showToast(
+            outcome.kind === 'exists' ? t()('toast.fileExists') : outcome.message,
+            '#f87171',
+            'fa-circle-exclamation'
+          )
+          return null
+        }
+        const { file } = outcome
+        // 展开父目录,新文件行才有地方显示
+        if (file.path.lastIndexOf('/') >= 0) {
+          const next = new Set(get().expanded)
+          for (const a of ancestorsOf(file.path)) next.add(a)
+          persistExpanded(next)
+          set({ expanded: next })
+        }
+        await reload()
+        showToast(t()('toast.fileCreated'), '#4ade80', 'fa-circle-check')
+        return file.path
+      } catch (err) {
+        showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+        return null
+      }
+    },
+
+    async renameFile(path, name) {
+      try {
+        const outcome = await dataSource().notes.renameFile({ path, name })
+        if (!outcome.ok) {
+          showToast(
+            outcome.kind === 'exists' ? t()('toast.fileExists') : outcome.message,
+            '#f87171',
+            'fa-circle-exclamation'
+          )
+          return null
+        }
+        await reload()
+        showToast(t()('toast.fileRenamed'), '#4ade80', 'fa-circle-check')
+        return outcome.file
+      } catch (err) {
+        showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+        return null
+      }
+    },
+
+    async createFolder(parent, name) {      try {
         const { id } = await dataSource().notes.createFolder({ parent, name })
         const next = new Set(get().expanded)
         for (const a of ancestorsOf(id)) next.add(a)

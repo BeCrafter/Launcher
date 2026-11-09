@@ -11,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn(),
   read: vi.fn(),
   save: vi.fn(),
-  search: vi.fn()
+  search: vi.fn(),
+  createFile: vi.fn(),
+  renameFile: vi.fn()
 }))
 
 vi.mock('../lib/utils', () => ({ showToast: mocks.toast }))
@@ -22,6 +24,8 @@ vi.mock('../data', () => ({
       read: mocks.read,
       save: mocks.save,
       search: mocks.search,
+      createFile: mocks.createFile,
+      renameFile: mocks.renameFile,
       rename: vi.fn()
     }
   })
@@ -212,5 +216,174 @@ describe('notes-store:保存期间切换笔记', () => {
     expect(state.draft?.body).toBe('b1')
     expect(state.conflict).toBeNull() // 不能把 A 的 latest 交给 B 的冲突裁决
     expect(mocks.toast).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('notes-store:leave(切到文件视图)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mocks.toast.mockReset()
+    mocks.read.mockReset()
+    mocks.save.mockReset()
+    mocks.list.mockResolvedValue({
+      notes: [],
+      folders: [],
+      files: [],
+      dir: '',
+      truncated: 0,
+      truncatedFiles: 0,
+      error: null
+    })
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+  })
+
+  it('干净笔记 leave 后清空视图', async () => {
+    const a = noteOf('A', 'a1')
+    seed([a])
+    mocks.read.mockResolvedValue(a)
+
+    await useNotesStore.getState().open('A')
+    await useNotesStore.getState().leave()
+
+    const s = useNotesStore.getState()
+    expect(s.currentId).toBeNull()
+    expect(s.draft).toBeNull()
+  })
+
+  it('保存失败时 leave 保留草稿与 dirty,不丢字', async () => {
+    const a = noteOf('A', 'a1')
+    seed([a])
+    mocks.read.mockResolvedValue(a)
+    mocks.save.mockResolvedValue({ ok: false, kind: 'io', message: '磁盘不可写' })
+
+    await useNotesStore.getState().open('A')
+    useNotesStore.getState().setBody('a2-没存上')
+    await useNotesStore.getState().leave()
+
+    const s = useNotesStore.getState()
+    expect(s.currentId).toBe('A')
+    expect(s.draft?.body).toBe('a2-没存上')
+    expect(s.dirty).toBe(true)
+    expect(mocks.toast).toHaveBeenCalled()
+  })
+
+  it('leave 等保存期间又打开了新笔记:leave 不清新笔记', async () => {
+    const a = noteOf('A', 'a1')
+    const b = noteOf('B', 'b1')
+    seed([a, b])
+    mocks.read.mockImplementation(async (id: string) => (id === 'A' ? a : b))
+    const pending: Array<(value: unknown) => void> = []
+    mocks.save.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          pending.push(resolve)
+        })
+    )
+
+    await useNotesStore.getState().open('A')
+    useNotesStore.getState().setBody('a2')
+    const leaving = useNotesStore.getState().leave()
+    await settle()
+    expect(pending).toHaveLength(1) // A 的保存在飞
+
+    await useNotesStore.getState().open('B')
+    pending[0]!({ ok: true, note: noteOf('A', 'a2') })
+    await leaving
+    await settle()
+
+    const s = useNotesStore.getState()
+    expect(s.currentId).toBe('B')
+    expect(s.draft?.body).toBe('b1')
+  })
+})
+
+describe('notes-store:createFile(新建任意类型的文件)', () => {
+  it('成功后重扫列表、展开父目录并返回路径', async () => {
+    seed([])
+    mocks.list.mockResolvedValue({
+      notes: [],
+      folders: ['docs'],
+      files: [
+        {
+          path: 'docs/app.js',
+          name: 'app.js',
+          ext: 'js',
+          kind: 'code',
+          mime: 'text/javascript',
+          size: 0,
+          mtimeMs: 1,
+          editable: true,
+          tooLarge: false
+        }
+      ],
+      dir: '/notes',
+      truncated: 0,
+      truncatedFiles: 0,
+      error: null
+    })
+    mocks.createFile.mockResolvedValue({
+      ok: true,
+      file: { path: 'docs/app.js', name: 'app.js', ext: 'js', kind: 'code', mime: 'text/javascript', size: 0, mtimeMs: 1, editable: true, tooLarge: false }
+    })
+
+    const path = await useNotesStore.getState().createFile('docs', 'app.js')
+    expect(path).toBe('docs/app.js')
+    expect(mocks.createFile).toHaveBeenCalledWith({ parent: 'docs', name: 'app.js' })
+    expect(useNotesStore.getState().expanded.has('docs')).toBe(true)
+    expect(useNotesStore.getState().files.map((f) => f.path)).toContain('docs/app.js')
+  })
+
+  it('失败(同名/非法名)返回 null 并提示', async () => {
+    seed([])
+    mocks.createFile.mockResolvedValue({ ok: false, kind: 'exists', message: '同名文件已存在' })
+    expect(await useNotesStore.getState().createFile('', 'app.js')).toBeNull()
+    expect(mocks.toast).toHaveBeenCalled()
+    expect(mocks.list).not.toHaveBeenCalled()
+  })
+})
+
+describe('notes-store:renameFile(重命名文件)', () => {
+  const renamed = {
+    path: 'docs/new.js',
+    name: 'new.js',
+    ext: 'js',
+    kind: 'code',
+    mime: 'text/javascript',
+    size: 3,
+    mtimeMs: 2,
+    editable: true,
+    tooLarge: false
+  }
+
+  it('成功后重扫列表、返回权威元信息并提示', async () => {
+    seed([])
+    mocks.renameFile.mockResolvedValue({ ok: true, file: renamed })
+    mocks.list.mockResolvedValue({
+      notes: [],
+      folders: ['docs'],
+      files: [renamed],
+      dir: '/notes',
+      truncated: 0,
+      truncatedFiles: 0,
+      error: null
+    })
+
+    const out = await useNotesStore.getState().renameFile('docs/old.js', 'new')
+    expect(out).toEqual(renamed)
+    expect(mocks.renameFile).toHaveBeenCalledWith({ path: 'docs/old.js', name: 'new' })
+    expect(useNotesStore.getState().files.map((f) => f.path)).toContain('docs/new.js')
+    expect(mocks.toast).toHaveBeenCalled()
+  })
+
+  it('同名 / 失败返回 null 并提示', async () => {
+    seed([])
+    mocks.renameFile.mockResolvedValue({ ok: false, kind: 'exists', message: '同名文件已存在' })
+    expect(await useNotesStore.getState().renameFile('a.js', 'b')).toBeNull()
+    expect(mocks.toast).toHaveBeenCalled()
+    expect(mocks.list).not.toHaveBeenCalled()
   })
 })

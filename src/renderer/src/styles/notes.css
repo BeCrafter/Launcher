@@ -110,7 +110,6 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 2px;
   border-radius: 6px;
   padding-right: 4px;
   min-height: 28px;
@@ -131,16 +130,6 @@
   background: var(--border2);
   pointer-events: none;
 }
-.notes-folder-toggle {
-  border: 0;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
-  padding: 4px 2px;
-  font-size: 9px;
-  width: 16px;
-  flex-shrink: 0;
-}
 /* ⚠ 目录名要比它装着的笔记标题更重、更亮:之前是 12px/400/--muted,
    比笔记标题(12.5px/500/--text)还弱 —— 层级读起来是反的。 */
 .notes-folder-name {
@@ -153,7 +142,7 @@
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  padding: 5px 2px;
+  padding: 5px 0;
   font-size: 12.5px;
   font-weight: 600;
   text-align: left;
@@ -163,6 +152,11 @@
   color: var(--text);
 }
 .notes-folder-name i {
+  /* 与笔记行同一个 14px 图标槽:同层目录图标和笔记图标同列,名字与标题同列 */
+  flex-shrink: 0;
+  width: 14px;
+  line-height: 16px;
+  text-align: center;
   color: var(--accent2);
   font-size: 11px;
 }
@@ -233,6 +227,48 @@
   color: var(--text);
   font-size: 11.5px;
   padding: 4px 7px;
+  outline: none;
+}
+/* 新建文档:主名 + 独立扩展名。类型不写在名字里,改名字不会改类型 */
+.notes-create-fields {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+.notes-create-name {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+.notes-create-ext {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 1px;
+  border: 1px solid var(--accent2);
+  border-radius: 5px;
+  background: var(--surface3);
+  color: var(--dim);
+  font-size: 11.5px;
+  padding: 4px 6px 4px 5px;
+}
+.notes-create-dot {
+  color: var(--muted);
+  user-select: none;
+}
+.notes-create-ext-input {
+  width: 26px;
+  min-width: 16px;
+  max-width: 52px;
+  /* 扩展名长度可变(js / html / markdown),让输入框跟着内容伸缩 */
+  field-sizing: content;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11.5px;
+  padding: 0;
   outline: none;
 }
 
@@ -492,26 +528,9 @@
   background: var(--hover);
 }
 .notes-row-spin {
-  flex-shrink: 0;
   font-size: 10px;
-  opacity: 0.7;
-}
-/* 行首加载指示:绝对定位在行左侧缩进留白里(水平位置由行内 left 随缩进给出)。
-   不参与 flex 布局 —— 出现/消失都不会推动标题,也不常驻占宽。
-   纯指示,不参与命中:点击/拖拽仍落到行本身。 */
-.notes-row-lead {
-  position: absolute;
-  top: 50%;
-  z-index: 1;
-  width: 12px;
-  height: 16px;
-  /* 这里不能用 translateY(-50%) 居中:fa-spin 的关键帧在动 transform,
-     会把居中位移一起覆盖掉,图标就贴到行中线上偏下一截。
-     用固定的半高负外边距居中,和旋转互不相干。 */
-  margin-top: -8px;
-  line-height: 16px;
-  text-align: center;
-  pointer-events: none;
+  color: var(--accent2);
+  opacity: 0.85;
 }
 .notes-row-main {
   flex: 1;
@@ -668,10 +687,17 @@
 }
 
 /* 文件行:沿用 .notes-row 的间距与 hover,只补图标与键盘焦点 */
-.notes-file-row .notes-file-icon {
-  width: 14px;
+/* 类型图标与加载转圈共用同一格:宽度/行高一致,状态切换时标题不会位移。
+   转圈只挂 .notes-row-spin(不挂 .notes-file-icon),颜色才不会被类型色覆盖。 */
+.notes-row-main .notes-file-icon,
+.notes-row-main .notes-row-spin {
   flex-shrink: 0;
+  width: 14px;
+  line-height: 16px;
   text-align: center;
+}
+/* 按类型的 Font Awesome 图标(笔记行与文件行共用;颜色由 data-kind 规则给) */
+.notes-row-main .notes-file-icon {
   font-size: 11px;
   color: var(--dim);
 }
@@ -707,6 +733,34 @@
   min-width: 0;
   display: flex;
   padding: 0 2px 0 0;
+}
+
+/* 文件改名:整格一个输入框,右侧固定后缀(扩展名由主进程沿用,不可编辑) */
+.notes-file-rename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--accent2);
+  border-radius: 5px;
+  background: var(--surface3);
+  padding-right: 6px;
+}
+.notes-file-rename .notes-folder-input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px 4px 7px;
+}
+.notes-file-rename-ext {
+  display: flex;
+  align-items: center;
+  flex: none;
+  color: var(--dim);
+  font-size: 11.5px;
+  user-select: none;
 }
 
 .notes-row-title {
@@ -4276,4 +4330,475 @@ video.md-media {
 }
 .embed-hint.warn > i {
   color: var(--yellow);
+}
+
+/* ── 文件视图(非 Markdown) ── */
+
+/* 类型图标着色:左栏与文件头共用。按 kind 而不是按扩展名,新增扩展名只改分类表 */
+.notes-file-icon[data-kind='code'] { color: var(--cyan); }
+.notes-file-icon[data-kind='html'] { color: var(--orange); }
+.notes-file-icon[data-kind='csv'] { color: var(--green); }
+.notes-file-icon[data-kind='markdown'],
+.notes-file-icon[data-kind='text'] { color: var(--muted); }
+.notes-file-icon[data-kind='image'],
+.notes-file-icon[data-kind='psd'],
+.notes-file-icon[data-kind='tiff'],
+.notes-file-icon[data-kind='heic'] { color: var(--green); }
+.notes-file-icon[data-kind='pdf'] { color: var(--red); }
+.notes-file-icon[data-kind='video'],
+.notes-file-icon[data-kind='audio'] { color: var(--accent2); }
+.notes-file-icon[data-kind='docx'],
+.notes-file-icon[data-kind='legacy-office'] { color: var(--blue); }
+.notes-file-icon[data-kind='xlsx'] { color: var(--green); }
+.notes-file-icon[data-kind='pptx'] { color: var(--orange); }
+.notes-file-icon[data-kind='archive'],
+.notes-file-icon[data-kind='archive-unsupported'] { color: var(--yellow); }
+.notes-file-icon[data-kind='model'] { color: var(--purple, var(--accent2)); }
+
+.notes-row.active .notes-file-icon { color: var(--accent2); }
+
+.file-main {
+  background: var(--bg);
+}
+.file-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 头部:文件名 + 大小 + 只读徽标;与笔记标题行同一高度 */
+.file-path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+.file-path .notes-file-icon {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 14px;
+  text-align: center;
+  color: var(--dim);
+}
+.file-name {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.file-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--dim);
+}
+.file-badge {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+/* 编辑器 */
+.file-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.file-editor-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+.file-editor .cm-editor {
+  height: 100%;
+}
+
+/* HTML / PDF / srcdoc 帧 */
+.file-preview-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--surface);
+}
+
+/* 分栏:与笔记页一样是左右两块,中间一条边框 */
+.file-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.file-split-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+.file-split-pane + .file-split-pane {
+  border-left: 1px solid var(--border);
+}
+
+/* 图片 */
+.file-image-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, var(--surface) 25%, transparent 25%) 0 0 / 18px 18px,
+    linear-gradient(-45deg, var(--surface) 25%, transparent 25%) 0 9px / 18px 18px,
+    linear-gradient(45deg, transparent 75%, var(--surface) 75%) 0 0 / 18px 18px,
+    linear-gradient(-45deg, transparent 75%, var(--surface) 75%) 9px -9px / 18px 18px,
+    var(--bg);
+}
+.file-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  user-select: none;
+  transition: transform 0.06s linear;
+  cursor: grab;
+}
+.file-image:active { cursor: grabbing; }
+.file-image-tools {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+.file-image-tools button {
+  min-width: 26px;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+.file-image-tools button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.file-image-scale { width: 46px; }
+
+/* 音视频 */
+.file-media {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.file-video {
+  max-width: 100%;
+  max-height: 100%;
+  background: #000;
+  border-radius: 8px;
+}
+.file-audio {
+  width: min(560px, 80%);
+}
+.file-pdf {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* 占位(无法预览 / 加载失败 / 超限) */
+.file-placeholder {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px;
+  color: var(--muted);
+  text-align: center;
+}
+.file-placeholder > .fa-solid {
+  font-size: 32px;
+  color: var(--dim);
+}
+.file-placeholder-title {
+  color: var(--text);
+  font-size: 13.5px;
+}
+.file-placeholder-hint {
+  max-width: 460px;
+  font-size: 12px;
+  color: var(--dim);
+  line-height: 1.6;
+}
+.file-placeholder-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* CSV 表格 */
+.file-csv {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+.file-csv-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 11px;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+}
+.file-csv-scroll {
+  flex: 1;
+  overflow: auto;
+}
+.file-csv-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 100%;
+}
+.file-csv-table th,
+.file-csv-table td {
+  border: 1px solid var(--border);
+  padding: 4px 9px;
+  text-align: left;
+  white-space: pre;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-csv-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface3, var(--surface));
+  color: var(--text);
+  z-index: 1;
+}
+.file-csv-table .file-csv-no {
+  color: var(--dim);
+  text-align: right;
+  min-width: 40px;
+  background: var(--surface);
+}
+
+/* Office */
+.file-office {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.file-viewer-tools {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.file-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  padding: 2px;
+}
+.file-zoom button {
+  min-width: 28px;
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.file-zoom button:hover { background: var(--hover); color: var(--text); }
+.file-sheet-tabs {
+  display: flex;
+  gap: 4px;
+  margin-right: auto;
+  overflow-x: auto;
+}
+.file-sheet-tab {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 11.5px;
+  padding: 3px 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.file-sheet-tab:hover { color: var(--text); background: var(--hover); }
+.file-sheet-tab.active {
+  color: var(--accent2);
+  border-color: var(--border2);
+  background: var(--wash-accent);
+}
+.file-office-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 18px;
+}
+.file-office-page {
+  width: fit-content;
+  min-width: 100%;
+  margin: 0 auto;
+}
+.file-xlsx-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+.file-xlsx-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  background: var(--surface);
+}
+.file-xlsx-table td {
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+  white-space: pre;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 压缩包 */
+.file-archive {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.file-archive-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.file-archive-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-archive-count {
+  margin-left: auto;
+  color: var(--dim);
+}
+.file-archive-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.file-archive-list {
+  width: 252px;
+  flex-shrink: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+  padding: 6px 4px;
+  background: var(--surface);
+}
+.file-archive-empty {
+  padding: 16px;
+  font-size: 12px;
+  color: var(--dim);
+  text-align: center;
+}
+.file-archive-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.file-archive-row:hover { background: var(--hover); }
+.file-archive-row.active { background: var(--wash-accent); }
+.file-archive-row.dir { color: var(--muted); cursor: default; }
+.file-archive-row > .fa-solid { color: var(--dim); width: 13px; text-align: center; font-size: 11px; }
+.file-archive-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-archive-size {
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.file-archive-preview {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* 3D */
+.file-model {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: var(--bg);
+}
+.file-model-host {
+  position: absolute;
+  inset: 0;
+}
+.file-model .file-placeholder {
+  position: absolute;
+  inset: 0;
 }

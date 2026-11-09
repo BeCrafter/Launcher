@@ -20,6 +20,14 @@ describe('isEmbeddedDocUrl', () => {
     expect(isEmbeddedDocUrl('launcher-note://asset/dir/a.pdf#page=3')).toBe(true)
   })
 
+  it('文件协议 host 的 HTML / PDF 同样处理', () => {
+    expect(isEmbeddedDocUrl('launcher-note://file/site/index.html')).toBe(true)
+    expect(isEmbeddedDocUrl('launcher-note://file/site/index.html?v=2')).toBe(true)
+    expect(isEmbeddedDocUrl('launcher-note://file/doc/manual.PDF#page=2')).toBe(true)
+    expect(isEmbeddedDocUrl('launcher-note://file/site/app.js')).toBe(false)
+    expect(isEmbeddedDocUrl('launcher-note://file/site/x.txt')).toBe(false)
+  })
+
   it('其它附件与外部页面不动', () => {
     expect(isEmbeddedDocUrl('launcher-note://asset/assets/sample.png')).toBe(false)
     expect(isEmbeddedDocUrl('launcher-note://asset/assets/sample.mp4')).toBe(false)

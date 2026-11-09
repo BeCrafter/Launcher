@@ -231,6 +231,453 @@ export interface NoteFileMeta {
   mtimeMs: number
 }
 
+// ── 非 Markdown 文件:类型、上限与读写契约 ──
+
+/**
+ * 文件行的类型。**这张表是唯一来源**:
+ * 左栏图标、打开方式、viewer registry、协议 MIME/CSP 都从它派生。
+ */
+export type NoteFileKind =
+  | 'text'
+  | 'code'
+  | 'markdown'
+  | 'csv'
+  | 'html'
+  | 'image'
+  | 'psd'
+  | 'tiff'
+  | 'heic'
+  | 'pdf'
+  | 'video'
+  | 'audio'
+  | 'docx'
+  | 'xlsx'
+  | 'pptx'
+  | 'archive'
+  | 'archive-unsupported'
+  | 'model'
+  | 'legacy-office'
+  | 'unsupported'
+
+/**
+ * 可编辑文本的大小上限。
+ *
+ * 不是产品限制,是内存安全线:CodeMirror 的文档是 JS UTF-16 字符串 + piece tree,
+ * IPC 还会再复制一份。64 MiB 已经能覆盖正常代码/日志;再大就只读或交给默认应用,
+ * 而不是把整个应用拖死。媒体/PDF 不走整读,靠 Range 不受这条限制。
+ */
+export const MAX_TEXT_FILE_BYTES = 64 * 1024 * 1024
+/** 单个二进制文件(Office/压缩包/PSD/TIFF/HEIC/3D)整读硬上限 */
+export const MAX_FILE_BYTES_READ = 128 * 1024 * 1024
+
+/** 各类查看器的建议上限(Sail 同量级;渲染层先按 stat 拦,主进程再有硬上限) */
+export const OFFICE_MAX_BYTES = 40 * 1024 * 1024
+export const IMAGE_MAX_BYTES = 80 * 1024 * 1024
+export const IMAGE_MAX_PIXELS = 80_000_000
+export const MODEL_MAX_BYTES = 120 * 1024 * 1024
+export const ARCHIVE_MAX_BYTES = 128 * 1024 * 1024
+export const ARCHIVE_UNPACKED_MAX = 256 * 1024 * 1024
+export const ARCHIVE_ENTRY_MAX = 128 * 1024 * 1024
+export const ARCHIVE_ENTRIES_MAX = 2000
+export const ARCHIVE_DEPTH_MAX = 3
+/** 压缩包内 HTML 内联资源的总预算 */
+export const ARCHIVE_INLINE_RESOURCE_MAX = 32 * 1024 * 1024
+export const ARCHIVE_HTML_MAX = 16 * 1024 * 1024
+
+export const CSV_PREVIEW_ROWS = 5000
+export const CSV_PREVIEW_COLS = 200
+export const CSV_PREVIEW_BYTES = 8 * 1024 * 1024
+
+/** 文件协议 host:`launcher-note://file/<rel>` */
+export const NOTES_FILE_HOST = 'file'
+
+const EXT_KIND: Record<string, NoteFileKind> = {
+  // 代码
+  js: 'code',
+  mjs: 'code',
+  cjs: 'code',
+  ts: 'code',
+  tsx: 'code',
+  jsx: 'code',
+  json: 'code',
+  jsonc: 'code',
+  json5: 'code',
+  jsonl: 'code',
+  vue: 'code',
+  svelte: 'code',
+  astro: 'code',
+  go: 'code',
+  py: 'code',
+  rb: 'code',
+  rs: 'code',
+  java: 'code',
+  kt: 'code',
+  kts: 'code',
+  swift: 'code',
+  php: 'code',
+  c: 'code',
+  h: 'code',
+  cc: 'code',
+  cpp: 'code',
+  cxx: 'code',
+  hpp: 'code',
+  cs: 'code',
+  sh: 'code',
+  bash: 'code',
+  zsh: 'code',
+  fish: 'code',
+  css: 'code',
+  scss: 'code',
+  sass: 'code',
+  less: 'code',
+  sql: 'code',
+  lua: 'code',
+  r: 'code',
+  pl: 'code',
+  scala: 'code',
+  proto: 'code',
+  graphql: 'code',
+  gql: 'code',
+  nix: 'code',
+  tf: 'code',
+  hcl: 'code',
+  yml: 'code',
+  yaml: 'code',
+  toml: 'code',
+  ini: 'code',
+  xml: 'code',
+  xsd: 'code',
+  xsl: 'code',
+  plist: 'code',
+  diff: 'code',
+  patch: 'code',
+  dockerfile: 'code',
+  makefile: 'code',
+  cmake: 'code',
+  gradle: 'code',
+  // 纯文本
+  txt: 'text',
+  log: 'text',
+  conf: 'text',
+  config: 'text',
+  env: 'text',
+  properties: 'text',
+  lock: 'text',
+  mod: 'text',
+  sum: 'text',
+  mk: 'text',
+  gitignore: 'text',
+  gitattributes: 'text',
+  editorconfig: 'text',
+  npmrc: 'text',
+  yarnrc: 'text',
+  dockerignore: 'text',
+  // 结构化文本
+  csv: 'csv',
+  tsv: 'csv',
+  tab: 'csv',
+  md: 'markdown',
+  markdown: 'markdown',
+  html: 'html',
+  htm: 'html',
+  // 图片
+  png: 'image',
+  jpg: 'image',
+  jpeg: 'image',
+  gif: 'image',
+  webp: 'image',
+  avif: 'image',
+  bmp: 'image',
+  ico: 'image',
+  svg: 'image',
+  // 媒体
+  mp4: 'video',
+  webm: 'video',
+  mov: 'video',
+  m4v: 'video',
+  ogv: 'video',
+  mkv: 'video',
+  mp3: 'audio',
+  m4a: 'audio',
+  wav: 'audio',
+  ogg: 'audio',
+  oga: 'audio',
+  flac: 'audio',
+  aac: 'audio',
+  opus: 'audio',
+  pdf: 'pdf',
+  // Office OpenXML
+  docx: 'docx',
+  docm: 'docx',
+  xlsx: 'xlsx',
+  xlsm: 'xlsx',
+  pptx: 'pptx',
+  pptm: 'pptx',
+  // 旧版 Office(只给占位)
+  doc: 'legacy-office',
+  xls: 'legacy-office',
+  ppt: 'legacy-office',
+  // 压缩包
+  zip: 'archive',
+  tar: 'archive',
+  tgz: 'archive',
+  gz: 'archive',
+  gzip: 'archive',
+  rar: 'archive-unsupported',
+  '7z': 'archive-unsupported',
+  zst: 'archive-unsupported',
+  bz2: 'archive-unsupported',
+  xz: 'archive-unsupported',
+  // 3D
+  glb: 'model',
+  gltf: 'model',
+  obj: 'model',
+  stl: 'model',
+  // 需要解码的图片
+  psd: 'psd',
+  psb: 'psd',
+  tif: 'tiff',
+  tiff: 'tiff',
+  heic: 'heic',
+  heif: 'heic'
+}
+
+/** 无扩展名但显然是代码/配置的文件名(小写) */
+const CODE_BASENAMES = new Set([
+  'makefile',
+  'dockerfile',
+  'gemfile',
+  'rakefile',
+  'vagrantfile',
+  'brewfile',
+  'procfile'
+])
+
+/** 无扩展名但显然是纯文本的文件名(小写) */
+const TEXT_BASENAMES = new Set([
+  'license',
+  'licence',
+  'readme',
+  'changelog',
+  'authors',
+  'notice'
+])
+
+/** 扩展名(不带点) → 文件类型;未知扩展名返回 unsupported */
+export function noteFileKind(ext: string, name?: string): NoteFileKind {
+  const e = ext.toLowerCase()
+  if (e !== '') return EXT_KIND[e] ?? 'unsupported'
+  const base = (name ?? '').toLowerCase()
+  if (CODE_BASENAMES.has(base)) return 'code'
+  return TEXT_BASENAMES.has(base) ? 'text' : 'unsupported'
+}
+
+/** 可以用 CodeMirror 编辑的类型 */
+export function isNoteFileEditable(kind: NoteFileKind): boolean {
+  return (
+    kind === 'text' ||
+    kind === 'code' ||
+    kind === 'markdown' ||
+    kind === 'csv' ||
+    kind === 'html'
+  )
+}
+
+/**
+ * 文件协议/下载用的 Content-Type。只按扩展名判断,**不嗅探内容** ——
+ * 嗅探会让一个改名成 .png 的恶意文件决定响应头,而扩展名是确定的。
+ */
+const FILE_MIME: Record<string, string> = {
+  html: 'text/html; charset=utf-8',
+  htm: 'text/html; charset=utf-8',
+  css: 'text/css; charset=utf-8',
+  js: 'text/javascript; charset=utf-8',
+  mjs: 'text/javascript; charset=utf-8',
+  cjs: 'text/javascript; charset=utf-8',
+  json: 'application/json; charset=utf-8',
+  jsonc: 'application/json; charset=utf-8',
+  jsonl: 'application/x-ndjson; charset=utf-8',
+  xml: 'application/xml; charset=utf-8',
+  xsd: 'application/xml; charset=utf-8',
+  xsl: 'application/xml; charset=utf-8',
+  svg: 'image/svg+xml',
+  txt: 'text/plain; charset=utf-8',
+  log: 'text/plain; charset=utf-8',
+  md: 'text/markdown; charset=utf-8',
+  markdown: 'text/markdown; charset=utf-8',
+  csv: 'text/csv; charset=utf-8',
+  tsv: 'text/tab-separated-values; charset=utf-8',
+  yml: 'text/yaml; charset=utf-8',
+  yaml: 'text/yaml; charset=utf-8',
+  toml: 'text/plain; charset=utf-8',
+  ini: 'text/plain; charset=utf-8',
+  sh: 'text/x-shellscript; charset=utf-8',
+  py: 'text/x-python; charset=utf-8',
+  go: 'text/x-go; charset=utf-8',
+  rs: 'text/x-rust; charset=utf-8',
+  sql: 'text/x-sql; charset=utf-8',
+  wasm: 'application/wasm',
+  woff: 'font/woff',
+  woff2: 'font/woff2',
+  ttf: 'font/ttf',
+  otf: 'font/otf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  ico: 'image/x-icon',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+  ogv: 'video/ogg',
+  mkv: 'video/x-matroska',
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  wav: 'audio/wav',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  flac: 'audio/flac',
+  aac: 'audio/aac',
+  opus: 'audio/opus',
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  docm: 'application/vnd.ms-word.document.macroEnabled.12',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xlsm: 'application/vnd.ms-excel.sheet.macroEnabled.12',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  pptm: 'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+  zip: 'application/zip',
+  tar: 'application/x-tar',
+  tgz: 'application/gzip',
+  gz: 'application/gzip',
+  gltf: 'model/gltf+json',
+  glb: 'model/gltf-binary',
+  stl: 'model/stl',
+  obj: 'text/plain; charset=utf-8',
+  psd: 'image/vnd.adobe.photoshop',
+  psb: 'image/vnd.adobe.photoshop',
+  tif: 'image/tiff',
+  tiff: 'image/tiff',
+  heic: 'image/heic',
+  heif: 'image/heif'
+}
+
+export function noteFileMime(ext: string): string {
+  return FILE_MIME[ext.toLowerCase()] ?? 'application/octet-stream'
+}
+
+/** 文件元信息 + 类型(不走内容读取) */
+export interface NoteFileStat extends NoteFileMeta {
+  kind: NoteFileKind
+  mime: string
+  editable: boolean
+  tooLarge: boolean
+}
+
+export type NoteFileTextEncoding = 'utf8' | 'utf8-bom' | 'utf16le' | 'utf16be'
+
+export interface NoteFileBaseDoc {
+  /** 相对笔记目录的路径 */
+  path: string
+  name: string
+  ext: string
+  kind: NoteFileKind
+  /** 协议/下载用的 Content-Type(按扩展名) */
+  mime: string
+  size: number
+  mtimeMs: number
+  editable: boolean
+  tooLarge: boolean
+}
+
+export interface NoteFileTextDoc extends NoteFileBaseDoc {
+  editable: true
+  /** sha1(磁盘原始字节) */
+  revision: string
+  encoding: NoteFileTextEncoding
+  /** 保存时按原样还原 */
+  eol: '\n' | '\r\n'
+  /** 运行时以 LF 归一 */
+  text: string
+}
+
+export type NoteFileBinaryReason = 'binary' | 'unsupported-encoding' | 'too-large' | 'unsupported'
+
+export interface NoteFileBinaryDoc extends NoteFileBaseDoc {
+  editable: false
+  revision: null
+  reason: NoteFileBinaryReason
+}
+
+export type NoteFileDoc = NoteFileTextDoc | NoteFileBinaryDoc
+
+export type NoteFileReadOutcome =
+  | { ok: true; doc: NoteFileDoc }
+  | { ok: false; kind: 'invalid' | 'not-found' | 'io'; message: string }
+
+export interface NoteFileSaveInput {
+  path: string
+  /** LF 归一后的正文 */
+  text: string
+  expectedRevision: string
+  /** 「保留我的版本」:以磁盘最新版本为基准强制覆盖 */
+  force?: boolean
+}
+
+export type NoteFileSaveOutcome =
+  | { ok: true; doc: NoteFileTextDoc }
+  | {
+      ok: false
+      kind: 'conflict'
+      /** 只回元信息,不回整份旧正文(可能是几十 MB) */
+      latest: { revision: string; size: number; mtimeMs: number }
+    }
+  | {
+      ok: false
+      kind: 'invalid' | 'not-found' | 'io' | 'too-large' | 'not-text'
+      message: string
+    }
+
+export type NoteFileBytesOutcome =
+  | { ok: true; data: Uint8Array; size: number; mtimeMs: number }
+  | {
+      ok: false
+      kind: 'invalid' | 'not-found' | 'io' | 'too-large'
+      message: string
+      size?: number
+    }
+
+/** 在指定目录新建一个空文件(非 .md;Markdown 笔记走 notes.create) */
+export interface NoteFileCreateInput {
+  /** 父目录 id(相对路径);空串 = 根层 */
+  parent: string
+  /** 单段文件名,含扩展名,如 `app.js` */
+  name: string
+}
+
+export type NoteFileCreateOutcome =
+  | { ok: true; file: NoteFileStat }
+  | { ok: false; kind: 'invalid' | 'exists' | 'io'; message: string }
+
+/**
+ * 重命名文件:只改主名,扩展名沿用原文件。
+ * 类型由扩展名决定,所以改名不可能改变「它是什么文件」。
+ */
+export interface NoteFileRenameInput {
+  /** 旧相对路径 */
+  path: string
+  /** 新主名(不含扩展名) */
+  name: string
+}
+
+export type NoteFileRenameOutcome =
+  | { ok: true; file: NoteFileStat }
+  | { ok: false; kind: 'invalid' | 'not-found' | 'exists' | 'io'; message: string }
+
 export interface NotesListPayload {
   notes: NoteMeta[]
   /**
@@ -410,6 +857,17 @@ export function parentOf(id: string): string {
 export function baseNameOf(id: string): string {
   const at = id.lastIndexOf('/')
   return at < 0 ? id : id.slice(at + 1)
+}
+
+/**
+ * 文件名 → 主名 + 扩展名(不含点)。`a.tar.gz` → `{ base:'a.tar', ext:'gz' }`。
+ * 无扩展名或点开头(`.env`)时 ext 为空,base 原样返回。
+ * 建文件与重命名共用这一份拆分,两边的预填/重建才不会对不上。
+ */
+export function splitFileExt(name: string): { base: string; ext: string } {
+  const dot = name.lastIndexOf('.')
+  if (dot <= 0 || dot === name.length - 1) return { base: name, ext: '' }
+  return { base: name.slice(0, dot), ext: name.slice(dot + 1) }
 }
 
 /** 拼接父子路径(父为空则就是子) */
