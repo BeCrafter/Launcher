@@ -111,7 +111,12 @@ export async function launchApp({ root, profileDir }) {
     ],
     {
       cwd: root,
-      env: { ...process.env, LAUNCHER_E2E_USER_DATA: profileDir },
+      env: {
+        ...process.env,
+        LAUNCHER_E2E_USER_DATA: profileDir,
+        // 双击文件行时不真的拉起系统默认应用(会抢焦点,CI 上不可控)
+        LAUNCHER_E2E_STUB_OPEN: '1'
+      },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe']
     }

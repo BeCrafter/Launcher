@@ -124,7 +124,8 @@ async function main() {
     cdp: app.cdp,
     profileDir,
     noteFile: MAIN_NOTE.file,
-    noteTitle: MAIN_NOTE.title
+    noteTitle: MAIN_NOTE.title,
+    logs: app.logs
   })
 
   let stopped = false

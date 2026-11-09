@@ -56,6 +56,31 @@ export function refForService(svc: PortService, o?: ServiceOverride): NoteRef {
   }
 }
 
+/**
+ * 关联的展示 / React key(`type:key`)。
+ *
+ * ⚠ 服务身份键**不含 addr / pid**(跨重启稳定),但同一服务可能以多条 PortService 记录出现
+ * —— 同一个进程同时监听 IPv4 与 IPv6 时,lsof 会给两行(addr 不同、pid:port 不同)。
+ * 所有拿它当 React key 的地方必须先按这个键去重,否则会报
+ * 「Encountered two children with the same key」。
+ */
+export function refKey(ref: Pick<NoteRef, 'type' | 'key'>): string {
+  return `${ref.type}:${ref.key}`
+}
+
+/** 按 refKey 去重,保留第一次出现的条目,顺序不变。 */
+export function uniqueByRefKey<T>(items: readonly T[], keyOf: (item: T) => string): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const item of items) {
+    const key = keyOf(item)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(item)
+  }
+  return out
+}
+
 /** 关联类型的中文名 —— 用户要一眼看出「哪个 type 当中的哪个服务」 */
 export function refTypeLabel(type: string, t: (k: string) => string): string {
   if (type === 'agent') return t('notes.ref.type.agent')

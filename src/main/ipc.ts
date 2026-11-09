@@ -29,6 +29,7 @@ import type { NotesService } from './services/notes-service'
 import type { UpdateController } from './services/update-controller'
 import type {
   NoteCreateInput,
+  NoteImportInput,
   NoteRemoveInput,
   NoteRenameInput,
   NoteSaveAssetInput,
@@ -291,11 +292,36 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.notesMove, (_e, input: { id: string; parent: string }) =>
     deps.notes.move({ id: String(input?.id ?? ''), parent: String(input?.parent ?? '') })
   )
+  ipcMain.handle(IPC.notesImport, (_e, input: NoteImportInput) =>
+    deps.notes.importPaths({
+      target: String(input?.target ?? ''),
+      paths: Array.isArray(input?.paths) ? input.paths.map(String) : []
+    })
+  )
+  ipcMain.handle(IPC.notesRemoveFile, (_e, path: string) =>
+    deps.notes.removeFile(String(path ?? ''))
+  )
+  ipcMain.handle(IPC.notesOpenFile, async (_e, path: string) => {
+    const abs = deps.notes.resolveNoteFile(String(path ?? ''))
+    if (abs === null) return { ok: false, message: '文件不存在或不在笔记目录内' }
+    // E2E 不能真的拉起系统应用(会抢焦点、在 CI 上不可控);只验证到路径解析这一层
+    if (process.env['LAUNCHER_E2E_STUB_OPEN'] === '1') {
+      console.log(`[note-open] ${abs}`)
+      return { ok: true }
+    }
+    const error = await shell.openPath(abs)
+    return error === '' ? { ok: true } : { ok: false, message: error }
+  })
   ipcMain.handle(IPC.notesReveal, async (_e, id?: string) => {
     if (typeof id === 'string' && id !== '') {
       const note = await deps.notes.read(id)
       if (note) {
         const file = join(deps.notes.dir(), `${id}.md`)
+        shell.showItemInFolder(file)
+        return
+      }
+      const file = deps.notes.resolveNoteFile(id)
+      if (file !== null) {
         shell.showItemInFolder(file)
         return
       }

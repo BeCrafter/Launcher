@@ -20,6 +20,13 @@ export const REF_LABEL_MAX = 200
 export const REF_DETAIL_MAX = 200
 /** 列表上限:超出的按 mtime 倒序截断,payload 里报 truncated(不静默丢) */
 export const MAX_NOTES = 2000
+/** 文件行列表上限(与笔记同一套「不静默丢」原则) */
+export const MAX_FILES = 2000
+/** 一次拖入的顶层项上限,防误拖整个磁盘 */
+export const MAX_IMPORT_ROOTS = 200
+/** 导入时最多复制的文件 / 目录数,超出的跳过并计数 */
+export const MAX_IMPORT_FILES = MAX_FILES
+export const MAX_IMPORT_DIRS = 1000
 /** 给 AI 的正文上限:超出截断并显式说明 */
 export const MAX_BODY_FOR_AI = 64 * 1024
 /**
@@ -212,6 +219,18 @@ export interface Note extends NoteMeta {
   revision: string
 }
 
+/** 目录里的非 Markdown 文件:只带列表需要的元信息,不含内容 */
+export interface NoteFileMeta {
+  /** 相对笔记目录的路径,含文件名与扩展名,如 `素材/截图.png` */
+  path: string
+  /** 文件名(含扩展名) */
+  name: string
+  /** 小写扩展名(不含点);无扩展名 = '' */
+  ext: string
+  size: number
+  mtimeMs: number
+}
+
 export interface NotesListPayload {
   notes: NoteMeta[]
   /**
@@ -219,10 +238,14 @@ export interface NotesListPayload {
    * 必须单独给:**空目录**在 notes 里没有任何痕迹,不给的话用户刚建的空目录会立刻消失。
    */
   folders: string[]
+  /** 目录里的非 Markdown 文件(根层 assets/ 除外) */
+  files: NoteFileMeta[]
   /** 生效目录(设置里为空时是默认路径) */
   dir: string
   /** 因上限未列出的篇数 */
   truncated: number
+  /** 因上限未列出的文件数 */
+  truncatedFiles: number
   /** 扫描失败原因 —— 「扫描挂了」与「真的没有笔记」不能长得一样 */
   error: string | null
 }
@@ -286,6 +309,28 @@ export interface NoteSaveAssetInput {
   fileName: string
   data: ArrayBuffer
 }
+
+/** 把 OS 文件/文件夹原样复制进笔记目录 */
+export interface NoteImportInput {
+  /** 目标目录 id;空串 = 根层 */
+  target: string
+  /** 源绝对路径(来自 preload 的 webUtils.getPathForFile) */
+  paths: string[]
+}
+
+export type NoteImportResult =
+  | {
+      ok: true
+      target: string
+      /** 实际复制出的文件 / 目录数(顶层被拖入的目录算一个) */
+      files: number
+      folders: number
+      /** 隐藏项、符号链接、超深/超量、非法名等 */
+      skipped: number
+    }
+  | { ok: false; message: string }
+
+export type NoteFileOutcome = { ok: true } | { ok: false; message: string }
 
 export interface NoteSaveAssetResult {
   /** 相对笔记目录的路径,如 `assets/Pasted image 20261009150211.png` */

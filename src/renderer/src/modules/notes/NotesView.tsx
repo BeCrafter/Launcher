@@ -18,6 +18,7 @@ import {
   type MediaTarget
 } from '../../lib/note-media-size'
 import { collectAnchors, editorLineFor, previewScrollFor, type LineAnchor } from '../../lib/scroll-sync'
+import { DEFAULT_FIND_OPTIONS, type FindState } from '../../lib/note-find'
 import {
   renderMarkdown,
   slugifyHeading,
@@ -39,10 +40,12 @@ import { DiagramDialog, type DiagramDialogTarget } from './DiagramDialog'
 import { EmbedDialog } from './EmbedDialog'
 import { MermaidBlock } from './MermaidBlock'
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor'
+import { Skeleton } from '../../components/ui/Skeleton'
 import type { WikiTarget } from './note-completions'
 import { aggregateTags } from '../../lib/note-tags'
 import { NoteBlockMenu, NoteInsertMenu, type InsertMenuMode } from './NoteBlockMenus'
 import { NoteMovePicker } from './NoteMovePicker'
+import { NoteFindBar } from './NoteFindBar'
 import { parseMarkdownBlocks, type MarkdownBlock } from '../../lib/markdown-blocks'
 import { locatorOf, type BlockLocator } from '../../lib/block-move'
 import { NoteRefChips } from './NoteRefChips'
@@ -58,6 +61,8 @@ export function NotesView(): React.JSX.Element {
   const railCollapsed = useNotesStore((s) => s.railCollapsed)
   const setRailCollapsed = useNotesStore((s) => s.setRailCollapsed)
   const draft = useNotesStore((s) => s.draft)
+  const openingId = useNotesStore((s) => s.openingId)
+  const docSession = useNotesStore((s) => s.docSession)
   const notes = useNotesStore((s) => s.notes)
   const dirty = useNotesStore((s) => s.dirty)
   const saving = useNotesStore((s) => s.saving)
@@ -99,6 +104,63 @@ export function NotesView(): React.JSX.Element {
   const [movePicker, setMovePicker] = useState<BlockLocator | null>(null)
   /** 图表 / 嵌入对话框要插到哪一行;`mode` 与插入菜单同一口径 */
   const insertLineRef = useRef<{ line: number; mode: InsertMenuMode } | null>(null)
+
+  // 查找 / 替换:面板关掉再打开要保留上一次的查询,所以把输入存在 ref 里,
+  // 而不是提到这里当 state —— 否则在查询框每敲一个字都会重渲染整页。
+  const [findOpen, setFindOpen] = useState(false)
+  const [findReplace, setFindReplace] = useState(false)
+  const [findFocus, setFindFocus] = useState(0)
+  const findMemory = useRef<FindState>({
+    query: '',
+    replacement: '',
+    options: { ...DEFAULT_FIND_OPTIONS }
+  })
+
+  const closeFind = useCallback(() => {
+    setFindOpen(false)
+    setFindReplace(false)
+    editorRef.current?.focus()
+  }, [])
+
+  const openFind = useCallback(
+    (withReplace: boolean) => {
+      const state = useNotesStore.getState()
+      if (state.draft === null) return
+      // 纯预览下编辑区被隐藏,先在分栏里把高亮露出来
+      if (state.viewMode === 'preview') setViewMode('split')
+      setFindOpen(true)
+      setFindReplace((current) => current || withReplace)
+      setFindFocus((nonce) => nonce + 1)
+    },
+    [setViewMode]
+  )
+
+  // ⌘F 查找 / ⌘⌥F 展开替换 / Esc 关闭。块菜单、插入菜单、移动选择器、模态打开时
+  // 不抢它们的键盘。macOS 上 Alt+F 的 e.key 是 `ƒ`,所以按 e.code 判 F。
+  const hasDraft = draft !== null
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!hasDraft) return
+      const overlayOpen =
+        document.querySelector(
+          '.notes-move-picker, .notes-block-menu, .notes-insert-menu, .modal-mask.open'
+        ) !== null
+      // Esc 先于 defaultPrevented 判断:焦点在正文时 CodeMirror 可能已经吃掉了这个键
+      // (它会把 preventDefault 打开),但那不该妨碍关查找面板。
+      if (findOpen && !overlayOpen && event.key === 'Escape') {
+        event.preventDefault()
+        closeFind()
+        return
+      }
+      if (event.defaultPrevented || overlayOpen) return
+      if ((event.metaKey || event.ctrlKey) && event.code === 'KeyF') {
+        event.preventDefault()
+        openFind(event.altKey)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [closeFind, findOpen, hasDraft, openFind])
 
   // 换笔记就关掉「移动到…」—— 源定位器属于上一篇的正文
   useEffect(() => {
@@ -226,6 +288,14 @@ export function NotesView(): React.JSX.Element {
     anchorCache.current = { sig: '', anchors: [] }
     syncLock.current = { preview: -1, editor: -1 }
   }, [draft?.id, viewMode, splitRatio])
+
+  // 换笔记:预览的滚动位置归零 —— 编辑器那边已经回到顶部,预览停在上一篇的位置会很怪。
+  // 必须排在下面「正文变化后恢复预览滚动」之前:否则会先把上一篇的 top 恢复回来。
+  useEffect(() => {
+    lastPreviewTop.current = 0
+    syncLock.current.preview = -1
+    if (previewRef.current !== null) previewRef.current.scrollTop = 0
+  }, [draft?.id])
 
   // 正文换了(拖拽写回、AI 改、外部编辑…)→ 把预览的滚动位置放回去
   useEffect(() => {
@@ -529,6 +599,16 @@ export function NotesView(): React.JSX.Element {
             <div className="notes-firstrun-title">{t('notes.pick.title')}</div>
             <p className="notes-firstrun-hint">{t('notes.pick.hint')}</p>
           </div>
+          {/* 第一次点开笔记:还没有旧正文可保留,同样给一层延迟出现的骨架 */}
+          {openingId !== null && (
+            <div
+              className="notes-opening-layer"
+              role="status"
+              aria-label={t('notes.opening')}
+            >
+              <Skeleton rows={8} />
+            </div>
+          )}
         </div>
         <NoteRefPicker />
       </div>
@@ -586,6 +666,15 @@ export function NotesView(): React.JSX.Element {
             {saving && <span className="notes-save-state">{t('notes.save.saving')}</span>}
             {!saving && dirty && <span className="notes-save-state dirty">{t('notes.save.dirty')}</span>}
             {!saving && !dirty && <span className="notes-save-state">{t('notes.save.saved')}</span>}
+            <button
+              type="button"
+              className="notes-act"
+              data-find-open
+              title={t('notes.find.open')}
+              onClick={() => openFind(false)}
+            >
+              <i className="fa-solid fa-magnifying-glass" />
+            </button>
             <button
               type="button"
               className="notes-act"
@@ -798,6 +887,7 @@ export function NotesView(): React.JSX.Element {
           >
             <NoteEditor
               value={draft.body}
+              docSession={docSession}
               onChange={setBody}
               handleRef={editorRef}
               placeholder={t('notes.field.bodyPlaceholder')}
@@ -809,6 +899,17 @@ export function NotesView(): React.JSX.Element {
               wikiTargets={wikiTargets}
               tagNames={tagNames}
             />
+            {findOpen && (
+              <NoteFindBar
+                handleRef={editorRef}
+                body={draft.body}
+                memoryRef={findMemory}
+                replaceOpen={findReplace}
+                focusNonce={findFocus}
+                onToggleReplace={() => setFindReplace((current) => !current)}
+                onClose={closeFind}
+              />
+            )}
           </div>
           {viewMode === 'split' && (
             <div
@@ -845,6 +946,16 @@ export function NotesView(): React.JSX.Element {
                 onTagClick={onTagClick}
                 wikiLabels={wikiLabels}
               />
+            </div>
+          )}
+          {/* 打开另一篇期间盖住旧内容:120ms 内完成看不到(不闪),慢的时候给出明确反馈 */}
+          {openingId !== null && (
+            <div
+              className="notes-opening-layer"
+              role="status"
+              aria-label={t('notes.opening')}
+            >
+              <Skeleton rows={8} />
             </div>
           )}
         </div>

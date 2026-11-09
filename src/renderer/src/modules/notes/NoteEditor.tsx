@@ -14,8 +14,15 @@
 //   都这么做,而且它们不改变行高。
 //   配色词表与预览共用(lib/code-tokens.ts),同一个 `const` 在两边是同一个颜色。
 
-import { useEffect, useImperativeHandle, useRef, type RefObject } from 'react'
-import { EditorSelection, EditorState, Prec, type Extension } from '@codemirror/state'
+import { useEffect, useImperativeHandle, useMemo, useRef, type RefObject } from 'react'
+import {
+  Compartment,
+  EditorSelection,
+  EditorState,
+  Prec,
+  Transaction,
+  type Extension
+} from '@codemirror/state'
 import {
   EditorView,
   crosshairCursor,
@@ -45,6 +52,8 @@ import { getCurrentLang, makeT } from '../../i18n'
 import { calloutCompletion, calloutMarks, extraHeadingMarks, highlightMarks, lenientTaskMarks, noteInlineMarks, syntaxMarks } from './editor-marks'
 import { tagCompletion, wikilinkCompletion, type WikiTarget } from './note-completions'
 import { applyWrap, suppressSelectionBubble } from '../../lib/note-marks'
+import { findHighlights, setFindHighlights as setFindHighlightsEffect } from '../../lib/editor-find'
+import type { FindMatch } from '../../lib/note-find'
 import { markdownSelectionBubble } from '../../lib/editor-bubble'
 import {
   markdownBlockFolding,
@@ -322,6 +331,26 @@ export interface NoteEditorHandle {
    * 不需要任何转换。
    */
   selectionText(): string
+  /** 主选区起点(光标偏移),查找面板用它决定从哪一处开始 */
+  selectionOffset(): number
+  /** 只更新查找高亮;不改选区、不滚动、不聚焦 */
+  setFindHighlights(matches: readonly FindMatch[], active: number): void
+  /** 选中某处匹配并居中滚动;不抢焦点(焦点留在查找框) */
+  revealFindMatch(from: number, to: number): void
+  /** 清掉查找高亮(关闭面板时) */
+  clearFindMatches(): void
+  /**
+   * 替换一处并在同一个 transaction 里把选区落到下一处 —— 连续替换时不闪、不丢撤销。
+   * `next` 由调用方按**替换后的文本**算好,坐标是新文档里的偏移。
+   */
+  replaceFindMatch(
+    from: number,
+    to: number,
+    insert: string,
+    next?: { from: number; to: number }
+  ): void
+  /** 「全部替换」:一批 changes 进同一个 transaction,一次 ⌘Z 整体退回 */
+  replaceFindAll(changes: readonly { from: number; to: number; insert: string }[]): void
   /** 「移动到…」:按起始行 + 类型定位源块,在实时文档里重新解析后移动 */
   moveBlock(source: BlockLocator, target: BlockMoveTarget): BlockMoveStatus
   focus(): void
@@ -404,6 +433,7 @@ const MD_EXTENSIONS: Extension[] = [
 
 export function NoteEditor({
   value,
+  docSession,
   onChange,
   handleRef,
   placeholder,
@@ -415,6 +445,8 @@ export function NoteEditor({
   tagNames
 }: {
   value: string
+  /** 笔记 store 的 docSession:变化即「换了一篇文档」,复位滚动/选区/撤销栈 */
+  docSession: number
   onChange: (v: string) => void
   handleRef?: RefObject<NoteEditorHandle | null>
   placeholder?: string
@@ -436,6 +468,9 @@ export function NoteEditor({
   const viewRef = useRef<EditorView | null>(null)
   // 外部 value 变化(切笔记 / 冲突用磁盘版本)→ 替换文档;内部输入不回灌(避免光标跳动)
   const externalValue = useRef(value)
+  // 撤销栈挂在 compartment 里:换笔记时把它摘掉再挂回,新文档从空栈开始
+  const historyComp = useMemo(() => new Compartment(), [])
+  const lastSession = useRef(docSession)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
   // 补全候选随笔记库刷新;编辑器只挂载一次,所以走 ref —— 与 onChange 同一套路
@@ -914,6 +949,49 @@ export function NoteEditor({
         return from === to ? '' : view.state.sliceDoc(from, to)
       },
 
+      selectionOffset() {
+        return viewRef.current?.state.selection.main.from ?? 0
+      },
+
+      setFindHighlights(matches, active) {
+        viewRef.current?.dispatch({
+          effects: setFindHighlightsEffect.of({ matches, active })
+        })
+      },
+
+      revealFindMatch(from, to) {
+        const view = viewRef.current
+        if (!view) return
+        view.dispatch({
+          selection: { anchor: from, head: to },
+          effects: EditorView.scrollIntoView(from, { y: 'center' }),
+          annotations: suppressSelectionBubble.of(true)
+        })
+      },
+
+      clearFindMatches() {
+        viewRef.current?.dispatch({
+          effects: setFindHighlightsEffect.of({ matches: [], active: -1 })
+        })
+      },
+
+      replaceFindMatch(from, to, insert, next) {
+        const view = viewRef.current
+        if (!view) return
+        view.dispatch({
+          changes: { from, to, insert },
+          selection: next === undefined ? undefined : { anchor: next.from, head: next.to },
+          effects: next === undefined ? undefined : EditorView.scrollIntoView(next.from, { y: 'center' }),
+          annotations: next === undefined ? undefined : suppressSelectionBubble.of(true)
+        })
+      },
+
+      replaceFindAll(changes) {
+        const view = viewRef.current
+        if (!view || changes.length === 0) return
+        view.dispatch({ changes: changes.map((change) => ({ ...change })) })
+      },
+
       moveBlock(source, target) {
         const view = viewRef.current
         if (!view) return 'invalid'
@@ -975,6 +1053,8 @@ export function NoteEditor({
           markdownBlockFolding(),
           // 选中文字时浮出的小工具条（有选区时块手柄自己让位）
           markdownSelectionBubble(),
+          // 查找匹配的底色（面板派发 effect 才出现，平时是空集）
+          findHighlights,
           // 输入 `> ` 提示五种提示块;`[[` 提示笔记;`#` 提示行内标签。
           // 候选从 ref 读 —— 编辑器只挂载一次,笔记库刷新后闭包仍拿得到新数组
           autocompletion({
@@ -985,7 +1065,7 @@ export function NoteEditor({
             ]
           }),
           indentUnit.of('  '),
-          history(),
+          historyComp.of(history()),
           drawSelection(),
           highlightActiveLine(),
           keymap.of(defaultKeymap),
@@ -1038,10 +1118,13 @@ export function NoteEditor({
           }),
           MD_THEME,
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) {
-              externalValue.current = u.state.doc.toString()
-              onChangeRef.current(externalValue.current)
-            }
+            if (!u.docChanged) return
+            const next = u.state.doc.toString()
+            // 与已知的外部值相同 = 这是值同步 effect 的整篇回灌,不是用户输入。
+            // 不挡住的话,光是打开一篇笔记就会把它标脏、900ms 后回写一次。
+            if (next === externalValue.current) return
+            externalValue.current = next
+            onChangeRef.current(next)
           }),
           EditorView.domEventHandlers({
             scroll: () => {
@@ -1065,6 +1148,36 @@ export function NoteEditor({
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
+    const switched = lastSession.current !== docSession
+    lastSession.current = docSession
+
+    if (switched) {
+      /*
+       * 换了一篇:整篇换成新文档,同时**复位光标、滚动与撤销栈**。
+       * 不这么做的话,新笔记会停在上一篇的滚动位置,`Cmd+Z` 还能把上一篇的内容带回来。
+       * 用 docSession 而不是 note id 判:改名也会让 id 变,但那还是同一篇文档。
+       */
+      externalValue.current = value
+      if (value !== view.state.doc.toString()) {
+        view.dispatch({
+          changes: { from: 0, to: view.state.doc.length, insert: value },
+          selection: { anchor: 0 },
+          // 整篇替换不算一次「编辑」,不进撤销栈
+          annotations: Transaction.addToHistory.of(false),
+          effects: historyComp.reconfigure([])
+        })
+      } else {
+        view.dispatch({
+          selection: { anchor: 0 },
+          effects: historyComp.reconfigure([])
+        })
+      }
+      // 摘掉再挂回 history:它的状态字段被丢弃,新文档从空栈开始
+      view.dispatch({ effects: historyComp.reconfigure(history()) })
+      view.scrollDOM.scrollTop = 0
+      return
+    }
+
     if (value !== externalValue.current) {
       externalValue.current = value
       /*
@@ -1082,7 +1195,7 @@ export function NoteEditor({
       })
       view.scrollDOM.scrollTop = prevTop
     }
-  }, [value])
+  }, [value, docSession, historyComp])
 
   // 块菜单开着 → 手柄钉在那一行（菜单不关，它就不收）
   useEffect(() => {

@@ -25,6 +25,7 @@ import {
   MAX_ASSET_BYTES,
   MAX_ASSET_FOR_AI,
   MAX_BODY_FOR_AI,
+  MAX_FILES,
   MAX_FOLDER_DEPTH,
   MAX_NOTE_BYTES,
   MAX_NOTES,
@@ -40,6 +41,10 @@ import {
   parentOf,
   type Note,
   type NoteCreateInput,
+  type NoteFileMeta,
+  type NoteFileOutcome,
+  type NoteImportInput,
+  type NoteImportResult,
   type NoteMeta,
   type NoteRemoveInput,
   type NoteRenameInput,
@@ -48,6 +53,7 @@ import {
   type NoteSaveOutcome,
   type NotesListPayload
 } from '../../shared/notes'
+import { importPathsIntoNotes, resolveNoteFile as resolveFileInNotes } from './note-import'
 import { scanInlineTags } from '../../shared/inline-tags'
 import {
   assembleFile,
@@ -110,6 +116,12 @@ export interface NotesService {
     | { ok: true; id: string; renamed?: { from: string; to: string } }
     | { ok: false; message: string }
   >
+  /** 把 OS 文件/文件夹原样复制进目标目录(批量导入) */
+  importPaths(input: NoteImportInput): Promise<NoteImportResult>
+  /** 文件相对路径 → 绝对路径;越界 / 根层 assets / 非普通文件返回 null */
+  resolveNoteFile(rel: string): string | null
+  /** 删除文件(应用内走系统废纸篓) */
+  removeFile(rel: string): Promise<NoteFileOutcome>
   /** 正文(供 AI 工具用;超长已截断并给出说明) */
   readBodyForAi(id: string): Promise<{ note: Note; body: string; truncated: boolean } | null>
   /**
@@ -174,6 +186,8 @@ export function createNotesService(opts: {
   const lastKnownRevision = new Map<string, string>()
   /** 上一次扫描看到的目录集合(排序后);用来发现目录的新增与删除 */
   let lastFolders: string[] = []
+  /** 上一次扫描看到的文件签名(path:mtime:size);文件行没有正文可比对,靠它发现变化 */
+  let lastFilesSig = ''
 
   let watcher: DebouncedDirWatcher | null = null
 
@@ -193,9 +207,16 @@ export function createNotesService(opts: {
    * 根层的 `assets/` 是附件目录,不参与扫描;嵌套的同名目录是普通目录。
    * 逐目录降级:读不动就跳过它,不影响其余目录(同 dir-watcher 的纪律)。
    */
-  function collectTree(root: string): { ids: string[]; folders: string[] } {
+  function collectTree(root: string): {
+    ids: string[]
+    folders: string[]
+    files: string[]
+    extraFiles: number
+  } {
     const ids: string[] = []
     const folders: string[] = []
+    const files: string[] = []
+    let extraFiles = 0
     const walk = (rel: string, depth: number): void => {
       if (depth > MAX_FOLDER_DEPTH) return
       const abs = rel === '' ? root : join(root, rel)
@@ -219,17 +240,27 @@ export function createNotesService(opts: {
           walk(child, depth + 1)
           continue
         }
-        if (!e.isFile() || !e.name.endsWith('.md')) continue
-        const id = child.slice(0, -3)
-        if (!isSafeNoteId(id)) {
+        if (!e.isFile()) continue
+        if (e.name.endsWith('.md')) {
+          const id = child.slice(0, -3)
+          if (!isSafeNoteId(id)) {
+            log(`skip 非法文件名: ${child}`)
+            continue
+          }
+          ids.push(id)
+          continue
+        }
+        // 非 Markdown 文件进「文件行」。名字不安全的没法从列表打开/删除,不列出来
+        if (!isSafeNoteId(child)) {
           log(`skip 非法文件名: ${child}`)
           continue
         }
-        ids.push(id)
+        if (files.length < MAX_FILES) files.push(child)
+        else extraFiles++
       }
     }
     walk('', 0)
-    return { ids, folders }
+    return { ids, folders, files, extraFiles }
   }
 
   /** 只要 id 的地方(create/rename 的查重)用它 */
@@ -342,7 +373,12 @@ export function createNotesService(opts: {
    * 扫一遍目录。**每次都 stat**:正确性不依赖 fs.watch,watcher 只是延迟优化。
    * (mtimeMs, size) 未变的文件不重读重解析 —— 笔记目录可能有几千篇。
    */
-  function scan(): { payload: NotesListPayload; changed: string[]; foldersChanged: boolean } {
+  function scan(): {
+    payload: NotesListPayload
+    changed: string[]
+    foldersChanged: boolean
+    filesChanged: boolean
+  } {
     const dir = opts.getDir()
     const changed: string[] = []
     // 进循环前先记下「上一次长什么样」—— 新增/删除的文件与目录也要能被发现,
@@ -354,23 +390,45 @@ export function createNotesService(opts: {
       mkdirSync(dir, { recursive: true })
     } catch (err) {
       return {
-        payload: { notes: [], folders: [], dir, truncated: 0, error: `无法创建笔记目录:${String(err)}` },
+        payload: {
+          notes: [],
+          folders: [],
+          files: [],
+          dir,
+          truncated: 0,
+          truncatedFiles: 0,
+          error: `无法创建笔记目录:${String(err)}`
+        },
         changed,
-        foldersChanged: false
+        foldersChanged: false,
+        filesChanged: false
       }
     }
 
     let ids: string[]
     let folders: string[]
+    let filePaths: string[]
+    let extraFiles = 0
     try {
       const tree = collectTree(dir)
       ids = tree.ids
       folders = tree.folders
+      filePaths = tree.files
+      extraFiles = tree.extraFiles
     } catch (err) {
       return {
-        payload: { notes: [], folders: [], dir, truncated: 0, error: `无法读取笔记目录:${String(err)}` },
+        payload: {
+          notes: [],
+          folders: [],
+          files: [],
+          dir,
+          truncated: 0,
+          truncatedFiles: 0,
+          error: `无法读取笔记目录:${String(err)}`
+        },
         changed,
-        foldersChanged: false
+        foldersChanged: false,
+        filesChanged: false
       }
     }
 
@@ -434,13 +492,48 @@ export function createNotesService(opts: {
       folderSet.length !== prevFolders.length || folderSet.some((f, i) => f !== prevFolders[i])
     lastFolders = folderSet
 
+    // 文件行:只 stat,不读内容。mtime/size 组成签名,watcher 靠它发现外部改动
+    const files: NoteFileMeta[] = []
+    for (const rel of filePaths) {
+      let st: Stats
+      try {
+        st = statSync(join(dir, rel))
+      } catch (err) {
+        log(`stat 失败,跳过文件 ${rel}: ${String(err)}`)
+        continue
+      }
+      if (!st.isFile()) continue
+      const name = baseNameOf(rel)
+      const dot = name.lastIndexOf('.')
+      files.push({
+        path: rel,
+        name,
+        ext: dot < 0 ? '' : name.slice(dot + 1).toLowerCase(),
+        size: st.size,
+        mtimeMs: st.mtimeMs
+      })
+    }
+    files.sort((a, b) => a.path.localeCompare(b.path))
+    const filesSig = files.map((f) => `${f.path}:${f.mtimeMs}:${f.size}`).join('\n')
+    const filesChanged = filesSig !== lastFilesSig
+    lastFilesSig = filesSig
+
     const all = [...index.values()].map((e) => e.meta)
     all.sort((a, b) => b.mtimeMs - a.mtimeMs)
     const notes = all.slice(0, MAX_NOTES)
     return {
-      payload: { notes, folders, dir, truncated: all.length - notes.length, error: null },
+      payload: {
+        notes,
+        folders,
+        files,
+        dir,
+        truncated: all.length - notes.length,
+        truncatedFiles: extraFiles,
+        error: null
+      },
       changed,
-      foldersChanged
+      foldersChanged,
+      filesChanged
     }
   }
 
@@ -499,7 +592,7 @@ export function createNotesService(opts: {
       // 扫描失败时不动手:那说明目录本身有问题,不是「空」
       if (p.error !== null) return 'none'
 
-      if (p.notes.length === 0 && p.folders.length === 0) {
+      if (p.notes.length === 0 && p.folders.length === 0 && p.files.length === 0) {
         try {
           // 目录是空的,assets/ 里也不会有同名文件 —— 这是「不覆盖用户文件」的天然保证
           input.onSeed?.()
@@ -820,6 +913,37 @@ export function createNotesService(opts: {
       return renamed ? { ok: true, id: next, renamed: { from: base, to: baseNameOf(next) } } : { ok: true, id: next }
     },
 
+    async importPaths(input) {
+      return importPathsIntoNotes({
+        dir: opts.getDir(),
+        target: String(input?.target ?? ''),
+        paths: Array.isArray(input?.paths) ? input.paths.map(String) : [],
+        log
+      })
+    },
+
+    resolveNoteFile(rel) {
+      return resolveFileInNotes(opts.getDir(), String(rel ?? ''))
+    },
+
+    async removeFile(rel) {
+      const abs = resolveFileInNotes(opts.getDir(), String(rel ?? ''))
+      if (abs === null) return { ok: false, message: '文件不存在或不在笔记目录内' }
+      try {
+        if (opts.trash) {
+          await opts.trash(abs)
+        } else {
+          const trashDir = join(opts.getDir(), NOTES_TRASH_DIR)
+          mkdirSync(trashDir, { recursive: true })
+          renameSync(abs, join(trashDir, `${compactStamp(now())}-${baseNameOf(abs)}`))
+        }
+        log(`removed file ${rel}`)
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, message: `删除失败:${String(err)}` }
+      }
+    },
+
     async remove(input) {
       const { id } = input
       if (!isSafeNoteId(id)) return { ok: false, kind: 'invalid', message: `非法笔记 id:${id}` }
@@ -933,9 +1057,10 @@ export function createNotesService(opts: {
         dirs: [dir],
         debounceMs: 400,
         onChange: () => {
-          const { changed, foldersChanged } = scan()
-          // 目录变化也要上报:新建一个空目录时没有任何笔记 id 可带,但界面必须刷新出它
-          if (changed.length > 0 || foldersChanged) opts.onExternalChange?.(changed)
+          const { changed, foldersChanged, filesChanged } = scan()
+          // 目录 / 文件变化也要上报:新建一个空目录、丢进一个 PDF 时没有任何笔记 id 可带,
+          // 但界面必须刷新出它
+          if (changed.length > 0 || foldersChanged || filesChanged) opts.onExternalChange?.(changed)
         },
         log
       })

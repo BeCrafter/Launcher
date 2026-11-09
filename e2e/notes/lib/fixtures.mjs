@@ -109,3 +109,16 @@ export const FOLD = [
 ].join('\n')
 
 export const EMPTY_SECTION = ['# A', '', 'p', '', '# B', '', '# C', '', 'c'].join('\n')
+
+/**
+ * 查找 / 替换用例的计数夹具。默认(大小写不敏感)下 `alpha` 精确出现 5 次:
+ *   · `alpha alpha alpha` —— 3 次全词
+ *   · `Alpha` —— 1 次,只受大小写开关影响
+ *   · `alphabet` —— 1 次,只受全词开关影响
+ * 因此:Aa → 4,全词(不区分大小写)→ 4,Aa + 全词 → 3。
+ * `hello hallo` 供正则 `h(a|e)llo` 命中两处。
+ */
+export const FIND = ['# 查找替换', '', 'alpha alpha alpha', 'Alpha alphabet', '', 'hello hallo'].join('\n')
+
+/** 替换用例:三处可替换的 `cat`,不掺其它命中,便于断言「一次撤销整体退回」。 */
+export const FIND_REPLACE = ['# 查找替换', '', 'cat cat cat'].join('\n')

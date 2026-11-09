@@ -1349,3 +1349,83 @@ describe('ensureSample:跟随界面语言', () => {
     expect((await svc.list()).notes.map((n) => n.title)).toEqual(['随心手记示例'])
   })
 })
+
+describe('非 Markdown 文件与批量导入', () => {
+  it('列出非 .md 文件;根层 assets/ 不列,嵌套 assets/ 正常列', async () => {
+    const svc = makeService()
+    const dir = svc.dir()
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'a.pdf'), 'pdf')
+    mkdirSync(join(dir, '工作', 'assets'), { recursive: true })
+    writeFileSync(join(dir, '工作', 'assets', 'p.png'), 'png')
+    mkdirSync(join(dir, 'assets'), { recursive: true })
+    writeFileSync(join(dir, 'assets', 'pasted.png'), 'png')
+
+    const list = await svc.list()
+    expect(list.files.map((f) => f.path).sort()).toEqual(['a.pdf', '工作/assets/p.png'])
+    expect(list.files.find((f) => f.path === 'a.pdf')?.ext).toBe('pdf')
+    expect(list.truncatedFiles).toBe(0)
+  })
+
+  it('importPaths 复制目录树;.md 变笔记,其它文件进 files', async () => {
+    const svc = makeService()
+    const src = mkdtempSync(join(tmpdir(), 'launcher-src-'))
+    dirs.push(src)
+    mkdirSync(join(src, 'pkg', 'sub'), { recursive: true })
+    writeFileSync(join(src, 'pkg', 'readme.md'), '# 导入\n')
+    writeFileSync(join(src, 'pkg', 'p.pdf'), 'pdf')
+    writeFileSync(join(src, 'pkg', 'sub', 'x.txt'), 'x')
+
+    const out = await svc.importPaths({ target: '', paths: [join(src, 'pkg')] })
+    expect(out.ok).toBe(true)
+    const list = await svc.list()
+    expect(list.notes.map((n) => n.id)).toContain('pkg/readme')
+    expect(list.files.map((f) => f.path).sort()).toEqual(['pkg/p.pdf', 'pkg/sub/x.txt'])
+  })
+
+  it('removeFile 走 trash 回调,删完从列表消失', async () => {
+    const trashed: string[] = []
+    const svc = makeService({
+      trash: async (p) => {
+        trashed.push(p)
+        rmSync(p)
+      }
+    })
+    const dir = svc.dir()
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'tmp.txt'), 'x')
+    expect(await svc.list()).toMatchObject({ files: [{ path: 'tmp.txt' }] })
+
+    expect(await svc.removeFile('tmp.txt')).toEqual({ ok: true })
+    expect(trashed).toEqual([join(dir, 'tmp.txt')])
+    expect((await svc.list()).files).toEqual([])
+  })
+
+  it('removeFile 拒绝目录 / 穿越 / 根层 assets', async () => {
+    const svc = makeService()
+    const dir = svc.dir()
+    mkdirSync(join(dir, '文件夹'), { recursive: true })
+    mkdirSync(join(dir, 'assets'), { recursive: true })
+    writeFileSync(join(dir, 'assets', 'pasted.png'), 'x')
+
+    expect((await svc.removeFile('文件夹')).ok).toBe(false)
+    expect((await svc.removeFile('../x')).ok).toBe(false)
+    expect((await svc.removeFile('assets/pasted.png')).ok).toBe(false)
+  })
+
+  it('只有非 md 文件时 ensureSample 不写示例', async () => {
+    const svc = makeService()
+    mkdirSync(svc.dir(), { recursive: true })
+    writeFileSync(join(svc.dir(), 'only.txt'), 'x')
+    expect(await svc.ensureSample({ title: '示例', body: '示例正文' })).toBe('none')
+    expect((await svc.list()).notes).toHaveLength(0)
+  })
+
+  it('resolveNoteFile 只放行笔记目录内的普通文件', async () => {
+    const svc = makeService()
+    mkdirSync(svc.dir(), { recursive: true })
+    writeFileSync(join(svc.dir(), 'a.txt'), 'a')
+    expect(svc.resolveNoteFile('a.txt')).toBe(join(svc.dir(), 'a.txt'))
+    expect(svc.resolveNoteFile('../a.txt')).toBeNull()
+  })
+})

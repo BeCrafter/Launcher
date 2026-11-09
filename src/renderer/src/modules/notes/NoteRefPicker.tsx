@@ -8,7 +8,7 @@ import type { NoteRef } from '@shared/notes'
 import { Modal } from '../../components/Modal'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { useT } from '../../hooks/useT'
-import { EMPTY_OVERRIDES, refForAgent, refForCron, refForService } from '../../lib/note-refs'
+import { EMPTY_OVERRIDES, refForAgent, refForCron, refForService, refKey, uniqueByRefKey } from '../../lib/note-refs'
 import { serviceIdentityKey } from '@shared/service-identity'
 import { useAgentsStore } from '../../state/agents-store'
 import { useCronStore } from '../../state/cron-store'
@@ -76,14 +76,18 @@ export function NoteRefPicker(): React.JSX.Element {
         icon: 'fa-solid fa-network-wired'
       }))
 
+    // 服务身份键不含 addr:同一进程同时监听 IPv4 / IPv6 时会有两条记录 →
+    // 不去重就会出现两个相同 React key(React 会直接报警,行也会重复)。
+    const uniqueRows = (rows: Row[]): Row[] => uniqueByRefKey(rows, (row) => refKey(row.ref))
+
     return [
-      { key: 'agent', title: t('notes.ref.picker.groupAgent'), rows: agentRows },
-      { key: 'cron', title: t('notes.ref.picker.groupCron'), rows: cronRows },
-      { key: 'service', title: t('notes.ref.picker.groupService'), rows: svcRows }
+      { key: 'agent', title: t('notes.ref.picker.groupAgent'), rows: uniqueRows(agentRows) },
+      { key: 'cron', title: t('notes.ref.picker.groupCron'), rows: uniqueRows(cronRows) },
+      { key: 'service', title: t('notes.ref.picker.groupService'), rows: uniqueRows(svcRows) }
     ].filter((g) => g.rows.length > 0)
   }, [agents, crons, services, overrides, q, t])
 
-  const already = new Set(existing.map((r) => `${r.type}:${r.key}`))
+  const already = new Set(existing.map(refKey))
   const total = groups.reduce((n, g) => n + g.rows.length, 0)
 
   const left = Math.min(x, window.innerWidth - PANEL_W - 12)
@@ -93,7 +97,7 @@ export function NoteRefPicker(): React.JSX.Element {
     let added = 0
     for (const g of groups) {
       for (const row of g.rows) {
-        const id = `${row.ref.type}:${row.ref.key}`
+        const id = refKey(row.ref)
         if (!picked.has(id) || already.has(id)) continue
         addRef(row.ref)
         added++
@@ -128,7 +132,7 @@ export function NoteRefPicker(): React.JSX.Element {
             <div key={g.key} className="note-ref-picker-group">
               <div className="note-ref-picker-group-title">{g.title}</div>
               {g.rows.map((row) => {
-                const id = `${row.ref.type}:${row.ref.key}`
+                const id = refKey(row.ref)
                 const isAlready = already.has(id)
                 return (
                   <label key={id} className={'note-ref-picker-row' + (isAlready ? ' disabled' : '')}>

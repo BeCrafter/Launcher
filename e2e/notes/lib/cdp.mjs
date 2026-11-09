@@ -110,6 +110,24 @@ export class CDP {
     throw new Error(`等待子目标超时：${urlPart}${suffix}`)
   }
 
+  /** 求值并拿回一个活对象句柄(objectId),供 DOM.* 这类按节点操作的命令使用。 */
+  async evalHandle(expression) {
+    const result = await this.send('Runtime.evaluate', {
+      expression,
+      returnByValue: false,
+      awaitPromise: true,
+      userGesture: true
+    })
+    if (result.exceptionDetails) {
+      const description =
+        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? ''
+      throw new Error(`页面求值失败: ${description}`)
+    }
+    const objectId = result.result?.objectId
+    if (objectId === undefined) throw new Error('页面求值没有返回对象句柄')
+    return objectId
+  }
+
   /** 把一段可 JSON 化的数据从页面取回来。 */
   async json(expression) {
     return JSON.parse(await this.eval(`JSON.stringify(${expression})`))

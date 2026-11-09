@@ -140,7 +140,15 @@ function makeNotesFake(initial: Note[] = []) {
     created,
     saved,
     removed,
-    list: async () => ({ notes: [...store.values()].map(toMeta), dir: '/notes', truncated: 0, error: null }),
+    list: async () => ({
+      notes: [...store.values()].map(toMeta),
+      folders: [],
+      files: [],
+      dir: '/notes',
+      truncated: 0,
+      truncatedFiles: 0,
+      error: null
+    }),
     search: async (q: string) =>
       [...store.values()].filter((n) => n.title.includes(q) || n.body.includes(q)).map(toMeta),
     readBodyForAi: async (id: string) => {

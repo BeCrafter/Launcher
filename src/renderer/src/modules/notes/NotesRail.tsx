@@ -7,11 +7,18 @@
 // 在列表里重复一遍既挤,又和目录的层级感打架(要扫的是「有哪些东西」,不是「它讲了什么」)。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { baseNameOf, parentOf, type NoteMeta, type NoteRef } from '@shared/notes'
+import {
+  baseNameOf,
+  parentOf,
+  type NoteFileMeta,
+  type NoteMeta,
+  type NoteRef
+} from '@shared/notes'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { useT } from '../../hooks/useT'
-import { buildNoteTree, countNotesIn, sortNotes, type NoteFolderNode } from '../../lib/note-tree'
+import { buildNoteTree, sortNotes, type NoteFolderNode } from '../../lib/note-tree'
+import { noteFileIcon } from '../../lib/note-file'
 import { refTypeLabel } from '../../lib/note-refs'
 import { rankByTagHits, tagHitsOf } from '../../lib/note-search'
 import { aggregateTags, noteHasTag } from '../../lib/note-tags'
@@ -54,16 +61,19 @@ export function NotesRail(): React.JSX.Element {
   const t = useT()
   const notes = useNotesStore((s) => s.notes)
   const folders = useNotesStore((s) => s.folders)
+  const files = useNotesStore((s) => s.files)
   const expanded = useNotesStore((s) => s.expanded)
   const selectedFolder = useNotesStore((s) => s.selectedFolder)
   const loaded = useNotesStore((s) => s.loaded)
   const error = useNotesStore((s) => s.error)
   const truncated = useNotesStore((s) => s.truncated)
+  const truncatedFiles = useNotesStore((s) => s.truncatedFiles)
   const query = useNotesStore((s) => s.query)
   const searchResults = useNotesStore((s) => s.searchResults)
   const refFilter = useNotesStore((s) => s.refFilter)
   const tagFilter = useNotesStore((s) => s.tagFilter)
   const currentId = useNotesStore((s) => s.currentId)
+  const openingId = useNotesStore((s) => s.openingId)
   const dir = useNotesStore((s) => s.dir)
   const setQuery = useNotesStore((s) => s.setQuery)
   const pinnedCollapsed = useNotesStore((s) => s.pinnedCollapsed)
@@ -86,6 +96,9 @@ export function NotesRail(): React.JSX.Element {
   const removeFolder = useNotesStore((s) => s.removeFolder)
   const create = useNotesStore((s) => s.create)
   const moveNote = useNotesStore((s) => s.moveNote)
+  const importPaths = useNotesStore((s) => s.importPaths)
+  const openFile = useNotesStore((s) => s.openFile)
+  const removeFile = useNotesStore((s) => s.removeFile)
   const setPinned = useNotesStore((s) => s.setPinned)
   const renameNote = useNotesStore((s) => s.renameNote)
   const remove = useNotesStore((s) => s.remove)
@@ -103,6 +116,9 @@ export function NotesRail(): React.JSX.Element {
   const draggingRef = useRef<string | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  // OS 文件拖入是**另一套**状态:null = 没在拖;'' = 根层;其余 = 目标目录
+  const [fileDragTarget, setFileDragTarget] = useState<string | null>(null)
+  const railRef = useRef<HTMLDivElement | null>(null)
   const [scrolling, setScrolling] = useState(false)
   const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(
@@ -178,7 +194,10 @@ export function NotesRail(): React.JSX.Element {
   // buildNoteTree 会按笔记的路径自动补出目录节点,而目录默认是折叠的 ——
   // 于是「命中一篇在目录里的笔记」会被塞进折叠的目录下面,界面上什么都看不到
   // (搜标签尤其明显:命中的笔记标题里根本没有搜索词,一旦被折叠就彻底没线索)。
-  const tree = useMemo(() => buildNoteTree(unpinned, folders), [unpinned, folders])
+  const tree = useMemo(
+    () => buildNoteTree(unpinned, folders, files),
+    [unpinned, folders, files]
+  )
 
   /** 能不能把正在拖的那个放进 target 目录 */
   // 内容或容器尺寸变化都要重算(展开目录、搜索出结果、窗口缩放)
@@ -198,9 +217,61 @@ export function NotesRail(): React.JSX.Element {
     return parentOf(id) !== target
   }
 
+  /** 拖进来的是不是 OS 文件(内部笔记拖拽只带 text/plain) */
+  const hasFiles = (e: React.DragEvent): boolean => e.dataTransfer.types.includes('Files')
+
+  /** 指针下最近一行的落点目录;行上的 data-drop-folder 由目录/笔记/文件行统一提供 */
+  const fileDropPath = (e: React.DragEvent): string => {
+    const hit = (e.target as Element | null)?.closest?.('[data-drop-folder]')
+    return hit?.getAttribute('data-drop-folder') ?? ''
+  }
+
+  const onRailDragOver = (e: React.DragEvent): void => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+    const target = fileDropPath(e)
+    setFileDragTarget((cur) => (cur === target ? cur : target))
+  }
+
+  const onRailDragLeave = (e: React.DragEvent): void => {
+    if (!hasFiles(e)) return
+    const next = e.relatedTarget as Node | null
+    if (next !== null && railRef.current?.contains(next) === true) return
+    setFileDragTarget(null)
+  }
+
+  const onRailDrop = (e: React.DragEvent): void => {
+    if (!hasFiles(e)) return
+    e.preventDefault()
+    const target = fileDropPath(e)
+    setFileDragTarget(null)
+    const paths: string[] = []
+    for (const file of [...e.dataTransfer.files]) {
+      try {
+        const path = window.launcher.filePath(file)
+        if (path !== '') paths.push(path)
+      } catch {
+        // 从浏览器/聊天窗口拖来的合成 File 没有本地路径
+      }
+    }
+    void importPaths(target, paths)
+  }
+
+  // 拖出窗口 / 在别处松手时浏览器不一定给 rail 发 dragleave,窗口级兜底
+  useEffect(() => {
+    const reset = (): void => setFileDragTarget(null)
+    window.addEventListener('dragend', reset)
+    window.addEventListener('drop', reset)
+    return () => {
+      window.removeEventListener('dragend', reset)
+      window.removeEventListener('drop', reset)
+    }
+  }, [])
+
   const loading = !loaded && notes.length === 0
   /** 首次使用:一篇笔记、一个目录都没有 */
-  const isEmpty = !loading && notes.length === 0 && folders.length === 0
+  const isEmpty = !loading && notes.length === 0 && folders.length === 0 && files.length === 0
   const startEdit = (next: NameEdit, initial = ''): void => {
     setEdit(next)
     setDraftName(initial)
@@ -239,16 +310,27 @@ export function NotesRail(): React.JSX.Element {
   /** 笔记行:只有名字。可拖拽;悬停露出置顶与删除 */
   const noteRow = (n: NoteMeta, depth: number): React.JSX.Element => {
     const renaming = edit !== null && edit.mode === 'rename' && edit.kind === 'note' && edit.path === n.id
+    const opening = n.id === openingId
     return (
     <div
       key={n.id}
       className={
         'notes-row' +
         (n.id === currentId ? ' active' : '') +
+        (opening ? ' opening' : '') +
         (draggingId === n.id ? ' dragging' : '')
       }
       style={{ paddingLeft: notePad(depth) }}
+      data-note-id={n.id}
+      data-drop-folder={parentOf(n.id)}
       draggable
+      // 点击热区放在整行:标题按钮只占内容区 16px,行的上下留白、左侧缩进、
+      // 右侧留白和悬停动作浮层的背景都在按钮之外 —— 只挂在按钮上会「点了没反应」。
+      // 改名时点别处只该失焦/提交,不能把笔记切走。
+      onClick={() => {
+        if (renaming) return
+        void open(n.id)
+      }}
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', n.id)
         e.dataTransfer.effectAllowed = 'move'
@@ -262,14 +344,23 @@ export function NotesRail(): React.JSX.Element {
       }}
     >
       <IndentGuides depth={depth} />
+      {/* 加载指示浮在行首缩进留白里(标题左侧 2px):不参与 flex 布局,
+          出现/消失都不会推挤标题,空闲时也不占标题宽度。 */}
+      {opening && (
+        <i
+          className="fa-solid fa-circle-notch fa-spin notes-row-spin notes-row-lead"
+          style={{ left: notePad(depth) - 14 }}
+          aria-hidden="true"
+        />
+      )}
       {renaming ? (
         <span className="notes-row-rename">{nameInput(t('notes.field.titlePlaceholder'))}</span>
       ) : (
         <button
           type="button"
           className="notes-row-main"
-          title={`${n.id} · ${relTime(n.updated, t)}`}
-          onClick={() => void open(n.id)}
+          title={opening ? t('notes.opening') : `${n.id} · ${relTime(n.updated, t)}`}
+          aria-busy={opening || undefined}
         >
           {n.pinned && <i className="fa-solid fa-thumbtack notes-row-pin" />}
           <span className="notes-row-title">{n.title}</span>
@@ -325,6 +416,64 @@ export function NotesRail(): React.JSX.Element {
     )
   }
 
+  /** 文件行:不是笔记,不参与打开/编辑;双击交给系统默认应用 */
+  const fileRow = (f: NoteFileMeta, depth: number): React.JSX.Element => (
+    <div
+      key={`file:${f.path}`}
+      className="notes-row notes-file-row"
+      style={{ paddingLeft: notePad(depth) }}
+      data-file-path={f.path}
+      data-drop-folder={parentOf(f.path)}
+      title={f.path}
+      onDoubleClick={() => void openFile(f.path)}
+    >
+      <IndentGuides depth={depth} />
+      <div
+        className="notes-row-main notes-file-main"
+        role="button"
+        tabIndex={0}
+        title={t('notes.file.open')}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            void openFile(f.path)
+          }
+        }}
+      >
+        <i className={`fa-solid ${noteFileIcon(f.ext)} notes-file-icon`} />
+        <span className="notes-row-title">{f.name}</span>
+      </div>
+      <span className="notes-row-acts" onDoubleClick={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          title={t('notes.file.reveal')}
+          onClick={(e) => {
+            e.stopPropagation()
+            void window.launcher.notes.reveal(f.path)
+          }}
+        >
+          <i className="fa-solid fa-folder-open" />
+        </button>
+        <button
+          type="button"
+          className="danger"
+          title={t('notes.file.delete')}
+          onClick={(e) => {
+            e.stopPropagation()
+            void (async () => {
+              const ok = await confirmDangerous.request(
+                t('notes.file.deleteMessage').replace('{NAME}', f.name)
+              )
+              if (ok) await removeFile(f.path)
+            })()
+          }}
+        >
+          <i className="fa-solid fa-trash-can" />
+        </button>
+      </span>
+    </div>
+  )
+
   /**
    * 递归铺目录。**刻意用命令式的 if + push,不写 `{isOpen && out.push(...)}`** ——
    * `Array.push` 返回的是新长度,那个表达式会算出一个数字并被 React 当文本渲染出来。
@@ -333,7 +482,6 @@ export function NotesRail(): React.JSX.Element {
     const out: React.JSX.Element[] = []
     for (const f of node.folders) {
       const isOpen = expanded.has(f.path)
-      const count = countNotesIn(f)
       const renaming = edit !== null && edit.mode === 'rename' && edit.path === f.path
       out.push(
         <div
@@ -342,9 +490,12 @@ export function NotesRail(): React.JSX.Element {
             'notes-folder-row' +
             (selectedFolder === f.path ? ' selected' : '') +
             (dropTarget === f.path ? ' drop-target' : '') +
+            (fileDragTarget === f.path ? ' file-drop-target' : '') +
             (draggingId === f.path ? ' dragging' : '')
           }
           style={{ paddingLeft: folderPad(depth) }}
+          data-folder-path={f.path}
+          data-drop-folder={f.path}
           draggable
           onDragStart={(e) => {
             e.dataTransfer.setData('text/plain', f.path)
@@ -358,12 +509,14 @@ export function NotesRail(): React.JSX.Element {
             setDropTarget(null)
           }}
           onDragOver={(e) => {
-            if (!canDropInto(f.path)) return
+            // OS 文件拖入由 rail 根节点统一处理(要借用 data-drop-folder 取落点)
+            if (hasFiles(e) || !canDropInto(f.path)) return
             e.preventDefault()
             e.dataTransfer.dropEffect = 'move'
             setDropTarget(f.path)
           }}
           onDrop={(e) => {
+            if (hasFiles(e)) return
             e.preventDefault()
             e.stopPropagation() // 别让列表容器的「放到根层」也接一手
             const id = e.dataTransfer.getData('text/plain')
@@ -396,7 +549,6 @@ export function NotesRail(): React.JSX.Element {
             >
               <i className={isOpen ? 'fa-regular fa-folder-open' : 'fa-regular fa-folder'} />
               <span>{f.name}</span>
-              <span className="notes-folder-count">{count > 0 ? count : ''}</span>
             </button>
           )}
           <span className="notes-folder-acts" style={renaming ? { display: 'none' } : undefined}>
@@ -453,13 +605,21 @@ export function NotesRail(): React.JSX.Element {
       if (isOpen) out.push(...folderBranch(f, depth + 1))
     }
     for (const n of node.notes) out.push(noteRow(n, depth))
+    for (const f of node.files) out.push(fileRow(f, depth))
     return out
   }
 
   const pinnedRef = useRef<HTMLDivElement | null>(null)
 
   return (
-    <div className={'notes-rail' + (narrow ? ' rail-narrow' : '')} style={{ width }}>
+    <div
+      ref={railRef}
+      className={'notes-rail' + (narrow ? ' rail-narrow' : '')}
+      style={{ width }}
+      onDragOver={onRailDragOver}
+      onDragLeave={onRailDragLeave}
+      onDrop={onRailDrop}
+    >
       {/* 一篇都没有时连搜索框一起收起来:没有东西可搜,摆在那儿只是噪音。
           (首启引导自己带顶部留白,所以这里不需要留占位。) */}
       {!isEmpty && (
@@ -539,6 +699,17 @@ export function NotesRail(): React.JSX.Element {
       )}
 
       <div className="notes-rail-listwrap">
+      {/* OS 文件拖入的落点提示:骑在列表顶部,不参与命中检测 */}
+      {fileDragTarget !== null && (
+        <div className="notes-import-hint" aria-hidden="true">
+          <i className="fa-solid fa-file-import" />
+          <span>
+            {fileDragTarget === ''
+              ? t('notes.import.hintRoot')
+              : t('notes.import.hint').replace('{NAME}', baseNameOf(fileDragTarget))}
+          </span>
+        </div>
+      )}
       {/* 列表本身**不再是投放区**:以前整片空白都能接住拖拽,从目录里随手一拖就掉到最外层,
           太容易误触。根层投放改成下面那条只在拖拽时出现的明确投放条。 */}
       <div
@@ -643,6 +814,11 @@ export function NotesRail(): React.JSX.Element {
 
         {truncated > 0 && (
           <div className="notes-rail-truncated">{t('notes.truncated').replace('{N}', String(truncated))}</div>
+        )}
+        {truncatedFiles > 0 && (
+          <div className="notes-rail-truncated">
+            {t('notes.truncatedFiles').replace('{N}', String(truncatedFiles))}
+          </div>
         )}
       </div>
       <div

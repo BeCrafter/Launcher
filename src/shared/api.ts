@@ -49,6 +49,9 @@ import type { AiEngineState, AiMessage, AiSession, AiSkillInfo } from './ai'
 import type {
   Note,
   NoteCreateInput,
+  NoteFileOutcome,
+  NoteImportInput,
+  NoteImportResult,
   NoteMeta,
   NoteRemoveInput,
   NoteRenameInput,
@@ -216,5 +219,16 @@ export interface LauncherApi {
     renameFolder: (input: { id: string; name: string }) => Promise<{ id: string }>
     /** 移动到另一个目录(笔记与目录共用);parent 为空串 = 根层 */
     move: (input: { id: string; parent: string }) => Promise<{ ok: true; id: string; renamed?: { from: string; to: string } } | { ok: false; message: string }>
+    /** 把 OS 文件/文件夹原样复制进目标目录 */
+    import: (input: NoteImportInput) => Promise<NoteImportResult>
+    /** 删除文件(进系统废纸篓) */
+    removeFile: (path: string) => Promise<NoteFileOutcome>
+    /** 用系统默认应用打开文件 */
+    openFile: (path: string) => Promise<NoteFileOutcome>
   }
+  /**
+   * 从拖入的 File 取本地绝对路径(Electron 44 已移除 File.path)。
+   * 参数类型留成 unknown:shared 同时被没有 DOM lib 的 main tsconfig 编译。
+   */
+  filePath: (file: unknown) => string
 }

@@ -6,7 +6,7 @@
 import type { NoteRef } from '@shared/notes'
 import { useT } from '../../hooks/useT'
 import { navigateToRef, openNotesFor } from '../../lib/notes-nav'
-import { refTypeIcon, refTypeLabel, resolveRef, useRefContext } from '../../lib/note-refs'
+import { refKey, refTypeIcon, refTypeLabel, resolveRef, uniqueByRefKey, useRefContext } from '../../lib/note-refs'
 import { showToast } from '../../lib/utils'
 
 export function NoteRefChips({
@@ -27,15 +27,19 @@ export function NoteRefChips({
 
   if (refs.length === 0) return null
 
+  // 同一服务可能以多条记录存在(IPv4/IPv6 各一条),按身份键去重后再渲染:
+  // 重复的 React key 会被 React 判为不支持的行为,chip 也可能被重复/吞掉。
+  const rows = uniqueByRefKey(refs, refKey)
+
   return (
     <div className={'note-refs' + (compact ? ' compact' : '')}>
-      {refs.map((r) => {
+      {rows.map((r) => {
         const res = resolveRef(r, ctx)
         const tone = res.state === 'ok' ? 'ok' : res.state === 'changed' ? 'changed' : 'stale'
         const label = res.state === 'stale' ? r.label : res.label
         return (
           <span
-            key={`${r.type}:${r.key}`}
+            key={refKey(r)}
             className={`note-ref note-ref-${tone}`}
             title={
               res.state === 'stale'

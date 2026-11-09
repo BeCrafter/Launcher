@@ -103,7 +103,13 @@ export const IPC = {
   /** 目录改名 */
   notesRenameFolder: 'notes:renameFolder',
   /** 跨目录移动(笔记与目录共用) */
-  notesMove: 'notes:move'
+  notesMove: 'notes:move',
+  /** 把 OS 文件/文件夹原样复制进目标目录 */
+  notesImport: 'notes:import',
+  /** 删除文件(进系统废纸篓) */
+  notesRemoveFile: 'notes:removeFile',
+  /** 用系统默认应用打开文件(相对笔记目录的路径) */
+  notesOpenFile: 'notes:openFile'
 } as const
 
 // ── main → renderer 推送事件(preload onEvent 白名单) ──

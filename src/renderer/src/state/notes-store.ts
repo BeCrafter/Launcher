@@ -8,7 +8,13 @@
 
 import { create } from 'zustand'
 import { normalizeTag } from '@shared/inline-tags'
-import { baseNameOf, type Note, type NoteMeta, type NoteRef } from '@shared/notes'
+import {
+  baseNameOf,
+  type Note,
+  type NoteFileMeta,
+  type NoteMeta,
+  type NoteRef
+} from '@shared/notes'
 import { slugifyNoteTitle } from '@shared/note-slug'
 import { dataSource } from '../data'
 import { getCurrentLang, makeT } from '../i18n'
@@ -62,6 +68,15 @@ export interface NoteDraft {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+/** 正在进行的保存:新的 flush 要等它落盘后再判一次,避免两次保存叠着写同一个文件 */
+let inFlightSave: Promise<void> | null = null
+/** 正在进行的改名:连点两篇时两条后台链可能同时走到这里,复用同一个请求 */
+let syncInFlight: Promise<void> | null = null
+/**
+ * 打开请求的序号。只认最后一次点击的 read 结果 —— 前一次读得再慢,回来时也不能
+ * 把用户后来选的笔记盖掉。放在模块级而不是 state:它不该触发任何渲染。
+ */
+let openSeq = 0
 
 function clearTimer(): void {
   if (saveTimer !== null) {
@@ -101,6 +116,8 @@ interface NotesState {
   notes: NoteMeta[]
   /** 所有目录的 id(空目录也在内 —— 它是空目录唯一的痕迹) */
   folders: string[]
+  /** 非 Markdown 文件(根层 assets/ 除外) */
+  files: NoteFileMeta[]
   /** 展开的目录(持久化:下次打开还在原来的位置) */
   expanded: Set<string>
   /** 当前选中的目录(「新建笔记」建在这里;'' = 根层) */
@@ -109,6 +126,7 @@ interface NotesState {
   loaded: boolean
   error: string | null
   truncated: number
+  truncatedFiles: number
   query: string
   searchResults: NoteMeta[] | null
   refFilter: NoteRef | null
@@ -120,6 +138,13 @@ interface NotesState {
   // 编辑
   currentId: string | null
   draft: NoteDraft | null
+  /** 正在打开的笔记 id:目录行立即出转圈,正文区延迟出骨架层 */
+  openingId: string | null
+  /**
+   * 每次真正切换到另一篇时 +1。编辑器据此复位滚动/选区/撤销栈 ——
+   * 用 id 判断不行:改名会让 id 变,但那是同一篇文档,不该跳回顶部、清掉撤销。
+   */
+  docSession: number
   dirty: boolean
   saving: boolean
   savedAt: number
@@ -152,6 +177,12 @@ interface NotesState {
   remove(id: string): Promise<void>
   /** 跨目录移动(笔记与目录共用);parent 为空串 = 根层 */
   moveNote(id: string, parent: string): Promise<void>
+  /** 把 OS 文件/文件夹原样复制进目标目录(空串 = 根层) */
+  importPaths(target: string, paths: string[]): Promise<void>
+  /** 用系统默认应用打开文件 */
+  openFile(path: string): Promise<void>
+  /** 删除文件(进系统废纸篓) */
+  removeFile(path: string): Promise<void>
   /** 置顶/取消置顶(纯元数据,不动 updated) */
   setPinned(id: string, pinned: boolean): Promise<void>
   /** 就地改名(列表里直接改,不必先打开) */
@@ -224,23 +255,41 @@ export const useNotesStore = create<NotesState>((set, get) => {
     set({
       notes: payload.notes,
       folders: payload.folders,
+      files: payload.files,
       dir: payload.dir,
       truncated: payload.truncated,
+      truncatedFiles: payload.truncatedFiles,
       error: payload.error,
       loaded: true
     })
     if (get().query.trim() !== '') await get().setQuery(get().query)
   }
 
+  /**
+   * 保存成功只回写这一篇的元信息,不再整目录重扫。
+   * 列表顺序由渲染层按 updated / pinned 现算,所以就地替换足够。
+   */
+  function patchNoteMeta(note: Note): void {
+    const { body: _body, revision: _revision, ...meta } = note
+    const notes = get().notes
+    if (!notes.some((n) => n.id === meta.id)) {
+      void reload() // 列表里没有(截断 / 刚被别处改动):退回完整扫描
+      return
+    }
+    set({ notes: notes.map((n) => (n.id === meta.id ? meta : n)) })
+  }
+
   return {
     notes: [],
     folders: [],
+    files: [],
     expanded: readExpanded(),
     selectedFolder: '',
     dir: '',
     loaded: false,
     error: null,
     truncated: 0,
+    truncatedFiles: 0,
     query: '',
     searchResults: null,
     refFilter: null,
@@ -249,6 +298,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
     pinnedCollapsed: lsGet(PINNED_LS_KEY) === '1',
     currentId: null,
     draft: null,
+    openingId: null,
+    docSession: 0,
     dirty: false,
     saving: false,
     savedAt: 0,
@@ -267,20 +318,59 @@ export const useNotesStore = create<NotesState>((set, get) => {
     },
 
     async open(id) {
-      if (get().currentId === id) return
-      await get().flush() // 切笔记前先把上一篇存了
-      await get().syncFileName() // 标题改过就把文件名跟上(否则旧名字会一直留着)
+      if (get().currentId === id) {
+        // 正在打开别的笔记时点回当前这篇 = 取消挂起的打开
+        if (get().openingId !== null) {
+          openSeq += 1
+          set({ openingId: null })
+        }
+        return
+      }
+      if (get().openingId === id) return // 同一篇的重复点击
+
+      const prevId = get().draft?.id ?? null
+      set({ openingId: id })
+      const seq = ++openSeq
+      const reading = dataSource().notes.read(id)
+
+      // 上一篇的保存与标题改名放到后台:打开只等目标笔记的这一次读取。
+      // flush 的同步段会把旧 draft 的快照交给 IPC,所以这里不 await 也不会丢内容。
+      if (prevId !== null) {
+        void (async () => {
+          await get().flush()
+          // 已经切走了就放弃改名(改完也不该回写草稿),留给下次打开该篇时同步
+          if (get().draft?.id !== prevId) return
+          await get().syncFileName()
+        })()
+      }
+
       try {
-        const note = await dataSource().notes.read(id)
+        const note = await reading
+        if (seq !== openSeq) return // 后面又点了别的:这次结果作废
         if (!note) {
           showToast(t()('toast.noteMissing'), '#fbbf24', 'fa-triangle-exclamation')
           await reload()
-          set({ currentId: null, draft: null, dirty: false, conflict: null, externalChanged: false })
+          if (seq !== openSeq) return
+          set({
+            currentId: null,
+            draft: null,
+            dirty: false,
+            conflict: null,
+            externalChanged: false,
+            openingId: null
+          })
           return
         }
         // 自动展开祖先目录:否则从搜索结果点进一篇深层笔记,列表里看不见它在哪
-        const next = new Set(get().expanded)
-        for (const a of ancestorsOf(id)) next.add(a)
+        const cur = get().expanded
+        let next = cur
+        for (const a of ancestorsOf(id)) {
+          if (next.has(a)) continue
+          if (next === cur) next = new Set(cur)
+          next.add(a)
+        }
+        // 读盘这几毫秒里用户可能又在上一篇里敲了字:别让切换把它吞掉,先交给后台保存
+        if (prevId !== null && get().draft?.id === prevId && get().dirty) void get().flush()
         set({
           currentId: id,
           draft: draftOf(note),
@@ -288,16 +378,22 @@ export const useNotesStore = create<NotesState>((set, get) => {
           conflict: null,
           externalChanged: false,
           savedAt: Date.now(),
-          expanded: next
+          expanded: next,
+          openingId: null,
+          docSession: get().docSession + 1
         })
-        persistExpanded(next)
+        if (next !== cur) persistExpanded(next)
       } catch (err) {
+        if (seq !== openSeq) return
+        set({ openingId: null })
         showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
       }
     },
 
     async close() {
-      await get().flush()
+      openSeq += 1 // 挂起的 open 回来后不能再把笔记打开
+      set({ openingId: null })
+      await get().flush() // 已有保存在飞时,等它落盘再清缓冲
       clearTimer()
       set({ currentId: null, draft: null, dirty: false, conflict: null, externalChanged: false })
     },
@@ -305,6 +401,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
     setBody(v) {
       const d = get().draft
       if (!d) return
+      if (d.body === v) return // 整篇回灌后的同文回调不该再标脏
       set({ draft: { ...d, body: v }, dirty: true })
       get().scheduleSave()
     },
@@ -390,6 +487,69 @@ export const useNotesStore = create<NotesState>((set, get) => {
         set({ expanded: next, selectedFolder: id })
         await reload()
         showToast(t()('toast.folderCreated'), '#4ade80', 'fa-folder-plus')
+      } catch (err) {
+        showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+      }
+    },
+
+    async importPaths(target, paths) {
+      if (paths.length === 0) {
+        showToast(t()('notes.import.noPath'), '#fbbf24', 'fa-triangle-exclamation')
+        return
+      }
+      try {
+        const out = await dataSource().notes.import({ target, paths })
+        if (!out.ok) {
+          showToast(out.message, '#f87171', 'fa-circle-exclamation')
+          return
+        }
+        // 展开目标目录:导入完总得让用户看见东西落在哪
+        const next = new Set(get().expanded)
+        if (target !== '') {
+          for (const a of ancestorsOf(target)) next.add(a)
+          next.add(target)
+        }
+        persistExpanded(next)
+        set({ expanded: next, selectedFolder: target })
+        await reload()
+
+        if (out.files === 0 && out.folders === 0) {
+          showToast(t()('notes.import.noPath'), '#fbbf24', 'fa-triangle-exclamation')
+          return
+        }
+        const partial = out.skipped > 0
+        const msg = t()(partial ? 'notes.import.partial' : 'notes.import.done')
+          .replace('{FILES}', String(out.files))
+          .replace('{FOLDERS}', String(out.folders))
+          .replace('{SKIPPED}', String(out.skipped))
+        showToast(
+          msg,
+          partial ? '#fbbf24' : '#4ade80',
+          partial ? 'fa-triangle-exclamation' : 'fa-file-import'
+        )
+      } catch (err) {
+        showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+      }
+    },
+
+    async openFile(path) {
+      try {
+        const out = await dataSource().notes.openFile(path)
+        if (!out.ok) showToast(out.message, '#f87171', 'fa-circle-exclamation')
+      } catch (err) {
+        showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+      }
+    },
+
+    async removeFile(path) {
+      try {
+        const out = await dataSource().notes.removeFile(path)
+        if (!out.ok) {
+          showToast(out.message, '#f87171', 'fa-circle-exclamation')
+          return
+        }
+        await reload()
+        showToast(t()('toast.noteFileDeleted'), '#4ade80', 'fa-trash-can')
       } catch (err) {
         showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
       }
@@ -492,48 +652,68 @@ export const useNotesStore = create<NotesState>((set, get) => {
     },
 
     async syncFileName() {
-      const d = get().draft
-      if (!d || d.title.trim() === '') return
-      // 标题算出来的文件名与当前文件名一致 → 什么都不用做(省掉一次无谓的写盘与 mtime 变动)
-      if (slugifyNoteTitle(d.title) === baseNameOf(d.id)) return
-      try {
-        let out = await dataSource().notes.rename({
-          id: d.id,
-          title: d.title,
-          expectedRevision: d.revision
-        })
-        if (!out.ok && out.kind === 'name-taken') {
-          if (!(await askNameClash(out.suggested ?? d.title))) return
-          out = await dataSource().notes.rename({
+      // 连点两篇时两条后台链可能同时走到这里:复用同一个改名,避免第二次必然撞 revision
+      if (syncInFlight !== null) {
+        await syncInFlight
+        return
+      }
+      const run = (async (): Promise<void> => {
+        const d = get().draft
+        if (!d || d.title.trim() === '') return
+        // 标题算出来的文件名与当前文件名一致 → 什么都不用做(省掉一次无谓的写盘与 mtime 变动)
+        if (slugifyNoteTitle(d.title) === baseNameOf(d.id)) return
+        try {
+          let out = await dataSource().notes.rename({
             id: d.id,
             title: d.title,
-            expectedRevision: d.revision,
-            onConflict: 'auto-rename'
+            expectedRevision: d.revision
           })
+          if (!out.ok && out.kind === 'name-taken') {
+            // 已经切走:不弹「保留两者」,保留旧文件名,下次打开该篇再同步
+            if (get().draft?.id !== d.id) return
+            if (!(await askNameClash(out.suggested ?? d.title))) return
+            out = await dataSource().notes.rename({
+              id: d.id,
+              title: d.title,
+              expectedRevision: d.revision,
+              onConflict: 'auto-rename'
+            })
+          }
+          if (!out.ok) {
+            // 改名失败不该打断编辑:冲突就出横幅,其余情况静默留着旧文件名
+            if (out.kind === 'conflict' && get().draft?.id === d.id) set({ conflict: out.latest })
+            return
+          }
+          if (!('note' in out)) return
+          if (get().draft?.id !== d.id) {
+            // 文件已经改名,但用户已经切到别的笔记:草稿一个字都不能动,只让列表跟上新 id
+            await reload()
+            return
+          }
+          set({
+            currentId: out.note.id,
+            draft: draftOf(out.note, d.unclosed),
+            dirty: false,
+            conflict: null,
+            externalChanged: false
+          })
+          await reload()
+          if (out.note.title !== d.title.trim()) {
+            showToast(
+              t()('toast.noteMovedRenamed').replace('{NAME}', out.note.title),
+              '#fbbf24',
+              'fa-triangle-exclamation'
+            )
+          }
+        } catch (err) {
+          showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
         }
-        if (!out.ok) {
-          // 改名失败不该打断编辑:冲突就出横幅,其余情况静默留着旧文件名
-          if (out.kind === 'conflict') set({ conflict: out.latest })
-          return
-        }
-        if (!('note' in out)) return
-        set({
-          currentId: out.note.id,
-          draft: draftOf(out.note, d.unclosed),
-          dirty: false,
-          conflict: null,
-          externalChanged: false
-        })
-        await reload()
-        if (out.note.title !== d.title.trim()) {
-          showToast(
-            t()('toast.noteMovedRenamed').replace('{NAME}', out.note.title),
-            '#fbbf24',
-            'fa-triangle-exclamation'
-          )
-        }
-      } catch (err) {
-        showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+      })()
+      syncInFlight = run
+      try {
+        await run
+      } finally {
+        if (syncInFlight === run) syncInFlight = null
       }
     },
 
@@ -667,46 +847,72 @@ export const useNotesStore = create<NotesState>((set, get) => {
     },
 
     async flush() {
+      // 已有保存在飞:等它落盘后再判一次 —— 期间用户可能又改了,也可能已经换了笔记。
+      // 不能直接 return:否则这次改动就永远没人保存了。
+      if (inFlightSave !== null) {
+        await inFlightSave
+        return get().flush()
+      }
       clearTimer()
       const { draft, dirty, conflict, saving } = get()
       if (!draft || !dirty || conflict !== null || saving) return
 
       const sent = snapshot(draft)
       set({ saving: true })
-      try {
-        const out = await dataSource().notes.save({
-          id: draft.id,
-          body: draft.body,
-          expectedRevision: draft.revision,
-          meta: { title: draft.title, tags: draft.tags, pinned: draft.pinned, refs: draft.refs }
-        })
+      const run = (async (): Promise<void> => {
+        try {
+          const out = await dataSource().notes.save({
+            id: draft.id,
+            body: draft.body,
+            expectedRevision: draft.revision,
+            meta: { title: draft.title, tags: draft.tags, pinned: draft.pinned, refs: draft.refs }
+          })
 
-        if (out.ok && 'note' in out) {
-          const cur = get().draft
-          // 保存期间用户又改了 → 回写 revision 但**保持 dirty**,再排一次;
-          // 绝不拿服务端返回的内容覆盖当前缓冲(那会吞掉刚敲的字)
-          const stillDirty = cur !== null && cur.id === draft.id && snapshot(cur) !== sent
-          if (cur !== null && cur.id === draft.id) {
-            set({ draft: { ...cur, revision: out.note.revision, updated: out.note.updated } })
+          if (out.ok && 'note' in out) {
+            // 保存期间用户又改了 → 回写 revision 但**保持 dirty**,再排一次;
+            // 已经切到别的笔记 → 只更新列表,绝不碰当前缓冲(否则会清掉新笔记的 dirty)。
+            const cur = get().draft
+            const current = cur !== null && cur.id === draft.id
+            const stillDirty = current && snapshot(cur) !== sent
+            if (current) {
+              set({
+                draft: { ...cur, revision: out.note.revision, updated: out.note.updated },
+                dirty: stillDirty,
+                savedAt: Date.now(),
+                externalChanged: false
+              })
+            }
+            set({ saving: false })
+            patchNoteMeta(out.note)
+            if (get().query.trim() !== '') await get().setQuery(get().query)
+            if (stillDirty) get().scheduleSave()
+            else if (!current && get().dirty) get().scheduleSave() // 切走后新笔记又输入了
+            return
           }
-          set({ dirty: stillDirty, saving: false, savedAt: Date.now(), externalChanged: false })
-          await reload()
-          if (stillDirty) get().scheduleSave()
-          return
-        }
 
-        if (!out.ok && out.kind === 'conflict') {
-          // 暂停自动保存,出横幅让用户选;缓冲一个字都不动
-          set({ saving: false, conflict: out.latest })
-          return
-        }
+          if (!out.ok && out.kind === 'conflict') {
+            // 暂停自动保存,出横幅让用户选;缓冲一个字都不动。
+            // 已经切走时不能把旧笔记的 latest 挂到新笔记的裁决上。
+            set({ saving: false })
+            if (get().draft?.id === draft.id) set({ conflict: out.latest })
+            else showToast(t()('toast.noteConflict'), '#fbbf24', 'fa-triangle-exclamation')
+            return
+          }
 
-        set({ saving: false })
-        if (!out.ok) showToast(out.message, '#f87171', 'fa-circle-exclamation')
-      } catch (err) {
-        // 失败保持 dirty:绝不静默丢缓冲
-        set({ saving: false })
-        showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+          set({ saving: false })
+          if (!out.ok) showToast(out.message, '#f87171', 'fa-circle-exclamation')
+        } catch (err) {
+          // 失败保持 dirty:绝不静默丢缓冲
+          set({ saving: false })
+          showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+        }
+      })()
+
+      inFlightSave = run
+      try {
+        await run
+      } finally {
+        if (inFlightSave === run) inFlightSave = null
       }
     },
 
@@ -770,6 +976,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
       }
       const note = await dataSource().notes.read(currentId)
       if (!note) return
+      // 读盘期间可能已经切到别的笔记 / 开始打开新的 / 又输入了:这次回填作废
+      if (get().currentId !== currentId || get().openingId !== null || get().dirty) return
       set({
         draft: draftOf(note, get().draft?.unclosed ?? false),
         dirty: false,

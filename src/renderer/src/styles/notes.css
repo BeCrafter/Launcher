@@ -171,14 +171,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.notes-folder-count {
-  margin-left: auto;
-  min-width: 18px;
-  text-align: right;
-  color: var(--dim);
-  font-size: 10.5px;
-  font-weight: 400;
-}
 /* 目录行的悬停动作:与笔记行同一套右侧浮层(不挤占目录名宽度) */
 .notes-folder-acts {
   position: absolute;
@@ -186,6 +178,8 @@
   top: 50%;
   z-index: 2;
   display: none;
+  /* 与笔记行同一套:背景不挡点击,只有按钮可命中 */
+  pointer-events: none;
   align-items: center;
   gap: 1px;
   padding: 3px 4px;
@@ -203,6 +197,7 @@
   display: inline-flex;
   align-items: center;
   height: 16px;
+  pointer-events: auto;
   border: 0;
   background: transparent;
   /* 与笔记行一致:正文色 + 略大字号,保证在对比底上清晰 */
@@ -492,6 +487,32 @@
 .notes-row.active {
   background: var(--wash-accent);
 }
+/* 正在打开:点下去同一帧就有反馈。active 要等读取完成才移过来,不能代替它。 */
+.notes-row.opening {
+  background: var(--hover);
+}
+.notes-row-spin {
+  flex-shrink: 0;
+  font-size: 10px;
+  opacity: 0.7;
+}
+/* 行首加载指示:绝对定位在行左侧缩进留白里(水平位置由行内 left 随缩进给出)。
+   不参与 flex 布局 —— 出现/消失都不会推动标题,也不常驻占宽。
+   纯指示,不参与命中:点击/拖拽仍落到行本身。 */
+.notes-row-lead {
+  position: absolute;
+  top: 50%;
+  z-index: 1;
+  width: 12px;
+  height: 16px;
+  /* 这里不能用 translateY(-50%) 居中:fa-spin 的关键帧在动 transform,
+     会把居中位移一起覆盖掉,图标就贴到行中线上偏下一截。
+     用固定的半高负外边距居中,和旋转互不相干。 */
+  margin-top: -8px;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
 .notes-row-main {
   flex: 1;
   min-width: 0;
@@ -548,6 +569,9 @@
   top: 50%;
   z-index: 2;
   display: none;
+  /* 浮层只让按钮参与命中:它的背景/内边距压住标题右侧,
+     若整块都可命中,点在那儿会「看得见、点了没反应」。 */
+  pointer-events: none;
   align-items: center;
   gap: 1px;
   padding: 3px 4px;
@@ -568,6 +592,7 @@
   display: inline-flex;
   align-items: center;
   height: 16px;
+  pointer-events: auto;
   border: 0;
   background: transparent;
   /* 图标用正文色:在对比底上要清晰可见(原来 --dim 太灰) */
@@ -612,8 +637,51 @@
   color: var(--accent2);
 }
 /* 投放高亮**只改背景色**:加描边、加阴影之类都会让行看起来在动 */
-.notes-folder-row.drop-target {
+.notes-folder-row.drop-target,
+.notes-folder-row.file-drop-target {
   background: var(--wash-accent);
+}
+
+/* OS 文件拖入提示:浮在列表顶部,不参与命中检测(否则会挡住下面的行) */
+.notes-import-hint {
+  position: absolute;
+  z-index: 5;
+  top: 6px;
+  left: 6px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px dashed var(--accent2);
+  border-radius: 6px;
+  background: var(--surface4);
+  color: var(--accent2);
+  font-size: 11.5px;
+  pointer-events: none;
+}
+.notes-import-hint span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 文件行:沿用 .notes-row 的间距与 hover,只补图标与键盘焦点 */
+.notes-file-row .notes-file-icon {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--dim);
+}
+.notes-file-row .notes-row-title {
+  font-weight: 450;
+}
+.notes-file-main:focus-visible {
+  outline: 1px solid var(--accent2);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 /* 悬停只改背景色。这里以前还有一条 `border-color: var(--border2)` ——
    那是 .notes-row 还是「白底卡片 + 透明描边」时留下的,悬停时改边框色会让行实打实跳 1px。 */
@@ -1046,6 +1114,25 @@
   display: flex;
   overflow: hidden;
   background: var(--editor-bg);
+  /* 打开另一篇时的骨架层以它为定位基准 */
+  position: relative;
+}
+/* 打开另一篇期间盖住旧正文。延迟 120ms 才渐显:快的时候完全不闪,慢的时候明确可见。 */
+.notes-opening-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 11;
+  padding: 18px 16px;
+  background: var(--editor-bg);
+  animation: notes-opening-in 0.12s ease 0.12s both;
+}
+@keyframes notes-opening-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .notes-pane {
   display: flex;
@@ -1066,8 +1153,195 @@
 }
 /* 编辑器那一栏:整块用 --editor-bg(明显区别于工具条与预览),形成明确的「输入区」 */
 .notes-editor-pane {
+  position: relative;
   background: var(--editor-bg);
   box-shadow: inset 0 1px 0 var(--border);
+}
+
+/* ── 编辑器内查找 / 替换 ──
+   编辑区右上角的浮层:不占正文高度,也不挤动底部工具条。材质与块菜单/插入菜单
+   同一档(--menu-bg + --border2),一眼能认出是「编辑器上的临时面板」。
+   只动 opacity / transform 做入场,不做高度动画 —— 高度变化会带着整篇正文抖。 */
+.notes-find {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: min(384px, calc(100% - 24px));
+  padding: 8px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--menu-bg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  animation: notes-find-in 120ms ease-out;
+}
+@keyframes notes-find-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .notes-find {
+    animation: none;
+  }
+}
+.notes-find-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.notes-find-glyph {
+  width: 16px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 11px;
+}
+.notes-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: var(--surface3);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.notes-find-input:focus {
+  border-color: var(--accent2);
+}
+.notes-find-input.invalid {
+  border-color: var(--red);
+}
+.notes-find-input::placeholder {
+  color: var(--dim);
+}
+.notes-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 11px;
+}
+.notes-find-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-find-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.notes-find-toggle {
+  width: 18px;
+}
+.notes-find-toggle.open {
+  color: var(--accent2);
+}
+.notes-find-count {
+  min-width: 46px;
+  text-align: right;
+  color: var(--dim);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 替换行缩进到查询词下方,与查询输入左边缘对齐(chevron 18 + 间距 4) */
+.notes-find-replace {
+  padding-left: 22px;
+}
+.notes-find-text-btn {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--surface4);
+  color: var(--text);
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.notes-find-text-btn:hover {
+  background: var(--hover);
+  color: var(--accent2);
+}
+.notes-find-text-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.notes-find-options {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px;
+}
+.notes-find-opt {
+  flex: none;
+  height: 20px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 10.5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.notes-find-opt:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-find-opt[aria-pressed='true'] {
+  border-color: var(--accent2);
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+.notes-find-case,
+.notes-find-regex {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.notes-find-opt.invalid {
+  border-color: var(--red);
+  color: var(--red);
+}
+.notes-find-hint {
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 10.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.notes-find-hint.danger {
+  color: var(--red);
+}
+/* 匹配底色:普通匹配铺淡黄,活动项再加一圈实色描边。
+   只用颜色,不碰行高 / 字号 / 内外边距 —— 源码模式的等高约束。 */
+.note-editor-host .cm-find-match {
+  background: var(--wash-yellow);
+  border-radius: 2px;
+}
+.note-editor-host .cm-find-match-active {
+  outline: 1px solid var(--yellow);
+  outline-offset: -1px;
+  background: var(--wash-yellow);
 }
 
 .note-editor-host {

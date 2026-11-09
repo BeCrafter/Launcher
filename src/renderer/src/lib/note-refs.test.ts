@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Agent, CronJob, PortService } from '@shared/models'
 import type { NoteRef } from '@shared/notes'
-import { resolveRef, type RefContext, type RefResolution } from './note-refs'
+import { refKey, resolveRef, uniqueByRefKey, type RefContext, type RefResolution } from './note-refs'
 
 /** 断言「可解析」并把联合收窄 —— 直接取 res.target 在 stale 分支上过不了类型检查 */
 function resolvable(res: RefResolution): Extract<RefResolution, { state: 'ok' | 'changed' }> {
@@ -181,5 +181,50 @@ describe('未知类型', () => {
     const ref: NoteRef = { type: 'future-thing', key: 'k', label: 'L' }
     const res = resolveRef(ref, ctx())
     expect(res).toEqual({ state: 'stale', reason: 'unknown-type' })
+  })
+})
+
+describe('关联的 React key', () => {
+  it('refKey 就是 type:key', () => {
+    expect(refKey({ type: 'service', key: '33837:cursor helper (plugin)' })).toBe(
+      'service:33837:cursor helper (plugin)'
+    )
+  })
+
+  it('同一服务的 IPv4 / IPv6 两条记录按身份键合并,保留第一条', () => {
+    // lsof 对「同一进程同时监听 v4/v6」会给两行;服务身份键不含 addr,两条会撞 key。
+    // React 直接报「Encountered two children with the same key」,chip / 选择器行会重复。
+    const v4: NoteRef = {
+      type: 'service',
+      key: '33837:cursor helper (plugin)',
+      label: 'Cursor Helper',
+      detail: '127.0.0.1:33837'
+    }
+    const v6: NoteRef = {
+      type: 'service',
+      key: '33837:cursor helper (plugin)',
+      label: 'Cursor Helper',
+      detail: '[::1]:33837'
+    }
+    const other: NoteRef = {
+      type: 'service',
+      key: '35065:cursor helper (plugin)',
+      label: 'Cursor Helper',
+      detail: '127.0.0.1:35065'
+    }
+    expect(uniqueByRefKey([v4, v6, other], refKey)).toEqual([v4, other])
+  })
+
+  it('类型不同但 key 相同的关联不会被误合并', () => {
+    const a: NoteRef = { type: 'agent', key: 'x', label: 'A' }
+    const b: NoteRef = { type: 'cron', key: 'x', label: 'C' }
+    expect(uniqueByRefKey([a, b], refKey)).toEqual([a, b])
+  })
+
+  it('顺序保持不变', () => {
+    const a: NoteRef = { type: 'agent', key: 'a', label: 'A' }
+    const b: NoteRef = { type: 'agent', key: 'b', label: 'B' }
+    const c: NoteRef = { type: 'agent', key: 'a', label: 'A2' }
+    expect(uniqueByRefKey([b, a, c], refKey)).toEqual([b, a])
   })
 })

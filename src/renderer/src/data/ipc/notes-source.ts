@@ -16,6 +16,9 @@ export function createIpcNotesRepo(): NotesRepository {
     createFolder: (input) => window.launcher.notes.createFolder(input),
     removeFolder: (id) => window.launcher.notes.removeFolder(id),
     renameFolder: (input) => window.launcher.notes.renameFolder(input),
-    move: (input) => window.launcher.notes.move(input)
+    move: (input) => window.launcher.notes.move(input),
+    import: (input) => window.launcher.notes.import(input),
+    removeFile: (path) => window.launcher.notes.removeFile(path),
+    openFile: (path) => window.launcher.notes.openFile(path)
   }
 }

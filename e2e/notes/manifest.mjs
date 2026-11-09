@@ -7,6 +7,8 @@ import drag from './cases/drag.mjs'
 import picker from './cases/picker.mjs'
 import keyboard from './cases/keyboard.mjs'
 import meta from './cases/meta.mjs'
+import fileImport from './cases/import.mjs'
+import find from './cases/find.mjs'
 
 /**
  * 编辑器端到端用例的唯一清单。
@@ -23,7 +25,9 @@ export const CASES = [
   ...drag,
   ...picker,
   ...keyboard,
-  ...meta
+  ...meta,
+  ...fileImport,
+  ...find
 ]
 
 export const AREA_TITLES = {
@@ -35,5 +39,7 @@ export const AREA_TITLES = {
   drag: '自由拖拽、自动滚动、右侧大纲',
   picker: '「移动到…」选择器',
   keyboard: 'Alt / Shift+Alt 键盘移动',
-  meta: '笔记列表、标签、关联'
+  meta: '笔记列表、标签、关联',
+  import: '拖入本地文件 / 文件夹批量导入、文件行',
+  find: '编辑器内查找替换、匹配导航、选项与撤销'
 }

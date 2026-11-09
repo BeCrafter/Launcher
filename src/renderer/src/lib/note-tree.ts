@@ -3,7 +3,7 @@
 // 目录必须**单独**从 payload 拿:`folders` 是空目录唯一的痕迹 —— 只按笔记 id 反推的话,
 // 用户刚建的空目录会在下一次刷新时凭空消失。
 
-import type { NoteMeta } from '@shared/notes'
+import type { NoteFileMeta, NoteMeta } from '@shared/notes'
 import { parentOf } from '@shared/notes'
 
 export interface NoteFolderNode {
@@ -13,6 +13,8 @@ export interface NoteFolderNode {
   path: string
   folders: NoteFolderNode[]
   notes: NoteMeta[]
+  /** 非 Markdown 文件,按名称排序;根层 assets/ 不会出现在 payload 里 */
+  files: NoteFileMeta[]
 }
 
 export type NotesSortKey = 'updated' | 'created' | 'title'
@@ -42,15 +44,25 @@ export function sortNotes(list: NoteMeta[], sort: NotesSortKey): NoteMeta[] {
   })
 }
 
-/** 建树:先按 folders 把目录骨架铺出来(含中间层),再把笔记挂到各自的父目录 */
-export function buildNoteTree(notes: NoteMeta[], folders: string[]): NoteFolderNode {
-  const root: NoteFolderNode = { name: '', path: '', folders: [], notes: [] }
+/** 建树:先按 folders 把目录骨架铺出来(含中间层),再把笔记/文件挂到各自的父目录 */
+export function buildNoteTree(
+  notes: NoteMeta[],
+  folders: string[],
+  files: NoteFileMeta[] = []
+): NoteFolderNode {
+  const root: NoteFolderNode = { name: '', path: '', folders: [], notes: [], files: [] }
   const byPath = new Map<string, NoteFolderNode>([['', root]])
 
   const ensure = (path: string): NoteFolderNode => {
     const hit = byPath.get(path)
     if (hit) return hit
-    const node: NoteFolderNode = { name: path.slice(path.lastIndexOf('/') + 1), path, folders: [], notes: [] }
+    const node: NoteFolderNode = {
+      name: path.slice(path.lastIndexOf('/') + 1),
+      path,
+      folders: [],
+      notes: [],
+      files: []
+    }
     byPath.set(path, node)
     ensure(parentOf(path)).folders.push(node)
     return node
@@ -58,9 +70,11 @@ export function buildNoteTree(notes: NoteMeta[], folders: string[]): NoteFolderN
 
   for (const f of folders) ensure(f)
   for (const n of notes) ensure(parentOf(n.id)).notes.push(n)
+  for (const f of files) ensure(parentOf(f.path)).files.push(f)
 
   const order = (node: NoteFolderNode): void => {
     node.folders.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    node.files.sort((a, b) => a.name.localeCompare(b.name, 'zh') || a.path.localeCompare(b.path))
     for (const f of node.folders) order(f)
   }
   order(root)
@@ -76,11 +90,6 @@ export function ancestorsOf(id: string): string[] {
     cur = parentOf(cur)
   }
   return out
-}
-
-/** 某个目录(含其所有子目录)下的笔记数 */
-export function countNotesIn(node: NoteFolderNode): number {
-  return node.notes.length + node.folders.reduce((n, f) => n + countNotesIn(f), 0)
 }
 
 /** 按路径找节点;找不到返回 null */

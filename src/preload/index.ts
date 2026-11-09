@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { APP_NAME } from '../shared/constants'
 import { IPC, IPC_EVENTS, type IpcEventChannel } from '../shared/ipc'
 import { normalizeSettings } from '../shared/settings'
@@ -34,6 +34,8 @@ const api: LauncherApi = {
     chrome: process.versions.chrome
   },
   initialSettings: readInitialSettings(),
+  // Electron 44 移除了 File.path;拖入的文件只能在 preload 里取路径
+  filePath: (file) => webUtils.getPathForFile(file as Parameters<typeof webUtils.getPathForFile>[0]),
   getSettings: () => ipcRenderer.invoke(IPC.settingsGet),
   setSettings: (patch) => ipcRenderer.invoke(IPC.settingsSet, patch),
   resetSettings: () => ipcRenderer.invoke(IPC.settingsReset),
@@ -133,7 +135,10 @@ const api: LauncherApi = {
     createFolder: (input) => ipcRenderer.invoke(IPC.notesCreateFolder, input),
     removeFolder: (id) => ipcRenderer.invoke(IPC.notesRemoveFolder, id),
     renameFolder: (input) => ipcRenderer.invoke(IPC.notesRenameFolder, input),
-    move: (input) => ipcRenderer.invoke(IPC.notesMove, input)
+    move: (input) => ipcRenderer.invoke(IPC.notesMove, input),
+    import: (input) => ipcRenderer.invoke(IPC.notesImport, input),
+    removeFile: (path) => ipcRenderer.invoke(IPC.notesRemoveFile, path),
+    openFile: (path) => ipcRenderer.invoke(IPC.notesOpenFile, path)
   }
 }
 

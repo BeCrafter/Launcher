@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { NoteMeta } from '@shared/notes'
-import { ancestorsOf, buildNoteTree, countNotesIn, findFolder, sortNotes } from './note-tree'
+import type { NoteFileMeta, NoteMeta } from '@shared/notes'
+import { ancestorsOf, buildNoteTree, findFolder, sortNotes } from './note-tree'
 
 function note(id: string, patch: Partial<NoteMeta> = {}): NoteMeta {
   return {
@@ -18,6 +18,18 @@ function note(id: string, patch: Partial<NoteMeta> = {}): NoteMeta {
     refsUnparsed: false,
     opaque: false,
     ...patch
+  }
+}
+
+function file(path: string): NoteFileMeta {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const dot = name.lastIndexOf('.')
+  return {
+    path,
+    name,
+    ext: dot < 0 ? '' : name.slice(dot + 1).toLowerCase(),
+    size: 1,
+    mtimeMs: 0
   }
 }
 
@@ -89,10 +101,24 @@ describe('buildNoteTree', () => {
     expect(tree.folders.map((f) => f.name)).toHaveLength(3)
   })
 
-  it('countNotesIn 统计子树', () => {
-    const tree = buildNoteTree([note('a'), note('工作/b'), note('工作/子/c')], [])
-    expect(countNotesIn(tree)).toBe(3)
-    expect(countNotesIn(findFolder(tree, '工作')!)).toBe(2)
+  it('文件挂到父目录,并按名称排序;只有文件也会补出中间目录', () => {
+    const files: NoteFileMeta[] = [
+      file('工作/z.pdf'),
+      file('工作/子/a.png'),
+      file('工作/m.txt'),
+      file('root.txt')
+    ]
+    const tree = buildNoteTree([], [], files)
+    expect(tree.files.map((f) => f.name)).toEqual(['root.txt'])
+    const work = findFolder(tree, '工作')!
+    expect(work.files.map((f) => f.name)).toEqual(['m.txt', 'z.pdf'])
+    expect(findFolder(tree, '工作/子')!.files.map((f) => f.name)).toEqual(['a.png'])
+  })
+
+  it('files 参数缺省时向后兼容', () => {
+    const tree = buildNoteTree([note('a')], [])
+    expect(tree.files).toEqual([])
+    expect(findFolder(tree, '')?.files).toEqual([])
   })
 })
 

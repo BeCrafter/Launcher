@@ -17,11 +17,13 @@ const EDITOR_LINE = (text) =>
 const MODES = ['split', 'edit', 'preview']
 
 export class NoteE2EContext {
-  constructor({ cdp, profileDir, noteFile, noteTitle }) {
+  constructor({ cdp, profileDir, noteFile, noteTitle, logs }) {
     this.cdp = cdp
     this.profileDir = profileDir
     this.noteFile = noteFile
     this.noteTitle = noteTitle
+    /** 应用进程日志(main 的 console.log 会进这里);用于断言打开文件的 IPC 落点 */
+    this.logs = logs ?? []
   }
 
   // ── 启动 / 导航 ──
@@ -393,7 +395,19 @@ export class NoteE2EContext {
       )
       await sleep(40)
     }
-    await sleep(180)
+    // 落点标签/线由鼠标移动后的 React 提交渲染 —— 机器忙时可能晚于固定等待。
+    // 轮询到任一指示可见再取快照(上限 1s):断言不放松,只是不再赌某个固定毫秒数足够。
+    // 不抛错:有个别拖拽场景本来就不该出现落点,调用方会自行断言缺席。
+    const indicatorDeadline = Date.now() + 1000
+    while (Date.now() < indicatorDeadline) {
+      const visible = await this.cdp.eval(`(() => {
+        const line = document.querySelector('.cm-block-drop-line')
+        const label = document.querySelector('.cm-block-drop-label')
+        return (line !== null && line.hidden === false) || (label !== null && label.hidden === false)
+      })()`)
+      if (visible === true) break
+      await sleep(30)
+    }
     const snapshot = await this.dragSnapshot()
     if (release) {
       await this.cdp.mouse('mouseReleased', x, y, { buttons: 0 })
@@ -507,6 +521,112 @@ export class NoteE2EContext {
     return snapshot
   }
 
+  // ── OS 文件拖入 ──
+
+  /**
+   * 让 CDP 把真实本地文件填进一个隐藏 input。页面里的 File 因此带本地路径,
+   * preload 的 webUtils.getPathForFile 才拿得到 —— 纯 JS new File() 没有路径。
+   * 随后把这些 File 原样搬进一个 DataTransfer,供 dragenter / dragover / drop 反复使用。
+   */
+  async prepareFileDrag(paths) {
+    await this.cdp.send('DOM.enable')
+    const objectId = await this.cdp.evalHandle(`(() => {
+      let input = document.getElementById('launcher-e2e-files')
+      if (input === null) {
+        input = document.createElement('input')
+        input.type = 'file'
+        input.multiple = true
+        input.id = 'launcher-e2e-files'
+        input.style.position = 'fixed'
+        input.style.left = '-1000px'
+        input.style.opacity = '0'
+        document.body.appendChild(input)
+      }
+      return input
+    })()`)
+    try {
+      await this.cdp.send('DOM.setFileInputFiles', { files: paths, objectId })
+    } finally {
+      await this.cdp.send('Runtime.releaseObject', { objectId }).catch(() => {})
+    }
+    const count = await this.cdp.eval(`(() => {
+      const input = document.getElementById('launcher-e2e-files')
+      const dt = new DataTransfer()
+      for (const file of input.files) dt.items.add(file)
+      window.__e2eFileTransfer = dt
+      return dt.files.length
+    })()`)
+    if (count !== paths.length) {
+      throw new Error(`准备文件拖拽失败:期望 ${paths.length} 个,实际 ${count} 个`)
+    }
+  }
+
+  /** 用同一份 DataTransfer 在目标元素上派发一次拖拽事件。 */
+  async dispatchFileDrag(selector, type) {
+    const found = await this.cdp.eval(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)})
+      if (el === null) return false
+      const dt = window.__e2eFileTransfer
+      if (!(dt instanceof DataTransfer)) return false
+      el.dispatchEvent(new DragEvent(${JSON.stringify(type)}, {
+        bubbles: true, cancelable: true, dataTransfer: dt
+      }))
+      return true
+    })()`)
+    if (found !== true) throw new Error(`派发 ${type} 失败:找不到 ${selector}`)
+    await sleep(30)
+  }
+
+  /**
+   * 模拟从系统拖入本地文件/目录。hold=true 时只停在 dragover,
+   * 用来检查目标高亮与提示;之后用 finishFileDrop() 松手。
+   */
+  async dropFiles(selector, paths, { hold = false } = {}) {
+    await this.prepareFileDrag(paths)
+    await this.dispatchFileDrag(selector, 'dragenter')
+    await this.dispatchFileDrag(selector, 'dragover')
+    if (!hold) await this.finishFileDrop(selector)
+  }
+
+  async finishFileDrop(selector) {
+    await this.dispatchFileDrag(selector, 'drop')
+    await sleep(80)
+  }
+
+  // ── 元素 / 双击 ──
+
+  async elementRect(selector) {
+    const rect = await this.cdp.json(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)})
+      if (el === null) return null
+      el.scrollIntoView({ block: 'center' })
+      const r = el.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    })()`)
+    if (rect === null) throw new Error(`找不到元素:${selector}`)
+    return rect
+  }
+
+  async doubleClick(selector) {
+    const rect = await this.elementRect(selector)
+    const x = rect.x + rect.width / 2
+    const y = rect.y + rect.height / 2
+    await this.cdp.mouse('mousePressed', x, y, { buttons: 1, clickCount: 1 })
+    await this.cdp.mouse('mouseReleased', x, y, { buttons: 0, clickCount: 1 })
+    await this.cdp.mouse('mousePressed', x, y, { buttons: 1, clickCount: 2 })
+    await this.cdp.mouse('mouseReleased', x, y, { buttons: 0, clickCount: 2 })
+    await sleep(150)
+  }
+
+  /** 轮询应用日志里的某一行（main 的 console.log 会进 app.logs）。 */
+  async waitForLog(needle, message, { timeout = 8000 } = {}) {
+    await this.waitForNode(
+      async () => this.logs.some((line) => line.includes(needle)),
+      message,
+      { timeout }
+    )
+  }
+
   // ── 键盘 ──
 
   async press(name, modifiers = 0) {
@@ -570,6 +690,7 @@ export class NoteE2EContext {
     await this.cdp.waitFor(
       `document.querySelector('.notes-block-menu') === null &&
        document.querySelector('.notes-move-picker') === null &&
+       document.querySelector('.notes-find') === null &&
        document.querySelector('.cm-block-outline') === null`,
       { timeout: 3000, message: '覆盖层已关闭' }
     )
