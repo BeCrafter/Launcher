@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { eq, includes, ok } from '../lib/assert.mjs'
 
 const HEADINGS = [
@@ -53,6 +55,59 @@ const TABLE = [
   '  A --> B',
   '```'
 ].join('\n')
+
+/** 嵌入文档滚动条用例:本地网页与多页 PDF 都由用例自己写进隔离的笔记 assets/ */
+const EMBED_DOCS = [
+  '# 嵌入滚动条',
+  '',
+  '网页:',
+  '',
+  '```embed',
+  'assets/e2e-scroll-page.html',
+  'height: 200',
+  '```',
+  '',
+  'PDF:',
+  '',
+  '![](assets/e2e-scroll.pdf)'
+].join('\n')
+
+const TALL_PAGE = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+body{margin:0;padding:20px;font:14px/1.7 -apple-system,sans-serif;color:#2a2f45;background:#f6f7fb}
+p{margin:0 0 10px}
+</style></head><body>${Array.from(
+  { length: 30 },
+  (_, i) => `<p>第 ${i + 1} 段:这是一段足够长的正文,用来把这个页面撑到需要滚动。</p>`
+).join('')}</body></html>`
+
+/** 最小的多页 PDF(不引依赖):PDF 阅读器必须真的能滚,滚动条才会出现 */
+function multiPagePdf(pages) {
+  const objs = []
+  const pageIds = []
+  for (let i = 0; i < pages; i += 1) pageIds.push(3 + i * 2)
+  objs[1] = '<< /Type /Catalog /Pages 2 0 R >>'
+  objs[2] = `<< /Type /Pages /Kids [${pageIds.map((id) => `${id} 0 R`).join(' ')}] /Count ${pages} >>`
+  for (let i = 0; i < pages; i += 1) {
+    objs[3 + i * 2] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents ${
+      4 + i * 2
+    } 0 R /Resources << /Font << /F1 ${3 + pages * 2} 0 R >> >> >>`
+    const text = `BT /F1 36 Tf 72 750 Td (Page ${i + 1} / ${pages}) Tj ET`
+    objs[4 + i * 2] = `<< /Length ${text.length} >>\nstream\n${text}\nendstream`
+  }
+  objs[3 + pages * 2] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  let out = '%PDF-1.4\n'
+  const offsets = [0]
+  for (let i = 1; i < objs.length; i += 1) {
+    offsets[i] = out.length
+    out += `${i} 0 obj\n${objs[i]}\nendobj\n`
+  }
+  const xref = out.length
+  out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`
+  for (let i = 1; i < objs.length; i += 1) out += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`
+  out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return out
+}
 
 export default [
   {
@@ -274,6 +329,141 @@ export default [
       ok(
         /!\s*\[图\\?\|\d+\]\(assets\/sample\.png\)/.test(body ?? ''),
         `拖动后图片宽度写回源码这一行,实际正文:\n${body}`
+      )
+    }
+  },
+
+  {
+    id: 'markdown/embedded-doc-scrollbar',
+    area: 'markdown',
+    title: '嵌入的网页 / PDF:滚动条是应用的细条(10px 槽),平时透明、滚动时才显形',
+    tags: ['media', 'embed', 'pdf'],
+    async run(ctx) {
+      // 夹具里的 assets 必须先在,否则 iframe 会先拿到 404;写完再重置一次正文
+      const assetsDir = join(ctx.profileDir, 'notes', 'assets')
+      mkdirSync(assetsDir, { recursive: true })
+      writeFileSync(join(assetsDir, 'e2e-scroll-page.html'), TALL_PAGE)
+      writeFileSync(join(assetsDir, 'e2e-scroll.pdf'), multiPagePdf(8))
+      await ctx.reset(EMBED_DOCS)
+
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+      const waitFrame = async (sessionId, expression, message, timeout = 8000) => {
+        const started = Date.now()
+        while (Date.now() - started < timeout) {
+          if ((await ctx.cdp.evalIn(sessionId, expression)) === true) return
+          await sleep(60)
+        }
+        throw new Error(message)
+      }
+      const thumb = (sessionId) =>
+        ctx.cdp.evalIn(
+          sessionId,
+          `document.documentElement.style.getPropertyValue('--launcher-frame-thumb')`
+        )
+
+      // ── 本地网页嵌入 ──
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-preview-body iframe.md-embed-frame') !== null`,
+        { message: '网页 iframe 渲染' }
+      )
+      // 网页嵌在正文下方,先把它滚进视口,滚轮的坐标才落在 iframe 上
+      await ctx.cdp.eval(
+        `document.querySelector('.notes-preview-body iframe.md-embed-frame')?.scrollIntoView({ block: 'center' })`
+      )
+      const pageFrames = await ctx.cdp.attachFrame('e2e-scroll-page.html')
+      const page = pageFrames[0]
+      await waitFrame(
+        page.sessionId,
+        `document.getElementById('launcher-frame-scrollbar') !== null`,
+        '网页文档应被装上细滚动条样式'
+      )
+      eq(
+        await ctx.cdp.evalIn(page.sessionId, `window.innerWidth - document.documentElement.clientWidth`),
+        10,
+        '网页滚动条槽宽应为 10px(注入前是系统风的 15px)'
+      )
+      eq(await thumb(page.sessionId), '', '网页还没滚动时滑块应完全透明')
+
+      const pageBox = await ctx.cdp.json(
+        `(() => { const f = document.querySelector('.notes-preview-body iframe.md-embed-frame');
+          const b = f.getBoundingClientRect();
+          return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) } })()`
+      )
+      await ctx.cdp.mouse('mouseMoved', pageBox.x, pageBox.y)
+      await ctx.cdp.wheel(pageBox.x, pageBox.y, 160)
+      await waitFrame(
+        page.sessionId,
+        `document.scrollingElement.scrollTop > 0`,
+        '滚轮应能滚动网页文档'
+      )
+      await waitFrame(
+        page.sessionId,
+        `document.documentElement.style.getPropertyValue('--launcher-frame-thumb') !== ''`,
+        '网页滚动时滑块应显形'
+      )
+      await waitFrame(
+        page.sessionId,
+        `document.documentElement.style.getPropertyValue('--launcher-frame-thumb') === ''`,
+        '网页停下 900ms 后滑块应重新隐去',
+        4000
+      )
+
+      // ── PDF(Chromium 阅读器包装页)──
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-preview-body iframe.md-media-pdf') !== null`,
+        { message: 'PDF iframe 渲染' }
+      )
+      const pdfFrames = await ctx.cdp.attachFrame('e2e-scroll.pdf')
+      let pdf = null
+      for (const frame of pdfFrames) {
+        if (
+          (await ctx.cdp.evalIn(
+            frame.sessionId,
+            `document.scrollingElement !== null &&
+             document.scrollingElement.scrollHeight > document.scrollingElement.clientHeight + 2`
+          )) === true
+        ) {
+          pdf = frame
+          break
+        }
+      }
+      ok(
+        pdf !== null,
+        `PDF 里应有可滚动的文档帧,实际:${pdfFrames.map((frame) => frame.url).join(', ')}`
+      )
+      await waitFrame(
+        pdf.sessionId,
+        `document.getElementById('launcher-frame-scrollbar') !== null`,
+        'PDF 文档应被装上细滚动条样式'
+      )
+      eq(
+        await ctx.cdp.evalIn(pdf.sessionId, `window.innerWidth - document.documentElement.clientWidth`),
+        10,
+        'PDF 滚动条槽宽应为 10px(注入前是系统风的 15px)'
+      )
+      eq(await thumb(pdf.sessionId), '', 'PDF 还没滚动时滑块应完全透明')
+
+      await ctx.cdp.eval(
+        `document.querySelector('.notes-preview-body iframe.md-media-pdf')?.scrollIntoView({ block: 'center' })`
+      )
+      const pdfBox = await ctx.cdp.json(
+        `(() => { const f = document.querySelector('.notes-preview-body iframe.md-media-pdf');
+          const b = f.getBoundingClientRect();
+          return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) } })()`
+      )
+      await ctx.cdp.mouse('mouseMoved', pdfBox.x, pdfBox.y)
+      await ctx.cdp.wheel(pdfBox.x, pdfBox.y, 160)
+      await waitFrame(pdf.sessionId, `document.scrollingElement.scrollTop > 0`, '滚轮应能滚动 PDF')
+      await waitFrame(
+        pdf.sessionId,
+        `document.documentElement.style.getPropertyValue('--launcher-frame-thumb') !== ''`,
+        'PDF 滚动时滑块应显形'
+      )
+      await waitFrame(
+        pdf.sessionId,
+        `document.documentElement.style.getPropertyValue('--launcher-frame-thumb') === ''`,
+        'PDF 停下 900ms 后滑块应重新隐去',
+        4000
       )
     }
   },

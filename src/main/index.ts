@@ -22,6 +22,7 @@ import { appBundleFromExecutable } from './services/update-target'
 import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
 import { handleNotesProtocol, registerNotesScheme } from './services/notes-protocol'
+import { installFrameScrollbar } from './services/frame-scrollbar'
 import { otherLang, sampleNoteBody, sampleNoteTitle } from './domains/note-sample'
 import { createAiStack } from './ai'
 import type { ApplyCtx } from './settings/types'
@@ -73,6 +74,20 @@ if (e2eUserData) {
 // 附件协议必须在 app ready **之前**登记特权(scheme 的 privileges 只能在那时设)。
 // 放在模块求值期是刻意的:它必须在 whenReady 之前跑完。
 registerNotesScheme()
+
+/*
+ * 预览里嵌进来的 PDF / 本地网页是跨源帧,父页面的 CSS 进不去;Chromium 的 PDF 阅读器
+ * 还会在插件包装页上画一条系统风的白底粗滚动条。帧载入完成后由主进程补装一套细滚动条
+ * (与 .notes-preview 同款,滚动时才显形),细节见 services/frame-scrollbar.ts。
+ */
+app.on('web-contents-created', (_event, wc) => {
+  wc.on('did-frame-finish-load', (_e, _isMain, processId, routingId) => {
+    const frame = wc.mainFrame.framesInSubtree.find(
+      (f) => f.processId === processId && f.routingId === routingId
+    )
+    if (frame !== undefined) void installFrameScrollbar(frame)
+  })
+})
 
 // 单实例锁：重复启动时唤起既有窗口
 const gotLock = app.requestSingleInstanceLock()

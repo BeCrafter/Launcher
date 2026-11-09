@@ -35,12 +35,15 @@ export class CDP {
     await this.send('Page.enable')
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, sessionId = undefined) {
     if (this.closed) return Promise.reject(new Error('CDP 连接已关闭'))
     const id = ++this.id
+    const message = { id, method, params }
+    // 挂到 iframe / OOPIF 之后,消息要带 sessionId 才会路由到那个目标
+    if (sessionId !== undefined) message.sessionId = sessionId
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject })
-      this.ws.send(JSON.stringify({ id, method, params }))
+      this.ws.send(JSON.stringify(message))
     })
   }
 
@@ -58,6 +61,53 @@ export class CDP {
       throw new Error(`页面求值失败: ${description}`)
     }
     return result.result?.value
+  }
+
+  /** 在某个已挂载的子目标里求值。 */
+  async evalIn(sessionId, expression) {
+    const result = await this.send(
+      'Runtime.evaluate',
+      { expression, returnByValue: true, awaitPromise: true, userGesture: true },
+      sessionId
+    )
+    if (result.exceptionDetails) {
+      const description =
+        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? ''
+      throw new Error(`子目标求值失败: ${description}`)
+    }
+    return result.result?.value
+  }
+
+  /**
+   * 等待并挂载 URL 含 `urlPart` 的子目标(iframe / OOPIF),返回
+   * `[{ sessionId, targetId, url }]`。同一个 URL 可能对应多个目标(PDF 阅读器的包装页),
+   * 调用方用 evalIn 各问一句、挑自己要的那个。
+   */
+  async attachFrame(urlPart, { timeout = 10_000 } = {}) {
+    const started = Date.now()
+    let lastError = null
+    while (Date.now() - started < timeout) {
+      try {
+        const { targetInfos } = await this.send('Target.getTargets')
+        const targets = targetInfos.filter((t) => t.url.includes(urlPart))
+        if (targets.length > 0) {
+          const handles = []
+          for (const target of targets) {
+            const { sessionId } = await this.send('Target.attachToTarget', {
+              targetId: target.targetId,
+              flatten: true
+            })
+            handles.push({ sessionId, targetId: target.targetId, url: target.url })
+          }
+          return handles
+        }
+      } catch (error) {
+        lastError = error
+      }
+      await sleep(100)
+    }
+    const suffix = lastError === null ? '' : `（最后一次错误：${lastError.message}）`
+    throw new Error(`等待子目标超时：${urlPart}${suffix}`)
   }
 
   /** 把一段可 JSON 化的数据从页面取回来。 */
