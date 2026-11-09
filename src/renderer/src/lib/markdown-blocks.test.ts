@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   blockContainsLine,
   blockOwnersByLine,
+  canDropBeside,
   inSameDropScope,
   isMarkdownBlockDraggable,
   isMarkdownBlockFoldable,
@@ -9,6 +10,7 @@ import {
   parseMarkdownBlocks,
   permutationOffsets,
   reorderMarkdownBlocks,
+  resolveDropAnchor,
   resolveDropSlot,
   type BlockSlot,
   type MarkdownBlock
@@ -356,7 +358,7 @@ describe('reorderMarkdownBlocks', () => {
     expect(reorderMarkdownBlocks(text, a.id, b.id, false)).toBe('# B\n\nB body\n\n# A\n\nA body\n')
   })
 
-  it('moves child headings only among the same parent', () => {
+  it('lets a top-level heading cross sections — source insertion keeps the level rules intact', () => {
     const text = '# A\n\n## One\n\n1\n\n## Two\n\n2\n\n# B\n'
     const blocks = parseMarkdownBlocks(text)
     const one = blocks.find((b) => b.kind === 'heading' && b.level === 2)!
@@ -365,7 +367,8 @@ describe('reorderMarkdownBlocks', () => {
     const b = blocks.find((block) => block.kind === 'heading' && block.level === 1 && block.id !== a.id)!
 
     expect(reorderMarkdownBlocks(text, two.id, one.id, true)).toBe('# A\n\n## Two\n\n2\n\n## One\n\n1\n\n# B\n')
-    expect(reorderMarkdownBlocks(text, one.id, b.id, true)).toBeNull()
+    // H2 插到 H1 之前仍然归 A 管 —— 标题层级本身决定归属,落点不该拒绝
+    expect(reorderMarkdownBlocks(text, one.id, b.id, true)).toBe('# A\n\n## Two\n\n2\n\n## One\n\n1\n\n# B\n')
   })
 
   it('does not move frontmatter or a block onto itself', () => {
@@ -415,6 +418,66 @@ const SLOTS: BlockSlot[] = [0, 1, 2, 3].map((i) => ({
   top: i * 20,
   height: 20
 }))
+
+describe('free drop boundaries (cross-section)', () => {
+  const linesOf = (text: string): string[] => text.split('\n')
+  const blockAt = (text: string, from: number): MarkdownBlock =>
+    parseMarkdownBlocks(text).find((block) => block.from === from)!
+
+  it('lets a table under one heading move into another section', () => {
+    const text = '# A\n\n前言。\n\n## B\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n## C\n\n结尾段。\n'
+    const blocks = parseMarkdownBlocks(text)
+    const table = blocks.find((block) => block.kind === 'table')!
+    const tail = blockAt(text, 12)
+    expect(canDropBeside(blocks, linesOf(text), table, tail)).toBe(true)
+    expect(reorderMarkdownBlocks(text, table.id, tail.id, true)).toBe(
+      '# A\n\n前言。\n\n## B\n\n## C\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n结尾段。\n'
+    )
+  })
+
+  it('lets a lone block under a heading be dragged out', () => {
+    // 以前它的兄弟只有自己 → 一个落点都没有,表格 / 图表因此完全拖不动
+    const text = '# A\n\n## B\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\n## C\n\n尾巴。\n'
+    const blocks = parseMarkdownBlocks(text)
+    const diagram = blockAt(text, 4)
+    const a = blockAt(text, 0)
+    const tail = blockAt(text, 11)
+    // 文档最前(标题之外)与另一小节的正文之前都可达
+    expect(reorderMarkdownBlocks(text, diagram.id, a.id, true)).toBe(
+      '```mermaid\nflowchart TD\n  A --> B\n```\n\n# A\n\n## B\n\n## C\n\n尾巴。\n'
+    )
+    expect(reorderMarkdownBlocks(text, diagram.id, tail.id, true)).toBe(
+      '# A\n\n## B\n\n## C\n\n```mermaid\nflowchart TD\n  A --> B\n```\n\n尾巴。\n'
+    )
+  })
+
+  it('keeps nested list items scoped to their own level', () => {
+    const text = '段落\n\n- 父\n  - 子\n'
+    const blocks = parseMarkdownBlocks(text)
+    const child = blocks.find((block) => linesOf(text)[block.from] === '  - 子')!
+    const para = blocks.find((block) => linesOf(text)[block.from] === '段落')!
+    expect(canDropBeside(blocks, linesOf(text), child, para)).toBe(false)
+  })
+})
+
+describe('resolveDropAnchor', () => {
+  const ANCHORS: BlockSlot[] = [
+    { id: 1, from: 0, to: 1, top: 0, height: 100 },
+    { id: 2, from: 2, to: 3, top: 100, height: 100 },
+    { id: 3, from: 4, to: 5, top: 200, height: 100 }
+  ]
+
+  it('每个锚点的上下半分别对应「在它前面」与「在下一个前面」', () => {
+    expect(resolveDropAnchor(ANCHORS, 10)).toEqual({ targetId: 1, before: true })
+    expect(resolveDropAnchor(ANCHORS, 60)).toEqual({ targetId: 2, before: true })
+    expect(resolveDropAnchor(ANCHORS, 160)).toEqual({ targetId: 3, before: true })
+    expect(resolveDropAnchor(ANCHORS, 260)).toEqual({ targetId: 3, before: false })
+  })
+
+  it('没有落点 → null', () => {
+    expect(resolveDropAnchor([], 10)).toBeNull()
+  })
+})
 
 describe('resolveDropSlot', () => {
   it('only advances past a block once the pointer is over its midpoint', () => {

@@ -10,20 +10,41 @@ import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import { getCurrentLang, makeT } from '../i18n'
 import { hasTextSelection } from './note-marks'
 import { blockIcon, caretIcon, dragIcon, headingText, plusIcon } from './block-icons'
+import { blockTypeLabelKey } from './block-labels'
 import {
   blockContainsLine,
   blockOwnersByLine,
+  canDropBeside,
   inSameDropScope,
   isMarkdownBlockDraggable,
   isMarkdownBlockFoldable,
+  isTopLevelScoped,
+  narrowestBlockAtLine,
   permutationOffsets,
   parseMarkdownBlocks,
   reorderMarkdownBlocks,
-  resolveDropSlot,
+  resolveDropAnchor,
   type BlockSlot,
   type DropSlot,
   type MarkdownBlock
 } from './markdown-blocks'
+import {
+  crossSectionMoveSlot,
+  foldSpansOf,
+  locateBlock,
+  matchBlockAfterMove,
+  resolveFoldSpans,
+  resolveMoveTarget,
+  siblingMoveSlot,
+  type BlockLocator,
+  type BlockMoveStatus,
+  type BlockMoveTarget
+} from './block-move'
+import {
+  buildOutlineEntries,
+  destinationForSlot,
+  type OutlineEntry
+} from './block-outline'
 
 export interface MarkdownBlockEditorCallbacks {
   onBlockMenu?: (block: MarkdownBlock, anchor: DOMRect, line: number) => void
@@ -164,7 +185,6 @@ function buildHandle(view: EditorView, callbacks: MarkdownBlockEditorCallbacks):
 
   const pill = document.createElement('div')
   pill.className = 'cm-block-pill'
-  pill.draggable = true
   const badge = document.createElement('span')
   badge.className = 'cm-block-type'
   const grip = document.createElement('span')
@@ -176,19 +196,10 @@ function buildHandle(view: EditorView, callbacks: MarkdownBlockEditorCallbacks):
   caretSlot.className = 'cm-block-caret-slot'
   root.append(pill, caretSlot)
 
-  // 胶囊整体既是拖拽源又是菜单触发器（点=开菜单、拖=移块）——
-  // 与飞书一致。⚠ 抓手上**不能** preventDefault mousedown，否则原生 dragstart 根本不触发。
-  pill.addEventListener('mousedown', (event) => {
-    if (!(event.target as HTMLElement).closest('.cm-block-grip')) event.preventDefault()
-  })
-  pill.addEventListener('dragstart', (event) => handleBlockDragStart(view, event))
-  pill.addEventListener('dragend', (event) => handleBlockDragEnd(view, event))
-  pill.addEventListener('click', () => {
-    const line = hoverLines.get(view)
-    const block = line === undefined ? undefined : ownersOf(view.state.doc).get(line)
-    if (line === undefined || block === undefined) return
-    callbacks.onBlockMenu?.(block, pill.getBoundingClientRect(), line)
-  })
+  // 整颗胶囊都是拖拽入口（含类型徽标与抓手）—— 与飞书一致。
+  // 用指针事件而不是原生 DnD：胶囊为了「点击不抢焦点」必须 preventDefault(pointerdown)，
+  // 而那正好会掐掉原生 dragstart（以前只有 14px 的抓手能拖，按胶囊本体看起来就是拖不动）。
+  pill.addEventListener('pointerdown', (event) => beginPillPress(view, event, callbacks, pill))
   caretSlot.addEventListener('click', (event) => {
     const line = hoverLines.get(view)
     const block = line === undefined ? undefined : ownersOf(view.state.doc).get(line)
@@ -203,6 +214,8 @@ function buildHandle(view: EditorView, callbacks: MarkdownBlockEditorCallbacks):
 
 /** 读相位：算出「手柄该长在哪儿、长什么样」。不写 DOM。 */
 function planHandle(view: EditorView): HandlePlan | null {
+  // 拖拽中手柄让位给跟手卡片 —— 它停在源块处会被源行位移带得对不上
+  if (dragStates.has(view)) return null
   // 有选区时手柄让位给选区浮条 —— 两者同处左侧那 60px，会打架（与空行同理）
   if (hasTextSelection(view.state)) return null
   const doc = view.state.doc
@@ -417,6 +430,8 @@ function lineAtPoint(view: EditorView, x: number, y: number): number | null {
 }
 
 function updateToolHover(view: EditorView, event: MouseEvent, callbacks: MarkdownBlockEditorCallbacks): void {
+  // 拖拽中指针位置只用来决定落点，别再改悬停行（手柄已隐藏）
+  if (dragStates.has(view)) return
   const lineNumber = lineAtPoint(view, event.clientX, event.clientY)
   if (lineNumber === null) {
     // 指针在浮层自己身上（或编辑器之外）—— 保留当前行，别让它跳
@@ -431,6 +446,8 @@ function markdownBlockHover(callbacks: MarkdownBlockEditorCallbacks): Extension 
     EditorView.domEventObservers({
       mousemove: (event, view) => updateToolHover(view, event as MouseEvent, callbacks),
       mouseleave: (event, view) => {
+        // 拖拽中指针离开了正文也不算「悬停结束」—— 落点由拖拽状态自己管
+        if (dragStates.has(view)) return
         // 鼠标只是走到左边的手柄浮层上不算离开 —— 否则整组会闪掉
         if (staysInsideEditor(view, event)) return
         clearHover(view)
@@ -439,7 +456,15 @@ function markdownBlockHover(callbacks: MarkdownBlockEditorCallbacks): Extension 
     }),
     ViewPlugin.fromClass(
       class {
-        private readonly onResize = (): void => repaintHandle(this.view)
+        private readonly onResize = (): void => {
+          repaintHandle(this.view)
+          // 分屏拖动 / 窗口缩小时,大纲要跟着换位置;落点也要按新滚动区重判
+          const drag = dragStates.get(this.view)
+          if (drag !== undefined && drag.outline !== null) {
+            positionOutline(this.view, drag)
+            retargetDrag(this.view, drag)
+          }
+        }
         constructor(private readonly view: EditorView) {
           handleViews.set(view, buildHandle(view, callbacks))
           // 视口内的小幅滚动**不产生任何 ViewUpdate 标志** —— 不自己挂一个，
@@ -447,6 +472,20 @@ function markdownBlockHover(callbacks: MarkdownBlockEditorCallbacks): Extension 
           window.addEventListener('resize', this.onResize)
         }
         update(update: ViewUpdate): void {
+          const drag = dragStates.get(update.view)
+          if (drag !== undefined) {
+            // 外部整篇替换（切笔记 / 撤销）会让块 id 失效 —— 直接取消，别去动新文档
+            if (update.docChanged) {
+              cancelPillPress(update.view)
+            } else if (update.viewportChanged || update.geometryChanged) {
+              // 视口重建会抹掉 inline transform 与提示线位置。微任务跑在本次 update 之后，
+              // 那时读 `documentTop` 才是新值（update 相位里不能同步读布局）。
+              queueMicrotask(() => {
+                if (dragStates.get(update.view) !== drag) return
+                retargetDrag(update.view, drag)
+              })
+            }
+          }
           if (
             update.docChanged ||
             update.viewportChanged ||
@@ -460,6 +499,8 @@ function markdownBlockHover(callbacks: MarkdownBlockEditorCallbacks): Extension 
         }
         destroy(): void {
           window.removeEventListener('resize', this.onResize)
+          // 销毁路径只清节点与监听，不再去读布局/重画
+          cancelPillPress(this.view, false)
           handleViews.get(this.view)?.root.remove()
           handleViews.delete(this.view)
           hoverLines.delete(this.view)
@@ -469,7 +510,16 @@ function markdownBlockHover(callbacks: MarkdownBlockEditorCallbacks): Extension 
     ),
     // 滚动同样不设标志 —— 观察者比 handler 更合适（不会被别人 return true 拦掉）
     EditorView.domEventObservers({
-      scroll: (_event, view) => repaintHandle(view)
+      scroll: (_event, view) => {
+        repaintHandle(view)
+        // 自动滚动 / 用户滚动都会重建视口行 DOM。落点必须按新几何重算 ——
+        // 只重画提示线的话，「看到的线」和「松手落的位置」会分叉。
+        const state = dragStates.get(view)
+        if (state !== undefined) {
+          refreshDragGeometry(view, state)
+          retargetDrag(view, state)
+        }
+      }
     })
   ]
 }
@@ -495,33 +545,89 @@ export function markdownBlockFolding(): Extension {
   return [markdownBlockFoldService, codeFolding()]
 }
 
-// ── 拖拽：视觉置换 ──
+// ── 拖拽：指针 + 视觉置换 ──
 //
 // 拖拽期间**不改文档**，只给受影响的行挂 `transform: translateY()`。同批兄弟互换是一次
 // 置换，位移后各家仍严丝合缝铺满同一段纵向空间（不露缝），松手时才提交一次真正的重排。
-// 这样绕开了「每次 dragover 都 dispatch」带来的一串后果：autosave 落盘、撤销栈被切碎、
-// 折叠状态被整篇替换打乱、滚动锚点，以及拖拽源 DOM 被重建导致浏览器中断拖拽。
+// 这样绕开了「每次移动都 dispatch」带来的一串后果：autosave 落盘、撤销栈被切碎、
+// 折叠状态被整篇替换打乱、滚动锚点，以及拖拽源 DOM 被重建导致拖拽中断。
+//
+// 入口是**整颗手柄胶囊**，走 Pointer Events：胶囊为了「点击不抢焦点」必须
+// `preventDefault(pointerdown)`，而那正好会掐掉原生 dragstart（以前只有 14px 的抓手能拖，
+// 按胶囊本体看起来就是拖不动）。按下不立即开始：移动超过 4px 才算拖拽，否则松手仍是点击菜单。
+
+const DRAG_THRESHOLD = 4
+const PREVIEW_MAX_LINES = 6
+const PREVIEW_MAX_CHARS = 120
+const AUTOSCROLL_EDGE = 48
+const AUTOSCROLL_MAX = 16
+const OUTLINE_LIMIT = 200
+
+interface PillPressState {
+  pointerId: number
+  /** 按下时对应的行 / 块 —— 没拖动时按它打开块菜单 */
+  line: number
+  sourceId: number
+  startX: number
+  startY: number
+  pill: HTMLElement
+  listeners: [string, EventListener][]
+}
 
 interface BlockDragState {
   sourceId: number
+  source: MarkdownBlock
+  blocks: MarkdownBlock[]
+  lines: string[]
+  t: (key: string) => string
   slots: BlockSlot[]
+  /**
+   * 允许落脚的**块边界**(不限兄弟):跨小节拖动表格 / 图表时用。
+   * `slots` 仍负责同父兄弟的置换动画,两者共用同一个 `slot` 结果。
+   */
+  anchors: BlockSlot[]
   /** 视觉位移（id → 像素），由 `permutationOffsets` 算出 */
   deltas: Map<number, number>
-  /** 跟手浮层：松手/中断时才移除（Chrome 在 dragstart 之后才拍快照） */
-  ghost: HTMLElement | null
-  /** 拖拽源 DOM 若被重建，`dragend` 可能不再冒泡 —— 用 window 上的兜底监听收尾 */
-  onWindowDragEnd: (() => void) | null
+  slot: DropSlot | null
+  /** 大纲锁定：悬停大纲条目后落点固定，不再跟指针 */
+  lock: { slot: DropSlot; entry: OutlineEntry } | null
+  /** 跟手折叠卡片 */
+  card: HTMLElement
+  cardWidth: number
+  cardHeight: number
+  /** 落点提示线、目标标签 */
+  dropLine: HTMLElement
+  destLabel: HTMLElement
+  destKey: string
+  /** 长文档的大纲面板；短文档 / 嵌套块为 null */
+  outline: HTMLElement | null
+  outlineEntries: OutlineEntry[]
+  activeOutlineKey: string | null
+  outlineRect: DOMRect | null
+  lastX: number
+  lastY: number
+  scrollRaf: number | null
+  /** 贴边加速的停留计时 */
+  scrollDir: -1 | 0 | 1
+  scrollStartedAt: number
+  /** 防几何漂移：上次重建快照时的 scrollTop */
+  snapshotScrollTop: number
 }
 
+const pressStates = new WeakMap<EditorView, PillPressState>()
 const dragStates = new WeakMap<EditorView, BlockDragState>()
 /** 同一个 view 同一帧只排一次重画 */
 const pendingRepaint = new WeakSet<EditorView>()
 
 /** 拖拽开始时的槽位快照：`top` / `height` 是**文档坐标**。 */
-function snapshotSlots(view: EditorView, source: MarkdownBlock): BlockSlot[] {
+function snapshotSlots(
+  view: EditorView,
+  source: MarkdownBlock,
+  blocks: readonly MarkdownBlock[],
+  lines: readonly string[]
+): BlockSlot[] {
   const doc = view.state.doc
-  const lines = doc.toString().split('\n')
-  return blocksOf(doc)
+  return blocks
     .filter((block) => isMarkdownBlockDraggable(block) && block.parentId === source.parentId)
     .sort((a, b) => a.from - b.from)
     .map((block) => {
@@ -542,9 +648,64 @@ function snapshotSlots(view: EditorView, source: MarkdownBlock): BlockSlot[] {
     })
 }
 
+/**
+ * 自由落点快照:所有能被 `canDropBeside` 接受的块(排除源块自己与它的子树)。
+ *
+ * `height` 只用于指针「上半 / 下半」判定 —— 取到**下一个锚点**为止,而不是块自身高度。
+ * 标题的块范围包含整棵子树,若用自身高度就会和子块重叠,指针永远只能停在标题上。
+ */
+function snapshotAnchors(
+  view: EditorView,
+  source: MarkdownBlock,
+  blocks: readonly MarkdownBlock[],
+  lines: readonly string[]
+): BlockSlot[] {
+  const doc = view.state.doc
+  const candidates = blocks
+    .filter((block) => isMarkdownBlockDraggable(block) && block.kind !== 'frontmatter')
+    .filter((block) => block.id !== source.id)
+    // 源块自己的子树不是落点:放进去等于把它劈成两半
+    .filter((block) => !(block.from >= source.from && block.to <= source.to))
+    .filter((block) => canDropBeside(blocks, lines, source, block))
+    .sort((a, b) => a.from - b.from)
+
+  return candidates.map((block, index) => {
+    const top = view.lineBlockAt(doc.line(block.from + 1).from).top
+    const next = candidates[index + 1]
+    // 非最后一项:范围到下一个锚点为止(标题的块范围包含整棵子树,用自身高度会重叠)。
+    // 最后一项:必须用它**自己的视觉高度** —— contentHeight 含正文底部 200px 留白,
+    // 拿来当高度会让「文件末尾」整片区域都算这个块的上半,永远落不到它后面。
+    let bottom: number
+    if (next !== undefined) {
+      bottom = view.lineBlockAt(doc.line(next.from + 1).from).top
+    } else {
+      // 最后一项:用**它自己最后一行的下边**。别拿 contentHeight —— 它含正文底部
+      // 200px 留白,会让「文件末尾」整片区域都算这个块的上半,永远落不到它后面。
+      // 用 `to` 而不是 `contentTo`:列表项 / 引用 / details 的子树在 `contentTo` 之后,
+      // 落点却是 `target.to`。只看首行会把提示线画在子树中间。
+      const last = view.lineBlockAt(doc.line(Math.min(Math.max(block.to, block.from + 1), doc.lines)).from)
+      bottom = last.top + last.height
+    }
+    return {
+      id: block.id,
+      from: block.from,
+      to: Math.min(block.to, doc.lines),
+      top,
+      height: Math.max(1, bottom - top)
+    }
+  })
+}
+
 function slotAtPointer(view: EditorView, state: BlockDragState, clientY: number): DropSlot | null {
-  const others = state.slots.filter((slot) => slot.id !== state.sourceId)
-  return resolveDropSlot(others, clientY - view.documentTop)
+  return resolveDropAnchor(state.anchors, clientY - view.documentTop)
+}
+
+/** 当前落点是不是「同父兄弟」—— 是的话才走置换动画 */
+function siblingTarget(state: BlockDragState, slot: DropSlot | null): boolean {
+  if (slot === null) return false
+  return state.slots.some(
+    (candidate) => candidate.id === slot.targetId && candidate.id !== state.sourceId && candidate.allowed !== false
+  )
 }
 
 /**
@@ -559,6 +720,8 @@ function paintPermutation(view: EditorView): void {
     if (line.style.transform !== '') line.style.transform = ''
   })
   if (state === undefined || state.slots.length < 2) return
+  // 跨父级落点没有置换动画:别给兄弟行留一排「位移 0」的标记(会被当成参与置换)
+  if (state.deltas.size === 0) return
 
   const owner = new Map<number, number>()
   for (const slot of state.slots) {
@@ -577,80 +740,6 @@ function paintPermutation(view: EditorView): void {
   })
 }
 
-function endBlockDrag(view: EditorView): void {
-  const state = dragStates.get(view)
-  if (state === undefined) return
-  dragStates.delete(view)
-  if (state.onWindowDragEnd !== null) window.removeEventListener('dragend', state.onWindowDragEnd, true)
-  state.ghost?.remove()
-  dragFlagHost(view)?.classList.remove('cm-block-dragging')
-  // dragStates 已删掉 —— 这一步把位移与高亮一起清干净
-  paintPermutation(view)
-}
-
-/** 跟手浮层：整块源码文本，替掉浏览器默认那个小图标快照。 */
-function dragGhost(view: EditorView, block: MarkdownBlock): HTMLElement {
-  const doc = view.state.doc
-  const from = doc.line(block.from + 1).from
-  const to = doc.line(Math.min(Math.max(block.contentTo, block.from + 1), doc.lines)).to
-  const lines = doc.sliceString(from, to).split('\n')
-  const shown = lines.slice(0, 8)
-  if (lines.length > shown.length) shown.push('…')
-  const ghost = document.createElement('div')
-  // 挂在 body 上、放到屏幕外：CM 的 MutationObserver 盯着 contentDOM，挂进去会被它量到；
-  // 也不能用 visibility/opacity 藏 —— Chrome 会拍出一张空白图。
-  ghost.className = 'cm-block-drag-ghost'
-  ghost.textContent = shown.join('\n')
-  document.body.append(ghost)
-  return ghost
-}
-
-export function handleBlockDragStart(view: EditorView, event: Event): boolean {
-  const target = event.target
-  if (!(target instanceof HTMLElement)) return false
-  const id = Number(target.closest<HTMLElement>('[data-block-id]')?.dataset.blockId)
-  if (!Number.isInteger(id)) return false
-  const block = blocksOf(view.state.doc).find((candidate) => candidate.id === id)
-  if (block === undefined || !isMarkdownBlockDraggable(block)) return false
-
-  const dragEvent = event as DragEvent
-  dragEvent.dataTransfer?.setData('text/plain', `markdown-block:${id}`)
-  if (dragEvent.dataTransfer !== null) dragEvent.dataTransfer.effectAllowed = 'move'
-  // 上一轮若没走完收尾（拖拽源被重建时 dragend 可能不来），先把它的浮层与监听清掉
-  endBlockDrag(view)
-  const ghost = dragGhost(view, block)
-  // must run inside dragstart: Chrome snapshots the element right after it returns
-  dragEvent.dataTransfer?.setDragImage(ghost, 14, 14)
-
-  const onWindowDragEnd = (): void => endBlockDrag(view)
-  window.addEventListener('dragend', onWindowDragEnd, true)
-  dragStates.set(view, {
-    sourceId: id,
-    slots: snapshotSlots(view, block),
-    deltas: new Map(),
-    ghost,
-    onWindowDragEnd
-  })
-  dragFlagHost(view)?.classList.add('cm-block-dragging')
-  paintPermutation(view)
-  // Let the browser continue the native drag after recording our source block.
-  return false
-}
-
-export function handleBlockDragOver(view: EditorView, event: Event): boolean {
-  const state = dragStates.get(view)
-  if (state === undefined) return false
-  const dragEvent = event as DragEvent
-  const slot = slotAtPointer(view, state, dragEvent.clientY)
-  state.deltas =
-    slot === null ? new Map() : permutationOffsets(state.slots, state.sourceId, slot.targetId, slot.before)
-  paintPermutation(view)
-  // 兜底：viewport 变化会把行 DOM 换掉（inline style 随之丢失），下次测量时重铺一遍
-  view.requestMeasure({ key: state, read: () => {}, write: () => paintPermutation(view) })
-  if (dragEvent.dataTransfer !== null) dragEvent.dataTransfer.dropEffect = 'move'
-  return true
-}
-
 function restoreAfterBlockMove(
   view: EditorView,
   previousText: string,
@@ -659,20 +748,11 @@ function restoreAfterBlockMove(
   anchorViewportTop: number | null,
   fallbackScrollTop: number
 ): void {
-  const previousLines = previousText.split('\n')
-  const targetSignature = previousLines.slice(anchorBlock.from, anchorBlock.contentTo).join('\n')
-  const nextLines = nextText.split('\n')
-  const candidates = parseMarkdownBlocks(nextText).filter((candidate) => {
-    if (candidate.kind !== anchorBlock.kind || candidate.level !== anchorBlock.level) return false
-    return nextLines.slice(candidate.from, candidate.contentTo).join('\n') === targetSignature
-  })
-  const candidate = candidates.sort(
-    (a, b) => Math.abs(a.from - anchorBlock.from) - Math.abs(b.from - anchorBlock.from)
-  )[0]
+  const candidate = matchBlockAfterMove(anchorBlock, previousText, nextText)
 
   window.requestAnimationFrame(() => {
     if (!view.dom.isConnected) return
-    if (candidate !== undefined && anchorViewportTop !== null) {
+    if (candidate !== null && anchorViewportTop !== null) {
       const nextLine = lineElement(view, candidate.from)
       const nextTop = nextLine?.getBoundingClientRect().top
       if (nextTop !== undefined) {
@@ -684,48 +764,741 @@ function restoreAfterBlockMove(
   })
 }
 
-export function handleBlockDrop(view: EditorView, event: Event): boolean {
-  const state = dragStates.get(view)
-  if (state === undefined) return false
-  const sourceId = state.sourceId
-  const text = view.state.doc.toString()
-  const source = blocksOf(view.state.doc).find((block) => block.id === sourceId)
-  const slot = slotAtPointer(view, state, (event as DragEvent).clientY)
+function lineStartsOf(lines: readonly string[]): number[] {
+  const starts = new Array<number>(lines.length + 1)
+  let pos = 0
+  for (let i = 0; i < lines.length; i += 1) {
+    starts[i] = pos
+    pos += lines[i].length + 1
+  }
+  starts[lines.length] = pos
+  return starts
+}
 
-  if (source === undefined || slot === null) {
-    endBlockDrag(view)
-    return true
+interface CommitBlockMoveOptions {
+  /** 拖动路径：保持被拖块在视口中的位置；键盘 / 选择器改为 nearest 揭示。 */
+  restoreScroll?: boolean
+  reveal?: boolean
+  /** 拖动路径必须在清除位移**之前**量好，否则恢复滚动会差一个置换位移。 */
+  anchorTop?: number | null
+  fallbackScrollTop?: number
+}
+
+/**
+ * 所有块移动的唯一提交入口（拖拽、移动到…、键盘）。
+ *
+ * 一次整篇 dispatch 换正文；折叠按块签名在第二个 effect-only transaction 里贴回
+ * （fold 不进 undo 历史）；光标跟着被移动块，避免整篇替换后停在无关位置。
+ */
+function commitBlockMove(
+  view: EditorView,
+  sourceId: number,
+  slot: DropSlot,
+  options: CommitBlockMoveOptions = {}
+): BlockMoveStatus {
+  const doc = view.state.doc
+  const text = doc.toString()
+  const lines = text.split('\n')
+  const blocks = blocksOf(doc)
+  const source = blocks.find((block) => block.id === sourceId)
+  const target = blocks.find((block) => block.id === slot.targetId)
+  if (source === undefined || target === undefined) return 'invalid'
+  if (!isMarkdownBlockDraggable(source) || !isMarkdownBlockDraggable(target)) return 'invalid'
+  if (!canDropBeside(blocks, lines, source, target)) return 'invalid'
+  if (target.from >= source.from && target.to <= source.to) return 'invalid'
+
+  const next = reorderMarkdownBlocks(text, sourceId, slot.targetId, slot.before)
+  if (next === null) return 'noop'
+  const nextSource = matchBlockAfterMove(source, text, next)
+  if (nextSource === null) return 'invalid'
+
+  const selection = view.state.selection.main
+  const sourceStart = doc.line(source.from + 1).from
+  const sourceEnd = doc.line(Math.min(Math.max(source.contentTo, source.from + 1), doc.lines)).to
+  const inSource = selection.head >= sourceStart && selection.head <= sourceEnd
+  const headLine = doc.lineAt(selection.head).number - 1
+  const relativeLine = inSource ? headLine - source.from : 0
+  const column = inSource ? selection.head - doc.line(doc.lineAt(selection.head).number).from : 0
+
+  const nextLines = next.split('\n')
+  const nextStarts = lineStartsOf(nextLines)
+  const lastLine = Math.max(nextSource.from, Math.min(nextSource.contentTo - 1, nextLines.length - 1))
+  const caretLine = Math.max(nextSource.from, Math.min(nextSource.from + relativeLine, lastLine))
+  const caret = Math.min(
+    (nextStarts[caretLine] ?? 0) + column,
+    (nextStarts[caretLine] ?? 0) + (nextLines[caretLine]?.length ?? 0)
+  )
+
+  const folded: { from: number; to: number }[] = []
+  foldedRanges(view.state).between(0, doc.length, (from, to) => {
+    folded.push({ from, to })
+  })
+  const foldSpans = foldSpansOf(lines, blocks, folded)
+  const anchorTop =
+    options.anchorTop !== undefined
+      ? options.anchorTop
+      : (lineElement(view, source.from)?.getBoundingClientRect().top ?? null)
+  const fallbackScrollTop = options.fallbackScrollTop ?? view.scrollDOM.scrollTop
+
+  view.dispatch({
+    changes: { from: 0, to: doc.length, insert: next },
+    selection: { anchor: caret },
+    effects: options.reveal ? [EditorView.scrollIntoView(caret, { y: 'nearest', yMargin: 32 })] : []
+  })
+  const restored = resolveFoldSpans(next, foldSpans)
+  if (restored.length > 0) {
+    view.dispatch({ effects: restored.map((range) => foldEffect.of(range)) })
+  }
+  // 两条定位策略互斥:reveal 会滚到光标,保持锚点位置的恢复再滚一次会把它顶回去
+  if (options.restoreScroll !== false && options.reveal !== true) {
+    restoreAfterBlockMove(view, text, source, next, anchorTop, fallbackScrollTop)
+  }
+  return 'moved'
+}
+
+/** 「移动到…」：按定位器在**实时文档**里重新定位源块与目标。 */
+export function moveBlockByLocator(
+  view: EditorView,
+  sourceLocator: BlockLocator,
+  target: BlockMoveTarget
+): BlockMoveStatus {
+  const text = view.state.doc.toString()
+  const lines = text.split('\n')
+  const blocks = blocksOf(view.state.doc)
+  const source = locateBlock(blocks, sourceLocator)
+  if (source === null) return 'invalid'
+  const slot = resolveMoveTarget(blocks, lines, source, target)
+  if (slot === null) return 'invalid'
+  return commitBlockMove(view, source.id, slot, { reveal: true })
+}
+
+/**
+ * 光标所在块的键盘移动。是可拖动块就消费按键（边界处也消费），
+ * 避免退回 CodeMirror 默认的「按行移动」——那会把表格拆坏。
+ */
+export function moveBlockAtCaret(
+  view: EditorView,
+  direction: 'up' | 'down',
+  mode: 'sibling' | 'cross-section'
+): boolean {
+  if (view.composing || view.state.selection.ranges.length > 1) return false
+  const head = view.state.selection.main.head
+  const line = view.state.doc.lineAt(head).number - 1
+  const blocks = blocksOf(view.state.doc)
+  const source = narrowestBlockAtLine(blocks, line, isMarkdownBlockDraggable)
+  if (source === null) return false
+  const lines = view.state.doc.toString().split('\n')
+  const slot =
+    mode === 'sibling'
+      ? siblingMoveSlot(blocks, lines, source, direction)
+      : crossSectionMoveSlot(blocks, lines, source, direction)
+  if (slot !== null) commitBlockMove(view, source.id, slot, { reveal: true })
+  return true
+}
+
+export interface DragCardPreview {
+  lines: string[]
+  truncated: boolean
+}
+
+/**
+ * 折叠预览：只取块的前 `maxLines` 行，每行最多 `maxChars` 个字符。
+ * 所有块同一套逻辑 —— 表格显示表头与前几行，Mermaid 显示围栏与节点，标题显示标题行。
+ */
+export function dragCardPreview(
+  lines: readonly string[],
+  block: MarkdownBlock,
+  maxLines = PREVIEW_MAX_LINES,
+  maxChars = PREVIEW_MAX_CHARS
+): DragCardPreview {
+  const from = Math.max(0, block.from)
+  const to = Math.min(Math.max(block.contentTo, from), lines.length)
+  const rows = lines.slice(from, to)
+  const shown: string[] = []
+  let truncated = rows.length > maxLines
+  for (const row of rows.slice(0, maxLines)) {
+    if (row.length > maxChars) {
+      shown.push(row.slice(0, Math.max(0, maxChars - 1)) + '…')
+      truncated = true
+    } else {
+      shown.push(row)
+    }
+  }
+  // 空块理论上不会走到拖拽，兜底给一行，卡片别塌成一条线
+  if (shown.length === 0) shown.push(lines[from] ?? '')
+  return { lines: shown, truncated }
+}
+
+/** 置换后源块的顶部（文档坐标）—— 落点提示线就画在这里。 */
+export function permutedDropTop(
+  slots: readonly BlockSlot[],
+  deltas: ReadonlyMap<number, number>,
+  sourceId: number
+): number | null {
+  const slot = slots.find((candidate) => candidate.id === sourceId)
+  if (slot === undefined) return null
+  return slot.top + (deltas.get(sourceId) ?? 0)
+}
+
+/** 指针进入滚动区上/下边缘时的滚动速度（px/帧，负数向上）。 */
+export function autoScrollVelocity(
+  pointerY: number,
+  viewportTop: number,
+  viewportBottom: number,
+  edge = AUTOSCROLL_EDGE,
+  maxSpeed = AUTOSCROLL_MAX
+): number {
+  if (pointerY < viewportTop + edge) {
+    const depth = Math.min(edge, viewportTop + edge - pointerY)
+    return -Math.ceil((depth / edge) * maxSpeed)
+  }
+  if (pointerY > viewportBottom - edge) {
+    const depth = Math.min(edge, pointerY - (viewportBottom - edge))
+    return Math.ceil((depth / edge) * maxSpeed)
+  }
+  return 0
+}
+
+export interface AutoScrollTuning {
+  edge?: number
+  maxSpeed?: number
+  rampMs?: number
+  maxRamp?: number
+}
+
+/**
+ * 长文档用的贴边滚动：边缘带与速度上限都按视口高度推算，
+ * 并在持续贴边时从 1× 线性加速到 `maxRamp`。短文档仍由上面的常量保底。
+ */
+export function autoScrollVelocityForViewport(
+  pointerY: number,
+  viewportTop: number,
+  viewportBottom: number,
+  dwellMs = 0,
+  tuning: AutoScrollTuning = {}
+): number {
+  const height = Math.max(1, viewportBottom - viewportTop)
+  const edge = tuning.edge ?? Math.min(140, Math.max(56, Math.round(height * 0.18)))
+  const maxSpeed = tuning.maxSpeed ?? Math.min(40, Math.max(16, Math.round(height * 0.035)))
+  const rampMs = Math.max(1, tuning.rampMs ?? 1000)
+  const maxRamp = Math.max(1, tuning.maxRamp ?? 2)
+  const base = autoScrollVelocity(pointerY, viewportTop, viewportBottom, edge, maxSpeed)
+  if (base === 0) return 0
+  const ramp = 1 + (Math.min(Math.max(0, dwellMs), rampMs) / rampMs) * (maxRamp - 1)
+  return Math.sign(base) * Math.ceil(Math.abs(base) * ramp)
+}
+
+/** 跟手卡片：类型图标 + 类型名 + 前几行源码（超出用 `…` 收尾）。 */
+function buildDragCard(view: EditorView, block: MarkdownBlock): HTMLElement {
+  const t = makeT(getCurrentLang())
+  const card = document.createElement('div')
+  card.className = 'cm-block-drag-card'
+
+  const head = document.createElement('div')
+  head.className = 'cm-block-drag-card-head'
+  const icon = document.createElement('span')
+  icon.className = 'cm-block-drag-card-icon'
+  icon.append(block.kind === 'heading' ? document.createTextNode(headingText(block.level)) : blockIcon(block))
+  const type = document.createElement('span')
+  type.className = 'cm-block-drag-card-type'
+  type.textContent = t(blockTypeLabelKey(block))
+  head.append(icon, type)
+
+  const body = document.createElement('pre')
+  body.className = 'cm-block-drag-card-body'
+  const preview = dragCardPreview(view.state.doc.toString().split('\n'), block)
+  body.textContent = preview.lines.join('\n')
+  if (preview.truncated) {
+    const ellipsis = document.createElement('span')
+    ellipsis.className = 'cm-block-drag-card-ellipsis'
+    ellipsis.textContent = '\n…'
+    body.append(ellipsis)
+  }
+  card.append(head, body)
+  return card
+}
+
+function positionDragCard(state: BlockDragState, x: number, y: number): void {
+  const rect = state.outlineRect
+  const overOutline = rect !== null && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+  const wanted = overOutline ? x - state.cardWidth - 14 : x + 14
+  const left = Math.min(Math.max(wanted, 8), Math.max(8, window.innerWidth - state.cardWidth - 8))
+  const top = Math.min(Math.max(y + 14, 8), Math.max(8, window.innerHeight - state.cardHeight - 8))
+  state.card.style.transform = `translate3d(${left.toFixed(1)}px, ${top.toFixed(1)}px, 0)`
+}
+
+function buildDestLabel(): HTMLElement {
+  const label = document.createElement('div')
+  label.className = 'cm-block-drop-label'
+  label.hidden = true
+  return label
+}
+
+function buildOutlinePanel(entries: readonly OutlineEntry[], t: (key: string) => string): HTMLElement {
+  const panel = document.createElement('div')
+  panel.className = 'cm-block-outline'
+  const head = document.createElement('div')
+  head.className = 'cm-block-outline-hd'
+  head.textContent = t('notes.blockMove.outlineTitle')
+  const list = document.createElement('div')
+  list.className = 'cm-block-outline-list'
+  list.setAttribute('role', 'listbox')
+  for (const entry of entries.slice(0, OUTLINE_LIMIT)) {
+    const row = document.createElement('div')
+    row.className = `cm-block-outline-entry${entry.kind === 'heading' ? '' : ' is-edge'}`
+    row.setAttribute('role', 'option')
+    row.dataset.entryKey = entry.key
+    if (entry.kind === 'heading') {
+      row.style.paddingLeft = `${8 + Math.max(0, entry.level - 1) * 12}px`
+    }
+    row.textContent =
+      entry.kind === 'heading'
+        ? entry.title || t('notes.blockMove.untitled')
+        : t(entry.kind === 'start' ? 'notes.blockMove.start' : 'notes.blockMove.end')
+    // 指针已经捕获在 pill 上；这里只是别让按下的默认行为把编辑器焦点抢走
+    row.addEventListener('pointerdown', (event) => event.preventDefault())
+    row.addEventListener('mousedown', (event) => event.preventDefault())
+    list.append(row)
+  }
+  panel.append(head, list)
+  if (entries.length > OUTLINE_LIMIT) {
+    const foot = document.createElement('div')
+    foot.className = 'cm-block-outline-ft'
+    foot.textContent = t('notes.blockMove.limit').replace('{N}', String(OUTLINE_LIMIT))
+    panel.append(foot)
+  }
+  return panel
+}
+
+function positionOutline(view: EditorView, state: BlockDragState): void {
+  if (state.outline === null) return
+  const rect = view.scrollDOM.getBoundingClientRect()
+  // 窄窗口（分屏）下跟着滚动区收窄，但绝不超出滚动区
+  const width = Math.max(0, Math.min(rect.width - 16, 240, Math.max(96, Math.round(rect.width * 0.38))))
+  const left = Math.max(8, Math.min(rect.right - width - 10, window.innerWidth - width - 8))
+  state.outline.style.width = `${width.toFixed(1)}px`
+  state.outline.style.left = `${left.toFixed(1)}px`
+  state.outline.style.top = `${Math.max(8, rect.top + 8).toFixed(1)}px`
+  state.outline.style.maxHeight = `${Math.max(120, rect.height - 16).toFixed(1)}px`
+  state.outlineRect = state.outline.getBoundingClientRect()
+}
+
+function paintOutlineActive(state: BlockDragState, key: string | null): void {
+  if (state.activeOutlineKey === key) return
+  state.activeOutlineKey = key
+  state.outline?.querySelectorAll<HTMLElement>('.cm-block-outline-entry').forEach((row) => {
+    row.classList.toggle('is-active', key !== null && row.dataset.entryKey === key)
+  })
+}
+
+function scrollToOutlineEntry(view: EditorView, state: BlockDragState, entry: OutlineEntry): void {
+  const line = Math.min(entry.line + 1, view.state.doc.lines)
+  const top = view.lineBlockAt(view.state.doc.line(line).from).top
+  const max = Math.max(0, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight)
+  view.scrollDOM.scrollTop = Math.min(max, Math.max(0, top - 24))
+  // 刚跳过去，别马上又因为「滚过一个视口」重建快照
+  state.snapshotScrollTop = view.scrollDOM.scrollTop
+}
+
+function outlineHitAt(
+  state: BlockDragState,
+  x: number,
+  y: number
+): { over: boolean; entry: OutlineEntry | null } {
+  const rect = state.outlineRect
+  if (state.outline === null || rect === null) return { over: false, entry: null }
+  if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+    return { over: false, entry: null }
+  }
+  // 指针捕获会把 pointermove 重定向到 pill，只能靠 elementFromPoint 找行
+  const row = document.elementFromPoint(x, y)?.closest<HTMLElement>('.cm-block-outline-entry')
+  const key = row?.dataset.entryKey
+  const entry =
+    key === undefined ? null : (state.outlineEntries.find((candidate) => candidate.key === key) ?? null)
+  return { over: true, entry }
+}
+
+function paintDestLabel(view: EditorView, state: BlockDragState, lineTop: number | null): void {
+  if (lineTop === null || state.slot === null) {
+    if (!state.destLabel.hidden) state.destLabel.hidden = true
+    state.destKey = ''
+    return
+  }
+  const dest = destinationForSlot(state.blocks, state.lines, state.slot)
+  if (dest === null) {
+    if (!state.destLabel.hidden) state.destLabel.hidden = true
+    state.destKey = ''
+    return
+  }
+  const key = `${state.slot.targetId}:${state.slot.before}`
+  if (key !== state.destKey) {
+    state.destKey = key
+    const name =
+      dest.kind === 'heading'
+        ? `${'#'.repeat(dest.level)} ${dest.title || state.t('notes.blockMove.untitled')}`.trim()
+        : state.t(dest.typeLabelKey ?? 'notes.blockMenu.type.paragraph')
+    const template = dest.before
+      ? state.t('notes.blockMove.before')
+      : dest.kind === 'heading'
+        ? state.t('notes.blockMove.afterSection')
+        : state.t('notes.blockMove.after')
+    state.destLabel.textContent = template.replace('{TARGET}', name)
+  }
+  const scroller = view.scrollDOM.getBoundingClientRect()
+  const content = view.contentDOM.getBoundingClientRect()
+  const above = lineTop - scroller.top > 34
+  const top = Math.min(
+    Math.max(above ? lineTop - 26 : lineTop + 6, scroller.top + 2),
+    scroller.bottom - 24
+  )
+  state.destLabel.style.top = `${top.toFixed(1)}px`
+  state.destLabel.style.left = `${(content.left + 4).toFixed(1)}px`
+  state.destLabel.style.maxWidth = `${Math.max(120, content.width - 8).toFixed(1)}px`
+  state.destLabel.hidden = false
+}
+
+/**
+ * 重新判定落点。滚动（滚轮 / 触控板 / 自动滚动 / 大纲跳转）与指针移动都走这里，
+ * 保证「看到的线」和「松手落的位置」始终是同一次判定。
+ */
+function retargetDrag(view: EditorView, state: BlockDragState): void {
+  const hit = outlineHitAt(state, state.lastX, state.lastY)
+  if (hit.over) {
+    if (hit.entry !== null && state.lock?.entry.key !== hit.entry.key) {
+      state.lock = { slot: hit.entry.target, entry: hit.entry }
+      paintOutlineActive(state, hit.entry.key)
+      scrollToOutlineEntry(view, state, hit.entry)
+      stopAutoScroll(state)
+    }
+    if (hit.entry === null && state.lock === null) {
+      // 指针在大纲的标题栏 / 间隙上：暂时没有落点
+      state.slot = null
+      state.deltas = new Map()
+      paintPermutation(view)
+      paintDestLabel(view, state, paintDropLine(view, state))
+      return
+    }
+  } else if (state.lock !== null) {
+    state.lock = null
+    paintOutlineActive(state, null)
   }
 
+  const slot = state.lock?.slot ?? slotAtPointer(view, state, state.lastY)
+  state.slot = slot
+  // 只有同父兄弟才做置换；大纲锁定 / 跨父级只画落点线
+  state.deltas =
+    state.lock === null && slot !== null && siblingTarget(state, slot)
+      ? permutationOffsets(state.slots, state.sourceId, slot.targetId, slot.before)
+      : new Map()
+  paintPermutation(view)
+  paintDestLabel(view, state, paintDropLine(view, state))
+}
+
+/** 长文档滚动超过一个视口后重建几何，抵消远端 lineBlockAt 的估算漂移。 */
+function refreshDragGeometry(view: EditorView, state: BlockDragState): void {
+  if (state.lock !== null) return
+  const box = view.scrollDOM
+  if (Math.abs(box.scrollTop - state.snapshotScrollTop) < box.clientHeight) return
+  state.slots = snapshotSlots(view, state.source, state.blocks, state.lines)
+  state.anchors = snapshotAnchors(view, state.source, state.blocks, state.lines)
+  state.snapshotScrollTop = box.scrollTop
+}
+
+/**
+ * 落点提示线画在**源块最终落点**的边界上。
+ *
+ * · 同父兄弟置换:画在源块置换后的顶边(与兄弟块滑动到的位置同一条边),两者永远一致;
+ * · 跨父级自由落点:没有置换动画,直接画在目标块的上边界(或文档末尾的下边界)。
+ * 2px 线以边界为中心:`top - 1`。
+ */
+function dropLineDocTop(state: BlockDragState): number | null {
+  if (state.slot === null) return null
+  // 大纲锁定不走置换:提示线必须画在锁定的那个锚点上,而不是源块当前的位置
+  if (state.lock === null && siblingTarget(state, state.slot)) {
+    return permutedDropTop(state.slots, state.deltas, state.sourceId)
+  }
+  const anchor = state.anchors.find((candidate) => candidate.id === state.slot!.targetId)
+  if (anchor === undefined) return null
+  return state.slot.before ? anchor.top : anchor.top + anchor.height
+}
+
+function paintDropLine(view: EditorView, state: BlockDragState): number | null {
+  const docTop = dropLineDocTop(state)
+  if (docTop === null) {
+    state.dropLine.hidden = true
+    return null
+  }
+  const scroller = view.scrollDOM.getBoundingClientRect()
+  const content = view.contentDOM.getBoundingClientRect()
+  const screenY = view.documentTop + docTop
+  // 目标可能被滚出视口：夹到滚动区边缘，仍能表达「在上方 / 下方」
+  const top = Math.min(Math.max(screenY, scroller.top + 1), scroller.bottom - 1)
+  state.dropLine.style.top = `${(top - 1).toFixed(1)}px`
+  state.dropLine.style.left = `${content.left.toFixed(1)}px`
+  state.dropLine.style.width = `${content.width.toFixed(1)}px`
+  state.dropLine.hidden = false
+  return top
+}
+
+function paintDrag(view: EditorView, state: BlockDragState, x: number, y: number): void {
+  state.lastX = x
+  state.lastY = y
+  retargetDrag(view, state)
+  positionDragCard(state, x, y)
+  ensureAutoScroll(view, state)
+}
+
+function updateBlockDrag(view: EditorView, x: number, y: number): void {
+  const state = dragStates.get(view)
+  if (state === undefined) return
+  paintDrag(view, state, x, y)
+}
+
+function stopAutoScroll(state: BlockDragState): void {
+  if (state.scrollRaf === null) return
+  window.cancelAnimationFrame(state.scrollRaf)
+  state.scrollRaf = null
+}
+
+function pointerOverOutline(state: BlockDragState): boolean {
+  const rect = state.outlineRect
+  if (rect === null) return false
+  return (
+    state.lastX >= rect.left &&
+    state.lastX <= rect.right &&
+    state.lastY >= rect.top &&
+    state.lastY <= rect.bottom
+  )
+}
+
+/**
+ * 指针贴住滚动区上下边缘时自动滚动。每帧重算落点：滚动改变了 `documentTop`，
+ * 指针没动也可能跨过一个块。滚不动了（到顶/到底）立即停。
+ * 在边缘停留越久滚得越快（1 秒内 1×→2×）；大纲锁定 / 指针停在大纲上时不自动滚。
+ */
+function ensureAutoScroll(view: EditorView, state: BlockDragState): void {
+  if (state.lock !== null || pointerOverOutline(state)) {
+    state.scrollDir = 0
+    state.scrollStartedAt = 0
+    stopAutoScroll(state)
+    return
+  }
+  const rect = view.scrollDOM.getBoundingClientRect()
+  const base = autoScrollVelocity(state.lastY, rect.top, rect.bottom)
+  const dir = (base === 0 ? 0 : Math.sign(base)) as -1 | 0 | 1
+  if (dir !== state.scrollDir) {
+    state.scrollDir = dir
+    state.scrollStartedAt = dir === 0 ? 0 : performance.now()
+  }
+  if (dir === 0) {
+    stopAutoScroll(state)
+    return
+  }
+  if (state.scrollRaf !== null) return
+  const step = (): void => {
+    state.scrollRaf = null
+    if (dragStates.get(view) !== state || state.lock !== null) return
+    const box = view.scrollDOM.getBoundingClientRect()
+    const dwell = state.scrollStartedAt === 0 ? 0 : performance.now() - state.scrollStartedAt
+    const speed = autoScrollVelocityForViewport(state.lastY, box.top, box.bottom, dwell)
+    if (speed === 0) return
+    const before = view.scrollDOM.scrollTop
+    view.scrollDOM.scrollTop = before + speed
+    if (view.scrollDOM.scrollTop === before) {
+      state.scrollDir = 0
+      state.scrollStartedAt = 0
+      return
+    }
+    // 卡片只跟指针，不用动；落点、置换与提示线要按新滚动位置重算
+    paintDrag(view, state, state.lastX, state.lastY)
+  }
+  state.scrollRaf = window.requestAnimationFrame(step)
+}
+
+/** 收尾：只清视觉与监听，**不碰文档**。`repaint=false` 供销毁路径用（那时别再读布局）。 */
+function endBlockDrag(view: EditorView, repaint = true): void {
+  const state = dragStates.get(view)
+  if (state === undefined) return
+  dragStates.delete(view)
+  stopAutoScroll(state)
+  state.card.remove()
+  state.dropLine.remove()
+  state.destLabel.remove()
+  state.outline?.remove()
+  dragFlagHost(view)?.classList.remove('cm-block-dragging')
+  document.body.classList.remove('cm-block-dragging')
+  if (!repaint) return
+  // 状态已删 —— 这一步把位移与高亮一起清干净
+  paintPermutation(view)
+  if (view.dom.isConnected) repaintHandle(view)
+}
+
+function cancelPillPress(view: EditorView, repaint = true): void {
+  const press = pressStates.get(view)
+  if (press !== undefined) {
+    for (const [type, listener] of press.listeners) window.removeEventListener(type, listener, true)
+    try {
+      if (press.pill.hasPointerCapture(press.pointerId)) press.pill.releasePointerCapture(press.pointerId)
+    } catch {
+      // 指针已结束：没有 capture 可释放
+    }
+    pressStates.delete(view)
+  }
+  endBlockDrag(view, repaint)
+}
+
+function startBlockDrag(view: EditorView, press: PillPressState, event: PointerEvent): void {
+  const blocks = blocksOf(view.state.doc)
+  const source = blocks.find((candidate) => candidate.id === press.sourceId)
+  if (source === undefined || !isMarkdownBlockDraggable(source)) return
+  const lines = view.state.doc.toString().split('\n')
+  const t = makeT(getCurrentLang())
+
+  const card = buildDragCard(view, source)
+  document.body.append(card)
+  const rect = card.getBoundingClientRect()
+  const dropLine = document.createElement('div')
+  dropLine.className = 'cm-block-drop-line'
+  dropLine.hidden = true
+  document.body.append(dropLine)
+  const destLabel = buildDestLabel()
+  document.body.append(destLabel)
+
+  const slots = snapshotSlots(view, source, blocks, lines)
+  const anchors = snapshotAnchors(view, source, blocks, lines)
+  // 长文档 + 顶层块才给大纲：短文档拖拽多一块遮挡，嵌套列表没有「节」可言
+  const entries =
+    isTopLevelScoped(blocks, source) && view.scrollDOM.scrollHeight > view.scrollDOM.clientHeight * 1.6
+      ? buildOutlineEntries(blocks, lines, anchors, source)
+      : []
+  const outline = entries.length > 0 ? buildOutlinePanel(entries, t) : null
+  if (outline !== null) document.body.append(outline)
+
+  const state: BlockDragState = {
+    sourceId: source.id,
+    source,
+    blocks,
+    lines,
+    t,
+    slots,
+    anchors,
+    deltas: new Map(),
+    slot: null,
+    lock: null,
+    card,
+    cardWidth: rect.width,
+    cardHeight: rect.height,
+    dropLine,
+    destLabel,
+    destKey: '',
+    outline,
+    outlineEntries: entries,
+    activeOutlineKey: null,
+    outlineRect: null,
+    lastX: event.clientX,
+    lastY: event.clientY,
+    scrollRaf: null,
+    scrollDir: 0,
+    scrollStartedAt: 0,
+    snapshotScrollTop: view.scrollDOM.scrollTop
+  }
+  dragStates.set(view, state)
+  dragFlagHost(view)?.classList.add('cm-block-dragging')
+  document.body.classList.add('cm-block-dragging')
+  if (outline !== null) positionOutline(view, state)
+  // 手柄立即让位（planHandle 看到 dragStates 返回 null）
+  repaintHandle(view)
+  paintDrag(view, state, event.clientX, event.clientY)
+}
+
+/** 松手：统一走 `commitBlockMove`（折叠恢复 / 光标跟随 / 滚动定位都在里面）。 */
+function finishBlockDrag(view: EditorView, state: BlockDragState): void {
+  const source = blocksOf(view.state.doc).find((block) => block.id === state.sourceId)
+  const slot = state.lock?.slot ?? state.slot
+  if (source === undefined || slot === null) {
+    endBlockDrag(view)
+    return
+  }
   // 锚点 = 被拖块**视觉上**的位置（带着位移）。松手后它就落在那儿，
   // 所以恢复滚动时要让它停在用户看到的地方，而不是跳回原槽位。
   const anchorTop = lineElement(view, source.from)?.getBoundingClientRect().top ?? null
   const fallbackScrollTop = view.scrollDOM.scrollTop
-  // 先清位移再 dispatch：restoreAfterBlockMove 在 rAF 里量 rect，带着 transform 会差一个动画位移
+  // 先清位移再提交：恢复滚动在 rAF 里量 rect，带着 transform 会差一个动画位移
   endBlockDrag(view)
+  commitBlockMove(view, state.sourceId, slot, { anchorTop, fallbackScrollTop })
+}
 
-  const next = reorderMarkdownBlocks(text, sourceId, slot.targetId, slot.before)
-  if (next !== null) {
-    const selection = view.state.selection.main
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: next },
-      selection: {
-        anchor: Math.min(selection.anchor, next.length),
-        head: Math.min(selection.head, next.length)
-      }
-    })
-    restoreAfterBlockMove(view, text, source, next, anchorTop, fallbackScrollTop)
+function beginPillPress(
+  view: EditorView,
+  event: PointerEvent,
+  callbacks: MarkdownBlockEditorCallbacks,
+  pill: HTMLElement
+): void {
+  if (event.button !== 0 || !event.isPrimary) return
+  const id = Number(pill.dataset.blockId)
+  if (!Number.isInteger(id)) return
+  const block = blocksOf(view.state.doc).find((candidate) => candidate.id === id)
+  if (block === undefined || !isMarkdownBlockDraggable(block)) return
+
+  // 上一轮没走完（理论上不会）—— 先收尾，别让 window 监听叠加
+  cancelPillPress(view)
+  // 焦点与 DOM 选区都不动。❌ 不 stopPropagation：块菜单靠 window pointerdown 关掉别处点击
+  event.preventDefault()
+  // 按下即捕获：即使指针移出窗口，松手也能收到 pointerup（否则按下态会一直挂着）
+  try {
+    pill.setPointerCapture(event.pointerId)
+  } catch {
+    // 指针已结束
   }
-  return true
-}
 
-export function handleBlockDragEnd(view: EditorView, _event: Event): boolean {
-  if (!dragStates.has(view)) return false
-  endBlockDrag(view)
-  return true
-}
-
-/** Whether a document drop is currently a block move rather than an image import. */
-export function isBlockDrag(view: EditorView): boolean {
-  return dragStates.has(view)
+  const line = pinnedLines.get(view) ?? hoverLines.get(view) ?? block.from
+  const press: PillPressState = {
+    pointerId: event.pointerId,
+    line,
+    sourceId: id,
+    startX: event.clientX,
+    startY: event.clientY,
+    pill,
+    listeners: []
+  }
+  const onMove = (moveEvent: PointerEvent): void => {
+    if (moveEvent.pointerId !== press.pointerId) return
+    if (dragStates.has(view)) {
+      updateBlockDrag(view, moveEvent.clientX, moveEvent.clientY)
+      return
+    }
+    if (Math.hypot(moveEvent.clientX - press.startX, moveEvent.clientY - press.startY) < DRAG_THRESHOLD) return
+    startBlockDrag(view, press, moveEvent)
+  }
+  const onUp = (upEvent: PointerEvent): void => {
+    if (upEvent.pointerId !== press.pointerId) return
+    const state = dragStates.get(view)
+    if (state !== undefined) {
+      finishBlockDrag(view, state)
+      cancelPillPress(view)
+      return
+    }
+    // 没越过阈值 = 点击：打开块菜单（原来的 click 行为）
+    const current = blocksOf(view.state.doc).find((candidate) => candidate.id === press.sourceId)
+    cancelPillPress(view)
+    if (current !== undefined) callbacks.onBlockMenu?.(current, pill.getBoundingClientRect(), press.line)
+  }
+  const onCancel = (cancelEvent: Event): void => {
+    if (cancelEvent instanceof PointerEvent && cancelEvent.pointerId !== press.pointerId) return
+    cancelPillPress(view)
+  }
+  const onKey = (keyEvent: KeyboardEvent): void => {
+    if (keyEvent.key !== 'Escape') return
+    keyEvent.preventDefault()
+    cancelPillPress(view)
+  }
+  press.listeners = [
+    ['pointermove', onMove as EventListener],
+    ['pointerup', onUp as EventListener],
+    ['pointercancel', onCancel],
+    ['keydown', onKey as EventListener],
+    ['blur', onCancel]
+  ]
+  for (const [type, listener] of press.listeners) window.addEventListener(type, listener, true)
+  pressStates.set(view, press)
 }

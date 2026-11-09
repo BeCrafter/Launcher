@@ -7,6 +7,7 @@ import { CALLOUT_KINDS, parseCallout, type CalloutKind } from '../../lib/markdow
 import { listMarkerOf } from '../../lib/md-list-syntax'
 import { Icon } from '../../components/ui/Icon'
 import { blockIconName, CALLOUT_ICON_NAMES } from '../../lib/block-icons'
+import { blockTypeLabelKey } from '../../lib/block-labels'
 import type { IconName } from '../../lib/icon-paths'
 import type { NoteEditorHandle } from './NoteEditor'
 import {
@@ -393,6 +394,7 @@ export function NoteBlockMenu({
   handleRef,
   onClose,
   onInsertBelow,
+  onMoveTo,
   onDiagram,
   onEmbed
 }: {
@@ -404,6 +406,7 @@ export function NoteBlockMenu({
   handleRef: RefObject<NoteEditorHandle | null>
   onClose: () => void
   onInsertBelow: (line: number) => void
+  onMoveTo: (block: MarkdownBlock) => void
   onDiagram: (line: number) => void
   onEmbed: (line: number) => void
 }): React.JSX.Element {
@@ -466,19 +469,8 @@ export function NoteBlockMenu({
     onClose()
   }
 
-  // 列表项的三种形态在手柄和菜单标题里用同一套区分
-  const typeLabel =
-    block.kind === 'align'
-      ? t(`notes.align.${block.align ?? 'left'}`)
-      : block.kind === 'listItem'
-        ? t(
-            block.task === true
-              ? 'notes.blockMenu.type.taskItem'
-              : block.ordered === true
-                ? 'notes.blockMenu.type.orderedItem'
-                : 'notes.blockMenu.type.listItem'
-          )
-        : t(`notes.blockMenu.type.${block.kind}`)
+  // 列表项的三种形态在手柄、菜单标题与拖拽预览里用同一套区分
+  const typeLabel = t(blockTypeLabelKey(block))
 
   return (
     <div
@@ -632,6 +624,10 @@ export function NoteBlockMenu({
       <button type="button" className="notes-block-menu-item" onClick={() => action(() => handleRef.current?.duplicateLines(block.from, block.to - 1))}>
         <Icon name="copy-plus" />
         <span>{t('notes.blockMenu.duplicate')}</span>
+      </button>
+      <button type="button" className="notes-block-menu-item" onClick={() => action(() => onMoveTo(block))}>
+        <Icon name="grip-vertical" />
+        <span>{t('notes.blockMenu.moveTo')}</span>
       </button>
       <button type="button" className="notes-block-menu-item" onClick={copy}>
         <Icon name="copy" />

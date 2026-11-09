@@ -46,15 +46,14 @@ import { calloutCompletion, calloutMarks, lenientTaskMarks, syntaxMarks } from '
 import { applyWrap, suppressSelectionBubble } from '../../lib/note-marks'
 import { markdownSelectionBubble } from '../../lib/editor-bubble'
 import {
-  handleBlockDragEnd,
-  handleBlockDragOver,
-  handleBlockDrop,
-  isBlockDrag,
   markdownBlockFolding,
   markdownBlockHandles,
+  moveBlockAtCaret,
+  moveBlockByLocator,
   setPinnedLine
 } from '../../lib/editor-blocks'
 import type { MarkdownBlock } from '../../lib/markdown-blocks'
+import type { BlockLocator, BlockMoveStatus, BlockMoveTarget } from '../../lib/block-move'
 import type { CalloutKind } from '../../lib/markdown'
 import {
   addTableColumn,
@@ -290,6 +289,8 @@ export interface NoteEditorHandle {
    * 不需要任何转换。
    */
   selectionText(): string
+  /** 「移动到…」:按起始行 + 类型定位源块,在实时文档里重新解析后移动 */
+  moveBlock(source: BlockLocator, target: BlockMoveTarget): BlockMoveStatus
   focus(): void
 }
 
@@ -796,6 +797,16 @@ export function NoteEditor({
         return from === to ? '' : view.state.sliceDoc(from, to)
       },
 
+      moveBlock(source, target) {
+        const view = viewRef.current
+        if (!view) return 'invalid'
+        const status = moveBlockByLocator(view, source, target)
+        // 选择器关闭后焦点回到正文:否则后续键盘输入会落到 body。
+        // invalid 时面板还开着,不能把焦点从搜索框抢走。
+        if (status !== 'invalid') view.focus()
+        return status
+      },
+
       focus() {
         viewRef.current?.focus()
       }
@@ -860,6 +871,16 @@ export function NoteEditor({
             { key: 'Mod-i', run: (v) => { applyWrap(v, '*'); return true } },
             { key: 'Mod-k', run: (v) => { applyWrap(v, '[', '](https://)'); return true } }
           ]),
+          // 块级移动覆盖 CodeMirror 默认的「按行上移/复制」—— 按行移动会把表格、
+          // 围栏和列表拆坏。是可拖动块就消费按键,到边界也不退回按行移动。
+          Prec.high(
+            keymap.of([
+              { key: 'Alt-ArrowUp', run: (v) => moveBlockAtCaret(v, 'up', 'sibling') },
+              { key: 'Alt-ArrowDown', run: (v) => moveBlockAtCaret(v, 'down', 'sibling') },
+              { key: 'Shift-Alt-ArrowUp', run: (v) => moveBlockAtCaret(v, 'up', 'cross-section') },
+              { key: 'Shift-Alt-ArrowDown', run: (v) => moveBlockAtCaret(v, 'down', 'cross-section') }
+            ])
+          ),
           // 最高优先级:只接管上游不认的宽松任务回车、批量缩进、同列光标;
           // 其余情况返回 false,原样落回 CodeMirror 的默认键位。
           Prec.highest(
@@ -874,8 +895,6 @@ export function NoteEditor({
             ])
           ),
           EditorView.domEventHandlers({
-            dragover: (e, v) => handleBlockDragOver(v, e),
-            dragend: (e, v) => handleBlockDragEnd(v, e),
             paste: (e, v) => {
               const files = imagesOf(e.clipboardData)
               if (files.length === 0) return false // 普通文本粘贴照旧交给 CodeMirror
@@ -884,7 +903,6 @@ export function NoteEditor({
               return true
             },
             drop: (e, v) => {
-              if (isBlockDrag(v)) return handleBlockDrop(v, e)
               const files = imagesOf(e.dataTransfer)
               if (files.length === 0) return false
               e.preventDefault()

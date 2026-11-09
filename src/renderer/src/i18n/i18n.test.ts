@@ -50,6 +50,34 @@ describe('i18n dictionaries', () => {
       expect(enUS[k], `en-US 缺 ${k}`).toBeTruthy()
     }
   })
+
+  it('块移动的键在两份字典均存在,且占位符一致', () => {
+    const keys = [
+      'notes.blockMenu.moveTo',
+      'notes.blockMove.title',
+      'notes.blockMove.search',
+      'notes.blockMove.empty',
+      'notes.blockMove.nestedHint',
+      'notes.blockMove.noSource',
+      'notes.blockMove.failed',
+      'notes.blockMove.outlineTitle',
+      'notes.blockMove.start',
+      'notes.blockMove.end',
+      'notes.blockMove.before',
+      'notes.blockMove.after',
+      'notes.blockMove.afterSection',
+      'notes.blockMove.untitled',
+      'notes.blockMove.limit',
+      'notes.blockMove.hint'
+    ]
+    const slots = (text: string): string[] =>
+      [...text.matchAll(/\{[A-Z]+\}/g)].map((match) => match[0]).sort()
+    for (const k of keys) {
+      expect(zhCN[k], `zh-CN 缺 ${k}`).toBeTruthy()
+      expect(enUS[k], `en-US 缺 ${k}`).toBeTruthy()
+      expect(slots(enUS[k]), `en-US ${k} 占位符不一致`).toEqual(slots(zhCN[k]))
+    }
+  })
 })
 
 describe('t / fmt', () => {

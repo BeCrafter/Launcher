@@ -1211,17 +1211,27 @@
 .note-editor-host.cm-block-dragging .cm-content {
   user-select: none;
 }
-/* 跟手浮层:只给 setDragImage 拍快照用 —— 挂在 body 上、放在屏幕外(不能藏,藏了拍出来是空白) */
-.cm-block-drag-ghost {
+/* 拖拽期间手柄让位给跟手卡片。只改透明度:`.cm-block-handle-hidden` 带
+   `pointer-events: none`,会让指针捕获跟着失效 */
+.note-editor-host.cm-block-dragging .cm-block-handle {
+  opacity: 0;
+}
+body.cm-block-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+/* 跟手卡片:整块折叠成「类型 + 前几行源码」。挂 body、fixed、不接事件 */
+.cm-block-drag-card {
   position: fixed;
   top: 0;
-  left: -10000px;
-  max-width: 360px;
-  padding: 6px 10px;
+  left: 0;
+  z-index: 1000;
+  max-width: 320px;
+  padding: 7px 10px 8px;
   border: 1px solid var(--border2);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--surface3);
-  box-shadow: 0 10px 28px rgb(0 0 0 / 30%);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 32%);
   color: var(--text);
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, 'Noto Sans SC', monospace;
   font-size: 12px;
@@ -1229,6 +1239,237 @@
   white-space: pre;
   overflow: hidden;
   pointer-events: none;
+  will-change: transform;
+  opacity: 0.96;
+}
+.cm-block-drag-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border2);
+  color: var(--accent2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.cm-block-drag-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  font-size: 10px;
+  font-weight: 700;
+}
+.cm-block-drag-card-type {
+  color: var(--muted);
+  font-family: inherit;
+  font-weight: 500;
+}
+.cm-block-drag-card-body {
+  /* 6 行预览 + 1 行省略号;再多就裁掉 */
+  max-height: 10.5em;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font: inherit;
+  opacity: 0.9;
+}
+.cm-block-drag-card-ellipsis {
+  color: var(--dim);
+}
+/* 落点提示线:视觉与预览表格的 `.md-table-drop-line` 同一套（2px 强调色 + 外发光） */
+.cm-block-drop-line {
+  position: fixed;
+  z-index: 1001;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent2);
+  box-shadow: 0 0 0 2px var(--wash-accent);
+  pointer-events: none;
+  transition: top 120ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.cm-block-drop-line[hidden] {
+  display: none;
+}
+/* 拖动中的目标标签:「插入到「## 乙」之前」。固定定位、不接事件 */
+.cm-block-drop-label {
+  position: fixed;
+  z-index: 1002;
+  padding: 3px 8px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: var(--menu-bg);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 26%);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+.cm-block-drop-label[hidden] {
+  display: none;
+}
+/* 长文档拖动时右缘的大纲:悬停即跳转并锁定落点 */
+.cm-block-outline {
+  position: fixed;
+  z-index: 1002;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--menu-bg);
+  box-shadow: 0 12px 34px rgb(0 0 0 / 32%);
+  font-size: 12px;
+  overflow: hidden;
+  user-select: none;
+}
+.cm-block-outline-hd {
+  flex-shrink: 0;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 10.5px;
+}
+.cm-block-outline-list {
+  flex: 1;
+  min-height: 0;
+  padding: 4px;
+  overflow-y: auto;
+}
+.cm-block-outline-entry {
+  padding: 4px 8px;
+  border-radius: 5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.cm-block-outline-entry:hover {
+  background: var(--hover);
+}
+.cm-block-outline-entry.is-edge {
+  color: var(--muted);
+}
+.cm-block-outline-entry.is-active {
+  background: var(--wash-accent);
+  color: var(--text);
+}
+.cm-block-outline-ft {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 10.5px;
+}
+/* 「移动到…」选择器 */
+.notes-move-picker {
+  position: fixed;
+  z-index: 1000;
+  top: 14vh;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  width: min(460px, calc(100vw - 32px));
+  max-height: min(520px, 72vh);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--menu-bg);
+  box-shadow: 0 14px 40px rgb(0 0 0 / 40%);
+  color: var(--text);
+  overflow: hidden;
+}
+.notes-move-picker-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.notes-move-picker-hd > span {
+  flex: 1;
+}
+.notes-move-picker-hd svg {
+  color: var(--dim);
+  flex-shrink: 0;
+}
+.notes-move-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.notes-move-picker-search i {
+  color: var(--dim);
+  font-size: 11px;
+}
+.notes-move-picker-search input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.notes-move-picker-list {
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  overflow-y: auto;
+}
+.notes-move-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.notes-move-row.active,
+.notes-move-row:hover {
+  background: var(--hover);
+}
+.notes-move-row svg {
+  flex-shrink: 0;
+  color: var(--dim);
+}
+.notes-move-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-move-row-sub {
+  flex-shrink: 0;
+  color: var(--dim);
+  font-size: 10.5px;
+}
+.notes-move-picker-empty {
+  padding: 18px 10px;
+  color: var(--dim);
+  font-size: 11.5px;
+  text-align: center;
+}
+.notes-move-picker-ft {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--dim);
+  font-size: 10.5px;
 }
 
 .notes-block-menu,

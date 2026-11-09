@@ -571,6 +571,57 @@ export function inSameDropScope(lines: readonly string[], a: MarkdownBlock, b: M
   return a.parentId === b.parentId && blockIndentOf(lines, a) === blockIndentOf(lines, b)
 }
 
+function byIdOf(blocks: readonly MarkdownBlock[]): Map<number, MarkdownBlock> {
+  const byId = new Map<number, MarkdownBlock>()
+  for (const block of blocks) byId.set(block.id, block)
+  return byId
+}
+
+function topLevelScopedWith(
+  byId: ReadonlyMap<number, MarkdownBlock>,
+  block: MarkdownBlock
+): boolean {
+  const seen = new Set<number>()
+  let parent = block.parentId
+  while (parent !== null) {
+    // 防御:数据异常时不要死循环
+    if (seen.has(parent)) return false
+    seen.add(parent)
+    const ancestor = byId.get(parent)
+    // 祖先只能是标题。引用 / 列表项 / 折叠块 / 对齐包裹里的行,
+    // 搬出去会改变容器归属,不能当自由落点。
+    if (ancestor === undefined || ancestor.kind !== 'heading') return false
+    parent = ancestor.parentId
+  }
+  return true
+}
+
+/** 块及其所有祖先都只处在标题层级里(没有被引用、列表、`<details>` 等容器包住)。 */
+export function isTopLevelScoped(blocks: readonly MarkdownBlock[], block: MarkdownBlock): boolean {
+  return topLevelScopedWith(byIdOf(blocks), block)
+}
+
+/**
+ * 能否把 `a` 放到 `b` 的前 / 后。
+ *
+ *  · 同一批兄弟(同父级 + 同缩进):互换不会改变归属,永远允许;
+ *  · 两个块都「只处在标题层级里」:各自带着完整源码行,放到任意顶格块边界都还是同一个块,
+ *    所以可以跨小节、跨标题层级移动 —— 表格 / 图表 / 段落最常见的诉求。
+ *
+ * 嵌套列表项、引用块里的行不满足第二条:搬出去会静默改挂父级或改变容器归属。
+ */
+export function canDropBeside(
+  blocks: readonly MarkdownBlock[],
+  lines: readonly string[],
+  a: MarkdownBlock,
+  b: MarkdownBlock
+): boolean {
+  if (a.id === b.id) return false
+  if (inSameDropScope(lines, a, b)) return true
+  const byId = byIdOf(blocks)
+  return topLevelScopedWith(byId, a) && topLevelScopedWith(byId, b)
+}
+
 /**
  * 行是否在这个块的**正文范围**内。区间是 `[from, contentTo)` ——
  * 与 `blockOwnersByLine` 的归属区间同口径（块尾的分隔空行不算）。
@@ -618,8 +669,10 @@ export function reorderMarkdownBlocks(
   if (source === undefined || target === undefined) return null
   if (!isMarkdownBlockDraggable(source) || !isMarkdownBlockDraggable(target) || source.id === target.id) return null
   const lines = text.split('\n')
-  if (!inSameDropScope(lines, source, target)) return null
-  if (source.from < target.to && target.from < source.to) return null
+  if (!canDropBeside(blocks, lines, source, target)) return null
+  // 落点在源块自己的子树里 → 会把源块劈开。祖先 / 兄弟都可以:
+  // 「插到祖先标题之前」就是搬到那棵子树的上面,是合法位置。
+  if (target.from >= source.from && target.to <= source.to) return null
 
   // Move the block body, not the separator after it. Separators belong to the
   // document layout and are recreated at the new boundary below.
@@ -699,6 +752,25 @@ export function resolveDropSlot(slots: readonly BlockSlot[], pointerTop: number)
   const last = allowed[allowed.length - 1]
   if (index >= allowed.length) return { targetId: last.id, before: false }
   return { targetId: allowed[index].id, before: true }
+}
+
+/**
+ * 按**块边界**找落点(不限兄弟):`anchors` 是允许落脚的块,按文档序,
+ * `height` 取到下一个锚点为止,所以指针在某个块的上半 / 下半决定落在它前面还是后面。
+ *
+ * 这是「拖到任意新行」的判据:标题、段落、表格、围栏之间都有边界,
+ * 而同一批兄弟的置换动画仍由 `resolveDropSlot` / `permutationOffsets` 负责。
+ */
+export function resolveDropAnchor(
+  anchors: readonly BlockSlot[],
+  pointerTop: number
+): DropSlot | null {
+  if (anchors.length === 0) return null
+  for (const slot of anchors) {
+    if (pointerTop < slot.top + slot.height / 2) return { targetId: slot.id, before: true }
+  }
+  const last = anchors[anchors.length - 1]
+  return { targetId: last.id, before: false }
 }
 
 /**

@@ -32,7 +32,9 @@ import { EmbedDialog } from './EmbedDialog'
 import { MermaidBlock } from './MermaidBlock'
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor'
 import { NoteBlockMenu, NoteInsertMenu } from './NoteBlockMenus'
+import { NoteMovePicker } from './NoteMovePicker'
 import { parseMarkdownBlocks, type MarkdownBlock } from '../../lib/markdown-blocks'
+import { locatorOf, type BlockLocator } from '../../lib/block-move'
 import { NoteRefChips } from './NoteRefChips'
 import { NoteRefPicker } from './NoteRefPicker'
 import { NotesRail } from './NotesRail'
@@ -80,6 +82,12 @@ export function NotesView(): React.JSX.Element {
   const [blockMenu, setBlockMenu] = useState<{ block: MarkdownBlock; anchor: DOMRect; line: number } | null>(null)
   const [insertMenu, setInsertMenu] = useState<{ line: number; anchor: DOMRect } | null>(null)
   const insertLineRef = useRef<number | null>(null)
+  const [movePicker, setMovePicker] = useState<BlockLocator | null>(null)
+
+  // 换笔记就关掉「移动到…」—— 源定位器属于上一篇的正文
+  useEffect(() => {
+    setMovePicker(null)
+  }, [draft?.id])
 
   // 折叠只属于当前编辑会话:切换笔记或切换编辑/分栏/预览模式时清空,
   // 但不改正文、不清空 CodeMirror history,所以 Cmd+Z 仍只对应用户编辑。
@@ -759,6 +767,10 @@ export function NotesView(): React.JSX.Element {
             setBlockMenu(null)
             setInsertMenu({ line, anchor: blockMenu.anchor })
           }}
+          onMoveTo={(block) => {
+            setBlockMenu(null)
+            setMovePicker(locatorOf(block))
+          }}
           onDiagram={(line) => {
             setBlockMenu(null)
             openDiagramAt(line)
@@ -783,6 +795,14 @@ export function NotesView(): React.JSX.Element {
             setInsertMenu(null)
             openEmbedAt(line)
           }}
+        />
+      )}
+      {movePicker !== null && (
+        <NoteMovePicker
+          source={movePicker}
+          body={draft.body}
+          handleRef={editorRef}
+          onClose={() => setMovePicker(null)}
         />
       )}
       <NoteRefPicker />
