@@ -12,3 +12,7 @@ resources/logo-custom/
 
 # AI 协作指令(仅本地开发用,不随仓库分发)
 CLAUDE.md
+
+# 笔记编辑器 E2E 的临时 profile / 截图 / 报告
+.e2e-notes-tmp/
+e2e/notes/.tmp/
