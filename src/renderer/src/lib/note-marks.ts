@@ -58,7 +58,7 @@ export function applyWrap(view: EditorView, before: string, after?: string): voi
  * ⚠ 想改这里先改预览那一条 —— 两边必须是同一套。
  */
 const MARK_RE =
-  /(?<esc>\\(?<escChar>[\\`*_~[\]()!#>+\-.|]))|(?<bi>\*\*\*(?!\s)(?<biText>[\s\S]+?)(?<!\s)\*\*\*)|(?<b>\*\*(?!\s)(?<bText>[\s\S]+?)(?<!\s)\*\*)|(?<i>\*(?!\s)(?<iText>[^*\n]+?)(?<!\s)\*)|(?<bi2>___(?!\s)(?<bi2Text>[\s\S]+?)(?<!\s)___)|(?<b2>__(?!\s)(?<b2Text>[\s\S]+?)(?<!\s)__)|(?<i2>(?<![\p{L}\p{N}])_(?!\s)(?<i2Text>[^_\n]+?)(?<!\s)_(?![\p{L}\p{N}]))|(?<s>~~(?!\s)(?<sText>[\s\S]+?)(?<!\s)~~)|(?<sub>~(?!\s)(?<subText>[^~\n]+?)(?<!\s)~)|(?<sup>\^(?!\s)(?<supText>[^^\n]+?)(?<!\s)\^)|(?<c>`(?<cText>[^`]+)`)|(?<img>!\[(?<imgAlt>[^\]]*)\]\((?<imgUrl>[^)\n]+?)\))|(?<l>\[(?<lText>[^\]]+)\]\((?<lUrl>[^)\n]+?)\))|(?<auto><(?<autoUrl>https?:\/\/[^>\s]+)>)/gu
+  /(?<esc>\\(?<escChar>[\\`*_~[\]()!#>+\-.|]))|(?<bi>\*\*\*(?!\s)(?<biText>[\s\S]+?)(?<!\s)\*\*\*)|(?<b>\*\*(?!\s)(?<bText>[\s\S]+?)(?<!\s)\*\*)|(?<i>\*(?!\s)(?<iText>[^*\n]+?)(?<!\s)\*)|(?<bi2>___(?!\s)(?<bi2Text>[\s\S]+?)(?<!\s)___)|(?<b2>__(?!\s)(?<b2Text>[\s\S]+?)(?<!\s)__)|(?<i2>(?<![\p{L}\p{N}])_(?!\s)(?<i2Text>[^_\n]+?)(?<!\s)_(?![\p{L}\p{N}]))|(?<s>~~(?!\s)(?<sText>[\s\S]+?)(?<!\s)~~)|(?<sub>~(?!\s)(?<subText>[^~\n]+?)(?<!\s)~)|(?<sup>\^(?!\s)(?<supText>[^^\n]+?)(?<!\s)\^)|(?<hl>==(?!\s)(?<hlText>[\s\S]+?)(?<!\s)==)|(?<c>`(?<cText>[^`]+)`)|(?<img>!\[(?<imgAlt>[^\]]*)\]\((?<imgUrl>[^)\n]+?)\))|(?<l>\[(?<lText>[^\]]+)\]\((?<lUrl>[^)\n]+?)\))|(?<auto><(?<autoUrl>https?:\/\/[^>\s]+)>)/gu
 
 const MAX_DEPTH = 8
 
@@ -73,6 +73,7 @@ function innerText(g: Record<string, string | undefined>): string | null {
   if (g.s !== undefined) return g.sText ?? ''
   if (g.sub !== undefined) return g.subText ?? ''
   if (g.sup !== undefined) return g.supText ?? ''
+  if (g.hl !== undefined) return g.hlText ?? ''
   if (g.c !== undefined) return g.cText ?? ''
   if (g.l !== undefined) return g.lText ?? ''
   return null

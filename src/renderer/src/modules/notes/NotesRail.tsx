@@ -14,6 +14,7 @@ import { useT } from '../../hooks/useT'
 import { buildNoteTree, countNotesIn, sortNotes, type NoteFolderNode } from '../../lib/note-tree'
 import { refTypeLabel } from '../../lib/note-refs'
 import { rankByTagHits, tagHitsOf } from '../../lib/note-search'
+import { aggregateTags, noteHasTag } from '../../lib/note-tags'
 import { relTime } from '../../lib/rel-time'
 import { confirmDangerous } from '../../lib/elevation'
 import { useRailResize } from '../../lib/use-rail-resize'
@@ -61,12 +62,14 @@ export function NotesRail(): React.JSX.Element {
   const query = useNotesStore((s) => s.query)
   const searchResults = useNotesStore((s) => s.searchResults)
   const refFilter = useNotesStore((s) => s.refFilter)
+  const tagFilter = useNotesStore((s) => s.tagFilter)
   const currentId = useNotesStore((s) => s.currentId)
   const dir = useNotesStore((s) => s.dir)
   const setQuery = useNotesStore((s) => s.setQuery)
   const pinnedCollapsed = useNotesStore((s) => s.pinnedCollapsed)
   const setPinnedCollapsed = useNotesStore((s) => s.setPinnedCollapsed)
   const filterByRef = useNotesStore((s) => s.filterByRef)
+  const setTagFilter = useNotesStore((s) => s.setTagFilter)
   const open = useNotesStore((s) => s.open)
   const toggleFolder = useNotesStore((s) => s.toggleFolder)
   const setSelectedFolder = useNotesStore((s) => s.setSelectedFolder)
@@ -89,6 +92,8 @@ export function NotesRail(): React.JSX.Element {
 
   const [edit, setEdit] = useState<NameEdit | null>(null)
   const [draftName, setDraftName] = useState('')
+  /** 标签面板默认收起 —— 标签会越来越多,常驻铺开太占地方 */
+  const [tagsOpen, setTagsOpen] = useState(false)
   // 滚动条只在滚动时露出来(见 .notes-rail-list 的 CSS)。停手约 0.9s 后自己隐去 ——
   // 常驻的滚动条在这么窄的一栏里很扎眼,而完全不要又让人不知道还能往下滚。
   // 拖拽:记住被拖的 id 与当前悬停的目标目录('' = 根层),用于高亮与合法性判断。
@@ -142,6 +147,8 @@ export function NotesRail(): React.JSX.Element {
   }
 
   const searching = query.trim() !== ''
+  /** 筛选/搜索生效时摊平目录:否则深层命中会被折叠目录藏住 */
+  const flat = searching || tagFilter !== null
 
   /**
    * 搜索词命中了哪些笔记的标签(id → 命中的标签名)。
@@ -151,17 +158,19 @@ export function NotesRail(): React.JSX.Element {
    * 完全在本地算:列表里本来就带着每篇的 tags,不必再问主进程一次。
    */
   const tagHits = useMemo(() => tagHitsOf(notes, query), [notes, query])
+  const tagCounts = useMemo(() => aggregateTags(notes), [notes])
 
   const visible = useMemo(() => {
     let list = searchResults ?? notes
     if (refFilter !== null) {
       list = list.filter((n) => n.refs.some((r) => r.type === refFilter.type && r.key === refFilter.key))
     }
+    if (tagFilter !== null) list = list.filter((n) => noteHasTag(n, tagFilter))
     // 按**创建时间**排,不按 updated:updated 会被自动保存/切换笔记时的 flush 刷新,
     // 于是「点一下笔记,列表就重排一次」—— 排序键本身会变,顺序就不可能稳。
     // created 一旦写入就不再动,顺序稳定;置顶仍由 sortNotes 内部优先。
     return rankByTagHits(sortNotes(list, 'created'), tagHits)
-  }, [notes, searchResults, refFilter, tagHits])
+  }, [notes, searchResults, refFilter, tagFilter, tagHits])
 
   const pinned = useMemo(() => visible.filter((n) => n.pinned), [visible])
   const unpinned = useMemo(() => visible.filter((n) => !n.pinned), [visible])
@@ -471,6 +480,51 @@ export function NotesRail(): React.JSX.Element {
         </div>
       )}
 
+      {/* 标签面板:默认收起,只占一行;展开后是限高滚动的 pill 墙 */}
+      {!isEmpty && tagCounts.length > 0 && (
+        <div className="notes-tag-panel">
+          <button
+            type="button"
+            className="notes-tag-panel-hd"
+            onClick={() => setTagsOpen((v) => !v)}
+            title={tagsOpen ? t('notes.folder.collapse') : t('notes.folder.expand')}
+          >
+            <i className={tagsOpen ? 'fa-solid fa-caret-down' : 'fa-solid fa-caret-right'} />
+            <i className="fa-solid fa-hashtag" />
+            <span>{t('notes.tags.panelTitle')}</span>
+            <span className="notes-tag-count">{tagCounts.length}</span>
+          </button>
+          {tagsOpen && (
+            <div className="notes-tag-list">
+              {tagCounts.map((tc) => (
+                <button
+                  key={tc.key}
+                  type="button"
+                  className={'notes-tag-pill' + (tagFilter === tc.key ? ' active' : '')}
+                  onClick={() => setTagFilter(tagFilter === tc.key ? null : tc.key)}
+                >
+                  #{tc.tag}
+                  <span className="notes-tag-count">{tc.count}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 当前筛选:与关联筛选一样用可清除的 chip 表达 */}
+      {tagFilter !== null && (
+        <div className="notes-rail-active">
+          <span className="notes-rail-chip">
+            <i className="fa-solid fa-hashtag" />
+            {tagFilter}
+            <button type="button" onClick={() => setTagFilter(null)} title={t('notes.tags.clear')}>
+              <i className="fa-solid fa-xmark" />
+            </button>
+          </span>
+        </div>
+      )}
+
       {/* 只给关联留一行 —— 标签的选中态由它自己的高亮表达,不需要再复述一遍 */}
       {refFilter !== null && (
         <div className="notes-rail-active">
@@ -512,8 +566,11 @@ export function NotesRail(): React.JSX.Element {
             <p className="notes-firstrun-sub">{t('notes.empty.sub')}</p>
           </div>
         )}
-        {!loading && searching && visible.length === 0 && (
-          <EmptyState icon="fa-solid fa-magnifying-glass" text={t('notes.searchEmpty')} />
+        {!loading && flat && visible.length === 0 && (
+          <EmptyState
+            icon="fa-solid fa-magnifying-glass"
+            text={tagFilter !== null ? t('notes.tagFilterEmpty') : t('notes.searchEmpty')}
+          />
         )}
 
         {/* 置顶区:始终在列表最顶 —— 这是「置顶」二字唯一的兑现方式 */}
@@ -534,7 +591,7 @@ export function NotesRail(): React.JSX.Element {
           </div>
         )}
 
-        {searching ? unpinned.map((n) => noteRow(n, 0)) : folderBranch(tree, 0)}
+        {flat ? unpinned.map((n) => noteRow(n, 0)) : folderBranch(tree, 0)}
 
         {/* 新建目录只在这里出现:它是**根层**才需要的东西 ——
             子目录从目录行 hover 出来的按钮建,不需要再占一个常驻入口。 */}

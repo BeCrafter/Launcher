@@ -186,6 +186,8 @@ export interface NoteMeta {
   created: string
   updated: string
   tags: string[]
+  /** 正文里的 #tag(派生字段,只读;保存时不会写回 frontmatter) */
+  inlineTags?: string[]
   pinned: boolean
   refs: NoteRef[]
   excerpt: string

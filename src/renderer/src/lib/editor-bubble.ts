@@ -34,6 +34,7 @@ const ACTIONS: BubbleAction[] = [
   { id: 'bold', icon: 'bold', labelKey: 'notes.fmt.bold', before: '**' },
   { id: 'italic', icon: 'italic', labelKey: 'notes.fmt.italic', before: '*' },
   { id: 'strike', icon: 'strikethrough', labelKey: 'notes.fmt.strike', before: '~~' },
+  { id: 'highlight', icon: 'highlighter', labelKey: 'notes.fmt.highlight', before: '==' },
   { id: 'code', icon: 'code', labelKey: 'notes.fmt.code', before: '`' },
   { id: 'link', icon: 'link', labelKey: 'notes.fmt.link', before: '[', after: '](https://)' },
   { id: 'clear', icon: 'eraser', labelKey: 'notes.fmt.clear' }

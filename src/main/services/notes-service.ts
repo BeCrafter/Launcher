@@ -48,6 +48,7 @@ import {
   type NoteSaveOutcome,
   type NotesListPayload
 } from '../../shared/notes'
+import { scanInlineTags } from '../../shared/inline-tags'
 import {
   assembleFile,
   bodyText,
@@ -317,6 +318,9 @@ export function createNotesService(opts: {
         created: fields.created ?? localIso(birthMs),
         updated: fields.updated ?? localIso(mtimeMs),
         tags: fields.tags ?? [],
+        // 正文标签是派生索引:frontmatter 的 tags 仍然只代表 frontmatter,
+        // 两者在界面/筛选层合并,但保存时绝不把 inlineTags 写回 frontmatter。
+        inlineTags: size > MAX_NOTE_BYTES ? [] : scanInlineTags(body),
         pinned: fields.pinned ?? false,
         refs: fields.refs ?? [],
         excerpt: excerptOf(body),
@@ -852,6 +856,7 @@ export function createNotesService(opts: {
         const hit =
           e.meta.title.toLowerCase().includes(q) ||
           e.meta.tags.some((t) => t.toLowerCase().includes(q)) ||
+          e.meta.inlineTags?.some((t) => t.toLowerCase().includes(q)) ||
           e.meta.refs.some((r) => r.label.toLowerCase().includes(q)) ||
           e.body.toLowerCase().includes(q)
         if (hit) hits.push(e.meta)

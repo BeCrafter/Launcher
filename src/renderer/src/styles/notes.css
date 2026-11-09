@@ -267,6 +267,58 @@
   font-size: 10px;
 }
 
+/* 标签面板:默认收起,标题只占一行;展开后限高滚动 ——
+   标签一多不能把笔记列表整个顶下去 */
+.notes-tag-panel {
+  padding: 4px 10px 0;
+}
+.notes-tag-panel-hd {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.notes-tag-panel-hd:hover { color: var(--text); }
+.notes-tag-panel-hd .fa-hashtag { color: var(--dim); font-size: 10px; }
+.notes-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 2px 2px 6px;
+}
+.notes-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  background: var(--surface3);
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.notes-tag-pill:hover { color: var(--text); }
+.notes-tag-pill.active {
+  border-color: transparent;
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+.notes-tag-count {
+  color: var(--dim);
+  font-size: 10px;
+}
+.notes-tag-pill.active .notes-tag-count { color: inherit; }
+
 
 /* 树末尾的根层新建入口:一对等宽小按钮。
    它们只负责**根层** —— 子笔记/子目录从目录行 hover 出来的按钮建。 */
@@ -1964,6 +2016,14 @@ body.cm-block-dragging {
 .notes-preview-body .md-del {
   color: var(--dim);
 }
+/* Obsidian 的 `==高亮==`:底色用主题里的黄色 wash,深色下也不会变成一块亮黄 */
+.notes-preview-body .md-hl {
+  background: var(--wash-yellow);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+  box-decoration-break: clone;
+}
 .notes-preview-body .md-list .md-list {
   margin: 2px 0 2px 4px;
 }
@@ -2006,6 +2066,59 @@ body.cm-block-dragging {
 .notes-preview-body .md-img-chip-alt {
   color: var(--muted);
 }
+
+/* wikilink:笔记之间的双向链接。失效链接(没有同名笔记)弱化成灰点线,
+   但**仍然可点** —— 点它会就地新建一篇同名笔记。 */
+.notes-preview-body .md-wikilink {
+  color: var(--cyan);
+  text-decoration: underline dotted;
+  text-decoration-color: var(--border2);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.notes-preview-body .md-wikilink:hover {
+  color: var(--accent2);
+  text-decoration-style: solid;
+}
+.notes-preview-body .md-wikilink.unresolved {
+  color: var(--dim);
+}
+/* 没有点击回调的渲染场景(帮助页 / AI 消息):只上色,不可点 */
+.notes-preview-body .md-wikilink.inert {
+  cursor: text;
+  text-decoration: none;
+}
+/* `![[...]]` 指向的不是媒体文件(比如 `![[笔记]]`):本期不做内容转写,显示提示 chip */
+.notes-preview-body .md-wikilink-embed-unsupported {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 6px;
+  background: var(--surface3);
+  color: var(--dim);
+  font-size: 11.5px;
+}
+
+/* 行内 #标签:小圆角 pill。预览里可点(点一下按标签筛选侧栏) */
+.notes-preview-body .md-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--wash-accent);
+  color: var(--accent2);
+  font-size: 0.94em;
+  line-height: 1.55;
+  font-family: inherit;
+}
+.notes-preview-body button.md-tag {
+  cursor: pointer;
+}
+.notes-preview-body button.md-tag:hover {
+  color: var(--text);
+}
+
 
 /* 关联选择器(根级浮层) */
 .note-ref-picker {
@@ -2421,6 +2534,9 @@ body.cm-block-dragging {
    同样只上色与改字形,不碰排版。 */
 .note-editor-host .tk-th { font-weight: 600; }
 .note-editor-host .tk-task { color: var(--syn-constant); font-weight: 600; }
+/* 编辑区守「源码模式」契约:只能改颜色/字形,不能加底色或圆角(见 styles.contract.test.ts)。
+   所以这里用黄色文字而不是高亮底色 —— 底色只在右侧预览里出现。 */
+.note-editor-host .tk-hl { color: var(--yellow); }
 
 /* 提示块标记按类型上色。名字由 editor-marks.ts 用模板串拼出来 ——
    静态扫描看不见,所以 styles.contract.test.ts 里有一份显式清单。 */
@@ -2430,6 +2546,9 @@ body.cm-block-dragging {
 .note-editor-host .tk-callout-important { color: var(--accent2); }
 .note-editor-host .tk-callout-warning { color: var(--yellow); }
 .note-editor-host .tk-callout-caution { color: var(--red); }
+/* Obsidian 扩展语法(语法树里没有,由 editor-marks 扫描上色)。源码模式:只改颜色 */
+.note-editor-host .tk-wikilink { color: var(--cyan); }
+.note-editor-host .tk-hashtag { color: var(--accent2); }
 
 /* ══════════════════════════════════════════════════════════════════
    编辑器:源码模式(没有块级装饰)

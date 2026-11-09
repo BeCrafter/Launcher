@@ -7,6 +7,7 @@
 //   · 冲突未决时**暂停自动保存**,只由用户的显式选择恢复。
 
 import { create } from 'zustand'
+import { normalizeTag } from '@shared/inline-tags'
 import { baseNameOf, type Note, type NoteMeta, type NoteRef } from '@shared/notes'
 import { slugifyNoteTitle } from '@shared/note-slug'
 import { dataSource } from '../data'
@@ -111,6 +112,8 @@ interface NotesState {
   query: string
   searchResults: NoteMeta[] | null
   refFilter: NoteRef | null
+  /** 标签筛选(已 normalize 的 key);与 query / refFilter 取交集 */
+  tagFilter: string | null
   railCollapsed: boolean
   /** 置顶区折叠 */
   pinnedCollapsed: boolean
@@ -165,6 +168,8 @@ interface NotesState {
   setQuery(q: string): Promise<void>
   setPinnedCollapsed(v: boolean): void
   filterByRef(ref: NoteRef | null): void
+  /** 标签筛选;传 null 清除。key 会先 normalize */
+  setTagFilter(tag: string | null): void
   setRailCollapsed(v: boolean): void
   setViewMode(m: NotesViewMode): void
   setSplitRatio(r: number): void
@@ -239,6 +244,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
     query: '',
     searchResults: null,
     refFilter: null,
+    tagFilter: null,
     railCollapsed: lsGet(RAIL_LS_KEY) === '1',
     pinnedCollapsed: lsGet(PINNED_LS_KEY) === '1',
     currentId: null,
@@ -795,6 +801,9 @@ export const useNotesStore = create<NotesState>((set, get) => {
     },
     filterByRef(ref) {
       set({ refFilter: ref })
+    },
+    setTagFilter(tag) {
+      set({ tagFilter: tag === null ? null : normalizeTag(tag) })
     },
     setRailCollapsed(v) {
       lsSet(RAIL_LS_KEY, v ? '1' : '0')

@@ -20,6 +20,8 @@ import { RangeSetBuilder } from '@codemirror/state'
 import { syntaxTree } from '@codemirror/language'
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import { inCodeBlock } from '../../lib/editor-code-block'
+import { scanInlineTagsInLine } from '@shared/inline-tags'
+import { scanWikilinksInLine } from '@shared/wikilinks'
 import { parseListLine } from '../../lib/md-list-syntax'
 import { CALLOUT_KINDS, type CalloutKind } from '../../lib/markdown'
 
@@ -98,6 +100,125 @@ export const lenientTaskMarks = ViewPlugin.fromClass(
     }
     update(u: ViewUpdate): void {
       if (u.docChanged || u.viewportChanged) this.decorations = buildLenientTaskMarks(u.view)
+    }
+  },
+  { decorations: (v) => v.decorations }
+)
+
+/**
+ * 七级及以上标题(`####### ` … `########## `)的着色。
+ *
+ * CommonMark 只到 H6,Lezer 把 7 个 `#` 解析成段落 —— 语法树上没有 heading tag,
+ * 而本项目自己的块模型与预览认到 H10。这里补一层正则,用与 H4–H6 相同的字形
+ * (只改字重,不改行高)。
+ */
+const EXTRA_HEADING_RE = /^ {0,3}#{7,10}(?:[ \t]|$)/
+
+function buildExtraHeadingMarks(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  const last = view.state.doc.lineAt(view.viewport.to).number
+  let line = view.state.doc.lineAt(view.viewport.from)
+  for (;;) {
+    if (EXTRA_HEADING_RE.test(line.text) && !inCodeBlock(view, line.from)) {
+      builder.add(line.from, line.to, Decoration.mark({ class: 'tk-h4' }))
+    }
+    if (line.number >= last) break
+    line = view.state.doc.line(line.number + 1)
+  }
+  return builder.finish()
+}
+
+export const extraHeadingMarks = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+    constructor(view: EditorView) {
+      this.decorations = buildExtraHeadingMarks(view)
+    }
+    update(u: ViewUpdate): void {
+      if (u.docChanged || u.viewportChanged) this.decorations = buildExtraHeadingMarks(u.view)
+    }
+  },
+  { decorations: (v) => v.decorations }
+)
+
+/**
+ * `[[wikilink]]` 与 `#行内标签` 的着色。
+ *
+ * 两者都不在 Lezer 的语法树里(Obsidian 扩展语法),与 `==高亮==` 一样只能自己扫。
+ * 扫描规则复用共享模块 —— 编辑器上色的范围必须与预览渲染、标签索引完全一致,
+ * 否则同一个 `#tag` 会「这里算、那里不算」。
+ */
+function buildNoteInlineMarks(view: EditorView): DecorationSet {
+  const ranges: { from: number; to: number; cls: string }[] = []
+  const last = view.state.doc.lineAt(view.viewport.to).number
+  let line = view.state.doc.lineAt(view.viewport.from)
+  for (;;) {
+    if (!inCodeBlock(view, line.from)) {
+      for (const link of scanWikilinksInLine(line.text)) {
+        ranges.push({ from: line.from + link.from, to: line.from + link.to, cls: 'tk-wikilink' })
+      }
+      for (const tag of scanInlineTagsInLine(line.text)) {
+        ranges.push({ from: line.from + tag.from, to: line.from + tag.to, cls: 'tk-hashtag' })
+      }
+    }
+    if (line.number >= last) break
+    line = view.state.doc.line(line.number + 1)
+  }
+  // 两类区间是分开扫的,合到一起后必须重新按位置排序 —— RangeSetBuilder 只收有序区间
+  ranges.sort((a, b) => a.from - b.from || a.to - b.to)
+  const builder = new RangeSetBuilder<Decoration>()
+  for (const r of ranges) builder.add(r.from, r.to, Decoration.mark({ class: r.cls }))
+  return builder.finish()
+}
+
+export const noteInlineMarks = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+    constructor(view: EditorView) {
+      this.decorations = buildNoteInlineMarks(view)
+    }
+    update(u: ViewUpdate): void {
+      if (u.docChanged || u.viewportChanged) this.decorations = buildNoteInlineMarks(u.view)
+    }
+  },
+  { decorations: (v) => v.decorations }
+)
+
+/**
+ * `==高亮==` 的着色(Obsidian 语法)。Lezer 不认,只能自己扫。
+ * 只给**两个等号之间**的内容上底色 —— 定界符保持普通文字,与 `*粗体*` 的观感一致。
+ */
+const HIGHLIGHT_RE = /==(?!\s)([^=\n]+?)(?<!\s)==/g
+
+function buildHighlightMarks(view: EditorView): DecorationSet {
+  const builder = new RangeSetBuilder<Decoration>()
+  const last = view.state.doc.lineAt(view.viewport.to).number
+  let line = view.state.doc.lineAt(view.viewport.from)
+  for (;;) {
+    if (!inCodeBlock(view, line.from)) {
+      for (const m of line.text.matchAll(HIGHLIGHT_RE)) {
+        if (m.index === undefined) continue
+        builder.add(
+          line.from + m.index + 2,
+          line.from + m.index + m[0].length - 2,
+          Decoration.mark({ class: 'tk-hl' })
+        )
+      }
+    }
+    if (line.number >= last) break
+    line = view.state.doc.line(line.number + 1)
+  }
+  return builder.finish()
+}
+
+export const highlightMarks = ViewPlugin.fromClass(
+  class {
+    decorations: DecorationSet
+    constructor(view: EditorView) {
+      this.decorations = buildHighlightMarks(view)
+    }
+    update(u: ViewUpdate): void {
+      if (u.docChanged || u.viewportChanged) this.decorations = buildHighlightMarks(u.view)
     }
   },
   { decorations: (v) => v.decorations }

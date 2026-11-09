@@ -17,7 +17,7 @@ export function tagHitsOf(notes: NoteMeta[], query: string): Map<string, string>
   const hit = new Map<string, string>()
   if (q === '') return hit
   for (const n of notes) {
-    const tag = n.tags.find((tg) => tg.toLowerCase().includes(q))
+    const tag = [...n.tags, ...(n.inlineTags ?? [])].find((tg) => tg.toLowerCase().includes(q))
     if (tag !== undefined) hit.set(n.id, tag)
   }
   return hit

@@ -498,6 +498,57 @@ describe('全文检索', () => {
   })
 })
 
+describe('行内标签索引', () => {
+  it('正文标签去重后进 NoteMeta,代码/URL/转义里的不算', async () => {
+    const svc = makeService()
+    const note = await svc.create({
+      title: 't',
+      body: [
+        '正文 #alpha 与 #Beta,重复 #alpha',
+        '',
+        '```',
+        '#fenced',
+        '```',
+        '`#inline` \\#escaped https://x/#frag',
+        '## 标题里 #headingTag'
+      ].join('\n')
+    })
+
+    expect(note.inlineTags).toEqual(['alpha', 'Beta', 'headingTag'])
+    const list = await svc.list()
+    expect(list.notes[0]!.inlineTags).toEqual(['alpha', 'Beta', 'headingTag'])
+  })
+
+  it('不污染 frontmatter tags;保存正文后重新解析', async () => {
+    const svc = makeService()
+    const note = await svc.create({ title: 't', body: '#inline', tags: ['fm'] })
+    expect(note.tags).toEqual(['fm'])
+    expect(note.inlineTags).toEqual(['inline'])
+    expect(read(svc.dir(), `${note.id}.md`)).toContain('tags:\n  - fm')
+
+    const out = await svc.save({
+      id: note.id,
+      body: '#next 与 #inline',
+      expectedRevision: note.revision
+    })
+    expect(out.ok).toBe(true)
+    if (!out.ok || !('note' in out)) throw new Error('save failed')
+    expect(out.note.tags).toEqual(['fm'])
+    expect(out.note.inlineTags).toEqual(['next', 'inline'])
+    const text = read(svc.dir(), `${note.id}.md`)
+    expect(text).toContain('tags:\n  - fm')
+    expect(text).not.toContain('next\n  -')
+  })
+
+  it('搜索命中正文标签', async () => {
+    const svc = makeService()
+    await svc.create({ title: '甲', body: '正文 #project/foo' })
+    await svc.create({ title: '乙', body: '无关' })
+    expect((await svc.search('project/foo')).map((n) => n.title)).toEqual(['甲'])
+    expect((await svc.search('PROJECT')).map((n) => n.title)).toEqual(['甲'])
+  })
+})
+
 describe('附件', () => {
   const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer
 

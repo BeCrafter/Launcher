@@ -26,6 +26,7 @@ const ICONS = [
   'eraser',
   'subscript',
   'superscript',
+  'highlighter',
   // 块级格式
   'heading',
   'list',

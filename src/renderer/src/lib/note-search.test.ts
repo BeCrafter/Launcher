@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { NoteMeta } from '@shared/notes'
 import { rankByTagHits, tagHitsOf } from './note-search'
 
-function note(id: string, tags: string[] = []): NoteMeta {
+function note(id: string, tags: string[] = [], inlineTags?: string[]): NoteMeta {
   return {
     id,
     title: id,
     created: '2026-10-09T10:00:00+08:00',
     updated: '2026-10-09T10:00:00+08:00',
     tags,
+    inlineTags,
     pinned: false,
     refs: [],
     excerpt: '',
@@ -40,6 +41,11 @@ describe('tagHitsOf', () => {
     const hits = tagHitsOf([note('a', ['阿达的', '啊大师的'])], '的')
     expect(hits.get('a')).toBe('阿达的')
     expect(hits.size).toBe(1)
+  })
+
+  it('正文标签也参与命中', () => {
+    const hits = tagHitsOf([note('a', [], ['Project/Foo'])], 'project')
+    expect(hits.get('a')).toBe('Project/Foo')
   })
 
   it('没有标签命中就是空表', () => {

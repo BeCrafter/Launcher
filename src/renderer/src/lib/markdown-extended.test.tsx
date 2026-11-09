@@ -116,6 +116,26 @@ describe('行内:删除线 / 转义 / autolink', () => {
   })
 })
 
+describe('行内:高亮(Obsidian 的 ==文字==)', () => {
+  it('渲染成 mark.md-hl', () => {
+    expect(html('普通 ==高亮== 文字')).toContain('<mark class="md-hl">高亮</mark>')
+  })
+
+  it('定界符内侧有空白就不算高亮(与粗体/斜体同一套边界规则)', () => {
+    const out = html('比较 == 左右留空 == 的情况')
+    expect(out).not.toContain('md-hl')
+    expect(out).toContain('== 左右留空 ==')
+  })
+
+  it('行内代码里的 == 保持字面', () => {
+    expect(html('`==不是高亮==`')).not.toContain('md-hl')
+  })
+
+  it('可以和加粗嵌套', () => {
+    expect(html('**==粗且高亮==**')).toContain('<mark class="md-hl">粗且高亮</mark>')
+  })
+})
+
 describe('块级:任务清单', () => {
   it('渲染复选框并反映勾选状态', () => {
     const out = html('- [ ] 未做\n- [x] 已做')
@@ -1131,5 +1151,103 @@ describe('折叠块(<details> / <summary>)', () => {
     expect(inputs).toHaveLength(1)
     ;(inputs[0].props.onChange as () => void)()
     expect(seen).toEqual([4]) // 待办在第 4 行;差一行的话这里会是 3
+  })
+})
+
+describe('wikilink 与行内标签', () => {
+  const resolveImage = (): string => 'launcher-asset://asset/x'
+
+  it('已解析链接渲染为可点击的 md-wikilink,别名生效', () => {
+    const calls: Array<{ target: string; resolved: string | null }> = []
+    const nodes = renderMarkdown('看 [[Alpha|别名]] 与 [[Missing]]', 't', {
+      extended: true,
+      resolveWiki: (target) => (target === 'Alpha' ? { id: 'a', title: 'Alpha' } : null),
+      onWikiClick: (link, resolved) => calls.push({ target: link.target, resolved: resolved?.id ?? null })
+    })
+    const out = renderToStaticMarkup(<>{nodes}</>)
+    expect(out).toContain('md-wikilink')
+    expect(out).toContain('别名')
+    expect(out).toContain('unresolved')
+
+    const links = collect(nodes, 'a')
+    expect(links).toHaveLength(2)
+    const click = (el: { props: Record<string, unknown> }): void =>
+      (el.props.onClick as (e: { preventDefault: () => void }) => void)({ preventDefault: () => undefined })
+    click(links[0]!)
+    click(links[1]!)
+    expect(calls).toEqual([
+      { target: 'Alpha', resolved: 'a' },
+      { target: 'Missing', resolved: null }
+    ])
+  })
+
+  it('没有点击回调时是不可点的 inert span(帮助页/AI 消息)', () => {
+    const out = html('[[A]] #tag')
+    expect(out).toContain('md-wikilink inert')
+    expect(out).not.toContain('<a')
+    expect(out).toContain('md-tag')
+    expect(out).not.toContain('<button')
+  })
+
+  it('点击标签回调拿到标签名', () => {
+    const seen: string[] = []
+    const nodes = renderMarkdown('正文 #Alpha 与 #项目/子项', 't', {
+      extended: true,
+      onTagClick: (tag) => seen.push(tag)
+    })
+    const buttons = collect(nodes, 'button')
+    expect(buttons).toHaveLength(2)
+    ;(buttons[0]!.props.onClick as () => void)()
+    ;(buttons[1]!.props.onClick as () => void)()
+    expect(seen).toEqual(['Alpha', '项目/子项'])
+  })
+
+  it('非法标签、URL 片段、代码、转义保持字面量', () => {
+    const out = html('#123 foo#bar https://x/#frag `#code` \\#escaped')
+    expect(out).not.toContain('md-tag')
+    expect(out).toContain('#123')
+    expect(out).toContain('#frag')
+    expect(out).toContain('#escaped')
+  })
+
+  it('标题行里的标签仍识别', () => {
+    const out = html('## 关于 #tag')
+    expect(out).toContain('md-tag')
+  })
+
+  it('转义的 wikilink 保持字面量', () => {
+    const out = html('\\[[A]]')
+    expect(out).not.toContain('md-wikilink')
+    expect(out).toContain('[[A]]')
+  })
+
+  it('媒体嵌入复用图片/视频/音频/PDF 渲染', () => {
+    const img = html('![[pic.png|300]]', { extended: true, resolveImage })
+    expect(img).toContain('<img')
+    expect(img).toContain('300px')
+
+    const video = html('![[clip.mp4]]', { extended: true, resolveImage })
+    expect(video).toContain('<video')
+
+    const audio = html('![[voice.mp3]]', { extended: true, resolveImage })
+    expect(audio).toContain('<audio')
+
+    const pdf = html('![[doc.pdf]]', { extended: true, resolveImage })
+    expect(pdf).toContain('<iframe')
+  })
+
+  it('`![[笔记]]` 不做内容转写,渲染为不可嵌入提示', () => {
+    const out = html('![[另一篇笔记]]', { extended: true, resolveImage })
+    expect(out).toContain('md-wikilink-embed-unsupported')
+    expect(out).not.toContain('<img')
+  })
+
+  it('没有 resolveImage 时媒体嵌入退化为 chip,而不是坏图', () => {
+    const out = html('![[pic.png]]')
+    expect(out).toContain('md-img-chip')
+  })
+
+  it('anchors 开启后标题带 id,供 [[笔记#标题]] 滚动定位', () => {
+    expect(html('# 标题', { extended: true, anchors: true })).toContain('id="标题"')
   })
 })

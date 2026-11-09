@@ -32,6 +32,7 @@ const FORMATS: FormatAction[] = [
   { id: 'bold', icon: 'bold', labelKey: 'notes.fmt.bold', shortcut: '⌘B', run: (h) => h.wrapSelection('**') },
   { id: 'italic', icon: 'italic', labelKey: 'notes.fmt.italic', shortcut: '⌘I', run: (h) => h.wrapSelection('*') },
   { id: 'code', icon: 'code', labelKey: 'notes.fmt.code', run: (h) => h.wrapSelection('`') },
+  { id: 'highlight', icon: 'highlighter', labelKey: 'notes.fmt.highlight', run: (h) => h.wrapSelection('==') },
   { id: 'link', icon: 'link', labelKey: 'notes.fmt.link', shortcut: '⌘K', run: (h) => h.wrapSelection('[', '](https://)') },
   { id: 'heading', icon: 'heading', labelKey: 'notes.fmt.heading', groupStart: true, run: (h) => h.prefixLines('## ') },
   { id: 'list', icon: 'list', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },

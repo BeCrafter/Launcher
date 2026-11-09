@@ -25,6 +25,8 @@
 
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { noteAssetKindOfUrl } from '@shared/notes'
+import { isValidInlineTag } from '@shared/inline-tags'
+import { parseWikilink, type WikiLink, type WikiResolution } from '@shared/wikilinks'
 import {
   clampEmbedHeight,
   clampMediaSize,
@@ -236,6 +238,22 @@ export interface MarkdownOptions {
   onEditTable?: (body: string) => void
   /** 表格编辑的界面文案;不传用英文兜底 */
   tableLabels?: TableLabels
+  /** wikilink 目标解析:返回 null 表示未解析(点击可新建)。由调用方决定策略 */
+  resolveWiki?: (target: string) => WikiResolution | null
+  /** 点击 wikilink;`resolved` 为 null 表示目标不存在 */
+  onWikiClick?: (link: WikiLink, resolved: WikiResolution | null) => void
+  /** 点击正文里的 #标签 */
+  onTagClick?: (tag: string) => void
+  /** wikilink / 标签的界面文案。这份文件不引 i18n,由调用方给 */
+  wikiLabels?: WikiLabels
+}
+
+/** wikilink / 行内标签的文案(调用方注入,避免这份文件依赖 i18n) */
+export interface WikiLabels {
+  create: (target: string) => string
+  missing: (target: string) => string
+  unsupportedEmbed: (target: string) => string
+  filterTag: (tag: string) => string
 }
 
 /** 表格编辑用到的文案。这份文件不引 i18n,由调用方给 */
@@ -532,6 +550,10 @@ interface ExtCtx {
   body?: string
   onEditTable?: (body: string) => void
   tableLabels?: TableLabels
+  resolveWiki?: (target: string) => WikiResolution | null
+  onWikiClick?: (link: WikiLink, resolved: WikiResolution | null) => void
+  onTagClick?: (tag: string) => void
+  wikiLabels?: WikiLabels
   lineAnchors: boolean
   /**
    * 这些行全都来自**同一行源文**(表格单元格用 `<br>` 分隔出来的那些)。
@@ -642,13 +664,18 @@ type InlineExt =
   | { strike: InlineExt[] }
   | { sub: InlineExt[] }
   | { sup: InlineExt[] }
+  | { highlight: InlineExt[] }
   | { linkText: string; url: string }
   /** `line` = 它在源文里的行号,拖拽改尺寸时按它定位 */
   | { alt: string; url: string; line: number }
+  /** `[[笔记]]` / `![[附件]]` */
+  | { wiki: WikiLink; line: number }
+  /** 正文里的 `#标签` */
+  | { tag: string }
 
 /**
  * 行内正则(带 u 标志,`\p{L}` 才生效)。顺序即优先级:
- * 转义 → 粗斜体 → 粗体 → 斜体 → 删除线 → 行内代码 → 图片 → 链接 → 角括号 autolink。
+ * 转义 → 粗斜体 → 粗体 → 斜体 → 删除线 → 上下标 → 高亮 → 行内代码 → 图片 → 链接 → 角括号 autolink。
  *
  * 两处边界是刻意的,不是随手加的:
  *   · `*斜体*` 开界符后不能是空白、闭界符前不能是空白 —— 否则 `2 * 3 * 4` 会被吃掉;
@@ -661,7 +688,7 @@ type InlineExt =
  * 见 markdown-extended.test.tsx 的「地址带空格的图片」。
  */
 const INLINE_EXT_RE =
-  /(?<esc>\\(?<escChar>[\\`*_~[\]()!#>+\-.|]))|(?<bi>\*\*\*(?!\s)(?<biText>[\s\S]+?)(?<!\s)\*\*\*)|(?<b>\*\*(?!\s)(?<bText>[\s\S]+?)(?<!\s)\*\*)|(?<i>\*(?!\s)(?<iText>[^*\n]+?)(?<!\s)\*)|(?<bi2>___(?!\s)(?<bi2Text>[\s\S]+?)(?<!\s)___)|(?<b2>__(?!\s)(?<b2Text>[\s\S]+?)(?<!\s)__)|(?<i2>(?<![\p{L}\p{N}])_(?!\s)(?<i2Text>[^_\n]+?)(?<!\s)_(?![\p{L}\p{N}]))|(?<s>~~(?!\s)(?<sText>[\s\S]+?)(?<!\s)~~)|(?<sub>~(?!\s)(?<subText>[^~\n]+?)(?<!\s)~)|(?<sup>\^(?!\s)(?<supText>[^^\n]+?)(?<!\s)\^)|(?<c>`(?<cText>[^`]+)`)|(?<img>!\[(?<imgAlt>[^\]]*)\]\((?<imgUrl>[^)\n]+?)\))|(?<l>\[(?<lText>[^\]]+)\]\((?<lUrl>[^)\n]+?)\))|(?<auto><(?<autoUrl>https?:\/\/[^>\s]+)>)/gu
+  /(?<esc>\\(?<escChar>[\\`*_~[\]()!#>+\-.|]))|(?<bi>\*\*\*(?!\s)(?<biText>[\s\S]+?)(?<!\s)\*\*\*)|(?<b>\*\*(?!\s)(?<bText>[\s\S]+?)(?<!\s)\*\*)|(?<i>\*(?!\s)(?<iText>[^*\n]+?)(?<!\s)\*)|(?<bi2>___(?!\s)(?<bi2Text>[\s\S]+?)(?<!\s)___)|(?<b2>__(?!\s)(?<b2Text>[\s\S]+?)(?<!\s)__)|(?<i2>(?<![\p{L}\p{N}])_(?!\s)(?<i2Text>[^_\n]+?)(?<!\s)_(?![\p{L}\p{N}]))|(?<s>~~(?!\s)(?<sText>[\s\S]+?)(?<!\s)~~)|(?<sub>~(?!\s)(?<subText>[^~\n]+?)(?<!\s)~)|(?<sup>\^(?!\s)(?<supText>[^^\n]+?)(?<!\s)\^)|(?<hl>==(?!\s)(?<hlText>[\s\S]+?)(?<!\s)==)|(?<c>`(?<cText>[^`]+)`)|(?<wiki>!?\[\[(?<wikiBody>[^\[\]\n]{1,600})\]{2})|(?<img>!\[(?<imgAlt>[^\]]*)\]\((?<imgUrl>[^)\n]+?)\))|(?<l>\[(?<lText>[^\]]+)\]\((?<lUrl>[^)\n]+?)\))|(?<auto><(?<autoUrl>https?:\/\/[^>\s]+)>)|(?<tag>(?<![\p{L}\p{N}_/#&\\-])#(?<tagName>[\p{L}\p{N}_/-]{1,64}))/gu
 
 /** 嵌套深度上限:病态输入(几千个 `*`)不该把渲染栈打穿 */
 const MAX_INLINE_DEPTH = 8
@@ -685,6 +712,9 @@ function parseInlineExt(src: string, depth = 0, lineBase = 0): InlineExt[] {
   if (depth > MAX_INLINE_DEPTH) return [src]
   const out: InlineExt[] = []
   let last = 0
+  /** 病态输入保护:单串里最多识别这么多 wikilink / 标签,超出按字面量 */
+  let wikiCount = 0
+  let tagCount = 0
   /** 某个分组的内容起点相对本串的行号偏移 */
   const innerBase = (m: RegExpExecArray, skip: number): number => lineBase + newlinesBefore(src, m.index + skip)
   for (const m of src.matchAll(INLINE_EXT_RE)) {
@@ -701,11 +731,27 @@ function parseInlineExt(src: string, depth = 0, lineBase = 0): InlineExt[] {
     else if (g.s !== undefined) out.push({ strike: parseInlineExt(g.sText ?? '', depth + 1, innerBase(m, 2)) })
     else if (g.sub !== undefined) out.push({ sub: parseInlineExt(g.subText ?? '', depth + 1, innerBase(m, 1)) })
     else if (g.sup !== undefined) out.push({ sup: parseInlineExt(g.supText ?? '', depth + 1, innerBase(m, 1)) })
+    else if (g.hl !== undefined) out.push({ highlight: parseInlineExt(g.hlText ?? '', depth + 1, innerBase(m, 2)) })
     else if (g.c !== undefined) out.push({ code: g.cText ?? '' })
+    else if (g.wiki !== undefined) {
+      const link = parseWikilink(g.wikiBody ?? '', g.wiki.startsWith('!'))
+      if (link === null || wikiCount >= 256) out.push(m[0])
+      else {
+        wikiCount++
+        out.push({ wiki: link, line: lineBase + newlinesBefore(src, m.index) })
+      }
+    }
     else if (g.img !== undefined)
       out.push({ alt: g.imgAlt ?? '', url: (g.imgUrl ?? '').trim(), line: lineBase + newlinesBefore(src, m.index) })
     else if (g.l !== undefined) out.push({ linkText: g.lText ?? '', url: (g.lUrl ?? '').trim() })
     else if (g.auto !== undefined) out.push({ linkText: g.autoUrl ?? '', url: g.autoUrl ?? '' })
+    else if (g.tag !== undefined) {
+      const name = g.tagName ?? ''
+      if (isValidInlineTag(name) && tagCount < 256) {
+        tagCount++
+        out.push({ tag: name })
+      } else out.push(m[0])
+    }
     else out.push(m[0])
     last = m.index + m[0].length
   }
@@ -1002,6 +1048,103 @@ function renderImageExt(p: { alt: string; url: string; line: number }, key: stri
   )
 }
 
+/** `[[笔记]]` / `[[笔记#标题]]`:解析成功才变链接;未解析的样式不同,点击由调用方决定(笔记页=新建) */
+function renderWikiExt(p: { wiki: WikiLink; line: number }, key: string, ctx: ExtCtx): ReactNode {
+  if (p.wiki.embed) return renderWikiEmbed(p, key, ctx)
+  const resolved = ctx.resolveWiki ? ctx.resolveWiki(p.wiki.target) : null
+  const label = p.wiki.alias ?? p.wiki.target
+  const title =
+    resolved !== null
+      ? resolved.title
+      : ctx.onWikiClick === undefined
+        ? (ctx.wikiLabels?.missing(p.wiki.target) ?? p.wiki.target)
+        : (ctx.wikiLabels?.create(p.wiki.target) ?? p.wiki.target)
+  if (ctx.onWikiClick === undefined) {
+    return (
+      <span
+        key={key}
+        className={`md-wikilink inert${resolved === null ? ' unresolved' : ''}`}
+        title={title}
+      >
+        {label}
+      </span>
+    )
+  }
+  return (
+    <a
+      key={key}
+      className={`md-wikilink${resolved === null ? ' unresolved' : ''}`}
+      href="#"
+      title={title}
+      onClick={(e) => {
+        e.preventDefault()
+        ctx.onWikiClick?.(p.wiki, resolved)
+      }}
+    >
+      {label}
+    </a>
+  )
+}
+
+/**
+ * `![[附件]]` 的媒体嵌入。
+ *
+ * 复用 `renderImageExt`,所以图片/视频/音频/PDF、坏图 chip、lightbox 全都一致;
+ * 但**不给 resize 回调** —— 尺寸回写只认 `![alt|宽](地址)`,把 `![[...]]` 交给它
+ * 会被改写成另一种语法。v1 只读。
+ */
+function renderWikiEmbed(p: { wiki: WikiLink; line: number }, key: string, ctx: ExtCtx): ReactNode {
+  const target = p.wiki.target
+  const kind = noteAssetKindOfUrl(target)
+  if (kind !== 'image' && kind !== 'video' && kind !== 'audio' && kind !== 'pdf') {
+    return (
+      <span
+        key={key}
+        className="md-wikilink-embed-unsupported"
+        title={ctx.wikiLabels?.unsupportedEmbed(target) ?? target}
+      >
+        {`![[${target}]]`}
+      </span>
+    )
+  }
+  const alias = p.wiki.alias ?? ''
+  const isSize = /^(?:\d+(?:x\d+)?|x\d+)$/.test(alias)
+  const url = /^[a-z][a-z0-9+.-]*:/i.test(target)
+    ? target
+    : target.includes('/')
+      ? target
+      : `assets/${target}`
+  return renderImageExt(
+    // 尺寸写进 alt(Obsidian 的 `![[图|300]]`);没有尺寸时 alt 用别名或文件名
+    { alt: isSize ? `|${alias}` : alias === '' ? target : alias, url, line: p.line },
+    key,
+    { ...ctx, onResizeMedia: undefined }
+  )
+}
+
+/** 正文 `#标签`;有回调时可点击筛选 */
+function renderTagExt(tag: string, key: string, ctx: ExtCtx): ReactNode {
+  const text = `#${tag}`
+  if (ctx.onTagClick === undefined) {
+    return (
+      <span key={key} className="md-tag">
+        {text}
+      </span>
+    )
+  }
+  return (
+    <button
+      key={key}
+      type="button"
+      className="md-tag"
+      title={ctx.wikiLabels?.filterTag(tag) ?? tag}
+      onClick={() => ctx.onTagClick?.(tag)}
+    >
+      {text}
+    </button>
+  )
+}
+
 function renderInlineExt(parts: InlineExt[], keyBase: string, ctx: ExtCtx): ReactNode[] {
   return parts.map((p, i) => {
     const key = `${keyBase}-${i}`
@@ -1028,7 +1171,15 @@ function renderInlineExt(parts: InlineExt[], keyBase: string, ctx: ExtCtx): Reac
       )
     if ('sub' in p) return <sub key={key}>{renderInlineExt(p.sub, key, ctx)}</sub>
     if ('sup' in p) return <sup key={key}>{renderInlineExt(p.sup, key, ctx)}</sup>
+    if ('highlight' in p)
+      return (
+        <mark className="md-hl" key={key}>
+          {renderInlineExt(p.highlight, key, ctx)}
+        </mark>
+      )
     if ('alt' in p) return renderImageExt(p, key, ctx)
+    if ('wiki' in p) return renderWikiExt(p, key, ctx)
+    if ('tag' in p) return renderTagExt(p.tag, key, ctx)
     if (ctx.anchors && p.url.startsWith('#')) {
       return (
         <a
@@ -2928,6 +3079,10 @@ function renderMarkdownExtended(src: string, keyPrefix: string, opts: MarkdownOp
     body: src,
     onEditTable: opts.onEditTable,
     tableLabels: opts.tableLabels,
+    resolveWiki: opts.resolveWiki,
+    onWikiClick: opts.onWikiClick,
+    onTagClick: opts.onTagClick,
+    wikiLabels: opts.wikiLabels,
     lineAnchors: opts.lineAnchors === true
   }
   return renderBlocks(src.split('\n'), keyPrefix, ctx, 0, { k: 0 })

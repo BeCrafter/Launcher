@@ -26,6 +26,7 @@ describe('stripInlineMarks', () => {
     expect(stripInlineMarks('`码`')).toBe('码')
     expect(stripInlineMarks('^上^')).toBe('上')
     expect(stripInlineMarks('~下~')).toBe('下')
+    expect(stripInlineMarks('==高亮==')).toBe('高亮')
   })
 
   it('unwraps links but keeps their text', () => {
@@ -39,6 +40,8 @@ describe('stripInlineMarks', () => {
   it('leaves a lone marker alone — eating it would swallow a neighbouring line', () => {
     expect(stripInlineMarks('前半 **后半')).toBe('前半 **后半')
     expect(stripInlineMarks('**粗')).toBe('**粗')
+    // 两侧有空格不是高亮,与预览一致
+    expect(stripInlineMarks('比较 == 空格 == 的情况')).toBe('比较 == 空格 == 的情况')
   })
 
   it('leaves escapes, images and autolinks untouched — those are content, not formatting', () => {

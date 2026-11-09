@@ -42,7 +42,8 @@ import { indentMarkdownLine, listMarkerOf, parseListLine } from '../../lib/md-li
 import { toggleTaskLine } from '../../lib/note-task'
 import { showToast } from '../../lib/utils'
 import { getCurrentLang, makeT } from '../../i18n'
-import { calloutCompletion, calloutMarks, lenientTaskMarks, syntaxMarks } from './editor-marks'
+import { calloutCompletion, calloutMarks, extraHeadingMarks, highlightMarks, lenientTaskMarks, noteInlineMarks, syntaxMarks } from './editor-marks'
+import { tagCompletion, wikilinkCompletion, type WikiTarget } from './note-completions'
 import { applyWrap, suppressSelectionBubble } from '../../lib/note-marks'
 import { markdownSelectionBubble } from '../../lib/editor-bubble'
 import {
@@ -351,9 +352,13 @@ const MD_EXTENSIONS: Extension[] = [
   // 只有着色,不改变行高,见 editor-marks.ts 顶部
   syntaxMarks,
   lenientTaskMarks,
+  // CommonMark 只到 H6;H7–H10 由块模型/预览支持,语法树认不出,这里补字重;
+  // `==高亮==` 同样不在语法树里
+  extraHeadingMarks,
+  highlightMarks,
   calloutMarks,
-  // 输入 `> ` 后提示五种提示块(GitHub / Obsidian 的 `> [!NOTE]`)
-  autocompletion({ override: [calloutCompletion((kind) => t()(`notes.callout.${kind}`))] }),
+  // `[[笔记]]` 与 `#行内标签` 的着色(Obsidian 扩展语法,语法树里没有)
+  noteInlineMarks,
   // 列选择 / 多光标:Option(Alt)+拖动是矩形选择,多光标输入天然同时生效。
   // 不开 allowMultipleSelections 的话,多选区会被折回单光标。
   EditorState.allowMultipleSelections.of(true),
@@ -373,7 +378,9 @@ export function NoteEditor({
   onScroll,
   onBlockMenu,
   onEmptyMenu,
-  pinnedLine
+  pinnedLine,
+  wikiTargets,
+  tagNames
 }: {
   value: string
   onChange: (v: string) => void
@@ -388,6 +395,10 @@ export function NoteEditor({
    * 菜单关闭（变回 null）后手柄交还给悬停控制。
    */
   pinnedLine?: number | null
+  /** `[[` 补全的候选(笔记 id + 标题) */
+  wikiTargets: readonly WikiTarget[]
+  /** `#` 补全的候选(已在用标签) */
+  tagNames: readonly string[]
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -395,6 +406,11 @@ export function NoteEditor({
   const externalValue = useRef(value)
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  // 补全候选随笔记库刷新;编辑器只挂载一次,所以走 ref —— 与 onChange 同一套路
+  const wikiTargetsRef = useRef(wikiTargets)
+  wikiTargetsRef.current = wikiTargets
+  const tagNamesRef = useRef(tagNames)
+  tagNamesRef.current = tagNames
   const onScrollRef = useRef(onScroll)
   onScrollRef.current = onScroll
   const onBlockMenuRef = useRef(onBlockMenu)
@@ -858,6 +874,15 @@ export function NoteEditor({
           markdownBlockFolding(),
           // 选中文字时浮出的小工具条（有选区时块手柄自己让位）
           markdownSelectionBubble(),
+          // 输入 `> ` 提示五种提示块;`[[` 提示笔记;`#` 提示行内标签。
+          // 候选从 ref 读 —— 编辑器只挂载一次,笔记库刷新后闭包仍拿得到新数组
+          autocompletion({
+            override: [
+              calloutCompletion((kind) => t()(`notes.callout.${kind}`)),
+              wikilinkCompletion(() => wikiTargetsRef.current),
+              tagCompletion(() => tagNamesRef.current)
+            ]
+          }),
           indentUnit.of('  '),
           history(),
           drawSelection(),

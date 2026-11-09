@@ -1,5 +1,5 @@
 // ⚠ 本文件由 scripts/gen-icons.mjs 生成，不要手改 —— 改脚本里的名单后重跑。
-// 生成时间：2026-10-18，来源 lucide-static@1.57.0
+// 生成时间：2026-11-08，来源 lucide-static@1.57.0
 //
 // 图标来自 Lucide（https://lucide.dev），ISC 许可：
 //   Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of
@@ -51,6 +51,10 @@ export const ICON_SHAPES: Record<string, readonly IconShape[]> = {
     { tag: 'path', attrs: {"d":"m4 19 8-8"} },
     { tag: 'path', attrs: {"d":"m12 19-8-8"} },
     { tag: 'path', attrs: {"d":"M20 12h-4c0-1.5.442-2 1.5-2.5S20 8.334 20 7.002c0-.472-.17-.93-.484-1.29a2.105 2.105 0 0 0-2.617-.436c-.42.239-.738.614-.899 1.06"} }
+  ],
+  'highlighter': [
+    { tag: 'path', attrs: {"d":"m9 11-6 6v3h9l3-3"} },
+    { tag: 'path', attrs: {"d":"m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"} }
   ],
   'heading': [
     { tag: 'path', attrs: {"d":"M6 12h12"} },

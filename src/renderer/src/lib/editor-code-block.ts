@@ -6,14 +6,35 @@
 // 所以集中到这里。
 
 import { syntaxTree } from '@codemirror/language'
+import type { EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 
-/** 光标是否落在围栏 / 缩进代码块里 —— 这些位置的回车、Tab、反引号原样交给 CodeMirror。 */
-export function inCodeBlock(view: EditorView, pos: number): boolean {
-  let node: SyntaxNode | null = syntaxTree(view.state).resolveInner(pos, 1)
+function nodeIn(state: EditorState, pos: number, names: readonly string[]): boolean {
+  let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1)
   for (; node !== null; node = node.parent) {
-    if (node.name === 'FencedCode' || node.name === 'CodeBlock') return true
+    if (names.includes(node.name)) return true
   }
   return false
+}
+
+/**
+ * `EditorState` 版本:补全源只拿得到 state(没有 view),判据必须能脱离 view 使用。
+ */
+export function inCodeBlockState(state: EditorState, pos: number): boolean {
+  return nodeIn(state, pos, ['FencedCode', 'CodeBlock'])
+}
+
+export function inInlineCodeState(state: EditorState, pos: number): boolean {
+  return nodeIn(state, pos, ['InlineCode'])
+}
+
+/** 光标是否落在围栏 / 缩进代码块里 —— 这些位置的回车、Tab、反引号原样交给 CodeMirror。 */
+export function inCodeBlock(view: EditorView, pos: number): boolean {
+  return inCodeBlockState(view.state, pos)
+}
+
+/** 光标是否落在**行内代码**里(反引号内)。里面的字符是字面量,行内格式套不进去。 */
+export function inInlineCode(view: EditorView, pos: number): boolean {
+  return inInlineCodeState(view.state, pos)
 }

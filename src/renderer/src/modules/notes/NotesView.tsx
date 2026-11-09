@@ -4,7 +4,8 @@
 // (放组件里会在卸载时把待保存的改动一起带走)。
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { parentOf } from '@shared/notes'
+import { parentOf, baseNameOf } from '@shared/notes'
+import { buildWikiIndex, resolveWikiTarget, type WikiLink, type WikiResolution } from '@shared/wikilinks'
 import { useT } from '../../hooks/useT'
 import { highlightCodeNodes } from '../../lib/code-highlight'
 import { resolvePreviewSrc } from '../../lib/note-asset'
@@ -17,7 +18,14 @@ import {
   type MediaTarget
 } from '../../lib/note-media-size'
 import { collectAnchors, editorLineFor, previewScrollFor, type LineAnchor } from '../../lib/scroll-sync'
-import { renderMarkdown, type CalloutKind, type DiagramBlock, type TableLabels } from '../../lib/markdown'
+import {
+  renderMarkdown,
+  slugifyHeading,
+  type CalloutKind,
+  type DiagramBlock,
+  type TableLabels,
+  type WikiLabels
+} from '../../lib/markdown'
 import { TABLE_BORDER_PX } from '@shared/note-table-style'
 import { useSettingsStore } from '../../state/settings-store'
 import { relTime } from '../../lib/rel-time'
@@ -31,6 +39,8 @@ import { DiagramDialog, type DiagramDialogTarget } from './DiagramDialog'
 import { EmbedDialog } from './EmbedDialog'
 import { MermaidBlock } from './MermaidBlock'
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor'
+import type { WikiTarget } from './note-completions'
+import { aggregateTags } from '../../lib/note-tags'
 import { NoteBlockMenu, NoteInsertMenu } from './NoteBlockMenus'
 import { NoteMovePicker } from './NoteMovePicker'
 import { parseMarkdownBlocks, type MarkdownBlock } from '../../lib/markdown-blocks'
@@ -48,6 +58,7 @@ export function NotesView(): React.JSX.Element {
   const railCollapsed = useNotesStore((s) => s.railCollapsed)
   const setRailCollapsed = useNotesStore((s) => s.setRailCollapsed)
   const draft = useNotesStore((s) => s.draft)
+  const notes = useNotesStore((s) => s.notes)
   const dirty = useNotesStore((s) => s.dirty)
   const saving = useNotesStore((s) => s.saving)
   const conflict = useNotesStore((s) => s.conflict)
@@ -249,6 +260,88 @@ export function NotesView(): React.JSX.Element {
   // 提示块默认标题走 i18n。做成 useCallback 是因为它是 NotePreview 的 memo 依赖 ——
   // 每次新建函数会让整篇重新解析。
   const calloutLabel = useCallback((kind: CalloutKind): string => t(`notes.callout.${kind}`), [t])
+
+  // ── wikilink 导航 ──
+  //
+  // 索引只在列表变化时重建;解析用 getState 读 currentId,回调身份因此保持稳定,
+  // 不会因为切换笔记把整篇预览重新解析一遍。
+  const wikiIndex = useMemo(() => buildWikiIndex(notes), [notes])
+  // 编辑器补全的候选:全部笔记 + 全库在用的标签。上限 500 只影响弹层,不影响索引
+  const wikiTargets = useMemo<WikiTarget[]>(
+    () => notes.map((n) => ({ id: n.id, title: n.title })),
+    [notes]
+  )
+  const tagNames = useMemo(() => aggregateTags(notes, 500).map((t) => t.tag), [notes])
+  const resolveWiki = useCallback(
+    (target: string) => resolveWikiTarget(wikiIndex, target, useNotesStore.getState().currentId ?? ''),
+    [wikiIndex]
+  )
+  const wikiLabels = useMemo<WikiLabels>(
+    () => ({
+      create: (target) => t('notes.wikilink.create').replace('{NAME}', target),
+      missing: (target) => t('notes.wikilink.missing').replace('{NAME}', target),
+      unsupportedEmbed: (target) => t('notes.wikilink.unsupportedEmbed').replace('{NAME}', target),
+      filterTag: (tag) => t('notes.wikilink.filterTag').replace('{NAME}', tag)
+    }),
+    [t]
+  )
+
+  /** 点 `[[笔记#标题]]` 后要滚到哪;等目标笔记的预览提交后再消费 */
+  const pendingAnchor = useRef<{ id: string; slug: string } | null>(null)
+  const [anchorTick, setAnchorTick] = useState(0)
+  const creatingNote = useRef(false)
+
+  const onWikiClick = useCallback(
+    (link: WikiLink, resolved: WikiResolution | null) => {
+      const s = useNotesStore.getState()
+      if (resolved !== null) {
+        pendingAnchor.current =
+          link.heading === null ? null : { id: resolved.id, slug: slugifyHeading(link.heading) }
+        setAnchorTick((n) => n + 1)
+        void s.open(resolved.id)
+        return
+      }
+
+      // 未解析 → 在当前笔记所在目录新建。重名由 create() 的 uniqueNoteId 自动加序号。
+      if (creatingNote.current) return
+      const raw = link.target.trim()
+      const title = (raw.includes('/') ? baseNameOf(raw) : raw).trim()
+      if (title === '') {
+        showToast(t('notes.wikilink.invalid').replace('{NAME}', link.target), '#fbbf24', 'fa-triangle-exclamation')
+        return
+      }
+      creatingNote.current = true
+      void s.create(title, parentOf(s.currentId ?? '')).finally(() => {
+        creatingNote.current = false
+      })
+    },
+    [t]
+  )
+
+  const onTagClick = useCallback((tag: string) => {
+    const s = useNotesStore.getState()
+    s.setTagFilter(tag)
+    s.setRailCollapsed(false)
+  }, [])
+
+  // 目标笔记渲染完成后滚动到标题。按 id 找,不用 textContent 重算 ——
+  // 标题里带行内标记时,源码与渲染文本的 slug 会不一致。
+  useEffect(() => {
+    const pending = pendingAnchor.current
+    if (pending === null || draft?.id !== pending.id || viewMode === 'edit') return
+    const pv = previewRef.current
+    if (pv === null) return
+    if (pending.slug === '') {
+      pendingAnchor.current = null
+      return
+    }
+    const raf = requestAnimationFrame(() => {
+      const el = pv.querySelector(`#${CSS.escape(pending.slug)}`)
+      el?.scrollIntoView({ behavior: 'instant', block: 'start' })
+      pendingAnchor.current = null
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [draft?.id, draft?.body, viewMode, anchorTick])
 
   /**
    * 表格边框的全局默认,以 CSS 变量下发到预览区。
@@ -708,6 +801,8 @@ export function NotesView(): React.JSX.Element {
               onEmptyMenu={openInsertMenu}
               // 菜单开着时把块手柄钉在那一行（按钮与弹框一起消失，一起留下）
               pinnedLine={blockMenu?.line ?? null}
+              wikiTargets={wikiTargets}
+              tagNames={tagNames}
             />
           </div>
           {viewMode === 'split' && (
@@ -740,6 +835,10 @@ export function NotesView(): React.JSX.Element {
                 onEditTable={onEditTable}
                 tableLabels={tableLabels}
                 tableVars={tableVars}
+                resolveWiki={resolveWiki}
+                onWikiClick={onWikiClick}
+                onTagClick={onTagClick}
+                wikiLabels={wikiLabels}
               />
             </div>
           )}
@@ -872,7 +971,11 @@ function NotePreview({
   copyCodeLabel,
   onEditTable,
   tableLabels,
-  tableVars
+  tableVars,
+  resolveWiki,
+  onWikiClick,
+  onTagClick,
+  wikiLabels
 }: {
   body: string
   resolveImage: (src: string) => string | null
@@ -887,6 +990,10 @@ function NotePreview({
   tableLabels: TableLabels
   /** 表格边框的全局默认(单表可用 ```table 围栏覆盖) */
   tableVars: CSSProperties
+  resolveWiki: (target: string) => WikiResolution | null
+  onWikiClick: (link: WikiLink, resolved: WikiResolution | null) => void
+  onTagClick: (tag: string) => void
+  wikiLabels: WikiLabels
 }): React.JSX.Element {
   const t = useT()
   // 每次击键都会重解析整篇 —— 笔记体量下可接受,但不该在无关状态变化时白跑。
@@ -906,6 +1013,12 @@ function NotePreview({
         copyCodeLabel,
         onEditTable,
         tableLabels,
+        // 标题带 id,wikilink 的 #标题 与 `[x](#标题)` 都靠它定位
+        anchors: true,
+        resolveWiki,
+        onWikiClick,
+        onTagClick,
+        wikiLabels,
         // 块级元素带上源行号 —— 编辑区与预览区的联动滚动全靠它
         lineAnchors: true
       }),
@@ -920,7 +1033,11 @@ function NotePreview({
       onResizeEmbed,
       copyCodeLabel,
       onEditTable,
-      tableLabels
+      tableLabels,
+      resolveWiki,
+      onWikiClick,
+      onTagClick,
+      wikiLabels
     ]
   )
 
