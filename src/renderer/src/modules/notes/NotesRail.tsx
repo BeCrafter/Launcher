@@ -6,7 +6,7 @@
 // 行的形态也统一了:目录与笔记都是**单行**,列表里只有名字。摘要与标签属于正文,
 // 在列表里重复一遍既挤,又和目录的层级感打架(要扫的是「有哪些东西」,不是「它讲了什么」)。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   baseNameOf,
   parentOf,
@@ -52,6 +52,56 @@ function IndentGuides({ depth }: { depth: number }): React.JSX.Element {
         <span key={i} className="notes-guide" style={{ left: GUIDE_LEFT + i * INDENT }} />
       ))}
     </>
+  )
+}
+
+/**
+ * 打开得很快时不把类型图标换成转圈 —— 本地读盘通常只有几十毫秒,换一下反而像闪屏。
+ * 超过这个时长才显示加载态。E2E 通过 <html data-opening-spinner-delay> 控制快/慢两条路径。
+ */
+const OPENING_SPINNER_DELAY_MS = 200
+
+function openingSpinnerDelay(): number {
+  const raw =
+    typeof document === 'undefined' ? undefined : document.documentElement.dataset.openingSpinnerDelay
+  if (raw === undefined || raw === '') return OPENING_SPINNER_DELAY_MS
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : OPENING_SPINNER_DELAY_MS
+}
+
+/** 等主动作持续到阈值再显示;提前结束就保持原图标 */
+function useDelayedOpening(active: boolean, delayMs: number): boolean {
+  const [shown, setShown] = useState(false)
+  useLayoutEffect(() => {
+    if (!active) {
+      setShown(false)
+      return
+    }
+    if (delayMs <= 0) {
+      setShown(true)
+      return
+    }
+    const id = setTimeout(() => setShown(true), delayMs)
+    return () => clearTimeout(id)
+  }, [active, delayMs])
+  return active && shown
+}
+
+/** 行首图标槽:空闲显示类型图标,打开较慢才原位换成转圈 */
+function RowIconSlot({
+  opening,
+  icon,
+  kind
+}: {
+  opening: boolean
+  icon: string
+  kind: string
+}): React.JSX.Element {
+  const showSpinner = useDelayedOpening(opening, openingSpinnerDelay())
+  return showSpinner ? (
+    <i key="spin" className="fa-solid fa-circle-notch fa-spin notes-row-spin" aria-hidden="true" />
+  ) : (
+    <i key="icon" className={`fa-solid ${icon} notes-file-icon`} data-kind={kind} aria-hidden="true" />
   )
 }
 
@@ -539,17 +589,7 @@ export function NotesRail(): React.JSX.Element {
           title={opening ? t('notes.opening') : `${n.id} · ${relTime(n.updated, t)}`}
           aria-busy={opening || undefined}
         >
-          {/* 加载中占用类型图标的位置,加载完恢复图标;两者同宽,标题不会移动 */}
-          {opening ? (
-            <i key="spin" className="fa-solid fa-circle-notch fa-spin notes-row-spin" aria-hidden="true" />
-          ) : (
-            <i
-              key="icon"
-              className="fa-solid fa-file-lines notes-file-icon"
-              data-kind="markdown"
-              aria-hidden="true"
-            />
-          )}
+          <RowIconSlot opening={opening} icon="fa-file-lines" kind="markdown" />
           {n.pinned && <i className="fa-solid fa-thumbtack notes-row-pin" />}
           <span className="notes-row-title">{fileName}</span>
           {n.frontmatterIssues.length > 0 && (
@@ -651,21 +691,7 @@ export function NotesRail(): React.JSX.Element {
               }
             }}
           >
-            {/* 加载中占用类型图标的位置,加载完恢复图标;两者同宽,标题不会移动 */}
-            {opening ? (
-              <i
-                key="spin"
-                className="fa-solid fa-circle-notch fa-spin notes-row-spin"
-                aria-hidden="true"
-              />
-            ) : (
-              <i
-                key="icon"
-                className={`fa-solid ${noteFileIcon(f.ext, f.name)} notes-file-icon`}
-                data-kind={kind}
-                aria-hidden="true"
-              />
-            )}
+            <RowIconSlot opening={opening} icon={noteFileIcon(f.ext, f.name)} kind={kind} />
             <span className="notes-row-title">{f.name}</span>
           </div>
         )}

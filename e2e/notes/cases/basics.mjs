@@ -401,10 +401,12 @@ export default [
   {
     id: 'basics/rail-opening-spinner-slot',
     area: 'basics',
-    title: '打开笔记:转圈替换行首类型图标(同一槽位),标题全程不位移,完成后图标恢复',
+    title: '打开笔记较慢时:转圈替换行首类型图标(同一槽位),标题全程不位移,完成后图标恢复',
     tags: ['smoke'],
     fixture: BASIC,
     async run(ctx, t) {
+      // 这条用例验证「超过延迟阈值」的加载态:E2E 把延迟调成 0,让打开第一帧就换转圈。
+      await ctx.cdp.eval(`document.documentElement.dataset.openingSpinnerDelay = '0'`)
       // 基准:空闲时类型图标与标题的位置
       const base = await ctx.cdp.json(`(() => {
         const el = ${rowExpr(LINK_NOTE.title)}
@@ -528,6 +530,116 @@ export default [
       })()`)
       eq(restored?.kind, 'markdown', '完成后类型图标恢复')
       includes(restored?.cls ?? '', 'fa-file-lines', '恢复的仍是 Markdown 文件图标')
+      await ctx.cdp.eval(`delete document.documentElement.dataset.openingSpinnerDelay`)
+    }
+  },
+
+  {
+    id: 'basics/rail-opening-fast-no-spinner',
+    area: 'basics',
+    title: '打开笔记很快时:全程保留类型图标,不闪转圈,标题不位移',
+    tags: ['smoke'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 正常延迟(200ms):本地打开远快于阈值,图标不该被换掉。
+      await ctx.cdp.eval(`delete document.documentElement.dataset.openingSpinnerDelay`)
+      const base = await ctx.cdp.json(`(() => {
+        const el = ${rowExpr(LINK_NOTE.title)}
+        if (!el) return null
+        const icon = el.querySelector('.notes-row-main .notes-file-icon')
+        const ir = icon?.getBoundingClientRect()
+        const tr = el.querySelector('.notes-row-title').getBoundingClientRect()
+        return {
+          iconPresent: icon !== null,
+          iconLeft: ir ? ir.left : null,
+          iconTop: ir ? ir.top : null,
+          iconWidth: ir ? ir.width : null,
+          iconHeight: ir ? ir.height : null,
+          titleLeft: tr.left
+        }
+      })()`)
+      ok(base !== null && base.iconPresent, '找到链接笔记行及类型图标')
+
+      // 观察整个打开过程:打开慢到阈值以上才会出现转圈,这里不应该出现。
+      await ctx.cdp.eval(`(() => {
+        const list = document.querySelector('.notes-rail-list')
+        const probe = { samples: [] }
+        const take = () => {
+          const row = ${rowExpr(LINK_NOTE.title)}
+          if (!row) {
+            probe.samples.push({ missing: true })
+            return
+          }
+          const main = row.querySelector('.notes-row-main')
+          const icon = main?.querySelector('.notes-file-icon')
+          const spin = main?.querySelector('.notes-row-spin')
+          const ir = icon?.getBoundingClientRect()
+          const tr = row.querySelector('.notes-row-title')?.getBoundingClientRect()
+          probe.samples.push({
+            missing: false,
+            opening: row.classList.contains('opening'),
+            icon: icon !== null,
+            spin: spin !== null,
+            iconLeft: ir ? ir.left : null,
+            iconTop: ir ? ir.top : null,
+            iconWidth: ir ? ir.width : null,
+            iconHeight: ir ? ir.height : null,
+            titleLeft: tr ? tr.left : null
+          })
+        }
+        take()
+        const obs = new MutationObserver(take)
+        obs.observe(list, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['class', 'aria-busy']
+        })
+        probe.stop = () => obs.disconnect()
+        window.__railFastOpeningProbe = probe
+      })()`)
+
+      const rect = await ctx.cdp.json(railRowExpr(LINK_NOTE.title))
+      await ctx.cdp.click(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value === ${JSON.stringify(LINK_NOTE.title)}`,
+        { timeout: 5000, message: '切到链接笔记' }
+      )
+
+      const samples = await ctx.cdp.json(`(() => {
+        window.__railFastOpeningProbe.stop()
+        const out = window.__railFastOpeningProbe.samples
+        delete window.__railFastOpeningProbe
+        return out
+      })()`)
+      const present = samples.filter((s) => !s.missing)
+      ok(present.length >= 2, `探针应采到打开中与完成两帧(实际 ${present.length} 帧)`)
+      ok(present.some((s) => s.opening), '探针应采到带 opening 状态的帧')
+
+      for (const s of present) {
+        eq(s.spin, false, `延迟未到不该出现转圈(样本 ${JSON.stringify(s)})`)
+        eq(s.icon, true, `类型图标应全程留在槽位(样本 ${JSON.stringify(s)})`)
+        ok(
+          Math.abs(s.titleLeft - base.titleLeft) <= 0.5,
+          `标题 x 应全程不变:基准 ${base.titleLeft},实际 ${s.titleLeft}`
+        )
+        ok(
+          Math.abs(s.iconLeft - base.iconLeft) <= 0.5 &&
+            Math.abs(s.iconTop - base.iconTop) <= 0.5 &&
+            Math.abs(s.iconWidth - base.iconWidth) <= 0.5 &&
+            Math.abs(s.iconHeight - base.iconHeight) <= 0.5,
+          `类型图标位置/尺寸应全程不变:基准 ${JSON.stringify(base)},实际 ${JSON.stringify(s)}`
+        )
+      }
+
+      eq(await ctx.cdp.eval(`document.querySelectorAll('.notes-row-spin').length`), 0, '整个过程没有转圈')
+      const restored = await ctx.cdp.json(`(() => {
+        const el = ${rowExpr(LINK_NOTE.title)}
+        const icon = el?.querySelector('.notes-row-main .notes-file-icon')
+        return { kind: icon?.dataset.kind ?? null, cls: icon?.className ?? '' }
+      })()`)
+      eq(restored?.kind, 'markdown', '完成后仍是 Markdown 图标')
+      includes(restored?.cls ?? '', 'fa-file-lines', '图标类名未变')
     }
   },
 

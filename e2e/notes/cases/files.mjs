@@ -1222,9 +1222,11 @@ export default [
   {
     id: 'files/opening-spinner-slot',
     area: 'files',
-    title: '打开文件:转圈替换类型图标(同一槽位),标题不位移,完成后图标恢复',
+    title: '打开文件较慢时:转圈替换类型图标(同一槽位),标题不位移,完成后图标恢复',
     tags: ['files', 'rail', 'spinner'],
     async run(ctx) {
+      // 与笔记行一致:E2E 把延迟调成 0,直接验证超过阈值后的转圈槽位。
+      await ctx.cdp.eval(`document.documentElement.dataset.openingSpinnerDelay = '0'`)
       const rel = 'opening-probe.txt'
       writeFile(ctx, rel, 'spinner probe\n')
       await waitFileRow(ctx, rel)
@@ -1348,6 +1350,7 @@ export default [
       })()`)
       eq(restored?.kind, 'text', '完成后类型图标恢复')
       includes(restored?.cls ?? '', 'fa-file-lines', '恢复的仍是文本文件图标')
+      await ctx.cdp.eval(`delete document.documentElement.dataset.openingSpinnerDelay`)
     }
   }
 ]
