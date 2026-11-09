@@ -654,11 +654,25 @@ interface InsertAction {
   id: string
   icon: IconName
   label: string
-  run: (handle: NoteEditorHandle, line: number) => void
+  /** 要插入的文本;`undefined` = 只放光标(「文本」) */
+  text?: string
+  /** 光标在插入文本中的偏移;默认落到文本末尾 */
+  caret?: number
+  /** 分隔线走 insertRuleAt —— 它自带前后空行,不能在行首直接粘 `---` */
+  rule?: boolean
 }
+
+/**
+ * `mode` 决定 `line` 的含义:
+ *  · `'at'`   —— `line` 是一行空行的行号,内容插在行首(悬停空行时的「+」菜单);
+ *  · `'below'`—— `line` 是**块之后第一个块的行号**,先补一个换行再插入,
+ *               否则新块会粘到下一个块的开头(块菜单「插入到下方」)。
+ */
+export type InsertMenuMode = 'at' | 'below'
 
 export function NoteInsertMenu({
   line,
+  mode = 'at',
   anchor,
   handleRef,
   onClose,
@@ -666,6 +680,7 @@ export function NoteInsertMenu({
   onEmbed
 }: {
   line: number
+  mode?: InsertMenuMode
   anchor: MenuAnchor
   handleRef: RefObject<NoteEditorHandle | null>
   onClose: () => void
@@ -676,22 +691,51 @@ export function NoteInsertMenu({
   const ref = useRef<HTMLDivElement | null>(null)
   useDismiss(onClose, ref)
   const actions: InsertAction[] = [
-    { id: 'text', icon: 'pilcrow', label: t('notes.insert.text'), run: (h, n) => h.focusLine(n) },
-    { id: 'h1', icon: 'heading', label: t('notes.insert.heading1'), run: (h, n) => h.insertAtLine(n, '# ', 2) },
-    { id: 'h2', icon: 'heading', label: t('notes.insert.heading2'), run: (h, n) => h.insertAtLine(n, '## ', 3) },
-    { id: 'h3', icon: 'heading', label: t('notes.insert.heading3'), run: (h, n) => h.insertAtLine(n, '### ', 4) },
-    { id: 'list', icon: 'list', label: t('notes.fmt.list'), run: (h, n) => h.insertAtLine(n, '- ', 2) },
-    { id: 'task', icon: 'square-check-big', label: t('notes.fmt.task'), run: (h, n) => h.insertAtLine(n, '- [ ] ', 6) },
-    { id: 'quote', icon: 'text-quote', label: t('notes.fmt.quote'), run: (h, n) => h.insertAtLine(n, '> ', 2) },
-    { id: 'code', icon: 'square-code', label: t('notes.fmt.codeBlock'), run: (h, n) => h.insertAtLine(n, '```\n\n```', 4) },
-    { id: 'table', icon: 'table', label: t('notes.insert.table'), run: (h, n) => h.insertAtLine(n, tableSkeleton(3, 3, (i) => t('notes.table.col').replace('{N}', String(i)))) },
-    { id: 'image', icon: 'image', label: t('notes.fmt.image'), run: (h, n) => h.insertAtLine(n, '![]()', 3) },
-    { id: 'rule', icon: 'minus', label: t('notes.fmt.rule'), run: (h, n) => h.insertRuleAt(n) },
-    { id: 'details', icon: 'square-chevron-down', label: t('notes.insert.details'), run: (h, n) => h.insertAtLine(n, '<details>\n<summary>标题</summary>\n\n内容\n\n</details>', 18) }
+    { id: 'text', icon: 'pilcrow', label: t('notes.insert.text') },
+    { id: 'h1', icon: 'heading', label: t('notes.insert.heading1'), text: '# ', caret: 2 },
+    { id: 'h2', icon: 'heading', label: t('notes.insert.heading2'), text: '## ', caret: 3 },
+    { id: 'h3', icon: 'heading', label: t('notes.insert.heading3'), text: '### ', caret: 4 },
+    { id: 'h4', icon: 'heading', label: t('notes.insert.heading4'), text: '#### ', caret: 5 },
+    { id: 'h5', icon: 'heading', label: t('notes.insert.heading5'), text: '##### ', caret: 6 },
+    { id: 'h6', icon: 'heading', label: t('notes.insert.heading6'), text: '###### ', caret: 7 },
+    { id: 'h7', icon: 'heading', label: t('notes.insert.heading7'), text: '####### ', caret: 8 },
+    { id: 'h8', icon: 'heading', label: t('notes.insert.heading8'), text: '######## ', caret: 9 },
+    { id: 'h9', icon: 'heading', label: t('notes.insert.heading9'), text: '######### ', caret: 10 },
+    { id: 'h10', icon: 'heading', label: t('notes.insert.heading10'), text: '########## ', caret: 11 },
+    { id: 'list', icon: 'list', label: t('notes.fmt.list'), text: '- ', caret: 2 },
+    { id: 'task', icon: 'square-check-big', label: t('notes.fmt.task'), text: '- [ ] ', caret: 6 },
+    { id: 'quote', icon: 'text-quote', label: t('notes.fmt.quote'), text: '> ', caret: 2 },
+    { id: 'code', icon: 'square-code', label: t('notes.fmt.codeBlock'), text: '```\n\n```', caret: 4 },
+    {
+      id: 'table',
+      icon: 'table',
+      label: t('notes.insert.table'),
+      text: tableSkeleton(3, 3, (i) => t('notes.table.col').replace('{N}', String(i)))
+    },
+    { id: 'image', icon: 'image', label: t('notes.fmt.image'), text: '![]()', caret: 3 },
+    { id: 'rule', icon: 'minus', label: t('notes.fmt.rule'), rule: true },
+    {
+      id: 'details',
+      icon: 'square-chevron-down',
+      label: t('notes.insert.details'),
+      text: '<details>\n<summary>标题</summary>\n\n内容\n\n</details>',
+      caret: 18
+    }
   ]
   const run = (action: InsertAction): void => {
     const handle = handleRef.current
-    if (handle !== null) action.run(handle, line)
+    if (handle !== null) {
+      if (action.rule) {
+        handle.insertRuleAt(line)
+      } else if (action.text === undefined) {
+        if (mode === 'below') handle.insertBlockBefore(line, '', 0)
+        else handle.focusLine(line)
+      } else if (mode === 'below') {
+        handle.insertBlockBefore(line, action.text, action.caret)
+      } else {
+        handle.insertAtLine(line, action.text, action.caret)
+      }
+    }
     onClose()
   }
 

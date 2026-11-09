@@ -243,6 +243,12 @@ export interface NoteEditorHandle {
   insertBlock(text: string, caretOffset?: number): void
   /** 在指定源码行插入文本并把光标放到插入内容内 */
   insertAtLine(line: number, text: string, caretOffset?: number): void
+  /**
+   * 在 doc 行 `line`（0 起，可传 doc.lines 表示文末）**之前**插入一个独立块:
+   * 按需补空行、并用换行把原行推到下一行。text 为空 = 只插一个空行并放光标。
+   * 块菜单「插入到下方」用它 —— 块的 `to` 指向下一个块的首行,直接 insertAtLine 会粘行。
+   */
+  insertBlockBefore(line: number, text: string, caretOffset?: number): void
   /** 将光标放到指定源码行 */
   focusLine(line: number): void
   /** 选中指定源码行范围(0 起,含首尾)。块菜单的格式化按钮先选中块再套用 */
@@ -505,6 +511,25 @@ export function NoteEditor({
           changes: { from: at, insert: text },
           selection: { anchor: at + Math.min(caretOffset ?? text.length, text.length) }
         })
+        view.focus()
+      },
+
+      insertBlockBefore(line, text, caretOffset) {
+        const view = viewRef.current
+        if (!view) return
+        const doc = view.state.doc
+        // 允许 doc.lines = 文末
+        const n = Math.min(Math.max(Math.trunc(line), 0), doc.lines)
+        const at = n >= doc.lines ? doc.length : doc.line(n + 1).from
+        const before = view.state.sliceDoc(0, at)
+        // 与 insertFence / insertRule 同一口径:前面没有空行就补一个,保证新块自成一块。
+        const lead = at === 0 ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
+        // 只放光标时插一个新空行,并把光标放在它上面。为什么光标用 `at` 而不是 `at+1`:
+        // 插入的 `\n` 占 [at, at+1),下一行的起点正是 `at`。
+        const insert = text === '' ? '\n' : `${lead}${text}\n`
+        const caret = text === '' ? at : at + lead.length + Math.min(caretOffset ?? text.length, text.length)
+        if (insert !== '') view.dispatch({ changes: { from: at, insert } })
+        view.dispatch({ selection: { anchor: caret } })
         view.focus()
       },
 

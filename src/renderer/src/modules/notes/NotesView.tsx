@@ -41,7 +41,7 @@ import { MermaidBlock } from './MermaidBlock'
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor'
 import type { WikiTarget } from './note-completions'
 import { aggregateTags } from '../../lib/note-tags'
-import { NoteBlockMenu, NoteInsertMenu } from './NoteBlockMenus'
+import { NoteBlockMenu, NoteInsertMenu, type InsertMenuMode } from './NoteBlockMenus'
 import { NoteMovePicker } from './NoteMovePicker'
 import { parseMarkdownBlocks, type MarkdownBlock } from '../../lib/markdown-blocks'
 import { locatorOf, type BlockLocator } from '../../lib/block-move'
@@ -91,9 +91,14 @@ export function NotesView(): React.JSX.Element {
   const [diagram, setDiagram] = useState<DiagramDialogTarget | null>(null)
   const [embedOpen, setEmbedOpen] = useState(false)
   const [blockMenu, setBlockMenu] = useState<{ block: MarkdownBlock; anchor: DOMRect; line: number } | null>(null)
-  const [insertMenu, setInsertMenu] = useState<{ line: number; anchor: DOMRect } | null>(null)
-  const insertLineRef = useRef<number | null>(null)
+  const [insertMenu, setInsertMenu] = useState<{
+    line: number
+    anchor: DOMRect
+    mode: InsertMenuMode
+  } | null>(null)
   const [movePicker, setMovePicker] = useState<BlockLocator | null>(null)
+  /** 图表 / 嵌入对话框要插到哪一行;`mode` 与插入菜单同一口径 */
+  const insertLineRef = useRef<{ line: number; mode: InsertMenuMode } | null>(null)
 
   // 换笔记就关掉「移动到…」—— 源定位器属于上一篇的正文
   useEffect(() => {
@@ -112,7 +117,7 @@ export function NotesView(): React.JSX.Element {
   }, [])
   const openInsertMenu = useCallback((line: number, anchor: DOMRect) => {
     setBlockMenu(null)
-    setInsertMenu({ line, anchor })
+    setInsertMenu({ line, anchor, mode: 'at' })
   }, [])
 
   /**
@@ -132,12 +137,12 @@ export function NotesView(): React.JSX.Element {
     }
     setBlockMenu((cur) => (cur === null ? null : { ...cur, block: next }))
   }, [draft, blockMenu])
-  const openDiagramAt = useCallback((line: number | null) => {
-    insertLineRef.current = line
+  const openDiagramAt = useCallback((line: number | null, mode: InsertMenuMode = 'at') => {
+    insertLineRef.current = line === null ? null : { line, mode }
     setDiagram({ code: null, from: 0, to: 0 })
   }, [])
-  const openEmbedAt = useCallback((line: number | null) => {
-    insertLineRef.current = line
+  const openEmbedAt = useCallback((line: number | null, mode: InsertMenuMode = 'at') => {
+    insertLineRef.current = line === null ? null : { line, mode }
     setEmbedOpen(true)
   }, [])
 
@@ -864,7 +869,8 @@ export function NotesView(): React.JSX.Element {
           onClose={() => setBlockMenu(null)}
           onInsertBelow={(line) => {
             setBlockMenu(null)
-            setInsertMenu({ line, anchor: blockMenu.anchor })
+            // 块的 `to` 是下一个块的首行;按 'below' 插,先补换行再写内容。
+            setInsertMenu({ line, anchor: blockMenu.anchor, mode: 'below' })
           }}
           onMoveTo={(block) => {
             setBlockMenu(null)
@@ -872,27 +878,28 @@ export function NotesView(): React.JSX.Element {
           }}
           onDiagram={(line) => {
             setBlockMenu(null)
-            openDiagramAt(line)
+            openDiagramAt(line, 'below')
           }}
           onEmbed={(line) => {
             setBlockMenu(null)
-            openEmbedAt(line)
+            openEmbedAt(line, 'below')
           }}
         />
       )}
       {insertMenu !== null && (
         <NoteInsertMenu
           line={insertMenu.line}
+          mode={insertMenu.mode}
           anchor={insertMenu.anchor}
           handleRef={editorRef}
           onClose={() => setInsertMenu(null)}
           onDiagram={(line) => {
             setInsertMenu(null)
-            openDiagramAt(line)
+            openDiagramAt(line, insertMenu.mode)
           }}
           onEmbed={(line) => {
             setInsertMenu(null)
-            openEmbedAt(line)
+            openEmbedAt(line, insertMenu.mode)
           }}
         />
       )}
@@ -912,12 +919,13 @@ export function NotesView(): React.JSX.Element {
           setDiagram(null)
         }}
         onInsert={(source) => {
-          const line = insertLineRef.current
-          if (line === null) {
+          const at = insertLineRef.current
+          if (at === null) {
             editorRef.current?.insertFence('mermaid', source)
           } else {
             const block = '```mermaid\n' + source + '\n```'
-            editorRef.current?.insertAtLine(line, block, block.length)
+            if (at.mode === 'below') editorRef.current?.insertBlockBefore(at.line, block, block.length)
+            else editorRef.current?.insertAtLine(at.line, block, block.length)
             insertLineRef.current = null
           }
         }}
@@ -943,12 +951,13 @@ export function NotesView(): React.JSX.Element {
         }}
         onInsert={({ url, height }) => {
           const body = height === null ? url : `${url}\nheight: ${height}`
-          const line = insertLineRef.current
-          if (line === null) {
+          const at = insertLineRef.current
+          if (at === null) {
             editorRef.current?.insertFence('embed', body)
           } else {
             const block = `\`\`\`embed ${body}\n\`\`\``
-            editorRef.current?.insertAtLine(line, block, block.length)
+            if (at.mode === 'below') editorRef.current?.insertBlockBefore(at.line, block, block.length)
+            else editorRef.current?.insertAtLine(at.line, block, block.length)
             insertLineRef.current = null
           }
         }}
