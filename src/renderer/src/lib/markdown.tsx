@@ -1222,7 +1222,7 @@ function renderInlineExt(parts: InlineExt[], keyBase: string, ctx: ExtCtx): Reac
  * 只收第一个词会把地址丢掉。语言名由 fenceLang() 从这里面取第一个词。
  */
 const FENCE_EXT_RE = /^\s*(`{3,}|~{3,})(.*)$/
-const HEAD_EXT_RE = /^(#{1,6})\s+(.*)$/
+const HEAD_EXT_RE = /^(#{1,10})\s+(.*)$/
 const HR_EXT_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/
 // 与块模型对齐:引用最多 3 个前导空格(4 个空格是代码块)。
 const QUOTE_EXT_RE = /^ {0,3}>\s?/

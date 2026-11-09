@@ -9,7 +9,7 @@ import { Icon } from '../../components/ui/Icon'
 import { blockIconName, CALLOUT_ICON_NAMES } from '../../lib/block-icons'
 import { blockTypeLabelKey } from '../../lib/block-labels'
 import type { IconName } from '../../lib/icon-paths'
-import type { NoteEditorHandle } from './NoteEditor'
+import { HEADING_LEVELS, type NoteEditorHandle } from './NoteEditor'
 import {
   clampTableWidth,
   TABLE_BORDERS,
@@ -497,8 +497,8 @@ export function NoteBlockMenu({
           />
         </>
       )}
-      <div className="notes-block-menu-grid">
-        {block.kind === 'heading' && ([1, 2, 3] as const).map((level) => (
+      <div className="notes-block-menu-grid notes-block-fmt-grid">
+        {block.kind === 'heading' && HEADING_LEVELS.map((level) => (
           <button
             key={level}
             type="button"

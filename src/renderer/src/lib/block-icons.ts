@@ -117,5 +117,5 @@ export function caretIcon(collapsed: boolean): SVGSVGElement {
 
 /** 标题的类型标识用文本（豆包与飞书都是这样），不画图标。 */
 export function headingText(level: number): string {
-  return `H${Math.min(Math.max(level, 1), 6)}`
+  return `H${Math.min(Math.max(level, 1), 10)}`
 }

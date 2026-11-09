@@ -1954,6 +1954,14 @@ body.cm-block-dragging {
   font-size: 12px;
   color: var(--muted);
 }
+/* H7–H10 是本项目扩展(CommonMark 到 6):再降半档,并与其他小标题一样转灰 */
+.notes-preview-body .md-h7,
+.notes-preview-body .md-h8,
+.notes-preview-body .md-h9,
+.notes-preview-body .md-h10 {
+  font-size: 11.5px;
+  color: var(--muted);
+}
 /* 折叠块:与提示块同一套「卡片」观感,只是标题可点 */
 .notes-preview-body .md-details {
   margin: 10px 0;
@@ -2402,6 +2410,41 @@ body.cm-block-dragging {
 }
 /* 悬停只改背景色与颜色,不动任何布局属性(见 CLAUDE.md「悬停不得改变布局」) */
 .notes-quote-picker button:hover {
+  background: var(--wash-accent);
+  color: var(--accent2);
+}
+/* 标题级别选择器:H1–H7 一排,与块菜单里那排层级按钮同一套数据 */
+.notes-heading-picker,
+.notes-list-picker {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: -6px;
+  z-index: 30;
+  display: flex;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--menu-bg);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+.notes-heading-picker button,
+.notes-list-picker button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+.notes-heading-picker button:hover,
+.notes-list-picker button:hover {
   background: var(--wash-accent);
   color: var(--accent2);
 }

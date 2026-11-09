@@ -15,7 +15,8 @@ import type { IconName } from '../../lib/icon-paths'
 import { tableSkeleton } from '../../lib/note-table'
 import { CALLOUT_ICON_NAMES } from '../../lib/block-icons'
 import { CALLOUT_KINDS, type CalloutKind } from '../../lib/markdown'
-import type { NoteEditorHandle } from './NoteEditor'
+import type { HeadingLevel, ListMarker, NoteEditorHandle } from './NoteEditor'
+import { HEADING_LEVELS } from './NoteEditor'
 
 interface FormatAction {
   id: string
@@ -35,8 +36,7 @@ const FORMATS: FormatAction[] = [
   { id: 'highlight', icon: 'highlighter', labelKey: 'notes.fmt.highlight', run: (h) => h.wrapSelection('==') },
   { id: 'link', icon: 'link', labelKey: 'notes.fmt.link', shortcut: '⌘K', run: (h) => h.wrapSelection('[', '](https://)') },
   { id: 'heading', icon: 'heading', labelKey: 'notes.fmt.heading', groupStart: true, run: (h) => h.prefixLines('## ') },
-  { id: 'list', icon: 'list', labelKey: 'notes.fmt.list', run: (h) => h.prefixLines('- ') },
-  { id: 'task', icon: 'square-check-big', labelKey: 'notes.fmt.task', run: (h) => h.prefixLines('- [ ] ') },
+  { id: 'list', icon: 'list', labelKey: 'notes.fmt.list', run: (h) => h.setListStyle('- ') },
   { id: 'indent', icon: 'indent-increase', labelKey: 'notes.fmt.indent', run: (h) => h.indentBlock('in') },
   { id: 'outdent', icon: 'indent-decrease', labelKey: 'notes.fmt.outdent', run: (h) => h.indentBlock('out') },
   { id: 'codeBlock', icon: 'square-code', labelKey: 'notes.fmt.codeBlock', groupStart: true, run: (h) => h.insertBlock('```\n\n```', 4) },
@@ -164,8 +164,93 @@ function QuotePicker({
   )
 }
 
-/** 生成 GFM 表格骨架。表头给占位名,空表头在预览里是一片看不出边界的格子 */
-export function NoteToolbar({
+/**
+ * 标题级别选择器。工具栏的 H 按钮不再固定写二级 —— 打开这一排 H1–H7,
+ * 与块菜单里那排层级按钮同一份数据(`HEADING_LEVELS`)。
+ * 往上开:工具条贴着窗口底边,往下开会被切掉。
+ */
+function HeadingPicker({
+  onPick,
+  onClose
+}: {
+  onPick: (level: HeadingLevel) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const boxRef = useRef<HTMLDivElement | null>(null)
+
+  // 与 TablePicker / QuotePicker 同一套关法
+  useEffect(() => {
+    const onDown = (e: PointerEvent): void => {
+      if (!boxRef.current?.contains(e.target as Node)) onClose()
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [onClose])
+
+  return (
+    <div className="notes-heading-picker" ref={boxRef} role="dialog" aria-label={t('notes.fmt.headingLevels')}>
+      {HEADING_LEVELS.map((level) => {
+        const label = t(`notes.insert.heading${level}`)
+        return (
+          <button key={level} type="button" title={label} aria-label={label} onClick={() => onPick(level)}>
+            H{level}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * 列表样式选择器:无序 / 有序 / 任务,三种类型互斥。
+ * 与块菜单里那排列表按钮同一组图标与标签 —— 同一个动作不该在两种地方长得不一样。
+ */
+function ListPicker({
+  onPick,
+  onClose
+}: {
+  onPick: (marker: ListMarker) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const boxRef = useRef<HTMLDivElement | null>(null)
+
+  // 与 TablePicker / QuotePicker / HeadingPicker 同一套关法
+  useEffect(() => {
+    const onDown = (e: PointerEvent): void => {
+      if (!boxRef.current?.contains(e.target as Node)) onClose()
+    }
+    window.addEventListener('pointerdown', onDown)
+    return () => window.removeEventListener('pointerdown', onDown)
+  }, [onClose])
+
+  const options: { marker: ListMarker; icon: IconName; labelKey: string }[] = [
+    { marker: '- ', icon: 'list', labelKey: 'notes.fmt.list' },
+    { marker: '1. ', icon: 'list-ordered', labelKey: 'notes.blockMenu.orderedList' },
+    { marker: '- [ ] ', icon: 'square-check-big', labelKey: 'notes.fmt.task' }
+  ]
+  return (
+    <div className="notes-list-picker" ref={boxRef} role="dialog" aria-label={t('notes.blockMenu.listStyle')}>
+      {options.map((option) => {
+        const label = t(option.labelKey)
+        return (
+          <button
+            key={option.marker}
+            type="button"
+            title={label}
+            aria-label={label}
+            onClick={() => onPick(option.marker)}
+          >
+            <Icon name={option.icon} />
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** 生成 GFM 表格骨架。表头给占位名,空表头在预览里是一片看不出边界的格子 */export function NoteToolbar({
   handleRef,
   body,
   onDiagram,
@@ -181,10 +266,22 @@ export function NoteToolbar({
   const empty = body.trim() === ''
   const [tableOpen, setTableOpen] = useState(false)
   const [quoteOpen, setQuoteOpen] = useState(false)
+  const [headingOpen, setHeadingOpen] = useState(false)
+  const [listOpen, setListOpen] = useState(false)
 
   const applyQuote = (kind: CalloutKind | null): void => {
     setQuoteOpen(false)
     handleRef.current?.applyQuote(kind)
+  }
+
+  const applyHeading = (level: HeadingLevel): void => {
+    setHeadingOpen(false)
+    handleRef.current?.setHeadingSelection(level)
+  }
+
+  const applyList = (marker: ListMarker): void => {
+    setListOpen(false)
+    handleRef.current?.setListStyle(marker)
   }
 
   const run = (a: FormatAction): void => {
@@ -201,18 +298,56 @@ export function NoteToolbar({
   return (
     <div className="notes-toolbar">
       <div className="notes-toolbar-fmt">
-        {FORMATS.map((a) => (
-          <button
-            key={a.id}
-            type="button"
-            className={'notes-fmt-btn' + (a.groupStart === true ? ' group-start' : '')}
-            title={a.shortcut !== undefined ? `${t(a.labelKey)} · ${a.shortcut}` : t(a.labelKey)}
-            aria-label={t(a.labelKey)}
-            onClick={() => run(a)}
-          >
-            <Icon name={a.icon} />
-          </button>
-        ))}
+        {FORMATS.map((a) => {
+          if (a.id === 'heading') {
+            // 标题不是「一律二级」:点开选 H1–H10(与块菜单同一份层级列表)
+            return (
+              <div key={a.id} className="notes-fmt-group group-start">
+                <button
+                  type="button"
+                  className={'notes-fmt-btn' + (headingOpen ? ' active' : '')}
+                  title={t('notes.fmt.headingLevels')}
+                  aria-label={t('notes.fmt.headingLevels')}
+                  aria-expanded={headingOpen}
+                  onClick={() => setHeadingOpen((v) => !v)}
+                >
+                  <Icon name={a.icon} />
+                </button>
+                {headingOpen && <HeadingPicker onPick={applyHeading} onClose={() => setHeadingOpen(false)} />}
+              </div>
+            )
+          }
+          if (a.id === 'list') {
+            // 列表也不再固定无序:点开选无序 / 有序 / 任务
+            return (
+              <div key={a.id} className="notes-fmt-group">
+                <button
+                  type="button"
+                  className={'notes-fmt-btn' + (listOpen ? ' active' : '')}
+                  title={t('notes.blockMenu.listStyle')}
+                  aria-label={t('notes.blockMenu.listStyle')}
+                  aria-expanded={listOpen}
+                  onClick={() => setListOpen((v) => !v)}
+                >
+                  <Icon name={a.icon} />
+                </button>
+                {listOpen && <ListPicker onPick={applyList} onClose={() => setListOpen(false)} />}
+              </div>
+            )
+          }
+          return (
+            <button
+              key={a.id}
+              type="button"
+              className={'notes-fmt-btn' + (a.groupStart === true ? ' group-start' : '')}
+              title={a.shortcut !== undefined ? `${t(a.labelKey)} · ${a.shortcut}` : t(a.labelKey)}
+              aria-label={t(a.labelKey)}
+              onClick={() => run(a)}
+            >
+              <Icon name={a.icon} />
+            </button>
+          )
+        })}
         {ALIGNS.map((a, i) => (
           <button
             key={a.id}

@@ -56,6 +56,16 @@ describe('parseMarkdownBlocks', () => {
     expect(firstHeading.to).toBeGreaterThan(childHeadings[1].to - 1)
   })
 
+  it('recognises H7 and H10 (####### / ##########) as nested heading blocks', () => {
+    const blocks = parseMarkdownBlocks('# 一\n\n###### 六\n\n####### 七\n\n########## 十\n\n正文')
+    const h6 = blocks.find((b) => b.kind === 'heading' && b.level === 6)!
+    const h7 = blocks.find((b) => b.kind === 'heading' && b.level === 7)!
+    const h10 = blocks.find((b) => b.kind === 'heading' && b.level === 10)!
+    expect(h7.parentId).toBe(h6.id)
+    expect(h10.parentId).toBe(h7.id)
+    expect(h10.bodyTo).toBe(h10.from + 1)
+  })
+
   it('recognises paragraphs, list items, quotes, fences and tables as blocks', () => {
     const text = [
       'paragraph line 1',

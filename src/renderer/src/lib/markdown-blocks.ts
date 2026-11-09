@@ -71,7 +71,7 @@ interface ConsumedBlock {
   align?: TextAlign
 }
 
-const HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+|$)/
+const HEADING_RE = /^ {0,3}(#{1,10})(?:[ \t]+|$)/
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(?:[^`~]*)$/
 const QUOTE_RE = /^ {0,3}>/
 const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/

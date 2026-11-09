@@ -235,6 +235,16 @@ describe('块级:标题层级 / 表格对齐 / 语义', () => {
     expect(html('###### 六级')).toContain('md-h6')
   })
 
+  it('扩展模式支持七到十级标题(本项目扩展,CommonMark 只到 6)', () => {
+    const out = html('####### 七级')
+    expect(out).toContain('md-h7')
+    expect(out).toContain('aria-level="7"')
+    expect(html('########## 十级')).toContain('md-h10')
+    expect(html('########## 十级')).toContain('aria-level="10"')
+    // 11 个 # 不算标题 —— 层级别无限外延
+    expect(html('########### 十一级')).not.toContain('md-h10')
+  })
+
   it('扩展模式的标题补 role 与 aria-level', () => {
     const out = html('## 标题')
     expect(out).toContain('role="heading"')

@@ -115,6 +115,16 @@ function applyDocText(view: EditorView, next: string): void {
   view.dispatch({ changes: { from: start, to: endPrev, insert: next.slice(start, endNext) } })
 }
 
+/** 标题行前缀:已有 1–7 个 `#` 就整体替换,没有就直接加 */
+const HEADING_LINE_RE = /^( {0,3})#{1,10}(?:[ \t]+|$)/
+
+function headingLine(text: string, level: HeadingLevel): string {
+  const match = HEADING_LINE_RE.exec(text)
+  const indent = match?.[1] ?? ''
+  const content = match === null ? text : text.slice(match[0].length)
+  return `${indent}${'#'.repeat(level)} ${content}`
+}
+
 /**
  * 回车:接管上游不认的宽松任务写法(`-[]` / `- []` / `- [x]文字` / 有序任务)。
  * 规整当前行前缀与插入新行放在同一个 transaction 里 —— 一次撤销回到输入前。
@@ -213,6 +223,15 @@ function addColumnCursors(view: EditorView): boolean {
   return true
 }
 
+/** 支持的标题层级。CommonMark 只到 6;7 是本项目自己的扩展(`####### `),与块模型/预览同一口径 */
+export type HeadingLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10
+
+/** 块菜单 / 插入菜单 / 工具条共用的层级列表 */
+export const HEADING_LEVELS: readonly HeadingLevel[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+/** 三种列表写法。工具条的列表按钮与块菜单的列表样式共用 */
+export type ListMarker = '- ' | '1. ' | '- [ ] '
+
 /** 编辑器对外的命令式接口(预览勾选任务项、底部工具条排版按钮、滚动同步) */
 export interface NoteEditorHandle {
   toggleTaskAtLine(line: number, next: boolean): void
@@ -233,7 +252,9 @@ export interface NoteEditorHandle {
   /** 复制包含首尾的源码行范围 */
   duplicateLines(from: number, to: number): void
   /** 将指定行转换成 ATX 标题级别 */
-  setHeadingLevel(line: number, level: 1 | 2 | 3): void
+  setHeadingLevel(line: number, level: HeadingLevel): void
+  /** 把选中的每一行(没有选区就是当前行)设成指定标题级别 */
+  setHeadingSelection(level: HeadingLevel): void
   /**
    * 把 `line` 所在的引用块首行换成指定样式:普通引用 ↔ 提示块。
    * `kind` 为 null 是普通引用;提示块换类型只换标记,普通引用升级时标记独占一行。
@@ -247,7 +268,12 @@ export interface NoteEditorHandle {
    */
   applyQuote(kind: CalloutKind | null): void
   /** 把 `line` 行设成指定列表标记;已是该标记则取消(变回普通行),不同标记直接替换 */
-  setListMarker(line: number, marker: '- ' | '1. ' | '- [ ] '): void
+  setListMarker(line: number, marker: ListMarker): void
+  /**
+   * 底部工具条的列表按钮:对选中的每一行(没有选区就是当前行)设成同一种列表样式。
+   * 三种类型互斥 —— 已有列表行直接换标记而不是叠加;选中的行都已是该样式时统一取消。
+   */
+  setListStyle(marker: ListMarker): void
   /** 整行缩进/反缩进 2 空格(列表嵌套) */
   indentLine(line: number, dir: 'in' | 'out'): void
   /** 对选中的每一行(没有选区就是当前行)缩进/反缩进 2 空格;空行跳过 */
@@ -538,11 +564,24 @@ export function NoteEditor({
         const doc = view.state.doc
         const n = Math.min(Math.max(line, 0), doc.lines - 1)
         const current = doc.line(n + 1)
-        const match = /^( {0,3})#{1,6}(?:[ \t]+|$)/.exec(current.text)
-        const indent = match?.[1] ?? ''
-        const content = match === null ? current.text : current.text.slice(match[0].length)
-        const next = `${indent}${'#'.repeat(level)} ${content}`
+        const next = headingLine(current.text, level)
         view.dispatch({ changes: { from: current.from, to: current.to, insert: next }, selection: { anchor: current.from + next.length } })
+        view.focus()
+      },
+
+      setHeadingSelection(level) {
+        const view = viewRef.current
+        if (!view) return
+        const { doc, selection } = view.state
+        const first = doc.lineAt(selection.main.from).number
+        const last = doc.lineAt(selection.main.to).number
+        const changes: { from: number; to: number; insert: string }[] = []
+        for (let n = first; n <= last; n += 1) {
+          const line = doc.line(n)
+          const next = headingLine(line.text, level)
+          if (next !== line.text) changes.push({ from: line.from, to: line.to, insert: next })
+        }
+        if (changes.length > 0) view.dispatch({ changes })
         view.focus()
       },
 
@@ -640,6 +679,43 @@ export function NoteEditor({
         const insert =
           listMarkerOf(cur.text) === marker ? `${head}${content}` : `${head}${marker}${content}`
         view.dispatch({ changes: { from: cur.from, to: cur.to, insert } })
+        view.focus()
+      },
+
+      setListStyle(marker) {
+        const view = viewRef.current
+        if (!view) return
+        const { from, to } = view.state.selection.main
+        const first = view.state.doc.lineAt(from).number
+        const last = view.state.doc.lineAt(to).number
+        const lines: { from: number; to: number; text: string }[] = []
+        for (let n = first; n <= last; n++) {
+          const line = view.state.doc.line(n)
+          // 空行不套列表标记:否则会在段落之间留下一堆看不见的空列表项
+          if (line.text.trim() === '') continue
+          lines.push({ from: line.from, to: line.to, text: line.text })
+        }
+        if (lines.length === 0) return
+        // 全都已经是这一种 → 统一取消;否则统一设成这一种(不同列表类型直接替换)
+        const toggleOff = lines.every((line) => listMarkerOf(line.text) === marker)
+        const changes: { from: number; to: number; insert: string }[] = []
+        for (const line of lines) {
+          const syntax = parseListLine(line.text)
+          let next: string
+          if (syntax === null) {
+            const indent = /^[ \t]*/.exec(line.text)?.[0] ?? ''
+            const content = line.text.slice(indent.length)
+            next = toggleOff ? line.text : `${indent}${marker}${content}`
+          } else {
+            const head = `${syntax.quote}${syntax.indent}`
+            const content = line.text.slice(syntax.contentStart)
+            next = toggleOff ? `${head}${content}` : `${head}${marker}${content}`
+          }
+          if (next !== line.text) changes.push({ from: line.from, to: line.to, insert: next })
+        }
+        if (changes.length === 0) return
+        // 一次 dispatch:撤销只记一步,选区自动跟着位移
+        view.dispatch({ changes })
         view.focus()
       },
 
