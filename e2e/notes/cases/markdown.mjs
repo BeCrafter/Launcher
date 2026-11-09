@@ -1,4 +1,4 @@
-import { includes, ok } from '../lib/assert.mjs'
+import { eq, includes, ok } from '../lib/assert.mjs'
 
 const HEADINGS = [
   '# 一级标题',
@@ -34,6 +34,13 @@ const LINK = '# 链接\n\n[[E2E 链接目标]]\n'
 const MISSING = '# 链接\n\n[[E2E 新建的笔记]]\n'
 const MEDIA = ['# 媒体', '', '![[sample.png]]'].join('\n')
 const TASKS = ['# 任务', '', '- [ ] 待办事项'].join('\n')
+const TABLE_IMAGE = [
+  '# 表格图片',
+  '',
+  '| 图片 | 说明 |',
+  '| --- | --- |',
+  '| ![图](assets/sample.png) | 端口排查 先看谁占着 8080。 |'
+].join('\n')
 const TABLE = [
   '# 表格',
   '',
@@ -184,6 +191,90 @@ export default [
         timeout: 15_000,
         message: 'mermaid 渲染出 SVG'
       })
+    }
+  },
+
+  {
+    id: 'markdown/table-cell-image-resize',
+    area: 'markdown',
+    title: '表格内嵌图片:悬停时缩放角柄贴着图片框右下角,不被表格的新增条留白推离;拖动角柄改宽并写回源码',
+    tags: ['media', 'table'],
+    fixture: TABLE_IMAGE,
+    async run(ctx, t) {
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-preview-body td .md-media-box.resizable') !== null`,
+        { message: '表格单元格里的图片可缩放' }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-preview-body td .md-media-box img.md-img')?.complete === true`,
+        { timeout: 10_000, message: '图片加载完成' }
+      )
+
+      const handleOpacity = () =>
+        ctx.cdp.eval(
+          `getComputedStyle(document.querySelector('.notes-preview-body td .md-media-box .md-resize-handle')).opacity`
+        )
+      eq(await handleOpacity(), '0', '未悬停时图片角柄不可见')
+
+      const imgCenter = await ctx.cdp.json(
+        `(() => { const b = document.querySelector('.notes-preview-body td .md-media-box').getBoundingClientRect();
+          return { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height / 2) } })()`
+      )
+      await ctx.cdp.mouse('mouseMoved', imgCenter.x, imgCenter.y)
+      await ctx.cdp.waitFor(
+        `getComputedStyle(document.querySelector('.notes-preview-body td .md-media-box .md-resize-handle')).opacity === '1'`,
+        { message: '悬停图片后角柄显形' }
+      )
+
+      // 角柄的 CSS 是 right/bottom:-7px,基准是图片的 .md-media-box。
+      // 表格块给自家角柄让出的 24px 新增条留白**不能**套到格子里的媒体上。
+      const geom = await ctx.cdp.json(`(() => {
+        const box = document.querySelector('.notes-preview-body td .md-media-box')
+        const h = box.querySelector('.md-resize-handle')
+        const b = box.getBoundingClientRect()
+        const r = h.getBoundingClientRect()
+        return {
+          boxRight: b.right, boxBottom: b.bottom,
+          handleRight: r.right, handleBottom: r.bottom,
+          handleX: Math.round(r.x + r.width / 2), handleY: Math.round(r.y + r.height / 2)
+        }
+      })()`)
+      ok(
+        Math.abs(geom.handleRight - (geom.boxRight + 7)) <= 2,
+        `角柄右边应贴着图片框右缘外 7px:角柄 ${geom.handleRight.toFixed(1)} / 图片框 ${geom.boxRight.toFixed(1)}`
+      )
+      ok(
+        Math.abs(geom.handleBottom - (geom.boxBottom + 7)) <= 2,
+        `角柄下边应贴着图片框下缘外 7px:角柄 ${geom.handleBottom.toFixed(1)} / 图片框 ${geom.boxBottom.toFixed(1)}`
+      )
+
+      // 悬停表格右下角的新增条留白(不碰图片):图片角柄不能被表格级悬停带出来
+      const tableCorner = await ctx.cdp.json(
+        `(() => { const b = document.querySelector('.notes-preview-body .md-table-block').getBoundingClientRect();
+          return { x: Math.round(b.right - 8), y: Math.round(b.bottom - 8) } })()`
+      )
+      await ctx.cdp.mouse('mouseMoved', tableCorner.x, tableCorner.y)
+      await ctx.cdp.waitFor(
+        `getComputedStyle(document.querySelector('.notes-preview-body td .md-media-box .md-resize-handle')).opacity === '0'`,
+        { message: '悬停表格留白时,格子里图片的角柄保持隐藏' }
+      )
+
+      // 角柄真的能用:按住它往右拖 60px,图片变宽,尺寸写回这一行的源码
+      await ctx.cdp.mouse('mouseMoved', geom.handleX, geom.handleY)
+      await ctx.cdp.mouse('mousePressed', geom.handleX, geom.handleY, { buttons: 1 })
+      await ctx.cdp.mouse('mouseMoved', geom.handleX + 60, geom.handleY, { buttons: 1 })
+      await ctx.cdp.mouse('mouseReleased', geom.handleX + 60, geom.handleY, { buttons: 0 })
+      await ctx.cdp.waitFor(
+        `!document.querySelector('.notes-preview-body td .md-media-box').classList.contains('dragging')`,
+        { message: '松开后结束拖拽' }
+      )
+      await ctx.waitSaved()
+      const body = await ctx.savedBody()
+      // 表格行里的 `|` 必须转义成 `\|`,否则会把单元格切断 —— 尺寸同样写在这一行的 alt 里
+      ok(
+        /!\s*\[图\\?\|\d+\]\(assets\/sample\.png\)/.test(body ?? ''),
+        `拖动后图片宽度写回源码这一行,实际正文:\n${body}`
+      )
     }
   },
 
