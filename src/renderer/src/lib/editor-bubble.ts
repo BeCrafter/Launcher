@@ -15,9 +15,10 @@
 import type { Extension } from '@codemirror/state'
 import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view'
 import { getCurrentLang, makeT } from '../i18n'
+import { inCodeBlock, inInlineCode } from './editor-code-block'
 import { iconNode } from './icon-dom'
 import type { IconName } from './icon-paths'
-import { applyWrap, stripInlineMarks, suppressSelectionBubble } from './note-marks'
+import { applyWrap, planClearMarks, suppressSelectionBubble } from './note-marks'
 
 const HIDDEN_CLASS = 'cm-selection-bubble-hidden'
 const GAP = 6
@@ -37,11 +38,14 @@ const ACTIONS: BubbleAction[] = [
   { id: 'highlight', icon: 'highlighter', labelKey: 'notes.fmt.highlight', before: '==' },
   { id: 'code', icon: 'code', labelKey: 'notes.fmt.code', before: '`' },
   { id: 'link', icon: 'link', labelKey: 'notes.fmt.link', before: '[', after: '](https://)' },
+  { id: 'sub', icon: 'subscript', labelKey: 'notes.fmt.sub', before: '~' },
+  { id: 'sup', icon: 'superscript', labelKey: 'notes.fmt.sup', before: '^' },
   { id: 'clear', icon: 'eraser', labelKey: 'notes.fmt.clear' }
 ]
 
 interface BubbleView {
   root: HTMLElement
+  buttons: { id: string; el: HTMLButtonElement }[]
   key: object
 }
 
@@ -61,6 +65,7 @@ function buildBubble(view: EditorView): BubbleView {
   root.className = `cm-selection-bubble ${HIDDEN_CLASS}`
   root.tabIndex = -1
   const t = makeT(getCurrentLang())
+  const buttons: { id: string; el: HTMLButtonElement }[] = []
   for (const action of ACTIONS) {
     const button = document.createElement('button')
     button.type = 'button'
@@ -71,6 +76,7 @@ function buildBubble(view: EditorView): BubbleView {
     button.setAttribute('aria-label', button.title)
     button.append(iconNode(action.icon, 15))
     root.append(button)
+    buttons.push({ id: action.id, el: button })
   }
   // 焦点与 DOM 选区都靠这一句留住 —— 见文件头第 2 条
   root.addEventListener('mousedown', (event) => event.preventDefault())
@@ -80,7 +86,7 @@ function buildBubble(view: EditorView): BubbleView {
     if (action !== undefined) runAction(view, action)
   })
   view.dom.append(root)
-  return { root, key: {} }
+  return { root, buttons, key: {} }
 }
 
 function runAction(view: EditorView, action: BubbleAction): void {
@@ -91,20 +97,88 @@ function runAction(view: EditorView, action: BubbleAction): void {
   applyWrap(view, action.before ?? '', action.after)
 }
 
-/** 清除格式：只去掉选区**内部**成对的行内标记，返回的选区落在新文本上（浮条不消失）。 */
+/** 清除格式：选区里的标记、包住选区的标记、重复套出来的多层标记，一次清干净。 */
 function clearMarks(view: EditorView): void {
   const { from, to } = view.state.selection.main
   if (from === to) return
-  const text = view.state.sliceDoc(from, to)
-  const before = view.state.sliceDoc(Math.max(0, from - 2), from)
-  const after = view.state.sliceDoc(to, Math.min(view.state.doc.length, to + 2))
-  const next = stripInlineMarks(text, before, after)
-  if (next === text) return
+  const plan = planClearMarks(view.state.doc.toString(), from, to)
+  if (plan === null) return
   view.dispatch({
-    changes: { from, to, insert: next },
-    selection: { anchor: from, head: from + next.length }
+    changes: { from: plan.from, to: plan.to, insert: plan.insert },
+    selection: { anchor: plan.from, head: plan.from + plan.insert.length }
   })
   if (!view.hasFocus) view.focus()
+}
+
+export interface BubbleContext {
+  /** 选区落在围栏 / 缩进代码块里 */
+  codeBlock: boolean
+  /** 选区落在行内代码里 */
+  inlineCode: boolean
+  /** 选区(含紧贴外侧的标记)里有没有东西可清;默认 true */
+  clearable?: boolean
+}
+
+/**
+ * 当前选区该显示哪些动作;`null` = 整条浮条都不出现。
+ *
+ * 判据全部来自预览的行内语法(`markdown.tsx` 的 `INLINE_EXT_RE`),不是凭感觉精简:
+ *   · 只选中空白、或在代码块里 —— 没有任何行内格式套得上去;
+ *   · 行内代码里只剩「清除格式」有意义(它负责把代码标记去掉);
+ *   · `*斜*` / `~下~` / `^上^` 的内容都不允许换行 —— 跨行选区不显示;
+ *   · 选区里已经含有该动作的标记时,再套一层只会拆坏预览的配对(如 `*a*b*`);
+ *   · 选区(含紧贴外侧的标记)里根本没有格式时,「清除格式」也不用出现。
+ */
+export function bubbleActionIds(text: string, ctx: BubbleContext): string[] | null {
+  if (text.trim() === '' || ctx.codeBlock) return null
+  if (ctx.inlineCode) return ctx.clearable === false ? [] : ['clear']
+  const multiline = text.includes('\n')
+  return ACTIONS.filter((action) => {
+    switch (action.id) {
+      case 'bold':
+        return !text.includes('**')
+      case 'italic':
+        return !multiline && !text.includes('*')
+      case 'strike':
+        return !text.includes('~~')
+      case 'highlight':
+        return !text.includes('==')
+      case 'code':
+        return !text.includes('`')
+      case 'link':
+        return !text.includes(']')
+      case 'sub':
+        return !multiline && !text.includes('~')
+      case 'sup':
+        return !multiline && !text.includes('^')
+      default:
+        return true // clear
+    }
+  })
+    .filter((action) => action.id !== 'clear' || ctx.clearable !== false)
+    .map((action) => action.id)
+}
+
+/** 把当前选区翻译成 `bubbleActionIds` 需要的上下文。 */
+function bubbleActions(view: EditorView): string[] | null {
+  const { from, to } = view.state.selection.main
+  if (from === to) return null
+  const right = Math.max(from, to - 1)
+  const text = view.state.sliceDoc(from, to)
+  return bubbleActionIds(text, {
+    // 任一端在代码里就按代码处理:跨出边界时套格式同样只会得到一半效果
+    codeBlock: inCodeBlock(view, from) || inCodeBlock(view, right),
+    inlineCode: inInlineCode(view, from) || inInlineCode(view, right),
+    // 与点下「清除格式」时同一份规划 —— 清不出东西就不显示按钮
+    clearable: planClearMarks(view.state.doc.toString(), from, to) !== null
+  })
+}
+
+function syncBubbleButtons(bubble: BubbleView, ids: string[] | null): void {
+  const visible = ids === null ? null : new Set(ids)
+  for (const button of bubble.buttons) {
+    button.el.style.display = visible !== null && visible.has(button.id) ? '' : 'none'
+  }
 }
 
 /**
@@ -112,6 +186,12 @@ function clearMarks(view: EditorView): void {
  * 位置以选区**首行**为准 —— 多行选区的包围盒几乎等于整栏宽，拿来定位会离谱。
  */
 function planBubble(view: EditorView): BubblePlan | null {
+  const bubble = bubbles.get(view)
+  if (bubble === undefined) return null
+  // 先按选区决定按钮、藏掉多余的,再量宽度 —— 否则定位会按整条浮条的宽度算
+  const ids = bubbleActions(view)
+  syncBubbleButtons(bubble, ids)
+  if (ids === null || ids.length === 0) return null
   if (suppressed.has(view) || composing.has(view) || view.compositionStarted) return null
   // 列选择 / 多光标:气泡只对主选区操作,会误导「全都改」—— 干脆不弹
   if (view.state.selection.ranges.length > 1) return null
@@ -122,8 +202,6 @@ function planBubble(view: EditorView): BubblePlan | null {
   const start = view.coordsAtPos(sel.from, 1)
   if (start === null) return null
   const last = view.coordsAtPos(Math.min(sel.to, vp.to - 1), -1)
-  const bubble = bubbles.get(view)
-  if (bubble === undefined) return null
   const host = view.dom.getBoundingClientRect()
   const bubbleRect = bubble.root.getBoundingClientRect()
   const scroller = view.scrollDOM.getBoundingClientRect()

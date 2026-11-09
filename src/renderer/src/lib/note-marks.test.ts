@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planWrap, stripInlineMarks } from './note-marks'
+import { planClearMarks, planWrap, stripInlineMarks } from './note-marks'
 
 describe('planWrap', () => {
   it('wraps a selection and keeps it selected', () => {
@@ -35,6 +35,14 @@ describe('stripInlineMarks', () => {
 
   it('recurses into nested marks', () => {
     expect(stripInlineMarks('**粗里有*斜*体**')).toBe('粗里有斜体')
+  })
+
+  it('strips every layer when the same mark was applied more than once', () => {
+    // 选区一直包着标记再点一次格式，就会摞成 `====高亮====`；一次清除要剥干净
+    expect(stripInlineMarks('====高亮====')).toBe('高亮')
+    expect(stripInlineMarks('======高亮======')).toBe('高亮')
+    expect(stripInlineMarks('*====高亮====*')).toBe('高亮')
+    expect(stripInlineMarks('==~~*高亮*~~==')).toBe('高亮')
   })
 
   it('leaves a lone marker alone — eating it would swallow a neighbouring line', () => {
@@ -76,5 +84,60 @@ describe('stripInlineMarks', () => {
     expect(stripInlineMarks('> 引用')).toBe('> 引用')
     expect(stripInlineMarks('- 列表')).toBe('- 列表')
     expect(stripInlineMarks('| a | b |')).toBe('| a | b |')
+  })
+})
+
+describe('planClearMarks', () => {
+  // 把计划应用到原文上，方便断言「清完是什么样、选区落在哪」
+  function apply(doc: string, from: number, to: number): string | null {
+    const plan = planClearMarks(doc, from, to)
+    if (plan === null) return null
+    expect(plan.from).toBeLessThanOrEqual(from)
+    expect(plan.to).toBeGreaterThanOrEqual(to)
+    const next = doc.slice(0, plan.from) + plan.insert + doc.slice(plan.to)
+    expect(next.slice(plan.from, plan.from + plan.insert.length)).toBe(plan.insert)
+    return next
+  }
+
+  it('clears marks that sit inside the selection', () => {
+    expect(apply('**粗**', 0, 5)).toBe('粗')
+    expect(apply('==高亮==', 0, 6)).toBe('高亮')
+    expect(apply('*斜* 与 ==亮==', 0, 11)).toBe('斜 与 亮')
+    expect(apply('`码`', 0, 3)).toBe('码')
+  })
+
+  it('clears marks that wrap the selection (double-click selects the text only)', () => {
+    expect(apply('==高亮==', 2, 4)).toBe('高亮')
+    expect(apply('**粗体**', 2, 4)).toBe('粗体')
+    expect(apply('_字母_', 1, 3)).toBe('字母')
+    expect(apply('`码`', 1, 2)).toBe('码')
+    expect(apply('~~删~~', 2, 3)).toBe('删')
+  })
+
+  it('clears every stacked layer in one go', () => {
+    expect(apply('====高亮====', 0, 10)).toBe('高亮')
+    expect(apply('====高亮====', 4, 6)).toBe('高亮')
+    expect(apply('*====高亮====*', 0, 12)).toBe('高亮')
+    expect(apply('======高亮======', 6, 8)).toBe('高亮')
+  })
+
+  it('unwraps a whole link when the selection covers it', () => {
+    const doc = '[文字](https://example.com)'
+    expect(apply(doc, 0, doc.length)).toBe('文字')
+  })
+
+  it('returns null when there is nothing safe to clear', () => {
+    expect(planClearMarks('普通文字', 0, 4)).toBeNull()
+    expect(planClearMarks('**粗', 0, 3)).toBeNull()
+    expect(planClearMarks('前半 **后半', 0, 7)).toBeNull()
+    // 选区横跨两段独立的斜体：外面两个 `*` 不是一对，不能删
+    expect(planClearMarks('*a* 和 *b*', 1, 8)).toBeNull()
+    expect(planClearMarks('# 标题', 2, 4)).toBeNull()
+  })
+
+  it('is stable: a cleared document has nothing left to clear', () => {
+    const once = apply('====*高亮*====', 0, 12)
+    expect(once).toBe('高亮')
+    expect(planClearMarks(once ?? '', 0, 2)).toBeNull()
   })
 })
