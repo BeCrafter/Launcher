@@ -28,7 +28,7 @@ import { confirmDangerous } from '../../lib/elevation'
 import { useRailResize } from '../../lib/use-rail-resize'
 import { useFilesStore } from '../../state/files-store'
 import { useNotesStore } from '../../state/notes-store'
-import { openFileDoc, openNoteDoc } from './doc-actions'
+import { openFileDoc, openNoteDoc, useActiveDocKind } from './doc-actions'
 
 /**
  * 缩进栅格。目录与笔记/文件共用同一列:
@@ -103,6 +103,62 @@ function RowIconSlot({
   ) : (
     <i key="icon" className={`fa-solid ${icon} notes-file-icon`} data-kind={kind} aria-hidden="true" />
   )
+}
+
+/** 笔记/文件行与目录行共用同一层悬停高亮 */
+const ROW_SELECTOR = '.notes-row, .notes-folder-row'
+
+/**
+ * 行自身的状态底色优先于悬停高亮 —— 与旧 CSS 的层叠顺序一致
+ * (`.selected` / 投放态都写在 `:hover` 之后)。
+ * 这些底色是半透明的,不能只靠绘制顺序:高亮透上来就变成双层色。
+ * `.active` / `.opening` 也在这里收起悬停层:笔记/文件的选中底色
+ * 由 `.notes-rail-selection` 那一层统一绘制,行自己不再铺底。
+ */
+function hoverSuppressed(row: Element): boolean {
+  return (
+    row.classList.contains('active') ||
+    row.classList.contains('opening') ||
+    row.classList.contains('selected') ||
+    row.classList.contains('drop-target') ||
+    row.classList.contains('file-drop-target') ||
+    row.classList.contains('dragging')
+  )
+}
+
+/** 行的文档身份。笔记/文件各一个命名空间,路径里的冒号不会冲突。 */
+function railRowKey(row: HTMLElement): string | null {
+  if (row.dataset.noteId !== undefined) return `note:${row.dataset.noteId}`
+  if (row.dataset.filePath !== undefined) return `file:${row.dataset.filePath}`
+  return null
+}
+
+/**
+ * 当前打开的文档在列表里的 key。opening 优先于 active —— 点击当帧只有 opening
+ * 已经置上,active 要等读取完成。种类由 useActiveDocKind() 决定:笔记 ↔ 文件
+ * 互切时另一个 store 的 active 会晚一帧才收掉,只看 active 会把色块带回旧文档。
+ */
+function railSelectionKey(
+  kind: 'note' | 'file',
+  ids: {
+    currentId: string | null
+    openingId: string | null
+    activeFilePath: string | null
+    openingFilePath: string | null
+  }
+): string | null {
+  if (kind === 'file') {
+    const path = ids.openingFilePath ?? ids.activeFilePath
+    return path === null ? null : `file:${path}`
+  }
+  const id = ids.openingId ?? ids.currentId
+  return id === null ? null : `note:${id}`
+}
+
+/** 按 key 找行。目标行可能没渲染(筛选/折叠),返回 null。 */
+function findRailSelectionRow(list: HTMLElement, key: string): HTMLElement | null {
+  const rows = Array.from(list.querySelectorAll<HTMLElement>('.notes-row'))
+  return rows.find((row) => railRowKey(row) === key) ?? null
 }
 
 /** 正在编辑的目录名/文件名(新建或改名);null = 没有 */
@@ -249,6 +305,9 @@ export function NotesRail(): React.JSX.Element {
   // 文件是「同一时刻只开一个文档」的另一半:文件打开时笔记行不再高亮
   const activeFilePath = useFilesStore((s) => s.file?.path ?? null)
   const openingFilePath = useFilesStore((s) => s.openingPath)
+  // 当前显示的是笔记还是文件。按最后一次点击同步切换,两个 store 的 active
+  // 同时存在时,只有它能判断谁是最新选中的目标。
+  const activeDocKind = useActiveDocKind()
   const leaveFile = useFilesStore((s) => s.leave)
   const dir = useNotesStore((s) => s.dir)
   const setQuery = useNotesStore((s) => s.setQuery)
@@ -320,6 +379,248 @@ export function NotesRail(): React.JSX.Element {
    */
   const listRef = useRef<HTMLDivElement | null>(null)
   const thumbRef = useRef<HTMLDivElement | null>(null)
+
+  /*
+   * 悬停高亮:整列只有一个色块,指针换行时从上一行滑到下一行。
+   * 用 ref 直接改样式,不走 state —— 鼠标每换一行都重渲染整棵树太贵。
+   */
+  const hoverPillRef = useRef<HTMLDivElement | null>(null)
+  const hoverRowRef = useRef<HTMLElement | null>(null)
+  const hoverBoxRef = useRef<{ x: number; y: number; w: number; h: number } | null>(null)
+  const hoverHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /** 当前打开的文档在列表里的身份;null = 没有选中。 */
+  const selectionKey = railSelectionKey(activeDocKind, {
+    currentId,
+    openingId,
+    activeFilePath,
+    openingFilePath
+  })
+
+  /*
+   * 选中高亮:与悬停层同一套几何,但跟随「当前打开的文档」。
+   * 目标只从 store 推导,不读 .active/.opening 类 —— 跨文档切换时行类会先出现
+   * 「新文档的 opening 已清掉、active 还没落上」的空档。
+   */
+  const selectionPillRef = useRef<HTMLDivElement | null>(null)
+  const selectionRef = useRef<{
+    key: string
+    el: HTMLElement
+    box: { x: number; y: number; w: number; h: number }
+  } | null>(null)
+
+  const hideRailSelection = (): void => {
+    selectionRef.current = null
+    const pill = selectionPillRef.current
+    if (pill !== null) pill.dataset.visible = 'false'
+  }
+
+  const cancelRailHoverHide = (): void => {
+    if (hoverHideTimer.current !== null) {
+      clearTimeout(hoverHideTimer.current)
+      hoverHideTimer.current = null
+    }
+  }
+
+  const hideRailHover = (): void => {
+    cancelRailHoverHide()
+    hoverRowRef.current = null
+    hoverBoxRef.current = null
+    const pill = hoverPillRef.current
+    if (pill !== null) pill.dataset.visible = 'false'
+  }
+
+  /**
+   * 指针落在两行之间的缝里时先别收 —— 普通行间隔 1px、置顶行间隔 3px,
+   * 还有置顶区到主列表十几 px 的分隔。等一小会儿,进了下一行就直接滑过去。
+   */
+  const scheduleRailHoverHide = (): void => {
+    if (hoverHideTimer.current !== null) return
+    hoverHideTimer.current = setTimeout(() => {
+      hoverHideTimer.current = null
+      hideRailHover()
+    }, 120)
+  }
+
+  /** 把色块摆到某一行。行高、行距都不固定(普通/置顶/目录行各不同),所以每次量矩形。 */
+  const paintRailHover = (row: HTMLElement): void => {
+    const rowKey = railRowKey(row)
+    if (
+      draggingRef.current !== null ||
+      hoverSuppressed(row) ||
+      // 选中行也收起悬停层,覆盖 active 尚未落上的空档。
+      // rowKey 为 null 时不能比 —— 目录行的 key 也是 null。
+      (rowKey !== null && rowKey === selectionKey)
+    ) {
+      hideRailHover()
+      return
+    }
+
+    const pill = hoverPillRef.current
+    const list = listRef.current
+    if (pill === null || list === null) return
+
+    const listRect = list.getBoundingClientRect()
+    const rowRect = row.getBoundingClientRect()
+    // 绝对定位子元素以滚动容器的 padding box 为包含块、随内容一起滚动,
+    // 所以要加上 scrollTop 才是内容坐标。
+    const box = {
+      x: rowRect.left - listRect.left,
+      y: rowRect.top - listRect.top + list.scrollTop,
+      w: rowRect.width,
+      h: rowRect.height
+    }
+    hoverRowRef.current = row
+
+    const shown = pill.dataset.visible === 'true'
+    const last = hoverBoxRef.current
+    if (
+      shown &&
+      last !== null &&
+      last.x === box.x &&
+      last.y === box.y &&
+      last.w === box.w &&
+      last.h === box.h
+    ) {
+      return
+    }
+    hoverBoxRef.current = box
+
+    if (!shown) {
+      pill.style.transition = 'none'
+      pill.style.opacity = '0'
+    }
+    pill.style.width = `${box.w}px`
+    pill.style.height = `${box.h}px`
+    pill.style.transform = `translate3d(${box.x}px, ${box.y}px, 0)`
+    pill.dataset.visible = 'true'
+    if (!shown) {
+      // 先把新位置落定,再恢复过渡与透明度:首次出现是原地淡入,
+      // 而不是从上一行横穿整列滑过来。
+      void pill.offsetWidth
+      pill.style.transition = ''
+      pill.style.opacity = ''
+    }
+  }
+
+  useEffect(
+    () => () => {
+      if (hoverHideTimer.current !== null) clearTimeout(hoverHideTimer.current)
+    },
+    []
+  )
+
+  /*
+   * 悬停期间行可能变高(行内改名输入)、变成活动/选中态,或列表重排;
+   * 每次渲染后把底色重新贴到同一行。行被删掉(搜索过滤)则直接收掉。
+   * 位置没变时 paintRailHover 会提前返回,不干扰正在进行的滑动过渡。
+   */
+  useLayoutEffect(() => {
+    const row = hoverRowRef.current
+    if (row === null) return
+    if (!row.isConnected) {
+      hideRailHover()
+      return
+    }
+    paintRailHover(row)
+  })
+
+  /*
+   * 选中色块:每次渲染后重新解析目标。切换文档时从当前位置滑到新行;
+   * 同一篇文档被布局挪动、或旧行已经不在 DOM 里,就直接落位,不假装成切换。
+   * 目标行被筛选/折叠掉则淡出,重新出现时原地淡入。
+   */
+  const paintRailSelection = (): void => {
+    const pill = selectionPillRef.current
+    const list = listRef.current
+    if (pill === null || list === null) return
+
+    if (selectionKey === null) {
+      hideRailSelection()
+      return
+    }
+    const row = findRailSelectionRow(list, selectionKey)
+    if (row === null) {
+      hideRailSelection()
+      return
+    }
+
+    const listRect = list.getBoundingClientRect()
+    const rowRect = row.getBoundingClientRect()
+    const box = {
+      x: rowRect.left - listRect.left,
+      y: rowRect.top - listRect.top + list.scrollTop,
+      w: rowRect.width,
+      h: rowRect.height
+    }
+
+    const prev = selectionRef.current
+    const shown = pill.dataset.visible === 'true'
+    if (
+      shown &&
+      prev !== null &&
+      prev.key === selectionKey &&
+      Math.abs(prev.box.x - box.x) < 0.5 &&
+      Math.abs(prev.box.y - box.y) < 0.5 &&
+      Math.abs(prev.box.w - box.w) < 0.5 &&
+      Math.abs(prev.box.h - box.h) < 0.5
+    ) {
+      prev.el = row
+      return
+    }
+
+    const reveal = !shown || prev === null
+    // 只有「选中从一个仍在 DOM 里的旧行移到另一行」才滑动。过滤/改名/删除
+    // 让旧行断开,或同一行只是被布局挪动(搜索/展开/置顶/新建目录把行挤下去)
+    // —— 直接落位,不要从已经不存在或没动过的位置滑过来。
+    const slide =
+      !reveal && prev !== null && prev.el.isConnected && prev.key !== selectionKey
+    const instant = reveal || !slide
+
+    if (instant) {
+      pill.style.transition = 'none'
+      if (reveal) pill.style.opacity = '0'
+    }
+    pill.style.width = `${box.w}px`
+    pill.style.height = `${box.h}px`
+    pill.style.transform = `translate3d(${box.x}px, ${box.y}px, 0)`
+    pill.dataset.visible = 'true'
+    if (instant) {
+      // 先把新位置落定,再恢复过渡:首次出现是原地淡入,重排/断开是直接贴上。
+      void pill.offsetWidth
+      pill.style.transition = ''
+      if (reveal) pill.style.opacity = ''
+    }
+    selectionRef.current = { key: selectionKey, el: row, box }
+  }
+
+  useLayoutEffect(() => {
+    paintRailSelection()
+  })
+
+  const onListPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.pointerType !== 'mouse') return
+    const target = e.target as Element
+    let row = target.closest<HTMLElement>(ROW_SELECTOR)
+    if (row === null) {
+      for (const dy of [-1, 1, -2, 2, -3, 3]) {
+        row =
+          document.elementFromPoint(e.clientX, e.clientY + dy)?.closest<HTMLElement>(ROW_SELECTOR) ??
+          null
+        if (row !== null) break
+      }
+    }
+    if (row === null) {
+      scheduleRailHoverHide()
+      return
+    }
+    cancelRailHoverHide()
+    paintRailHover(row)
+  }
+
+  const onListPointerLeave = (): void => {
+    hideRailHover()
+  }
 
   const syncThumb = useCallback((): void => {
     const el = listRef.current
@@ -1005,7 +1306,11 @@ export function NotesRail(): React.JSX.Element {
         className="notes-rail-list"
         data-dragging={draggingId !== null ? 'true' : undefined}
         onScroll={onListScroll}
+        onPointerMove={onListPointerMove}
+        onPointerLeave={onListPointerLeave}
       >
+        <div ref={hoverPillRef} className="notes-rail-hover" aria-hidden="true" />
+        <div ref={selectionPillRef} className="notes-rail-selection" aria-hidden="true" />
         {error !== null && (
           <div className="notes-rail-error">
             <i className="fa-solid fa-triangle-exclamation" />

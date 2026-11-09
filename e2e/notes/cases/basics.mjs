@@ -53,6 +53,132 @@ function actsVisibleExpr(title) {
   })()`
 }
 
+/** 目录行(按 path)。找不到时返回 undefined,调用方用 == null 判断。 */
+function railFolderRowExpr(path) {
+  return `[...document.querySelectorAll('.notes-folder-row')]
+    .find((el) => el.dataset.folderPath === ${JSON.stringify(path)})`
+}
+
+/** 笔记行(按 data-note-id)。 */
+function railNoteRowExpr(id) {
+  return `document.querySelector('.notes-row[data-note-id=${JSON.stringify(id)}]')`
+}
+
+/** 整列唯一的悬停色块:几何、透明度与命中设置 */
+function railHoverPillExpr() {
+  return `(() => {
+    const el = document.querySelector('.notes-rail-hover')
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    const cs = getComputedStyle(el)
+    return {
+      left: r.left, top: r.top, width: r.width, height: r.height,
+      opacity: Number(cs.opacity), pointerEvents: cs.pointerEvents,
+      background: cs.backgroundColor, hidden: el.getAttribute('aria-hidden')
+    }
+  })()`
+}
+
+/** 色块是否贴在某个行矩形上(1px 容差:色块走 transform,对齐由脚本量矩形得到) */
+function railHoverAtExpr(rect) {
+  return `(() => {
+    const p = document.querySelector('.notes-rail-hover')
+    if (!p) return false
+    const r = p.getBoundingClientRect()
+    return Number(getComputedStyle(p).opacity) >= 0.99 &&
+      Math.abs(r.left - ${rect.left}) <= 1 && Math.abs(r.top - ${rect.top}) <= 1 &&
+      Math.abs(r.width - ${rect.width}) <= 1 && Math.abs(r.height - ${rect.height}) <= 1
+  })()`
+}
+
+/** 取计算颜色的 alpha;用于断言“行自己不再铺底、只有色块有底色” */
+function colorAlpha(color) {
+  if (color === 'transparent') return 0
+  if (color.startsWith('rgba')) return Number(color.slice(color.lastIndexOf(',') + 1, -1))
+  return 1
+}
+
+/** 文件行(按 data-file-path)。找不到时返回 null。 */
+function railFileRowExpr(path) {
+  return `document.querySelector('.notes-row[data-file-path=${JSON.stringify(path)}]')`
+}
+
+/** 选中色块:几何、透明度、命中设置与可见标记 */
+function railSelectionPillExpr() {
+  return `(() => {
+    const el = document.querySelector('.notes-rail-selection')
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    const cs = getComputedStyle(el)
+    return {
+      left: r.left, top: r.top, width: r.width, height: r.height,
+      opacity: Number(cs.opacity), pointerEvents: cs.pointerEvents,
+      background: cs.backgroundColor, hidden: el.getAttribute('aria-hidden'),
+      visible: el.dataset.visible ?? null
+    }
+  })()`
+}
+
+/** 选中色块是否贴在某个行表达式对应的行上(1px 容差,与悬停色块一致) */
+function railSelectionAtRowExpr(rowExpression) {
+  return `(() => {
+    const row = ${rowExpression}
+    const p = document.querySelector('.notes-rail-selection')
+    if (!row || !p) return false
+    const rr = row.getBoundingClientRect()
+    const pr = p.getBoundingClientRect()
+    return p.dataset.visible === 'true' &&
+      Number(getComputedStyle(p).opacity) >= 0.99 &&
+      Math.abs(pr.left - rr.left) <= 1 && Math.abs(pr.top - rr.top) <= 1 &&
+      Math.abs(pr.width - rr.width) <= 1 && Math.abs(pr.height - rr.height) <= 1
+  })()`
+}
+
+/** 真实鼠标点击某一行:先移到行中心再按下 / 抬起,与用户点击同一条链路。 */
+async function realClickRow(ctx, rowExpression) {
+  const point = await ctx.cdp.json(`(() => {
+    const el = ${rowExpression}
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })()`)
+  ok(point !== null, '目标行可见')
+  await ctx.cdp.mouse('mouseMoved', point.x, point.y)
+  await ctx.cdp.click(point.x, point.y)
+}
+
+/** 每帧记录选中色块的 top/left/opacity,用来证明它在行间滑动而不是瞬移。 */
+async function startRailSelectionProbe(ctx) {
+  await ctx.cdp.eval(`(() => {
+    const samples = []
+    let raf = 0
+    const tick = () => {
+      const p = document.querySelector('.notes-rail-selection')
+      if (p) {
+        const r = p.getBoundingClientRect()
+        samples.push({ top: r.top, left: r.left, opacity: Number(getComputedStyle(p).opacity) })
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    window.__railSelectionProbe = { samples, stop: () => cancelAnimationFrame(raf) }
+    return true
+  })()`)
+  await ctx.cdp.eval(
+    `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`
+  )
+}
+
+async function stopRailSelectionProbe(ctx) {
+  return ctx.cdp.eval(`(() => {
+    const p = window.__railSelectionProbe
+    if (!p) return []
+    p.stop()
+    delete window.__railSelectionProbe
+    return p.samples
+  })()`)
+}
+
 /** 点目录行的第 index 个悬停动作(0 新建笔记 / 1 新建子目录 / 2 改名 / 3 删除)。 */
 async function indentFolderAct(ctx, path, index) {
   const clicked = await ctx.cdp.eval(`(() => {
@@ -771,6 +897,439 @@ export default [
         })()`,
         { timeout: 3000, message: '再点目录名后深层笔记行恢复' }
       )
+    }
+  },
+
+  {
+    id: 'basics/rail-hover-glide',
+    area: 'basics',
+    title:
+      '左侧目录树:悬停底色在行间快速滑动,活动/打开行不叠悬停层,离开行与列表时淡出',
+    tags: ['rail', 'motion'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 共享实例:目录会保留,名字必须全组唯一。
+      const A = '悬停甲'
+      const B = '悬停乙'
+      const N = `${A}/悬停笔记`
+
+      // 上一条用例结束时指针停在目录行上,悬停态会跨用例保留:先移出 rail。
+      const editor = await ctx.cdp.json(`(() => {
+        const r = document.querySelector('.notes-editor-pane')?.getBoundingClientRect()
+        return r ? { x: r.left + r.width / 2, y: r.top + 80 } : null
+      })()`)
+      ok(editor !== null, '编辑区可见')
+      await ctx.cdp.mouse('mouseMoved', editor.x, editor.y)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const p = document.querySelector('.notes-rail-hover')
+          return p !== null && Number(getComputedStyle(p).opacity) === 0
+        })()`,
+        { message: '起始时没有悬停高亮' }
+      )
+
+      const pill0 = await ctx.cdp.json(railHoverPillExpr())
+      ok(pill0 !== null, '悬停色块层已挂载')
+      eq(pill0.pointerEvents, 'none', '悬停色块不参与命中测试')
+      eq(pill0.hidden, 'true', '悬停色块对读屏隐藏')
+      eq(pill0.opacity, 0, '初始没有可见的悬停色块')
+
+      // 目录 A 里放一篇笔记(A 会展开),再建目录 B 并把选中态移到 B。
+      // 随后打开主笔记:新建的那篇不再 active,而主笔记保留 active ——
+      // 用它验证“活动行不叠悬停色块,选中底色由单独的选中层绘制”。
+      await indentCreateRootFolder(ctx, A)
+      await indentCreateNote(ctx, A, '悬停笔记')
+      await indentCreateRootFolder(ctx, B)
+      const selectedB = await ctx.cdp.eval(`(() => {
+        const row = ${railFolderRowExpr(B)}
+        row?.querySelector('.notes-folder-name')?.click()
+        return row !== undefined
+      })()`)
+      ok(selectedB, `找到目录 B「${B}」`)
+      await ctx.cdp.eval(clickRow(MAIN_NOTE.title))
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value === ${JSON.stringify(MAIN_NOTE.title)}`,
+        { timeout: 10_000, message: '主笔记成为活动笔记' }
+      )
+      await ctx.cdp.eval(
+        `(() => { const el = document.querySelector('.notes-rail-list'); if (el) el.scrollTop = 0 })()`
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const folder = ${railFolderRowExpr(A)}
+          const note = ${railNoteRowExpr(N)}
+          return folder != null && note !== null &&
+            !folder.classList.contains('selected') &&
+            !note.classList.contains('active') && !note.classList.contains('opening')
+        })()`,
+        { timeout: 5000, message: '悬停目标行不在活动/选中态' }
+      )
+
+      const g = await ctx.cdp.json(`(() => {
+        const box = (el) => {
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return { left: r.left, top: r.top, width: r.width, height: r.height }
+        }
+        const list = document.querySelector('.notes-rail-list')
+        const lr = list.getBoundingClientRect()
+        return {
+          folder: box(${railFolderRowExpr(A)}),
+          note: box(${railNoteRowExpr(N)}),
+          main: box(${rowExpr(MAIN_NOTE.title)}),
+          list: {
+            left: lr.left, top: lr.top, right: lr.right, bottom: lr.bottom,
+            width: lr.width, height: lr.height
+          }
+        }
+      })()`)
+      ok(g.folder !== null && g.note !== null && g.main !== null, '目录行、目录内笔记行、活动笔记行都已渲染')
+      for (const [label, r] of [
+        ['目录行', g.folder],
+        ['笔记行', g.note],
+        ['活动笔记行', g.main]
+      ]) {
+        ok(
+          r.top >= g.list.top && r.top + r.height <= g.list.bottom,
+          `${label}应在列表可视区内(实际 ${r.top}..${r.top + r.height},列表 ${g.list.top}..${g.list.bottom})`
+        )
+      }
+
+      const hoverAt = async (rect, message) => {
+        await ctx.cdp.mouse('mouseMoved', rect.left + rect.width / 2, rect.top + rect.height / 2)
+        await ctx.cdp.waitFor(railHoverAtExpr(rect), { message })
+      }
+
+      // 1) 首次进入目录行:色块原地出现,尺寸贴合整行
+      await hoverAt(g.folder, '悬停目录行:色块出现在该行')
+
+      // 2) 活动行不叠悬停色块(半透明底色叠两层会变色)
+      await ctx.cdp.mouse(
+        'mouseMoved',
+        g.main.left + g.main.width / 2,
+        g.main.top + g.main.height / 2
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const p = document.querySelector('.notes-rail-hover')
+          return p !== null && Number(getComputedStyle(p).opacity) === 0
+        })()`,
+        { timeout: 3000, message: '活动笔记行不铺悬停高亮' }
+      )
+
+      // 3) 回到目录行,准备录一帧帧的滑动过程
+      await hoverAt(g.folder, '离开活动行后色块回到目录行')
+      await ctx.cdp.eval(`(() => {
+        const pill = document.querySelector('.notes-rail-hover')
+        if (!pill) return false
+        const samples = []
+        let raf = 0
+        const tick = () => {
+          const r = pill.getBoundingClientRect()
+          samples.push({ top: r.top, left: r.left, opacity: Number(getComputedStyle(pill).opacity) })
+          raf = requestAnimationFrame(tick)
+        }
+        raf = requestAnimationFrame(tick)
+        window.__railHoverProbe = { samples, stop: () => cancelAnimationFrame(raf) }
+        return true
+      })()`)
+      await ctx.cdp.eval(
+        `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`
+      )
+
+      let samples = []
+      try {
+        await hoverAt(g.note, '指针移到笔记行时色块滑到该行')
+      } finally {
+        samples = await ctx.cdp.eval(`(() => {
+          const p = window.__railHoverProbe
+          if (!p) return []
+          p.stop()
+          delete window.__railHoverProbe
+          return p.samples
+        })()`)
+      }
+
+      const lo = Math.min(g.folder.top, g.note.top)
+      const hi = Math.max(g.folder.top, g.note.top)
+      const middle = samples.filter((s) => s.top > lo + 1 && s.top < hi - 1)
+      ok(
+        middle.length > 0,
+        `从目录行滑到笔记行应经过中间位置,而不是瞬移(采样 top: ${samples
+          .map((s) => s.top.toFixed(1))
+          .join(', ')})`
+      )
+
+      // 4) 行自己不再铺底:悬停时行背景透明,视觉底色只来自色块
+      const colors = await ctx.cdp.json(`(() => {
+        const note = ${railNoteRowExpr(N)}
+        const pill = document.querySelector('.notes-rail-hover')
+        return {
+          note: getComputedStyle(note).backgroundColor,
+          pill: getComputedStyle(pill).backgroundColor
+        }
+      })()`)
+      eq(colorAlpha(colors.note), 0, `笔记行自己不再铺悬停底色(实际 ${colors.note})`)
+      ok(colorAlpha(colors.pill) > 0, `悬停色块本身有底色(实际 ${colors.pill})`)
+
+      // 5) 移到列表空白:短暂宽限后淡出
+      const blank = await ctx.cdp.json(`(() => {
+        const list = document.querySelector('.notes-rail-list')
+        const r = list.getBoundingClientRect()
+        for (let y = r.bottom - 3; y > r.top + 20; y -= 2) {
+          if (document.elementFromPoint(r.left + r.width / 2, y) === list) {
+            return { x: r.left + r.width / 2, y }
+          }
+        }
+        return null
+      })()`)
+      ok(blank !== null, '列表底部有一段不属于任何行的空白')
+      await ctx.cdp.mouse('mouseMoved', blank.x, blank.y)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const p = document.querySelector('.notes-rail-hover')
+          return p !== null && Number(getComputedStyle(p).opacity) === 0
+        })()`,
+        { timeout: 3000, message: '移到空白后色块淡出' }
+      )
+
+      // 6) 指针离开列表,不给后面的用例留悬停态
+      await ctx.cdp.mouse('mouseMoved', editor.x, editor.y)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const p = document.querySelector('.notes-rail-hover')
+          return p !== null && Number(getComputedStyle(p).opacity) === 0
+        })()`,
+        { message: '指针离开列表后没有残留高亮' }
+      )
+    }
+  },
+
+  {
+    id: 'basics/rail-selection-glide',
+    area: 'basics',
+    title:
+      '左侧目录树:点击笔记/文件时选中底色从旧活动行滑到新行;行自身不铺底,目录选中不参与滑动',
+    tags: ['rail', 'motion'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 共享实例:目录/文件会保留,名字必须全组唯一。
+      const FOLDER = '选中目录'
+      const FILE = '选中文件.txt'
+
+      await indentCreateRootFolder(ctx, FOLDER)
+
+      // 建一个非 Markdown 文件:创建后会自动在应用内打开。
+      await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-create-fields .notes-create-name') !== null`,
+        { timeout: 5000, message: '根层出现新建名字输入框' }
+      )
+      await ctx.cdp.type('选中文件')
+      await ctx.cdp.eval(
+        `(() => { const el = document.querySelector('.notes-create-ext-input'); el?.focus(); el?.select() })()`
+      )
+      await ctx.cdp.type('txt')
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-row[data-file-path=${JSON.stringify(FILE)}]') !== null`,
+        { timeout: 10_000, message: `文件「${FILE}」出现在左栏` }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === ${JSON.stringify(FILE)}`,
+        { timeout: 15_000, message: '新建文件在应用内打开' }
+      )
+
+      // 回到主笔记:后面几次切换都从它出发。
+      await ctx.cdp.eval(clickRow(MAIN_NOTE.title))
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value === ${JSON.stringify(MAIN_NOTE.title)}`,
+        { timeout: 10_000, message: '主笔记成为活动笔记' }
+      )
+      await ctx.cdp.waitFor(
+        `(${rowExpr(MAIN_NOTE.title)})?.classList.contains('active') === true`,
+        { timeout: 10_000, message: '主笔记行进入 active' }
+      )
+      await ctx.cdp.eval(
+        `(() => { const el = document.querySelector('.notes-rail-list'); if (el) el.scrollTop = 0 })()`
+      )
+
+      const pill0 = await ctx.cdp.json(railSelectionPillExpr())
+      ok(pill0 !== null, '选中色块层已挂载')
+      eq(pill0.pointerEvents, 'none', '选中色块不参与命中测试')
+      eq(pill0.hidden, 'true', '选中色块对读屏隐藏')
+      ok(colorAlpha(pill0.background) > 0, `选中色块本身有底色(实际 ${pill0.background})`)
+
+      const g = await ctx.cdp.json(`(() => {
+        const box = (el) => {
+          if (!el) return null
+          const r = el.getBoundingClientRect()
+          return { left: r.left, top: r.top, width: r.width, height: r.height }
+        }
+        const list = document.querySelector('.notes-rail-list')
+        const lr = list.getBoundingClientRect()
+        return {
+          folder: box(${railFolderRowExpr(FOLDER)}),
+          main: box(${rowExpr(MAIN_NOTE.title)}),
+          link: box(${rowExpr(LINK_NOTE.title)}),
+          file: box(${railFileRowExpr(FILE)}),
+          list: {
+            left: lr.left, top: lr.top, right: lr.right, bottom: lr.bottom,
+            width: lr.width, height: lr.height
+          }
+        }
+      })()`)
+      ok(
+        g.folder !== null && g.main !== null && g.link !== null && g.file !== null,
+        '目录、主笔记、链接笔记、文件行都已渲染'
+      )
+      for (const [label, r] of [
+        ['目录行', g.folder],
+        ['主笔记行', g.main],
+        ['链接笔记行', g.link],
+        ['文件行', g.file]
+      ]) {
+        ok(
+          r.top >= g.list.top && r.top + r.height <= g.list.bottom,
+          `${label}应在列表可视区内(实际 ${r.top}..${r.top + r.height},列表 ${g.list.top}..${g.list.bottom})`
+        )
+      }
+
+      // 初始:选中色块贴在活动的主笔记行。
+      await ctx.cdp.waitFor(railSelectionAtRowExpr(rowExpr(MAIN_NOTE.title)), {
+        message: '初始选中色块贴在活动笔记行'
+      })
+
+      // 1) 点击目录只改变目录选中态,不移动文档选中色块。
+      await realClickRow(ctx, railFolderRowExpr(FOLDER))
+      await ctx.cdp.waitFor(
+        `(${railFolderRowExpr(FOLDER)})?.classList.contains('selected') === true`,
+        { message: '目录行进入选中态' }
+      )
+      await ctx.cdp.waitFor(railSelectionAtRowExpr(rowExpr(MAIN_NOTE.title)), {
+        message: '点击目录不移动文档选中色块'
+      })
+
+      const waitNote = async (title) => {
+        await ctx.cdp.waitFor(
+          `document.querySelector('.notes-title')?.value === ${JSON.stringify(title)}`,
+          { timeout: 10_000, message: `笔记「${title}」在编辑器打开` }
+        )
+        await ctx.cdp.waitFor(`(${rowExpr(title)})?.classList.contains('active') === true`, {
+          timeout: 10_000,
+          message: `笔记「${title}」行进入 active`
+        })
+      }
+      const waitFile = async () => {
+        await ctx.cdp.waitFor(
+          `document.querySelector('.file-main .file-name')?.textContent === ${JSON.stringify(FILE)}`,
+          { timeout: 15_000, message: '文件在应用内打开' }
+        )
+        await ctx.cdp.waitFor(
+          `(${railFileRowExpr(FILE)})?.classList.contains('active') === true`,
+          { timeout: 10_000, message: '文件行进入 active' }
+        )
+      }
+
+      /** 真实点击目标行,记录选中色块每帧位置,并断言它经过两行之间的中间位置。 */
+      const slideFrom = async (fromExpr, toExpr, waitTarget, message) => {
+        const before = await ctx.cdp.json(`(() => {
+          const top = (el) => {
+            if (!el) return null
+            return el.getBoundingClientRect().top
+          }
+          return { from: top(${fromExpr}), to: top(${toExpr}) }
+        })()`)
+        ok(before.from !== null && before.to !== null, `${message}:起止行都已渲染`)
+        await startRailSelectionProbe(ctx)
+        let samples = []
+        try {
+          await realClickRow(ctx, toExpr)
+          await waitTarget()
+          await ctx.cdp.waitFor(railSelectionAtRowExpr(toExpr), {
+            message: `${message}:选中色块到达目标行`
+          })
+        } finally {
+          samples = await stopRailSelectionProbe(ctx)
+        }
+        const lo = Math.min(before.from, before.to)
+        const hi = Math.max(before.from, before.to)
+        const middle = samples.filter((s) => s.top > lo + 1 && s.top < hi - 1)
+        ok(
+          middle.length > 0,
+          `${message}:应经过中间位置而不是瞬移(采样 top: ${samples
+            .map((s) => s.top.toFixed(1))
+            .join(', ')})`
+        )
+      }
+
+      // 2) 笔记 → 笔记:主笔记滑到链接目标。
+      await slideFrom(
+        rowExpr(MAIN_NOTE.title),
+        rowExpr(LINK_NOTE.title),
+        () => waitNote(LINK_NOTE.title),
+        '主笔记滑到链接笔记'
+      )
+      const colors = await ctx.cdp.json(`(() => {
+        const main = ${rowExpr(MAIN_NOTE.title)}
+        const link = ${rowExpr(LINK_NOTE.title)}
+        const pill = document.querySelector('.notes-rail-selection')
+        return {
+          main: getComputedStyle(main).backgroundColor,
+          link: getComputedStyle(link).backgroundColor,
+          pill: getComputedStyle(pill).backgroundColor
+        }
+      })()`)
+      eq(colorAlpha(colors.main), 0, `主笔记行自己不再铺活动底色(实际 ${colors.main})`)
+      eq(colorAlpha(colors.link), 0, `活动笔记行自己不再铺底色(实际 ${colors.link})`)
+      ok(colorAlpha(colors.pill) > 0, `选中底色只来自色块(实际 ${colors.pill})`)
+
+      // 3) 笔记 → 文件。
+      await slideFrom(
+        rowExpr(LINK_NOTE.title),
+        railFileRowExpr(FILE),
+        waitFile,
+        '链接笔记滑到文件'
+      )
+      const noteLost = await ctx.cdp.eval(
+        `(${rowExpr(LINK_NOTE.title)})?.classList.contains('active') === false`
+      )
+      ok(noteLost, '打开文件后笔记行失去 active')
+      const fileBg = await ctx.cdp.json(
+        `getComputedStyle(${railFileRowExpr(FILE)}).backgroundColor`
+      )
+      eq(colorAlpha(fileBg), 0, `活动文件行自己不再铺底色(实际 ${fileBg})`)
+
+      // 4) 文件 → 笔记:跨 store 切换时旧文件可能还挂着 active,
+      //    色块应直接从文件滑回笔记,不能被带回文件。
+      await slideFrom(
+        railFileRowExpr(FILE),
+        rowExpr(LINK_NOTE.title),
+        () => waitNote(LINK_NOTE.title),
+        '文件滑回链接笔记'
+      )
+      const fileLost = await ctx.cdp.eval(
+        `(${railFileRowExpr(FILE)})?.classList.contains('active') === false`
+      )
+      ok(fileLost, '回到笔记后文件行失去 active')
+
+      // 5) 收尾:选中色块不跟指针走,离开列表后仍停在活动行。
+      const editor = await ctx.cdp.json(`(() => {
+        const r = document.querySelector('.notes-editor-pane')?.getBoundingClientRect()
+        return r ? { x: r.left + r.width / 2, y: r.top + 80 } : null
+      })()`)
+      ok(editor !== null, '编辑区可见')
+      await ctx.cdp.mouse('mouseMoved', editor.x, editor.y)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const p = document.querySelector('.notes-rail-hover')
+          return p !== null && Number(getComputedStyle(p).opacity) === 0
+        })()`,
+        { message: '指针离开列表后没有残留悬停高亮' }
+      )
+      await ctx.cdp.waitFor(railSelectionAtRowExpr(rowExpr(LINK_NOTE.title)), {
+        message: '指针离开后选中色块仍停在活动笔记行'
+      })
     }
   }
 ]

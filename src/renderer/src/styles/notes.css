@@ -114,9 +114,6 @@
   padding-right: 4px;
   min-height: 28px;
 }
-.notes-folder-row:hover {
-  background: var(--hover);
-}
 .notes-folder-row.selected {
   background: var(--surface4);
 }
@@ -435,6 +432,7 @@
 }
 
 .notes-rail-list {
+  position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -447,6 +445,45 @@
 }
 .notes-rail-list::-webkit-scrollbar {
   display: none;
+}
+
+/*
+ * 整列共用的两层高亮:悬停层(浅)与选中层(强调色)。
+ * 都是滚动内容的绝对定位子元素 —— 随内容一起滚动;
+ * 排在所有行之前,所以永远在行文字下面,行尾动作(acts,z-index:2)仍在最上面。
+ * 选中层放在悬停层之后:两者偶尔重叠时,选中的颜色压在上面。
+ * 行自身不铺 :hover 底色;目录选中/投放态用自身底色压住它们,
+ * 脚本会在这些行和当前文档行上收起悬停色块(半透明底色叠两层会变色)。
+ */
+.notes-rail-hover,
+.notes-rail-selection {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: 0;
+  height: 0;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.notes-rail-hover {
+  background: var(--hover);
+  transition:
+    transform 110ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    opacity 90ms ease;
+}
+/* 选中层比悬停层稍慢一点,让「换文档」比「移动鼠标」更稳重,但仍要快。 */
+.notes-rail-selection {
+  background: var(--wash-accent);
+  transition:
+    transform 140ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    opacity 90ms ease;
+}
+.notes-rail-hover[data-visible='true'],
+.notes-rail-selection[data-visible='true'] {
+  opacity: 1;
 }
 
 /*
@@ -517,16 +554,9 @@
   margin-bottom: 1px;
   min-height: 28px;
 }
-.notes-row:hover {
-  background: var(--hover);
-}
-.notes-row.active {
-  background: var(--wash-accent);
-}
-/* 正在打开:点下去同一帧就有反馈。active 要等读取完成才移过来,不能代替它。 */
-.notes-row.opening {
-  background: var(--hover);
-}
+/* 活动/打开中的底色统一由 .notes-rail-selection 绘制:
+   点击时它从旧活动行滑到新行,行自己铺底就看不到滑动,半透明叠两层还会变色。
+   .active / .opening 类本身保留 —— 图标变色、转圈、悬停抑制都依赖它们。 */
 .notes-row-spin {
   font-size: 10px;
   color: var(--accent2);
