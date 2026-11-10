@@ -37,14 +37,27 @@ export function toServicesPayload(r: ScanResult, polling: boolean): ServicesList
   }
 }
 
-/** lsof 行 × ps 补全 → 卡片模型。pid 不在 ps 里 = 进程已死(lsof 与 ps 之间退出),丢弃 */
+/**
+ * lsof 行 × ps 补全 → 卡片模型。
+ * pid 不在 ps 里 = 进程已死(lsof 与 ps 之间退出),先丢弃。
+ * 同一个监听套接字可以被多个进程同时拿着(OpenSSH `-D` 与它的 ControlMaster mux
+ * 继承了同一个 fd)。lsof 会给每个 pid 各报一行,addr 仍是 `127.0.0.1` / `[::1]`。
+ * 卡片 key 是 `port:command:addr`,不含 pid。这里每个端点只留还活着的最小 pid,
+ * 否则同一组里两张卡片 key 相同。地址不同、程序名不同都不合并。
+ */
 function toPortServices(
   rows: LsofRow[],
   psMap: ReadonlyMap<number, { user: string; etime: string; command: string }>,
   brewServices: ReadonlySet<string>
 ): PortService[] {
-  return rows
-    .filter((r) => psMap.has(r.pid))
+  const kept = new Map<string, LsofRow>()
+  for (const r of rows) {
+    if (!psMap.has(r.pid)) continue
+    const key = `${r.port}:${r.command}:${r.addr}`
+    const prev = kept.get(key)
+    if (prev === undefined || r.pid < prev.pid) kept.set(key, r)
+  }
+  return [...kept.values()]
     .map((r) => {
       const ps = psMap.get(r.pid)!
       const cls = classifyService({ command: r.command, cmd: ps.command || r.command, port: r.port }, brewServices)

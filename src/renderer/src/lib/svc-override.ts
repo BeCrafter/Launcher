@@ -14,7 +14,9 @@ export { serviceIdentityKey } from '@shared/service-identity'
  * 正在进行的「双击改名」被吞掉、组内其余卡片随之重排;而轮询每 3s 就会把新 pid 推上来,
  * 于是「重启过的服务」在界面上表现为闪一下。
  *
- * 三元组唯一性:同一 addr+port 不可能被两个进程同时监听(lsof 侧已按 pid:port:addr 去重)。
+ * 同一 `port + command + addr` 在扫描结果里只有一条:监听 fd 可以被继承给第二个进程
+ * (OpenSSH ControlMaster),合并发生在 `toPortServices`,留下还活着的最小 pid。
+ * 地址不同(IPv4 与 IPv6)仍是两张卡。
  */
 export function cardKey(svc: Pick<PortService, 'port' | 'command' | 'addr' | 'containerId'>): string {
   if (svc.containerId !== undefined) return `docker:${svc.containerId}`

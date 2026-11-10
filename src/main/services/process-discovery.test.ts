@@ -51,25 +51,42 @@ const container = (): DockerContainer => ({
 /** ps 的异常形态(2026-09-23:ps 失败此前会把整张表静默清空 → 端口页整片白) */
 type PsFault = 'exit' | 'timeout' | 'garbage' | 'partial'
 
-function harness(opts?: { lsofFail?: boolean; lsofTimeout?: boolean; psFault?: PsFault; dockerAvailable?: boolean }) {
+function lsofProc(pid: number, command: string, names: string[]): string {
+  const lines = [`p${pid}`, `c${command}`, 'u501']
+  names.forEach((name, i) => {
+    lines.push(`f${i + 6}`, 'PTCP', `n${name}`)
+  })
+  return lines.join('\n')
+}
+
+function harness(opts?: {
+  lsofFail?: boolean
+  lsofTimeout?: boolean
+  psFault?: PsFault
+  dockerAvailable?: boolean
+  lsof?: string
+  ps?: string
+}) {
   const calls: string[][] = []
   let lsofFailOnce = opts?.lsofFail ?? false
   let lsofTimeoutOnce = opts?.lsofTimeout ?? false
   let psFault = opts?.psFault
+  const lsofOut = opts?.lsof ?? LSOF
+  const psOut = opts?.ps ?? PS
   const runner: ShellRunner = {
     async run(file, args = []) {
       calls.push([file, ...args])
       // 超时被杀时 stdout 可能是半截表:必须与「完整结果」区分开
       if (file === 'lsof') {
-        if (lsofTimeoutOnce) return timedOut(LSOF.split('\n').slice(0, 6).join('\n'))
-        return lsofFailOnce ? fail('lsof: operation not permitted') : ok(LSOF)
+        if (lsofTimeoutOnce) return timedOut(lsofOut.split('\n').slice(0, 6).join('\n'))
+        return lsofFailOnce ? fail('lsof: operation not permitted') : ok(lsofOut)
       }
       if (file === 'ps') {
         if (psFault === 'exit') return fail('ps: not permitted')
-        if (psFault === 'timeout') return timedOut(PS.split('\n')[0])
+        if (psFault === 'timeout') return timedOut(psOut.split('\n')[0])
         if (psFault === 'garbage') return ok('   PID USER     ELAPSED COMMAND\n     1 root       1-00:00 launchd\n')
-        if (psFault === 'partial') return ok(PS.split('\n').slice(0, 2).join('\n')) // 少列一个已退出的 pid
-        return ok(PS)
+        if (psFault === 'partial') return ok(psOut.split('\n').slice(0, 2).join('\n')) // 少列一个已退出的 pid
+        return ok(psOut)
       }
       if (file === 'brew') return ok('Name Status User File\nredis started tester\nnginx none\n')
       return ok('')
@@ -95,6 +112,49 @@ function harness(opts?: { lsofFail?: boolean; lsofTimeout?: boolean; psFault?: P
 }
 
 describe('process-discovery.scanOnce', () => {
+  it('同一监听被两个 ssh 进程各报一次(转发与 ControlMaster)→ 每个地址只留还活着的最小 pid', async () => {
+    const h = harness({
+      lsof: [
+        lsofProc(82113, 'ssh', ['127.0.0.1:49177', '[::1]:49177']),
+        lsofProc(82124, 'ssh', ['127.0.0.1:49177', '[::1]:49177'])
+      ].join('\n'),
+      ps: [
+        ' 82113 tester 02:24:11 /usr/bin/ssh -T -D 49177 host',
+        ' 82124 tester 02:24:10 ssh: /Users/mark/.ssh/cm-host [mux]'
+      ].join('\n')
+    })
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toBeNull()
+    expect(r.services).toHaveLength(2)
+    expect(r.services.map((s) => s.addr).sort()).toEqual(['127.0.0.1', '[::1]'])
+    for (const s of r.services) {
+      expect(s).toMatchObject({ pid: 82113, port: 49177, command: 'ssh' })
+      expect(s.cmd).toContain('-D 49177')
+    }
+  })
+
+  it('较小的 pid 已退出、套接字还在另一个进程上 → 留还活着的那个,端口不丢', async () => {
+    const h = harness({
+      lsof: [lsofProc(82113, 'ssh', ['127.0.0.1:49177']), lsofProc(82124, 'ssh', ['127.0.0.1:49177'])].join('\n'),
+      ps: ' 82124 tester 02:24:10 ssh: /Users/mark/.ssh/cm-host [mux]'
+    })
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toBeNull()
+    expect(r.services).toEqual([
+      expect.objectContaining({ pid: 82124, port: 49177, addr: '127.0.0.1', command: 'ssh' })
+    ])
+  })
+
+  it('同端口同地址但程序名不同 → 不合并', async () => {
+    const h = harness({
+      lsof: [lsofProc(10, 'node', ['127.0.0.1:5000']), lsofProc(11, 'python', ['127.0.0.1:5000'])].join('\n'),
+      ps: [' 10 tester 00:01 /usr/local/bin/node app.js', ' 11 tester 00:01 /usr/local/bin/python app.py'].join('\n')
+    })
+    const r = await h.discovery.scanOnce()
+    expect(r.error).toBeNull()
+    expect(r.services.map((s) => s.command).sort()).toEqual(['node', 'python'])
+  })
+
   it('lsof+ps 合成:去重/IPv4 双栈、字段补全、分类与 dev 识别', async () => {
     const h = harness()
     const r = await h.discovery.scanOnce()
