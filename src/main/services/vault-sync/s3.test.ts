@@ -1,6 +1,34 @@
+import { createHash, createHmac } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import { createS3Store } from './s3'
 import { IncompleteListError } from './store'
+
+/** 用发出去的头重算 SigV4。If-Match 按小写名取空时，这里对不上 */
+function resign(url: string, method: string, headers: Record<string, string>, secret: string): string {
+  const auth = headers.Authorization
+  const signed = /SignedHeaders=([^,]+)/.exec(auth)?.[1].split(';') ?? []
+  const scope = /Credential=[^/]+\/([^,]+)/.exec(auth)?.[1] ?? ''
+  const payload = headers['x-amz-content-sha256']
+  const amzDate = headers['x-amz-date']
+  const lower = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value.trim()]))
+  const u = new URL(url)
+  const canonical = [
+    method,
+    u.pathname,
+    [...u.searchParams.entries()]
+      .sort()
+      .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+      .join('&'),
+    signed.map((key) => `${key}:${lower.get(key)}\n`).join(''),
+    signed.join(';'),
+    payload
+  ].join('\n')
+  const toSign = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${createHash('sha256').update(canonical).digest('hex')}`
+  const [date, region] = scope.split('/')
+  let key: Buffer | string = `AWS4${secret}`
+  for (const part of [date, region, 's3', 'aws4_request']) key = createHmac('sha256', key).update(part).digest()
+  return createHmac('sha256', key).update(toSign).digest('hex')
+}
 
 function page(keys: string[], next: string, truncated: boolean): string {
   const contents = keys
@@ -54,8 +82,12 @@ describe('createS3Store', () => {
     await expect(bad.list()).rejects.toBeInstanceOf(IncompleteListError)
   })
 
-  it('412 记为冲突', async () => {
-    const fetchImpl: typeof fetch = async () => new Response('', { status: 412 })
+  it('412 记为冲突,If-Match 带上 ETag 的引号', async () => {
+    let match = ''
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      match = ((init?.headers ?? {}) as Record<string, string>)['If-Match'] ?? ''
+      return new Response('', { status: 412 })
+    }
     const store = createS3Store(
       {
         endpoint: 'https://vault.s3.amazonaws.com',
@@ -69,5 +101,55 @@ describe('createS3Store', () => {
       { fetch: fetchImpl }
     )
     await expect(store.write('a.md', Buffer.from('x'), 'old')).rejects.toMatchObject({ name: 'ConflictError' })
+    expect(match).toBe('"old"')
+  })
+
+  it('条件写的签名覆盖带引号的 If-Match，不签传输层自己加的头', async () => {
+    let sent: { url: string; headers: Record<string, string> } | undefined
+    const fetchImpl: typeof fetch = async (input, init) => {
+      sent = { url: String(input), headers: (init?.headers ?? {}) as Record<string, string> }
+      return new Response('', { status: 200, headers: { ETag: '"next"' } })
+    }
+    const store = createS3Store(
+      {
+        endpoint: 'https://s3.amazonaws.com',
+        region: 'us-east-1',
+        bucket: 'vault',
+        prefix: '',
+        accessKeyId: 'AKID',
+        secretAccessKey: 'secret',
+        forcePathStyle: false
+      },
+      { fetch: fetchImpl }
+    )
+    await store.write('a.md', Buffer.from('x'), 'old')
+    const headers = sent?.headers ?? {}
+    const signed = /SignedHeaders=([^,]+)/.exec(headers.Authorization)?.[1]
+    expect(signed).toBe('host;if-match;x-amz-content-sha256;x-amz-date')
+    expect(headers['x-amz-content-sha256']).toBe(createHash('sha256').update(Buffer.from('x')).digest('hex'))
+    const signature = /Signature=([0-9a-f]+)/.exec(headers.Authorization)?.[1]
+    expect(signature).toBe(resign(sent?.url ?? '', 'PUT', headers, 'secret'))
+  })
+
+  it('403 直接失败，不重试，也不当成冲突', async () => {
+    let calls = 0
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1
+      return new Response('<Error><Code>SignatureDoesNotMatch</Code></Error>', { status: 403 })
+    }
+    const store = createS3Store(
+      {
+        endpoint: 'https://s3.amazonaws.com',
+        region: 'us-east-1',
+        bucket: 'vault',
+        prefix: '',
+        accessKeyId: 'AKID',
+        secretAccessKey: 'secret',
+        forcePathStyle: false
+      },
+      { fetch: fetchImpl }
+    )
+    await expect(store.write('a.md', Buffer.from('x'))).rejects.toThrow(/^403 /)
+    expect(calls).toBe(1)
   })
 })

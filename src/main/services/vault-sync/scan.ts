@@ -19,6 +19,11 @@ export interface LocalFile {
   mtimeMs: number
   /** sha256(原始字节)。大小与 mtime 都没变时沿用快照里的值,不读文件 */
   hash: string
+  /**
+   * Git blob SHA-1。只有这轮真正读过文件时才有。
+   * 第一次同步用它和 Git 远端的 blob SHA 比,不跟 sha256 比。
+   */
+  gitHash?: string
 }
 
 export interface SnapshotFile {
@@ -81,8 +86,16 @@ export function scanLocal(
       }
       const prev = previous.get(child)
       const unchanged = prev !== undefined && prev.size === st.size && prev.mtimeMs === st.mtimeMs
-      const hash = unchanged ? prev.hash : contentHash(read(join(root, child)))
-      out.set(child, { path: child, size: st.size, mtimeMs: st.mtimeMs, hash })
+      let hash: string
+      let gitHash: string | undefined
+      if (unchanged) {
+        hash = prev.hash
+      } else {
+        const bytes = read(join(root, child))
+        hash = contentHash(bytes)
+        gitHash = gitBlobSha(bytes)
+      }
+      out.set(child, { path: child, size: st.size, mtimeMs: st.mtimeMs, hash, gitHash })
     }
   }
 

@@ -1,16 +1,17 @@
-// 笔记设置里的同步区。一排五个协议,选中哪个才渲染哪一块。
-// 各块的字段分开存在 notesSync 里,切走再切回来值还在。
-// 秘密不进设置文件:框是空的,placeholder 写「已配置」,失焦才写入,眼睛按钮临时显示。
+// 笔记设置里的同步区。
+// 协议是一排切换,不是五张大卡片:选中哪个才渲染哪一块,字段两列排。
+// 排除规则默认收着,改过的才展开。各块的值分开存在 notesSync 里,切走再切回来还在。
+// 秘密不进设置文件:失焦才写入,眼睛按钮临时显示。
 
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { DEFAULT_SYNC_IGNORE } from '@shared/notes'
-import type { NotesSyncProvider, NotesSyncSettings } from '@shared/settings'
+import type { NotesSyncGitConfig, NotesSyncProvider, NotesSyncSettings } from '@shared/settings'
 import type { NotesSyncStatus } from '@shared/ipc'
 import { useT, useFmt } from '../../hooks/useT'
 import { useSettingsStore } from '../../state/settings-store'
 import { dataSource } from '../../data'
 import { showToast } from '../../lib/utils'
-import { SettingsSection, SettingsRow } from './SettingsBits'
+import { SettingsSection } from './SettingsBits'
 import { Toggle } from '../../components/ui/Toggle'
 
 const PROVIDERS: { id: NotesSyncProvider; icon: string }[] = [
@@ -37,6 +38,8 @@ export function NotesSyncPane(): React.JSX.Element {
   const [secretVisible, setSecretVisible] = useState(false)
   const [busy, setBusy] = useState<'sync' | 'test' | null>(null)
   const [tested, setTested] = useState<'ok' | 'fail' | null>(null)
+  const [ignoreOpen, setIgnoreOpen] = useState(false)
+  const ignoreSeen = useRef(false)
 
   useEffect(() => {
     const repo = dataSource().notesSync
@@ -67,10 +70,22 @@ export function NotesSyncPane(): React.JSX.Element {
     }
   }, [provider])
 
+  // 设置是异步进来的。第一次看到时,规则已经不是默认就展开;之后由用户自己收放
+  useEffect(() => {
+    if (!sync || ignoreSeen.current) return
+    ignoreSeen.current = true
+    if (sync.ignore !== DEFAULT_SYNC_IGNORE) setIgnoreOpen(true)
+  }, [sync])
+
   if (!sync) return <></>
 
   const patch = (next: Partial<NotesSyncSettings>): void => {
     set({ notesSync: { ...sync, ...next } })
+  }
+
+  const patchGit = (field: keyof NotesSyncGitConfig, value: string): void => {
+    if (provider === 'github') patch({ github: { ...sync.github, [field]: value } })
+    else if (provider === 'gitlab') patch({ gitlab: { ...sync.gitlab, [field]: value } })
   }
 
   const saveSecret = async (): Promise<void> => {
@@ -130,263 +145,206 @@ export function NotesSyncPane(): React.JSX.Element {
     status.lastSyncAt > 0
       ? fmt(t('settings.notes.sync.last'), { T: new Date(status.lastSyncAt).toLocaleString() })
       : t('settings.notes.sync.never')
+  const ignoreCustom = sync.ignore !== DEFAULT_SYNC_IGNORE
+  const git = provider === 'github' || provider === 'gitlab' ? sync[provider] : null
 
   return (
     <SettingsSection icon="fa-solid fa-arrows-rotate" title={t('settings.notes.sync.sectionTitle')} desc={t('settings.notes.sync.sectionDesc')}>
-      <div className="ai-prov-grid">
+      <div className="sync-protocols" role="group" aria-label={t('settings.notes.sync.sectionTitle')}>
         {PROVIDERS.map((item) => {
           const on = item.id === provider
           return (
-            <div
+            <button
               key={item.id}
-              className={`ai-prov-card${on ? ' selected' : ''}`}
-              role="button"
-              tabIndex={0}
+              type="button"
+              className={`sync-protocol${on ? ' selected' : ''}`}
+              aria-pressed={on}
               onClick={() => patch({ provider: item.id })}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') patch({ provider: item.id })
-              }}
             >
-              <div className="ai-prov-card-hd">
-                <i className={`${item.icon} ai-prov-card-icon`} />
-                <span className="ai-prov-card-name">{t(`settings.notes.sync.${item.id}.name`)}</span>
-                <i className="fa-solid fa-circle-check ai-prov-check" />
-              </div>
-              <div className="ai-prov-card-sub">{t(`settings.notes.sync.${item.id}.desc`)}</div>
-            </div>
+              <i className={item.icon} />
+              <span className="sync-protocol-name">{t(`settings.notes.sync.${item.id}.name`)}</span>
+            </button>
           )
         })}
       </div>
+      <div className="sync-protocol-desc">{t(`settings.notes.sync.${provider}.desc`)}</div>
 
-      {(provider === 'github' || provider === 'gitlab') && (
-        <>
-          <SettingsRow
-            title={t('settings.notes.sync.repo')}
-            control={
+      <div className="sync-fields">
+        {git && (
+          <>
+            <Field label={t('settings.notes.sync.repo')}>
               <input
-                className="f-input mono ai-cfg-input"
-                value={sync[provider].repo}
+                className="f-input mono"
+                value={git.repo}
                 placeholder={t(`settings.notes.sync.${provider}.repoPh`)}
                 spellCheck={false}
-                onChange={(e) => patch({ [provider]: { ...sync[provider], repo: e.target.value } })}
+                onChange={(e) => patchGit('repo', e.target.value)}
               />
-            }
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.branch')}
-            control={
+            </Field>
+            <Field label={t('settings.notes.sync.branch')}>
               <input
-                className="f-input mono ai-cfg-input"
-                value={sync[provider].branch}
+                className="f-input mono"
+                value={git.branch}
                 placeholder={t('settings.notes.sync.branchPh')}
                 spellCheck={false}
-                onChange={(e) => patch({ [provider]: { ...sync[provider], branch: e.target.value } })}
+                onChange={(e) => patchGit('branch', e.target.value)}
               />
-            }
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.api')}
-            control={
+            </Field>
+            <Field label={t('settings.notes.sync.api')} wide>
               <input
-                className="f-input mono ai-cfg-input"
-                value={sync[provider].apiBaseUrl}
+                className="f-input mono"
+                value={git.apiBaseUrl}
                 placeholder={t(`settings.notes.sync.${provider}.apiPh`)}
                 spellCheck={false}
-                onChange={(e) => patch({ [provider]: { ...sync[provider], apiBaseUrl: e.target.value } })}
+                onChange={(e) => patchGit('apiBaseUrl', e.target.value)}
               />
-            }
-          />
-          <SecretRow
-            title={t('settings.notes.sync.token')}
-            draft={secretDraft}
-            visible={secretVisible}
-            configured={status.hasSecret[provider] === true}
-            onChange={setSecretDraft}
-            onBlur={() => void saveSecret()}
-            onToggle={() => setSecretVisible((v) => !v)}
-          />
-        </>
-      )}
+            </Field>
+            <SecretField
+              wide
+              title={t('settings.notes.sync.token')}
+              draft={secretDraft}
+              visible={secretVisible}
+              configured={status.hasSecret[provider === 'gitlab' ? 'gitlab' : 'github'] === true}
+              onChange={setSecretDraft}
+              onBlur={() => void saveSecret()}
+              onToggle={() => setSecretVisible((v) => !v)}
+            />
+          </>
+        )}
 
-      {provider === 'webdav' && (
-        <>
-          <SettingsRow
-            title={t('settings.notes.sync.webdav.url')}
-            control={
+        {provider === 'webdav' && (
+          <>
+            <Field label={t('settings.notes.sync.webdav.url')} wide>
               <input
-                className="f-input mono ai-cfg-input"
+                className="f-input mono"
                 value={sync.webdav.url}
                 spellCheck={false}
                 onChange={(e) => patch({ webdav: { ...sync.webdav, url: e.target.value } })}
               />
-            }
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.webdav.user')}
-            control={
+            </Field>
+            <Field label={t('settings.notes.sync.webdav.user')}>
               <input
-                className="f-input ai-cfg-input"
+                className="f-input"
                 value={sync.webdav.username}
                 spellCheck={false}
                 onChange={(e) => patch({ webdav: { ...sync.webdav, username: e.target.value } })}
               />
-            }
-          />
-          <SecretRow
-            title={t('settings.notes.sync.webdav.password')}
-            draft={secretDraft}
-            visible={secretVisible}
-            configured={status.hasSecret.webdav === true}
-            onChange={setSecretDraft}
-            onBlur={() => void saveSecret()}
-            onToggle={() => setSecretVisible((v) => !v)}
-          />
-        </>
-      )}
+            </Field>
+            <SecretField
+              title={t('settings.notes.sync.webdav.password')}
+              draft={secretDraft}
+              visible={secretVisible}
+              configured={status.hasSecret.webdav === true}
+              onChange={setSecretDraft}
+              onBlur={() => void saveSecret()}
+              onToggle={() => setSecretVisible((v) => !v)}
+            />
+          </>
+        )}
 
-      {provider === 'smb' && (
-        <SettingsRow
-          title={t('settings.notes.sync.smb.mount')}
-          control={
+        {provider === 'smb' && (
+          <Field label={t('settings.notes.sync.smb.mount')} wide>
             <input
-              className="f-input mono ai-cfg-input"
+              className="f-input mono"
               value={sync.smb.mountPath}
               placeholder={t('settings.notes.sync.smb.mountPh')}
               spellCheck={false}
               onChange={(e) => patch({ smb: { mountPath: e.target.value } })}
             />
-          }
-        />
-      )}
+          </Field>
+        )}
 
-      {provider === 's3' && (
-        <>
-          <SettingsRow
-            title={t('settings.notes.sync.s3.endpoint')}
-            control={
+        {provider === 's3' && (
+          <>
+            <Field label={t('settings.notes.sync.s3.endpoint')} wide>
               <input
-                className="f-input mono ai-cfg-input"
+                className="f-input mono"
                 value={sync.s3.endpoint}
                 spellCheck={false}
                 onChange={(e) => patch({ s3: { ...sync.s3, endpoint: e.target.value } })}
               />
-            }
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.s3.region')}
-            control={
+            </Field>
+            <Field label={t('settings.notes.sync.s3.region')}>
               <input
-                className="f-input mono ai-cfg-input"
+                className="f-input mono"
                 value={sync.s3.region}
                 spellCheck={false}
                 onChange={(e) => patch({ s3: { ...sync.s3, region: e.target.value } })}
               />
-            }
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.s3.bucket')}
-            control={
+            </Field>
+            <Field label={t('settings.notes.sync.s3.bucket')}>
               <input
-                className="f-input mono ai-cfg-input"
+                className="f-input mono"
                 value={sync.s3.bucket}
                 spellCheck={false}
                 onChange={(e) => patch({ s3: { ...sync.s3, bucket: e.target.value } })}
               />
-            }
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.s3.prefix')}
-            control={
+            </Field>
+            <Field label={t('settings.notes.sync.s3.prefix')} wide>
               <input
-                className="f-input mono ai-cfg-input"
+                className="f-input mono"
                 value={sync.s3.prefix}
                 placeholder={t('settings.notes.sync.s3.prefixPh')}
                 spellCheck={false}
                 onChange={(e) => patch({ s3: { ...sync.s3, prefix: e.target.value } })}
               />
-            }
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.s3.accessKey')}
-            control={
+            </Field>
+            <Field label={t('settings.notes.sync.s3.accessKey')}>
               <input
-                className="f-input mono ai-cfg-input"
+                className="f-input mono"
                 value={sync.s3.accessKeyId}
                 spellCheck={false}
                 onChange={(e) => patch({ s3: { ...sync.s3, accessKeyId: e.target.value } })}
               />
-            }
-          />
-          <SecretRow
-            title={t('settings.notes.sync.s3.secret')}
-            draft={secretDraft}
-            visible={secretVisible}
-            configured={status.hasSecret.s3 === true}
-            onChange={setSecretDraft}
-            onBlur={() => void saveSecret()}
-            onToggle={() => setSecretVisible((v) => !v)}
-          />
-          <SettingsRow
-            title={t('settings.notes.sync.s3.pathStyle')}
-            desc={t('settings.notes.sync.s3.pathStyleDesc')}
-            control={<Toggle checked={sync.s3.forcePathStyle} onChange={(v) => patch({ s3: { ...sync.s3, forcePathStyle: v } })} />}
-          />
-        </>
-      )}
+            </Field>
+            <SecretField
+              title={t('settings.notes.sync.s3.secret')}
+              draft={secretDraft}
+              visible={secretVisible}
+              configured={status.hasSecret.s3 === true}
+              onChange={setSecretDraft}
+              onBlur={() => void saveSecret()}
+              onToggle={() => setSecretVisible((v) => !v)}
+            />
+            <div className="sync-field wide sync-field-switch">
+              <div>
+                <div className="sync-field-label">{t('settings.notes.sync.s3.pathStyle')}</div>
+                <div className="sync-field-hint">{t('settings.notes.sync.s3.pathStyleDesc')}</div>
+              </div>
+              <Toggle checked={sync.s3.forcePathStyle} onChange={(v) => patch({ s3: { ...sync.s3, forcePathStyle: v } })} />
+            </div>
+          </>
+        )}
+      </div>
 
-      <SettingsRow
-        title={t('settings.notes.sync.test')}
-        control={
+      <div className="sync-bar">
+        <div className="sync-bar-enable">
+          <div>
+            <div>{t('settings.notes.sync.enabled')}</div>
+            <div className="sync-field-hint">{t('settings.notes.sync.enabledDesc')}</div>
+          </div>
+          <Toggle checked={sync.enabled} onChange={(v) => patch({ enabled: v })} />
+        </div>
+        <div className="sync-bar-status">
+          <div>{status.phase === 'running' || busy === 'sync' ? t('settings.notes.sync.running') : when}</div>
+          {status.message && <div className="sync-bar-msg">{status.message}</div>}
+        </div>
+        <div className="sync-bar-actions">
           <button className="d-btn" type="button" disabled={busy !== null} onClick={() => void test()}>
             <i className={`fa-solid ${busy === 'test' ? 'fa-circle-notch ai-spin' : 'fa-plug-circle-check'}`} />
             <span>{busy === 'test' ? t('settings.notes.sync.testing') : t('settings.notes.sync.test')}</span>
           </button>
-        }
-      />
-      {tested !== null && (
-        <div className={`ai-cfg-test-st ${tested === 'ok' ? 'ok' : 'fail'}`}>
-          {t(tested === 'ok' ? 'settings.notes.sync.testOk' : 'settings.notes.sync.testFail')}
-        </div>
-      )}
-
-      <SettingsRow
-        title={t('settings.notes.sync.enabled')}
-        desc={t('settings.notes.sync.enabledDesc')}
-        control={<Toggle checked={sync.enabled} onChange={(v) => patch({ enabled: v })} />}
-      />
-      <SettingsRow
-        title={t('settings.notes.sync.ignore')}
-        desc={t('settings.notes.sync.ignoreDesc')}
-        control={
-          <textarea
-            className="f-input mono"
-            rows={4}
-            value={sync.ignore}
-            spellCheck={false}
-            onChange={(e) => patch({ ignore: e.target.value })}
-          />
-        }
-      />
-      <SettingsRow
-        title={t('settings.notes.sync.ignoreReset')}
-        desc={(provider === 'github' || provider === 'gitlab') ? t('settings.notes.sync.emptyDirs') : undefined}
-        control={
-          <button className="d-btn" type="button" onClick={() => patch({ ignore: DEFAULT_SYNC_IGNORE })}>
-            <span>{t('settings.notes.sync.ignoreReset')}</span>
-          </button>
-        }
-      />
-
-      <SettingsRow
-        title={status.phase === 'running' || busy === 'sync' ? t('settings.notes.sync.running') : when}
-        desc={status.message}
-        control={
+          {tested !== null && (
+            <span className={`ai-cfg-test-st ${tested === 'ok' ? 'ok' : 'fail'}`}>
+              {t(tested === 'ok' ? 'settings.notes.sync.testOk' : 'settings.notes.sync.testFail')}
+            </span>
+          )}
           <button className="d-btn" type="button" disabled={busy !== null || !sync.enabled} onClick={() => void syncNow()}>
-            <i className="fa-solid fa-arrows-rotate" />
+            <i className={`fa-solid fa-arrows-rotate${busy === 'sync' ? ' ai-spin' : ''}`} />
             <span>{t('settings.notes.sync.syncNow')}</span>
           </button>
-        }
-      />
+        </div>
+      </div>
 
       {status.errors.length > 0 && (
         <ul className="settings-sync-errors">
@@ -397,47 +355,91 @@ export function NotesSyncPane(): React.JSX.Element {
       )}
 
       {status.conflicts.length > 0 && (
-        <>
-          <SettingsRow
-            title={t('settings.notes.sync.conflicts')}
-            control={
-              <>
-                <button className="d-btn" type="button" onClick={() => void resolveAll('local')}>
-                  <span>{t('settings.notes.sync.keepAllLocal')}</span>
+        <div className="sync-conflicts">
+          <div className="sync-conflicts-hd">
+            <span>{t('settings.notes.sync.conflicts')}</span>
+            <button className="d-btn" type="button" onClick={() => void resolveAll('local')}>
+              <span>{t('settings.notes.sync.keepAllLocal')}</span>
+            </button>
+            <button className="d-btn" type="button" onClick={() => void resolveAll('remote')}>
+              <span>{t('settings.notes.sync.keepAllRemote')}</span>
+            </button>
+          </div>
+          <div className="sync-conflicts-list">
+            {status.conflicts.map((path) => (
+              <div className="sync-conflict" key={path}>
+                <span className="sync-conflict-path" title={path}>
+                  {path}
+                </span>
+                <button className="d-btn" type="button" onClick={() => void resolve(path, 'local')}>
+                  <span>{t('settings.notes.sync.keepLocal')}</span>
                 </button>
-                <button className="d-btn" type="button" onClick={() => void resolveAll('remote')}>
-                  <span>{t('settings.notes.sync.keepAllRemote')}</span>
+                <button className="d-btn" type="button" onClick={() => void resolve(path, 'remote')}>
+                  <span>{t('settings.notes.sync.keepRemote')}</span>
                 </button>
-              </>
-            }
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button
+        className="sync-fold"
+        type="button"
+        aria-expanded={ignoreOpen}
+        onClick={() => setIgnoreOpen((open) => !open)}
+      >
+        <i className={`fa-solid fa-chevron-right${ignoreOpen ? ' open' : ''}`} />
+        <span>{t('settings.notes.sync.ignore')}</span>
+        <span className="sync-fold-hint">
+          {t(ignoreCustom ? 'settings.notes.sync.ignoreStateCustom' : 'settings.notes.sync.ignoreStateDefault')}
+        </span>
+      </button>
+      {ignoreOpen && (
+        <div className="sync-ignore">
+          <div className="sync-field-hint">{t('settings.notes.sync.ignoreDesc')}</div>
+          <textarea
+            className="f-input mono"
+            rows={4}
+            value={sync.ignore}
+            spellCheck={false}
+            onChange={(e) => patch({ ignore: e.target.value })}
           />
-          {status.conflicts.map((path) => (
-            <SettingsRow
-              key={path}
-              title={path}
-              control={
-                <>
-                  <button className="d-btn" type="button" onClick={() => void resolve(path, 'local')}>
-                    <span>{t('settings.notes.sync.keepLocal')}</span>
-                  </button>
-                  <button className="d-btn" type="button" onClick={() => void resolve(path, 'remote')}>
-                    <span>{t('settings.notes.sync.keepRemote')}</span>
-                  </button>
-                </>
-              }
-            />
-          ))}
-        </>
+          <div className="sync-ignore-actions">
+            {git ? <div className="sync-field-hint">{t('settings.notes.sync.emptyDirs')}</div> : <span />}
+            <button className="d-btn" type="button" onClick={() => patch({ ignore: DEFAULT_SYNC_IGNORE })}>
+              <span>{t('settings.notes.sync.ignoreReset')}</span>
+            </button>
+          </div>
+        </div>
       )}
     </SettingsSection>
   )
 }
 
-function SecretRow({
+function Field({
+  label,
+  wide,
+  children
+}: {
+  label: string
+  wide?: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <label className={`sync-field${wide ? ' wide' : ''}`}>
+      <span className="sync-field-label">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+function SecretField({
   title,
   draft,
   visible,
   configured,
+  wide,
   onChange,
   onBlur,
   onToggle
@@ -446,40 +448,40 @@ function SecretRow({
   draft: string
   visible: boolean
   configured: boolean
+  wide?: boolean
   onChange: (value: string) => void
   onBlur: () => void
   onToggle: () => void
 }): React.JSX.Element {
   const t = useT()
+  const id = useId()
   return (
-    <SettingsRow
-      title={title}
-      desc={t(configured ? 'settings.notes.sync.secretSet' : 'settings.notes.sync.secretEmpty')}
-      control={
-        <div className="ai-cfg-key-wrap">
-          <div className="ai-cfg-key-field">
-          <input
-            className="f-input mono ai-cfg-input"
-            type={visible ? 'text' : 'password'}
-            autoComplete="off"
-            spellCheck={false}
-            value={draft}
-            placeholder={configured ? t('settings.notes.sync.secretSet') : ''}
-            onChange={(e) => onChange(e.target.value)}
-            onBlur={onBlur}
-          />
-          <button
-            className="ai-cfg-eye"
-            type="button"
-            title={t(visible ? 'settings.notes.sync.secretHide' : 'settings.notes.sync.secretShow')}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onToggle}
-          >
-            <i className={`fa-solid ${visible ? 'fa-eye-slash' : 'fa-eye'}`} />
-          </button>
-          </div>
-        </div>
-      }
-    />
+    <div className={`sync-field${wide ? ' wide' : ''}`}>
+      <label className="sync-field-label" htmlFor={id}>
+        {title}
+      </label>
+      <div className="ai-cfg-key-field">
+        <input
+          id={id}
+          className="f-input mono"
+          type={visible ? 'text' : 'password'}
+          autoComplete="off"
+          spellCheck={false}
+          value={draft}
+          placeholder={configured ? t('settings.notes.sync.secretSet') : t('settings.notes.sync.secretEmpty')}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onBlur}
+        />
+        <button
+          className="ai-cfg-eye"
+          type="button"
+          title={t(visible ? 'settings.notes.sync.secretHide' : 'settings.notes.sync.secretShow')}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onToggle}
+        >
+          <i className={`fa-solid ${visible ? 'fa-eye-slash' : 'fa-eye'}`} />
+        </button>
+      </div>
+    </div>
   )
 }

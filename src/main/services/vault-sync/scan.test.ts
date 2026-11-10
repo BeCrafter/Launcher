@@ -31,6 +31,7 @@ describe('scanLocal', () => {
     const found = scanLocal(root, compileIgnore(DEFAULT_SYNC_IGNORE), new Map())
     expect([...found.keys()].sort()).toEqual(['assets/a.png', 'model.glb', '笔记.md'])
     expect(found.get('笔记.md')?.hash).toBe(contentHash(Buffer.from('hello')))
+    expect(found.get('笔记.md')?.gitHash).toBe(gitBlobSha(Buffer.from('hello')))
   })
 
   it('大小与 mtime 未变时不重算哈希', () => {

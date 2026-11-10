@@ -134,6 +134,13 @@ export function createVaultSync(opts: VaultSyncOptions): VaultSync {
       return false
     }
 
+    for (const path of plan.baseline) {
+      const entry = remote.get(path)
+      const file = local.get(path)
+      if (entry === undefined || file === undefined) continue
+      files[path] = { etag: entry.etag, hash: file.hash, size: file.size, mtimeMs: file.mtimeMs }
+    }
+
     for (const path of plan.pull) {
       const entry = remote.get(path)
       if (entry === undefined || tooBig(path, entry.size)) continue

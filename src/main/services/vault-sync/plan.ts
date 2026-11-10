@@ -13,8 +13,9 @@ export interface RemoteEntry {
   etag: string
   size: number
   /**
-   * 内容哈希。Git 的 etag 本身就是内容哈希,文件协议列目录拿不到,
-   * 留空。第一次同步时没有它就无法判断两边是不是同一份,记为冲突。
+   * 内容哈希。文件协议能直接给出 sha256 时填 sha256。
+   * Git 填 blob SHA,和本地的 gitHash 比,不和 sha256 比。
+   * 留空表示列目录时不知道内容,第一次同步记为冲突。
    */
   hash?: string
 }
@@ -30,6 +31,11 @@ export interface SyncPlan {
   deleteLocal: string[]
   /** 两边都变了,或者第一次同步时两边内容不同:停下来问 */
   conflicts: string[]
+  /**
+   * 第一次同步时两边内容相同:不传,但要记进快照。
+   * 否则下一轮没有「上次一致」,会把没改过的文件当成两边都变了。
+   */
+  baseline: string[]
   /**
    * 旧路径消失、新路径出现,且内容哈希相同:当成改名,不重传字节。
    * from 是远端路径,to 是本地路径。
@@ -60,6 +66,7 @@ export function planSync(input: {
     deleteRemote: [],
     deleteLocal: [],
     conflicts: [],
+    baseline: [],
     renames: []
   }
 
@@ -81,9 +88,13 @@ export function planSync(input: {
     const remoteChanged = !remoteUnchanged(there, snap)
     if (firstSync && snap === undefined) {
       // 第一次没有「上次一致」可依。内容哈希相同就不用传,不同或比不了就问,不默认哪一边胜出
+      // 文件协议的 hash 是 sha256。Git 的 hash 是 blob SHA,要和本地 gitHash 比
       const remoteHash = there.hash
-      if (remoteHash !== undefined && remoteHash === file.hash) continue
-      plan.conflicts.push(path)
+      const same =
+        remoteHash !== undefined &&
+        (remoteHash === file.hash || (file.gitHash !== undefined && remoteHash === file.gitHash))
+      if (same) plan.baseline.push(path)
+      else plan.conflicts.push(path)
       continue
     }
     if (localChanged && remoteChanged) plan.conflicts.push(path)

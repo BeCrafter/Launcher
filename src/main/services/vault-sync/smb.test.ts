@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { contentHash } from './scan'
 import { createSmbStore } from './smb'
 import { ConflictError } from './store'
 
@@ -42,7 +43,7 @@ describe('createSmbStore', () => {
     const store = createSmbStore({ mountPath: root })
     const listed = await store.list()
     const etag = listed.get('a.md')?.etag
-    expect(listed.get('a.md')?.hash).toBeTruthy()
+    expect(listed.get('a.md')?.hash).toBe(contentHash(Buffer.from('v1')))
 
     writeFileSync(join(root, 'a.md'), 'someone-else')
     await expect(store.write('a.md', Buffer.from('mine'), etag)).rejects.toBeInstanceOf(ConflictError)
@@ -52,5 +53,8 @@ describe('createSmbStore', () => {
     const again = await store.list()
     await store.write('a.md', Buffer.from('mine'), again.get('a.md')?.etag)
     expect(readFileSync(join(root, 'a.md'), 'utf8')).toBe('mine')
+
+    await store.write('folder/nested.txt', Buffer.from('nested'))
+    expect(readFileSync(join(root, 'folder/nested.txt'), 'utf8')).toBe('nested')
   })
 })

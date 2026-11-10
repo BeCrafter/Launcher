@@ -1495,6 +1495,8 @@ export const enUS: Record<string, string> = {
   "settings.notes.sync.ignore": "Don't sync these",
   "settings.notes.sync.ignoreDesc": "One pattern per line, gitignore style. Changing the rules does not delete copies already on the remote. Empty means sync everything",
   "settings.notes.sync.ignoreReset": "Restore defaults",
+  "settings.notes.sync.ignoreStateDefault": "Default rules",
+  "settings.notes.sync.ignoreStateCustom": "Changed",
   "settings.notes.sync.emptyDirs": "Git cannot store empty folders, and no placeholder file is added",
   "settings.notes.sync.syncNow": "Sync now",
   "settings.notes.sync.testing": "Testing…",

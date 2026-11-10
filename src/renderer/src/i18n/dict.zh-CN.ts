@@ -1495,6 +1495,8 @@ export const zhCN: Record<string, string> = {
   "settings.notes.sync.ignore": "不同步这些",
   "settings.notes.sync.ignoreDesc": "一行一条,写法与 gitignore 相同。改规则不会删除远端已经有的文件。空着就是全部同步",
   "settings.notes.sync.ignoreReset": "恢复默认",
+  "settings.notes.sync.ignoreStateDefault": "默认规则",
+  "settings.notes.sync.ignoreStateCustom": "已改过",
   "settings.notes.sync.emptyDirs": "空目录在 Git 里留不下来,不会自动加占位文件",
   "settings.notes.sync.syncNow": "立即同步",
   "settings.notes.sync.testing": "正在测试…",

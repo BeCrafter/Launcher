@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { contentHash } from './scan'
+import { contentHash, gitBlobSha } from './scan'
 import { createVaultSync } from './service'
 import { ConflictError, IncompleteListError, type RemoteStore } from './store'
 import type { RemoteEntry } from './plan'
@@ -91,6 +91,54 @@ describe('createVaultSync', () => {
     expect(store.files.get('local.md')?.toString()).toBe('mine')
     expect(readFileSync(join(root, 'remote.md'), 'utf8')).toBe('theirs')
     expect(pulled).toEqual(['remote.md'])
+  })
+
+  it('Git 首次同步内容相同不冲突,下一轮也不把没改过的当成两边都变', async () => {
+    const root = temp()
+    const body = Buffer.from('same-bytes')
+    writeFileSync(join(root, 'a.md'), body)
+    const files = new Map<string, Buffer>([['a.md', Buffer.from(body)]])
+    let writes = 0
+    const store: RemoteStore = {
+      targetId: 'github|test',
+      cursor: () => 'commit1',
+      async list() {
+        const out = new Map<string, RemoteEntry>()
+        for (const [path, buf] of files) {
+          const sha = gitBlobSha(buf)
+          out.set(path, { path, etag: sha, size: buf.length, hash: sha })
+        }
+        return out
+      },
+      async read(path) {
+        const buf = files.get(path)
+        if (buf === undefined) throw new Error(`not found: ${path}`)
+        return buf
+      },
+      async write(_path, buf) {
+        writes += 1
+        return { etag: gitBlobSha(buf) }
+      },
+      async remove() {}
+    }
+    const stateDir = temp()
+    const sync = make(root, store, {}, stateDir)
+    const first = await sync.syncNow()
+    expect(first.phase).toBe('idle')
+    expect(first.conflicts).toEqual([])
+    expect(writes).toBe(0)
+    const saved = JSON.parse(readFileSync(join(stateDir, 'state.json'), 'utf8')) as {
+      cursor?: string
+      files: Record<string, { hash: string; etag: string }>
+    }
+    expect(saved.cursor).toBe('commit1')
+    expect(saved.files['a.md']?.hash).toBe(contentHash(body))
+    expect(saved.files['a.md']?.etag).toBe(gitBlobSha(body))
+
+    const second = await sync.syncNow()
+    expect(second.phase).toBe('idle')
+    expect(second.conflicts).toEqual([])
+    expect(writes).toBe(0)
   })
 
   it('两边都改过就停下来,不覆盖', async () => {

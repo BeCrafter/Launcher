@@ -97,8 +97,28 @@ describe('planSync', () => {
       ])
     })
     expect(plan.conflicts).toEqual(['diff.md'])
+    expect(plan.baseline).toEqual(['same.md'])
     expect(plan.pull).toEqual(['only.md'])
     expect(plan.push).toEqual([])
+  })
+
+  it('第一次同步:Git blob SHA 对得上就不冲突,对不上仍是冲突', () => {
+    const same = run({
+      firstSync: true,
+      local: new Map([['a.md', { ...local('a.md', 'sha256'), gitHash: 'blob' }]]),
+      remote: new Map([['a.md', remote('a.md', 'blob', 'blob')]])
+    })
+    expect(same.conflicts).toEqual([])
+    expect(same.baseline).toEqual(['a.md'])
+    expect(same.push).toEqual([])
+
+    const different = run({
+      firstSync: true,
+      local: new Map([['a.md', { ...local('a.md', 'sha256'), gitHash: 'blob-local' }]]),
+      remote: new Map([['a.md', remote('a.md', 'blob-remote', 'blob-remote')]])
+    })
+    expect(different.conflicts).toEqual(['a.md'])
+    expect(different.baseline).toEqual([])
   })
 
   it('第一次同步比不出内容哈希时不猜,记为冲突', () => {

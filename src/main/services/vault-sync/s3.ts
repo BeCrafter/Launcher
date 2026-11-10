@@ -52,14 +52,15 @@ export function createS3Store(config: S3Config, http: HttpOptions): RemoteStore 
     headers['x-amz-date'] = amzDate
     headers['x-amz-content-sha256'] = payloadHash
     headers.host = u.host
-    const signed = Object.keys(headers)
-      .map((k) => k.toLowerCase())
-      .sort()
+    // 签名只覆盖真正参与请求的头。传输层自己加的 User-Agent、Accept 不在这里，
+    // 否则按小写名取值会取到空，签名和发出去的请求对不上。
+    const lower = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value.trim()]))
+    const signed = [...lower.keys()].sort()
     const canonical = [
       method,
       u.pathname,
       [...u.searchParams.entries()].sort().map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&'),
-      signed.map((k) => `${k}:${headers[k]}\n`).join(''),
+      signed.map((k) => `${k}:${lower.get(k)}\n`).join(''),
       signed.join(';'),
       payloadHash
     ].join('\n')
@@ -114,7 +115,8 @@ export function createS3Store(config: S3Config, http: HttpOptions): RemoteStore 
     },
     async write(path, body, expected) {
       const extra: Record<string, string> = {}
-      if (expected) extra['If-Match'] = expected
+      // S3 的 ETag 是带引号的不透明值。If-Match 要原样带上引号,否则对不上
+      if (expected) extra['If-Match'] = quoteEtag(expected)
       const res = await call('PUT', objectUrl(`${keyPrefix}${path}`), body, extra)
       if (res.status === 412) throw new ConflictError(path)
       if (!res.ok) throw new Error(`${res.status} 写入 ${path}`)
@@ -122,7 +124,7 @@ export function createS3Store(config: S3Config, http: HttpOptions): RemoteStore 
     },
     async remove(path, expected) {
       const extra: Record<string, string> = {}
-      if (expected) extra['If-Match'] = expected
+      if (expected) extra['If-Match'] = quoteEtag(expected)
       const res = await call('DELETE', objectUrl(`${keyPrefix}${path}`), undefined, extra)
       if (res.status === 412) throw new ConflictError(path)
       if (!res.ok && res.status !== 404) throw new Error(`${res.status} 删除 ${path}`)
@@ -146,4 +148,8 @@ function textOf(block: string, tag: string): string {
 
 function encodePath(path: string): string {
   return path.split('/').map(encodeURIComponent).join('/')
+}
+
+function quoteEtag(etag: string): string {
+  return etag.startsWith('"') ? etag : `"${etag}"`
 }
