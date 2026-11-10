@@ -139,6 +139,21 @@ describe('deriveOpsBar(意图层:启动/停止 · 重启 · 开机自启 + 未�
     expect(broken.primary.disabled).toBe(true)
   })
 
+  it('进行中:三个控件都禁用,芯片是正在做的动作,不动待运行', () => {
+    const m = deriveOpsBar({ loaded: true, enabled: true, running: true, isDraft: false, working: 'stop' })
+    expect(m.primary.disabled && m.restart.disabled && m.autostart.disabled).toBe(true)
+    expect(m.primary.labelKey).toBe('ops.working.stop')
+    expect(m.primary.icon).toContain('fa-spinner')
+    expect(m.chip.labelKey).toBe('ops.working.stop')
+    expect(m.chip.dot).toBe('working')
+    expect(m.futureHintKey).toBeNull()
+    // 开机自启不改状态文案,但三个控件仍然不能再点
+    const auto = deriveOpsBar({ loaded: false, enabled: true, running: false, isDraft: false, working: 'autostart' })
+    expect(auto.chip.labelKey).toBe('ops.state.stopped')
+    expect(auto.futureHintKey).toBe('ops.hint.autoOn')
+    expect(auto.primary.disabled && auto.restart.disabled && auto.autostart.disabled).toBe(true)
+  })
+
   it('意图层没有任何"因顺序而置灰"的按钮(仅草稿态禁用)', () => {
     for (const s of [
       { loaded: false, enabled: false, running: false },

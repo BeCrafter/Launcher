@@ -4,6 +4,7 @@
 // 因此这里没有任何"因顺序而置灰"的按钮——约束不需要用户学,也不会以灰按钮形式出现。
 // 维度之间的联动用「未来时句」(futureHintKey)表达:直接告诉用户接下来会发生什么。
 import type { OpsState } from '@shared/models'
+import type { AgentIntent } from './agent-ops'
 
 export interface OpsBarModel {
   state: 'draft' | 'stopped' | 'pending' | 'running'
@@ -17,7 +18,9 @@ export interface OpsBarModel {
   futureHintKey: string | null
 }
 
-export function deriveOpsBar(s: OpsState & { isDraft: boolean; isNotTask?: boolean; isBroken?: boolean }): OpsBarModel {
+export function deriveOpsBar(
+  s: OpsState & { isDraft: boolean; isNotTask?: boolean; isBroken?: boolean; working?: AgentIntent | null }
+): OpsBarModel {
   // 非任务/损坏文件不是 launchd 任务:没有任何可执行的意图动作 —— 启停/重启/自启全禁用,
   // 未来时句位置改为说明「为什么这里什么都不能点」
   if (s.isNotTask || s.isBroken) {
@@ -54,18 +57,41 @@ export function deriveOpsBar(s: OpsState & { isDraft: boolean; isNotTask?: boole
   }[state]
   // 联动:待运行时最该知道的是"它仍会被自动触发";否则说清"下次登录会不会自动起"
   const futureHintKey = pending ? 'ops.hint.pending' : s.enabled ? 'ops.hint.autoOn' : 'ops.hint.autoOff'
-  return {
-    state,
-    primary: s.running
-      ? { action: 'stop', labelKey: 'ops.stop', icon: 'fa-solid fa-stop', cls: 'hdr-ops-btn active-blue', disabled: false }
-      : { action: 'start', labelKey: 'ops.start', icon: 'fa-solid fa-play', cls: 'hdr-ops-btn active-green', disabled: false },
-    restart: { labelKey: 'ops.restart', icon: 'fa-solid fa-rotate-right', cls: 'hdr-ops-btn', disabled: false },
-    autostart: {
-      on: s.enabled,
-      labelKey: 'ops.autostart',
-      disabled: false
+  return applyWorking(
+    {
+      state,
+      primary: s.running
+        ? { action: 'stop', labelKey: 'ops.stop', icon: 'fa-solid fa-stop', cls: 'hdr-ops-btn active-blue', disabled: false }
+        : { action: 'start', labelKey: 'ops.start', icon: 'fa-solid fa-play', cls: 'hdr-ops-btn active-green', disabled: false },
+      restart: { labelKey: 'ops.restart', icon: 'fa-solid fa-rotate-right', cls: 'hdr-ops-btn', disabled: false },
+      autostart: {
+        on: s.enabled,
+        labelKey: 'ops.autostart',
+        disabled: false
+      },
+      chip,
+      futureHintKey
     },
-    chip,
-    futureHintKey
+    s.working
+  )
+}
+
+/** 进行中盖住真实状态。待运行(载入了但没有进程)不走这里。 */
+function applyWorking(bar: OpsBarModel, working: AgentIntent | null | undefined): OpsBarModel {
+  if (!working) return bar
+  const lifecycle = working === 'start' || working === 'stop' || working === 'restart'
+  const labelKey = lifecycle ? `ops.working.${working}` : bar.primary.labelKey
+  return {
+    ...bar,
+    primary: {
+      ...bar.primary,
+      labelKey,
+      icon: 'fa-solid fa-spinner ops-working-spin',
+      disabled: true
+    },
+    restart: { ...bar.restart, disabled: true },
+    autostart: { ...bar.autostart, disabled: true },
+    chip: lifecycle ? { labelKey, dot: 'working', color: 'var(--accent2)' } : bar.chip,
+    futureHintKey: lifecycle ? null : bar.futureHintKey
   }
 }

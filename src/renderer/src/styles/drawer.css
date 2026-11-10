@@ -202,6 +202,12 @@ body.light-theme .drawer-title-icon {
   background: var(--dim);
 }
 
+.hdr-state-dot.working {
+  background: var(--accent2);
+  box-shadow: 0 0 5px var(--accent);
+  animation: pulse-g 1.2s infinite;
+}
+
 /* 抽屉 tab 导航 */
 .drawer-nav {
   display: flex;

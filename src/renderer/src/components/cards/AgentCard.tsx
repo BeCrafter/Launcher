@@ -7,6 +7,7 @@ import { TagChip } from '../ui/TagChip'
 import { ActBtn } from '../ui/ActBtn'
 import { useT } from '../../hooks/useT'
 import { cardActions, exitCodeTone } from '../../lib/agent-card-actions'
+import { useAgentsStore } from '../../state/agents-store'
 import type { Agent, AgentStatus } from '@shared/models'
 
 const EXIT_COLOR = { ok: 'var(--green)', bad: 'var(--red)', muted: 'var(--muted)' } as const
@@ -31,9 +32,10 @@ export function AgentCard({
   onMore: (anchor: { x: number; y: number }) => void
 }): React.JSX.Element {
   const t = useT()
+  const working = useAgentsStore((s) => s.working[agent.id])
   const broken = !!agent.parseError
   // 非任务文件与损坏文件都不是 launchd 任务:启停与「更多」不画,编辑保留
-  const actions = cardActions(agent)
+  const actions = cardActions(agent, working)
   const displayName = agent.label || agent.fileName || ''
   const tagHtml = agent.tags.slice(0, 3).map((tg) => <TagChip key={tg} text={tg} cls={tg} />)
   const brewBadge = agent.isBrew ? <TagChip text="brew" cls="brew" /> : null
@@ -45,11 +47,18 @@ export function AgentCard({
   const toggle = actions.toggle
   const toggleBtn = toggle ? (
     <ActBtn
-      icon={toggle.action === 'stop' ? 'fa-solid fa-stop' : 'fa-solid fa-play'}
+      icon={
+        toggle.busy
+          ? 'fa-solid fa-spinner ops-working-spin'
+          : toggle.action === 'stop'
+            ? 'fa-solid fa-stop'
+            : 'fa-solid fa-play'
+      }
       opts={{
         cls: toggle.action === 'stop' ? 'blue' : 'green',
-        title: t(toggle.action === 'stop' ? 'ops.stop' : 'ops.start'),
-        onPress: onToggle
+        title: t(actions.statusKey ?? (toggle.action === 'stop' ? 'ops.stop' : 'ops.start')),
+        onPress: onToggle,
+        disabled: toggle.busy
       }}
     />
   ) : null
@@ -69,6 +78,11 @@ export function AgentCard({
               <i className={`fa-solid ${broken ? 'fa-triangle-exclamation' : 'fa-file-circle-question'}`} />
               {broken ? t('agent.broken') : t('agent.notTask')}
             </span>
+          ) : actions.statusKey ? (
+            <>
+              <div className="status-dot working" />
+              <span style={{ color: 'var(--accent2)', fontSize: 10, fontWeight: 600 }}>{t(actions.statusKey)}</span>
+            </>
           ) : (
             <>
               <StatusDot status={agent.status} />

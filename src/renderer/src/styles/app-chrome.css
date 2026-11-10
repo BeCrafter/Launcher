@@ -135,12 +135,18 @@ body.light-theme .skeleton-row {
   text-align: center;
 }
 
-.agent-card-menu-item:hover {
+.agent-card-menu-item:hover:not(:disabled) {
   background: var(--hover);
   color: var(--text);
 }
 
-.agent-card-menu-item:hover i {
+.agent-card-menu-item:disabled,
+.agent-card-menu-item:disabled:hover {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.agent-card-menu-item:hover:not(:disabled) i {
   color: var(--accent2);
 }
 

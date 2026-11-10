@@ -250,6 +250,16 @@ body {
   background: var(--dim);
 }
 
+.status-dot.working {
+  background: var(--accent2);
+  box-shadow: 0 0 6px var(--accent2);
+  animation: pulse-g 1.2s infinite;
+}
+
+.ops-working-spin {
+  animation: spin 1s linear infinite;
+}
+
 .status-dot.running::after {
   content: '';
   position: absolute;

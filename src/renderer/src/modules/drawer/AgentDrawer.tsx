@@ -3,6 +3,7 @@ import { useT } from '../../hooks/useT'
 import { Modal } from '../../components/Modal'
 import { Toggle } from '../../components/ui/Toggle'
 import { deriveOpsBar } from '../../lib/ops-bar'
+import { useAgentsStore } from '../../state/agents-store'
 import { useDrawerStore, type DrawerTab } from '../../state/drawer-store'
 import { EditTab } from './tabs/EditTab'
 import { StatusTab } from './tabs/StatusTab'
@@ -32,12 +33,14 @@ export function AgentDrawer(): React.JSX.Element {
   const isDraft = useDrawerStore((s) => s.isDraft)
   const isNotTask = useDrawerStore((s) => s.isNotTask)
   const isBroken = useDrawerStore((s) => s.isBroken)
+  const agentId = useDrawerStore((s) => s.agentId)
   const ops = useDrawerStore((s) => s.ops)
   const opsAction = useDrawerStore((s) => s.opsAction)
   const tab = useDrawerStore((s) => s.tab)
   const setTab = useDrawerStore((s) => s.setTab)
+  const working = useAgentsStore((s) => (agentId ? s.working[agentId] : undefined))
 
-  const bar = deriveOpsBar({ ...ops, isDraft, isNotTask, isBroken })
+  const bar = deriveOpsBar({ ...ops, isDraft, isNotTask, isBroken, working })
 
   return (
     <Modal id="editAgentFloat" kind="drawer" open={open} onClose={close}>

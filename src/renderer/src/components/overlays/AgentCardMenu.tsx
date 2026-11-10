@@ -22,6 +22,7 @@ export function AgentCardMenu(): React.JSX.Element | null {
   const ref = useRef<HTMLDivElement | null>(null)
 
   const agent = useAgentsStore((s) => s.agents.find((a) => a.id === agentId))
+  const working = useAgentsStore((s) => (agentId ? s.working[agentId] : undefined))
   const open = agentId !== null && agent !== undefined
   // 反查关联笔记:笔记列表在 bootstrap 里常驻加载,所以这里不用额外 IPC
   const noteCount = useNoteCountForRef(agent ? refForAgent(agent) : NO_REF)
@@ -58,7 +59,7 @@ export function AgentCardMenu(): React.JSX.Element | null {
 
   return (
     <div className="agent-card-menu" ref={ref} style={{ left, top, width: MENU_W }} id="agentCardMenu">
-      <button className="agent-card-menu-item" type="button" onClick={() => run('autostart')}>
+      <button className="agent-card-menu-item" type="button" disabled={!!working} onClick={() => run('autostart')}>
         <i className={agent.isDisabledByOverride ? 'fa-solid fa-circle-check' : 'fa-solid fa-circle-pause'} />
         {t(agent.isDisabledByOverride ? 'ops.autostartOn' : 'ops.autostartOff')}
       </button>

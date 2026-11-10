@@ -12,7 +12,7 @@ const row = (over: Partial<Parameters<typeof cardActions>[0]> = {}) => ({
 describe('cardActions', () => {
   it('非任务只留铅笔:不画启停、brew、更多', () => {
     const a = cardActions(row({ isNotTask: true, isBrew: true, status: 'running' }))
-    expect(a).toEqual({ abnormal: true, edit: true, toggle: null, more: false })
+    expect(a).toEqual({ abnormal: true, edit: true, toggle: null, more: false, statusKey: null })
   })
 
   it('解析失败同样只留铅笔', () => {
@@ -23,14 +23,26 @@ describe('cardActions', () => {
   })
 
   it('普通任务:运行中只画停止,其余画启动,更多保留', () => {
-    expect(cardActions(row({ status: 'running' })).toggle).toEqual({ kind: 'intent', action: 'stop' })
-    expect(cardActions(row({ status: 'loaded' })).toggle).toEqual({ kind: 'intent', action: 'start' })
+    expect(cardActions(row({ status: 'running' })).toggle).toEqual({ kind: 'intent', action: 'stop', busy: false })
+    expect(cardActions(row({ status: 'loaded' })).toggle).toEqual({ kind: 'intent', action: 'start', busy: false })
     expect(cardActions(row({ status: 'stopped' })).more).toBe(true)
+    expect(cardActions(row({ status: 'stopped' })).statusKey).toBeNull()
   })
 
   it('Homebrew 跟普通任务一样只留一个按钮,并且走同一个意图入口', () => {
-    expect(cardActions(row({ isBrew: true, status: 'running' })).toggle).toEqual({ kind: 'intent', action: 'stop' })
-    expect(cardActions(row({ isBrew: true, status: 'stopped' })).toggle).toEqual({ kind: 'intent', action: 'start' })
+    expect(cardActions(row({ isBrew: true, status: 'running' })).toggle).toEqual({ kind: 'intent', action: 'stop', busy: false })
+    expect(cardActions(row({ isBrew: true, status: 'stopped' })).toggle).toEqual({ kind: 'intent', action: 'start', busy: false })
+  })
+
+  it('进行中:按钮忙、更多不画,启停重启换文案;开机自启只禁用', () => {
+    const stopping = cardActions(row({ status: 'running' }), 'stop')
+    expect(stopping.toggle).toEqual({ kind: 'intent', action: 'stop', busy: true })
+    expect(stopping.more).toBe(false)
+    expect(stopping.statusKey).toBe('ops.working.stop')
+    const auto = cardActions(row({ status: 'stopped' }), 'autostart')
+    expect(auto.toggle).toEqual({ kind: 'intent', action: 'start', busy: true })
+    expect(auto.more).toBe(false)
+    expect(auto.statusKey).toBeNull()
   })
 })
 
