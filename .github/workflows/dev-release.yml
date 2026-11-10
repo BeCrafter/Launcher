@@ -42,8 +42,9 @@ concurrency:
 
 jobs:
   dev:
-    # macos-14 是 arm64 主机；--arch all 交叉构建 x64，故两种产物由同一 job 产出
-    runs-on: macos-14
+    # macOS 14 的托管镜像已于 2026-11-02 退役（macos-14 会报「configuration … is not supported」）。
+    # macos-15 是 arm64 主机；--arch all 交叉构建 x64，故两种产物由同一 job 产出
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
         with:
