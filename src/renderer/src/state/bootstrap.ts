@@ -1,10 +1,12 @@
 // 一次性应用引导:StrictMode 双跑安全(幂等守卫)
 import { IPC_EVENTS } from '@shared/ipc'
 import type { ServicesListPayload } from '@shared/ipc'
-import type { Agent } from '@shared/models'
+import type { Agent, AgentRuntimePayload, DrawerStatusModel } from '@shared/models'
 import type { NotesChangedPayload } from '@shared/notes'
 import { initSettingsFromMain } from './settings-store'
 import { useAgentsStore } from './agents-store'
+import { useDrawerStore } from './drawer-store'
+import { useUiStore } from './ui-store'
 import { useCronStore } from './cron-store'
 import { useServicesStore } from './services-store'
 import { useNotesStore } from './notes-store'
@@ -37,6 +39,76 @@ export function bootstrap(): void {
   }
   window.launcher.onEvent(IPC_EVENTS.agentsDirChanged, reloadAgents)
   window.launcher.onEvent(IPC_EVENTS.agentsChanged, reloadAgents)
+  window.launcher.onEvent(IPC_EVENTS.agentsRuntime, (payload) => {
+    if (payload) useAgentsStore.getState().applyRuntime(payload as AgentRuntimePayload)
+  })
+
+  // 只在看着 Agents,或抽屉开着时,让 main 扫运行态。窗口不在前台时 main 自己会停。
+  const syncWatch = (): void => {
+    const on = useUiStore.getState().module === 'agents' || useDrawerStore.getState().open
+    void window.launcher.agents.setWatch(on).catch((e) => console.error('[bootstrap] agents watch', e))
+  }
+  syncWatch()
+  useUiStore.subscribe((s, prev) => {
+    if (s.module !== prev.module) syncWatch()
+  })
+  useDrawerStore.subscribe((s, prev) => {
+    if (s.open !== prev.open) syncWatch()
+  })
+
+  // 抽屉吃列表里当前那一行。卡片、头部芯片、状态页用同一份快照。
+  const followDrawer = (): void => {
+    const before = useDrawerStore.getState()
+    if (!before.open || !before.agentId || before.isDraft) return
+    const agentId = before.agentId
+    const requestVersion = before.requestVersion
+    const row = useAgentsStore.getState().agents.find((a) => a.id === agentId)
+    if (!row || row.isNotTask || row.parseError) return
+    const still = (): boolean => {
+      const now = useDrawerStore.getState()
+      return now.open && now.requestVersion === requestVersion && now.agentId === agentId
+    }
+    if (!still()) return
+    const loaded = row.status !== 'stopped'
+    const enabled = !row.isDisabledByOverride
+    const running = row.status === 'running'
+    const ops = useDrawerStore.getState().ops
+    if (ops.loaded !== loaded || ops.enabled !== enabled || ops.running !== running) {
+      useDrawerStore.getState().setOps({ loaded, enabled, running })
+    }
+    const current = useDrawerStore.getState()
+    if (!still() || current.tab !== 'status' || !current.statusModel) return
+    const extra = useAgentsStore.getState().procExtras[row.id]
+    const cpu = extra?.cpu ?? current.statusModel.cpu
+    const mem = extra?.mem ?? current.statusModel.mem
+    const startTime = extra?.startTime || current.statusModel.startTime
+    const next: DrawerStatusModel = {
+      ...current.statusModel,
+      state: row.status,
+      pid: row.pid,
+      uptime: row.uptime,
+      exitCode: row.exitCode,
+      cpu,
+      cpuWidth: `${Math.min(100, Number.parseFloat(cpu) || 0)}%`,
+      mem,
+      memWidth: `${Math.min(100, (Number.parseFloat(mem) || 0) * 10)}%`,
+      startTime
+    }
+    const prevModel = current.statusModel
+    const same =
+      prevModel.state === next.state &&
+      prevModel.pid === next.pid &&
+      prevModel.uptime === next.uptime &&
+      prevModel.exitCode === next.exitCode &&
+      prevModel.cpu === next.cpu &&
+      prevModel.mem === next.mem &&
+      prevModel.startTime === next.startTime
+    if (same || !still()) return
+    useDrawerStore.setState({ statusModel: next })
+  }
+  useAgentsStore.subscribe((s, prev) => {
+    if (s.agents !== prev.agents || s.procExtras !== prev.procExtras) followDrawer()
+  })
 
   // 端口服务:main 轮询命中集合变化时推送(阶段 3;页面激活时 3s 一轮)
   window.launcher.onEvent(IPC_EVENTS.servicesUpdated, (payload) => {

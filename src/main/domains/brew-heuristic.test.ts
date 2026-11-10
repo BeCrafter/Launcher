@@ -9,7 +9,13 @@ describe('formulaNameFromLabel', () => {
   it('非前缀 / 空余部 → null', () => {
     expect(formulaNameFromLabel('com.user.backup')).toBeNull()
     expect(formulaNameFromLabel('homebrew.mxcl.')).toBeNull()
+    expect(formulaNameFromLabel('sh.brew.')).toBeNull()
     expect(formulaNameFromLabel('')).toBeNull()
+  })
+
+  it('新版 sh.brew. 前缀同样给出公式名', () => {
+    expect(formulaNameFromLabel('sh.brew.postgresql@18')).toBe('postgresql@18')
+    expect(isBrewManaged('sh.brew.postgresql@18', '')).toBe(true)
   })
 })
 

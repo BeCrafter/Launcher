@@ -71,6 +71,17 @@ describe('runAgentIntent:停用任务的启动', () => {
     c.stop()
   })
 
+  it('Homebrew 的停止不问开机自启,直接 ops(stop)', async () => {
+    mocks.ops.mockResolvedValue({ loaded: false, enabled: true, running: false })
+    const c = answerChoice('andAutostart')
+    const res = await runAgentIntent(agent({ isBrew: true, status: 'running' }), 'stop')
+    expect(mocks.ops).toHaveBeenCalledTimes(1)
+    expect(mocks.ops).toHaveBeenCalledWith('user:com.a', 'stop')
+    expect(res).toMatchObject({ running: false })
+    expect(c.last()).toBeNull()
+    c.stop()
+  })
+
   it('未停用的任务:不弹选择,直接启动', async () => {
     mocks.ops.mockResolvedValue({ loaded: true, enabled: true, running: true })
     const c = answerChoice('go')

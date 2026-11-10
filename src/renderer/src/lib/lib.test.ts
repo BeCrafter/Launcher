@@ -130,6 +130,15 @@ describe('deriveOpsBar(意图层:启动/停止 · 重启 · 开机自启 + 未�
     expect(off.futureHintKey).toBe('ops.hint.autoOff')
   })
 
+  it('非任务 / 损坏文件:三个控件都禁用,芯片说明原因', () => {
+    const notTask = deriveOpsBar({ loaded: false, enabled: true, running: false, isDraft: false, isNotTask: true })
+    expect(notTask.primary.disabled && notTask.restart.disabled && notTask.autostart.disabled).toBe(true)
+    expect(notTask.chip.labelKey).toBe('agent.notTask')
+    const broken = deriveOpsBar({ loaded: false, enabled: true, running: false, isDraft: false, isBroken: true })
+    expect(broken.chip.labelKey).toBe('agent.broken')
+    expect(broken.primary.disabled).toBe(true)
+  })
+
   it('意图层没有任何"因顺序而置灰"的按钮(仅草稿态禁用)', () => {
     for (const s of [
       { loaded: false, enabled: false, running: false },

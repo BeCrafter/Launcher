@@ -12,6 +12,7 @@ import { createTrayController } from './settings/appliers/tray'
 import { createApplierRegistry } from './settings/appliers'
 import { launchdWatchDirs } from './services/dir-watcher'
 import { createAgentLogRotation } from './services/agent-log-rotation'
+import { createAgentRuntimeWatch, type AgentRuntimeWatch } from './services/agent-runtime'
 import { createShellRunner } from './services/shell-runner'
 import { createElevationExecutor } from './services/elevation'
 import { toServicesPayload } from './services/process-discovery'
@@ -38,6 +39,8 @@ import { registerIpc } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 let store: SettingsStore
+/** 运行态轮询。只在 Electron 主进程里起,MCP 进程没有窗口也不该扫 launchctl。 */
+let agentRuntime: AgentRuntimeWatch | null = null
 /** 窗口显示门控(每个窗口一份;见 services/boot-gate.ts 的说明) */
 let bootGate: BootGate | null = null
 /** 新版本 ready 标记的门控:启动序完成 + 渲染层进入正常应用树后,才解除助手的回滚看门狗 */
@@ -249,6 +252,15 @@ function createWindow(): void {
     }
   })
   bootLog('window created')
+  // 菜单栏常驻时关窗只是 hide。不在前台就不扫 launchctl。
+  const syncRuntimeVisible = (): void => {
+    const on = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()
+    agentRuntime?.setVisible(on)
+  }
+  mainWindow.on('focus', syncRuntimeVisible)
+  mainWindow.on('blur', syncRuntimeVisible)
+  mainWindow.on('show', syncRuntimeVisible)
+  mainWindow.on('hide', syncRuntimeVisible)
 
   // 显示门控:窗口何时可以露出来,由渲染层的真实进度决定(rAF → 过渡页已上屏;应用 commit → 直接显示)
   bootGate = createBootGate({
@@ -426,6 +438,7 @@ async function startApp(): Promise<void> {
       // AI/MCP 的写工具直接走领域服务,不经过 renderer store —— 变更后必须推一次事件,
       // 否则「新建/启停」后列表会一直停在旧状态,只有重启应用才刷新。
       onAgentsChange: () => broadcast(IPC_EVENTS.agentsChanged),
+      onAgentsMembershipChange: () => broadcast(IPC_EVENTS.agentsChanged),
       // 应用内删除走系统废纸篓(用户可恢复);独立进程没有 shell,退回 <dir>/.trash/
       trashNote: (path) => shell.trashItem(path),
       log: (m) => console.log(`[notes] ${m}`)
@@ -513,6 +526,14 @@ async function startApp(): Promise<void> {
     }
   }
 
+  // 运行态轮询不放进 createCoreServices:MCP 进程复用那份装配,它没有窗口。
+  agentRuntime = createAgentRuntimeWatch({
+    agents,
+    getWindow: () => mainWindow,
+    broadcast: (snap) => broadcast(IPC_EVENTS.agentsRuntime, snap),
+    log: (m) => console.log(`[agents] ${m}`)
+  })
+
   // ⚠ 顺序约束(别顺手调换):
   //   · 主题必须在建窗**之前**(否则窗口底色跟随系统而不是应用主题);
   //   · registerIpc() 也必须在建窗**之前** —— 渲染层启动瞬间就会调 settings:get / agents:list;
@@ -523,6 +544,7 @@ async function startApp(): Promise<void> {
     store,
     tray: trayCtl,
     agents,
+    runtime: agentRuntime,
     cron,
     discovery,
     termination,
@@ -556,6 +578,7 @@ async function startApp(): Promise<void> {
   })
 
   discovery.start() // 启动扫一次(侧边栏角标初值);页面激活后按 3s 轮询
+  agentRuntime.start() // 计时器先挂上;页面没打开、窗口不在前台时 tick 直接返回
   // 附件协议:预览加载笔记目录内的图片(唯一入口,三道闸见 services/notes-protocol.ts)
   handleNotesProtocol(
     () =>
@@ -671,6 +694,7 @@ app.on('window-all-closed', () => {
 
 // menubarOnly 关窗只隐藏,退出须经 Tray 菜单 / Cmd+Q(默认 macOS 行为保留)
 app.on('before-quit', () => {
+  agentRuntime?.stop()
   // 允许 quit 流程真正退出(绕过 close 的 hide 拦截)
   mainWindow?.removeAllListeners('close')
   mainWindow?.destroy()

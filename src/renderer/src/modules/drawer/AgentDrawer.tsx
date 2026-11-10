@@ -60,40 +60,43 @@ export function AgentDrawer(): React.JSX.Element {
               <span className={`hdr-state-dot ${bar.chip.dot}`} id="opsStateDot" />
               <span id="opsStateLabel">{t(bar.chip.labelKey)}</span>
             </div>
-            <div className="hdr-ops-group">
-              <button
-                className={bar.primary.cls}
-                id="opsBtnPrimary"
-                type="button"
-                disabled={bar.primary.disabled}
-                onClick={() => void opsAction(bar.primary.action)}
-              >
-                <i className={bar.primary.icon} />
-                <span id="opsBtnPrimaryLabel">{t(bar.primary.labelKey)}</span>
-              </button>
-              <button
-                className={bar.restart.cls}
-                id="opsBtnRestart"
-                type="button"
-                disabled={bar.restart.disabled}
-                onClick={() => void opsAction('restart')}
-              >
-                <i className={bar.restart.icon} />
-                <span>{t(bar.restart.labelKey)}</span>
-              </button>
-              <div className="hdr-ops-divider" />
-              {/* 开机自启:只管下次登录,不动当前运行状态 */}
-              <span className="hdr-ops-switch">
-                <span className="hdr-ops-switch-label">{t(bar.autostart.labelKey)}</span>
-                <Toggle
-                  checked={bar.autostart.on}
-                  disabled={bar.autostart.disabled}
-                  onChange={() => {
-                    if (!bar.autostart.disabled) void opsAction('autostart')
-                  }}
-                />
-              </span>
-            </div>
+            {/* 非任务/损坏文件没有可执行的意图。草稿仍画出禁用的三个控件,说明得先保存。 */}
+            {isNotTask || isBroken ? null : (
+              <div className="hdr-ops-group">
+                <button
+                  className={bar.primary.cls}
+                  id="opsBtnPrimary"
+                  type="button"
+                  disabled={bar.primary.disabled}
+                  onClick={() => void opsAction(bar.primary.action)}
+                >
+                  <i className={bar.primary.icon} />
+                  <span id="opsBtnPrimaryLabel">{t(bar.primary.labelKey)}</span>
+                </button>
+                <button
+                  className={bar.restart.cls}
+                  id="opsBtnRestart"
+                  type="button"
+                  disabled={bar.restart.disabled}
+                  onClick={() => void opsAction('restart')}
+                >
+                  <i className={bar.restart.icon} />
+                  <span>{t(bar.restart.labelKey)}</span>
+                </button>
+                <div className="hdr-ops-divider" />
+                {/* 开机自启:只管下次登录,不动当前运行状态 */}
+                <span className="hdr-ops-switch">
+                  <span className="hdr-ops-switch-label">{t(bar.autostart.labelKey)}</span>
+                  <Toggle
+                    checked={bar.autostart.on}
+                    disabled={bar.autostart.disabled}
+                    onChange={() => {
+                      if (!bar.autostart.disabled) void opsAction('autostart')
+                    }}
+                  />
+                </span>
+              </div>
+            )}
             <button className="modal-close" type="button" onClick={close} title={t('common.close')}>
               <i className="fa-solid fa-xmark" />
             </button>

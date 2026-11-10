@@ -117,7 +117,9 @@ export interface LauncherApi {
   }
   // Launch Agents(阶段 1:真实 launchctl/plist)
   agents: {
-    list: () => Promise<{ agents: Agent[] }>
+    list: () => Promise<{ agents: Agent[]; epoch: number }>
+    /** Agents 页可见或抽屉开着时打开运行态轮询;离开时关掉。 */
+    setWatch: (on: boolean) => Promise<void>
     brewAction: (kind: 'start' | 'stop', id: string) => Promise<Agent>
     createDraft: (scope: AgentScope, label: string) => Promise<Agent>
     /** 文档读取(表单 + 原文 + 兼容报告 + revision) */

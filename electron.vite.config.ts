@@ -1,6 +1,12 @@
+import { existsSync } from 'node:fs'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'node:path'
+
+// 这个 worktree 自己的 node_modules 是空的,包在仓库根。Vite 会跟到真实路径,
+// 但默认不放行项目目录以外的文件,图标和中文字体就会 403。
+const repoModules = resolve('../../../node_modules')
+const outsideModules = existsSync(resolve(repoModules, '@fortawesome')) ? repoModules : null
 
 export default defineConfig({
   main: {
@@ -18,6 +24,7 @@ export default defineConfig({
   },
   preload: {},
   renderer: {
+    server: outsideModules ? { fs: { allow: [resolve('.'), outsideModules] } } : undefined,
     resolve: {
       alias: {
         '@renderer': resolve('src/renderer/src'),

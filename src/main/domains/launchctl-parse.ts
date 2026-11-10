@@ -35,7 +35,8 @@ export function parseLaunchctlList(output: string): Map<string, LaunchctlEntry> 
 export function parseDomainServices(output: string): Map<string, LaunchctlEntry> {
   const out = new Map<string, LaunchctlEntry>()
   for (const raw of output.split('\n')) {
-    const m = raw.match(/^\t+ *(\d+) +(\S+) +\t?([A-Za-z0-9][A-Za-z0-9._-]*) *$/)
+    // `@` `+` 出现在 Homebrew 公式名(postgresql@14)。丢掉这行会把正在跑的 daemon 显示成已停止。
+    const m = raw.match(/^\t+ *(\d+) +(\S+) +\t?([A-Za-z0-9][A-Za-z0-9._@+-]*) *$/)
     if (!m) continue
     const label = m[3]
     const statusRaw = m[2]

@@ -76,7 +76,9 @@ export type CronFilter = 'all' | 'user' | 'system'
 export type SvcFilter = 'all' | 'brew' | 'node' | 'process' | 'docker'
 
 export interface AgentRepository {
-  list(): Promise<{ agents: Agent[] }>
+  list(): Promise<{ agents: Agent[]; epoch: number }>
+  /** 页面可见或抽屉开着 → 让 main 轮询运行态。 */
+  setWatch(on: boolean): Promise<void>
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
   // 草稿:以给定 label 新建未加载条目并插入列表顶(demo openAgentDraft;label 去重在调用方完成)
   createDraft(scope: AgentScope, label: string): Promise<Agent>

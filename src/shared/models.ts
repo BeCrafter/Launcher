@@ -33,6 +33,30 @@ export interface Agent {
   logErr?: string
 }
 
+/**
+ * 一次运行态快照里的一行(不重扫 plist)。
+ * cpu/mem/startTime 只给抽屉状态页;列表卡片不用。
+ */
+export interface AgentRuntimeRow {
+  id: string
+  status: AgentStatus
+  pid: number | null
+  uptime: string | null
+  exitCode: number | null
+  isDisabledByOverride: boolean
+  /** 下面三项只给抽屉状态页;列表卡片不读 */
+  cpu: string | null
+  mem: string | null
+  startTime: string | null
+}
+
+/** agents:runtime 与 list() 共用。epoch 单调递增,渲染层丢掉比整表更旧的快照。 */
+export interface AgentRuntimePayload {
+  epoch: number
+  rows: AgentRuntimeRow[]
+}
+
+
 export type CronScope = 'user' | 'system'
 
 export interface CronJob {

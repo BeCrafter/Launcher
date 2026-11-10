@@ -20,6 +20,8 @@ export const IPC = {
   appBootPainted: 'app:bootPainted',
   // ── Launch Agents(阶段 1) ──
   agList: 'agents:list',
+  /** 页面可见或抽屉开着时让 main 轮询运行态(窗口不在前台时 main 侧仍会停) */
+  agSetWatch: 'agents:setWatch',
   agBrewAction: 'agents:brewAction',
   agCreateDraft: 'agents:createDraft',
   agSaveForm: 'agents:saveForm',
@@ -137,6 +139,8 @@ export const IPC_EVENTS = {
   agentsDirChanged: 'agents:dirChanged',
   /** Agent 运行态/文件被 main 侧改变(含 AI/MCP 工具写入、启停)→ renderer 重新拉取列表 */
   agentsChanged: 'agents:changed',
+  /** 运行态快照(进程启停/崩溃拉起;不含 plist 增删)。负载是 AgentRuntimePayload */
+  agentsRuntime: 'agents:runtime',
   servicesUpdated: 'services:updated',
   /** AI 运行事件流(AiRunEvent;高频,只在会话运行期间推送) */
   aiRunEvent: 'ai:runEvent',

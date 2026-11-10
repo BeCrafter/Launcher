@@ -12,7 +12,6 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { AgentCard } from '../../components/cards/AgentCard'
 import { useDrawerStore } from '../../state/drawer-store'
-import { showToast } from '../../lib/utils'
 import { runAgentIntent } from '../../lib/agent-ops'
 import { useCardMenuStore } from '../../state/card-menu-store'
 import type { Agent, AgentScope } from '@shared/models'
@@ -53,7 +52,6 @@ export function AgentsView(): React.JSX.Element {
   const setStatusFilter = useAgentsStore((s) => s.setStatusFilter)
   const selectedId = useAgentsStore((s) => s.selectedId)
   const select = useAgentsStore((s) => s.select)
-  const brewAction = useAgentsStore((s) => s.brewAction)
   const searchQuery = useUiStore((s) => s.searchQuery)
   // 首屏加载中(!loaded 且仓库为空):渲染骨架,避免「加载中」被误呈现为「没有数据」
   const loading = !loaded && agents.length === 0
@@ -96,12 +94,6 @@ export function AgentsView(): React.JSX.Element {
   const onToggle = (a: Agent): void => {
     // 意图层:未运行→启动 / 运行中→停止(提权/询问/toast/列表刷新由 lib/agent-ops 统一处理)
     void runAgentIntent(a, a.status === 'running' ? 'stop' : 'start')
-  }
-
-  const onBrew = (kind: 'start' | 'stop', a: Agent): void => {
-    void brewAction(kind, a.id).then(() => {
-      showToast(`brew ${kind}: ${a.label}`, '#f97316', 'fa-beer-mug-empty')
-    })
   }
 
   // 「更多」菜单:启用/停用(根级浮层,锚点为省略号按钮)
@@ -177,7 +169,6 @@ export function AgentsView(): React.JSX.Element {
                   selected={selectedId === a.id}
                   onSelect={() => select(a.id)}
                   onToggle={() => onToggle(a)}
-                  onBrew={(kind) => onBrew(kind, a)}
                   onEdit={() => void useDrawerStore.getState().openFor(a)}
                   onMore={(anchor) => onMore(a, anchor)}
                 />
