@@ -6,14 +6,20 @@ import { StatusLabel } from '../ui/StatusLabel'
 import { TagChip } from '../ui/TagChip'
 import { ActBtn } from '../ui/ActBtn'
 import { useT } from '../../hooks/useT'
-import type { Agent } from '@shared/models'
+import { cardActions, exitCodeTone } from '../../lib/agent-card-actions'
+import type { Agent, AgentStatus } from '@shared/models'
+
+const EXIT_COLOR = { ok: 'var(--green)', bad: 'var(--red)', muted: 'var(--muted)' } as const
+
+function exitCodeColor(status: AgentStatus, code: number): string {
+  return EXIT_COLOR[exitCodeTone(status, code)]
+}
 
 export function AgentCard({
   agent,
   selected,
   onSelect,
   onToggle,
-  onBrew,
   onEdit,
   onMore
 }: {
@@ -21,14 +27,13 @@ export function AgentCard({
   selected: boolean
   onSelect: () => void
   onToggle: () => void
-  onBrew: (kind: 'start' | 'stop') => void
   onEdit: () => void
   onMore: (anchor: { x: number; y: number }) => void
 }): React.JSX.Element {
   const t = useT()
   const broken = !!agent.parseError
-  // 非任务文件与损坏文件都不是 launchd 任务:没有可启停/自启的对象
-  const locked = !!agent.isNotTask || broken
+  // 非任务文件与损坏文件都不是 launchd 任务:启停与「更多」不画,编辑保留
+  const actions = cardActions(agent)
   const displayName = agent.label || agent.fileName || ''
   const tagHtml = agent.tags.slice(0, 3).map((tg) => <TagChip key={tg} text={tg} cls={tg} />)
   const brewBadge = agent.isBrew ? <TagChip text="brew" cls="brew" /> : null
@@ -36,24 +41,18 @@ export function AgentCard({
   const overrideBadge = agent.isDisabledByOverride ? (
     <TagChip text={t('agent.override')} cls="yellow" title={t('agent.override.title')} />
   ) : null
-  // 意图层:未运行→启动 / 运行中→停止(launchctl 的载入/启用等步骤由 main 内部按序完成)
-  const toggleBtn = agent.isBrew ? (
-    <>
-      <ActBtn
-        icon="fa-solid fa-play"
-        opts={{ cls: 'green', title: 'brew start', onPress: onBrew.bind(null, 'start'), disabled: locked }}
-      />
-      {'  '}
-      <ActBtn
-        icon="fa-solid fa-stop"
-        opts={{ cls: 'blue', title: 'brew stop', onPress: onBrew.bind(null, 'stop'), disabled: locked }}
-      />
-    </>
-  ) : agent.status === 'running' ? (
-    <ActBtn icon="fa-solid fa-stop" opts={{ cls: 'blue', title: t('ops.stop'), onPress: onToggle, disabled: locked }} />
-  ) : (
-    <ActBtn icon="fa-solid fa-play" opts={{ cls: 'green', title: t('ops.start'), onPress: onToggle, disabled: locked }} />
-  )
+  // 意图层:未运行→启动 / 运行中→停止。Homebrew 也走这里,main 再决定是 brew services 还是 launchctl。
+  const toggle = actions.toggle
+  const toggleBtn = toggle ? (
+    <ActBtn
+      icon={toggle.action === 'stop' ? 'fa-solid fa-stop' : 'fa-solid fa-play'}
+      opts={{
+        cls: toggle.action === 'stop' ? 'blue' : 'green',
+        title: t(toggle.action === 'stop' ? 'ops.stop' : 'ops.start'),
+        onPress: onToggle
+      }}
+    />
+  ) : null
   return (
     <div
       className={`agent-col-card${selected ? ' selected' : ''}${agent.isNotTask ? ' not-task' : ''}${broken ? ' broken' : ''}`}
@@ -62,7 +61,7 @@ export function AgentCard({
     >
       <div className="acc-top">
         <div className="acc-status-row">
-          {locked ? (
+          {actions.abnormal ? (
             <span
               className={`acc-nontask-chip${broken ? ' broken' : ''}`}
               title={broken ? t('agent.broken.title') : t('agent.notTask.title')}
@@ -105,14 +104,8 @@ export function AgentCard({
             <span>{agent.uptime || '—'}</span>
           </span>
           {agent.exitCode !== null && agent.exitCode !== undefined ? (
-            <span
-              className="acc-meta-stat"
-              style={{ color: agent.exitCode === 0 ? 'var(--green)' : 'var(--red)' }}
-            >
-              <i
-                className="fa-solid fa-right-from-bracket"
-                style={{ color: agent.exitCode === 0 ? 'var(--green)' : 'var(--red)' }}
-              />
+            <span className="acc-meta-stat" style={{ color: exitCodeColor(agent.status, agent.exitCode) }}>
+              <i className="fa-solid fa-right-from-bracket" style={{ color: exitCodeColor(agent.status, agent.exitCode) }} />
               <span>{agent.exitCode}</span>
             </span>
           ) : null}
@@ -123,21 +116,22 @@ export function AgentCard({
             icon="fa-solid fa-pen"
             opts={{
               cls: 'accent',
-              title: locked ? (broken ? t('agent.broken.title') : t('agent.notTask.title')) : t('agents.editConfig'),
+              title: actions.abnormal ? (broken ? t('agent.broken.title') : t('agent.notTask.title')) : t('agents.editConfig'),
               onPress: onEdit
             }}
           />
-          <ActBtn
-            icon="fa-solid fa-ellipsis"
-            opts={{
-              title: t('common.more'),
-              disabled: locked,
-              onPress: (e) => {
-                const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                onMore({ x: r.right, y: r.bottom })
-              }
-            }}
-          />
+          {actions.more ? (
+            <ActBtn
+              icon="fa-solid fa-ellipsis"
+              opts={{
+                title: t('common.more'),
+                onPress: (e) => {
+                  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                  onMore({ x: r.right, y: r.bottom })
+                }
+              }}
+            />
+          ) : null}
         </div>
       </div>
     </div>

@@ -369,7 +369,8 @@ describe('agent-service 非任务/损坏文件', () => {
       }),
       lint: vi.fn(async () => ({ ok: true, error: null }))
     } as unknown as PlistService
-    const svc = createAgentService({ runner: {} as never, launchctl, plists, brew: {} as never, getXmlIndent: () => '  ' })
+    const runner = { run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null }) }
+    const svc = createAgentService({ runner: runner as never, launchctl, plists, brew: {} as never, getXmlIndent: () => '  ' })
     return {
       svc,
       files,
@@ -406,6 +407,229 @@ describe('agent-service 非任务/损坏文件', () => {
     } finally {
       h.cleanup()
     }
+  })
+
+  it('snapshotRuntime 不带非任务行,且记下调用当时的 epoch', async () => {
+    const h = fileHarness()
+    try {
+      const listed = await h.svc.list()
+      const snap = await h.svc.snapshotRuntime()
+      expect(snap.epoch).toBe(listed.epoch)
+      expect(snap.rows).toEqual([])
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('brew stop 删掉管理目录副本后,公式目录里的服务仍作为已停止列出', async () => {
+    const h = fileHarness()
+    const formula = '/opt/homebrew/opt/postgresql@18/sh.brew.postgresql@18.plist'
+    const rec: PlistFile = {
+      path: formula,
+      scope: 'user',
+      fileName: 'sh.brew.postgresql@18.plist',
+      xml: '',
+      value: { Label: 'sh.brew.postgresql@18', ProgramArguments: ['/opt/homebrew/opt/postgresql@18/bin/postgres'] },
+      label: 'sh.brew.postgresql@18',
+      desc: '',
+      isTask: true
+    }
+    const read = vi.fn(async (_scope: string, path: string) => (path === formula ? rec : Promise.reject(new Error('no'))))
+    const readFresh = vi.fn()
+    const bootout = vi.fn()
+    const bootstrap = vi.fn()
+    const plists = {
+      scanAll: async () => h.files,
+      read,
+      readFresh
+    }
+    const brew = {
+      list: vi.fn(async () => [
+        { name: 'postgresql@18', status: 'none', user: null, file: formula, exitCode: null }
+      ]),
+      action: vi.fn(async () => undefined)
+    }
+    const svc = createAgentService({
+      runner: { run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null }) } as never,
+      launchctl: {
+        list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set(), system: new Set() } }),
+        bootout,
+        bootstrap
+      } as unknown as LaunchctlService,
+      plists: plists as unknown as PlistService,
+      brew: brew as never,
+      getXmlIndent: () => '  ',
+      brewFormulaPlists: async () => [formula]
+    })
+    try {
+      const { agents } = await svc.list()
+      expect(agents.find((a) => a.id === 'user:sh.brew.postgresql@18')).toMatchObject({
+        status: 'stopped',
+        pid: null,
+        isBrew: true,
+        scope: 'user'
+      })
+      // 已注册的同一 Label 不再补第二行
+      h.files.push({ ...rec, path: join(tmpdir(), 'LaunchAgents', 'sh.brew.postgresql@18.plist') })
+      const again = await svc.list()
+      expect(again.agents.filter((a) => a.label === 'sh.brew.postgresql@18')).toHaveLength(1)
+      // 启动、停止都走 brew services,不直接 bootstrap / bootout 公式文件
+      h.files.pop()
+      await svc.ops('user:sh.brew.postgresql@18', 'start')
+      await svc.ops('user:sh.brew.postgresql@18', 'stop')
+      expect(brew.action).toHaveBeenNthCalledWith(1, 'start', expect.objectContaining({ name: 'postgresql@18' }))
+      expect(brew.action).toHaveBeenNthCalledWith(2, 'stop', expect.objectContaining({ name: 'postgresql@18' }))
+      expect(h.opCalls).toEqual([])
+      expect(bootout).not.toHaveBeenCalled()
+      expect(bootstrap).not.toHaveBeenCalled()
+      // reload 不能把公式文件 bootstrap 进 launchd
+      await svc.ops('user:sh.brew.postgresql@18', 'reload')
+      expect(brew.action).toHaveBeenNthCalledWith(3, 'restart', expect.objectContaining({ name: 'postgresql@18' }))
+      expect(bootstrap).not.toHaveBeenCalled()
+      // 公式文件不在管理目录里:保存、删除、克隆都拒绝,而且不走 readFresh(那条会撞作用域检查)
+      const doc = await svc.readDocument('user:sh.brew.postgresql@18')
+      const saved = await svc.saveForm({
+        id: 'user:sh.brew.postgresql@18',
+        expectedRevision: doc.revision,
+        patch: { label: 'sh.brew.postgresql@18', desc: 'nope' },
+        dirtyFields: ['desc'],
+        applyMode: 'save'
+      })
+      expect(saved).toMatchObject({ ok: false, kind: 'invalid' })
+      const removed = await svc.remove('user:sh.brew.postgresql@18', doc.revision)
+      expect(removed).toMatchObject({ ok: false, kind: 'invalid' })
+      const cloned = await svc.clone({ id: 'user:sh.brew.postgresql@18', expectedRevision: doc.revision })
+      expect(cloned).toMatchObject({ ok: false, kind: 'invalid' })
+      expect(readFresh).not.toHaveBeenCalled()
+      // 卡片那条 brewAction 没有 Program 键,也要靠 ProgramArguments 认出来
+      await svc.brewAction('start', 'user:sh.brew.postgresql@18')
+      expect(brew.action).toHaveBeenLastCalledWith('start', expect.objectContaining({ name: 'postgresql@18' }))
+    } finally {
+      h.cleanup()
+    }
+  })
+
+  it('公式 plist 标了 UserName=root 时按 daemon 列出,停止仍走 brew', async () => {
+    const formula = '/opt/homebrew/opt/mysql/sh.brew.mysql.plist'
+    const rec: PlistFile = {
+      path: formula,
+      scope: 'user',
+      fileName: 'sh.brew.mysql.plist',
+      xml: '',
+      value: { Label: 'sh.brew.mysql', UserName: 'root', ProgramArguments: ['/opt/homebrew/opt/mysql/bin/mysqld'] },
+      label: 'sh.brew.mysql',
+      desc: '',
+      isTask: true
+    }
+    const brew = {
+      list: vi.fn(async () => []),
+      action: vi.fn(async () => undefined)
+    }
+    const svc = createAgentService({
+      runner: { run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null }) } as never,
+      launchctl: {
+        list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set(), system: new Set() } })
+      } as unknown as LaunchctlService,
+      plists: {
+        scanAll: async () => [],
+        read: async () => rec
+      } as unknown as PlistService,
+      brew: brew as never,
+      getXmlIndent: () => '  ',
+      brewFormulaPlists: async () => [formula]
+    })
+    const { agents } = await svc.list()
+    expect(agents.find((a) => a.label === 'sh.brew.mysql')).toMatchObject({ id: 'daemon:sh.brew.mysql', scope: 'daemon', isBrew: true })
+    await svc.ops('daemon:sh.brew.mysql', 'stop')
+    expect(brew.action).toHaveBeenCalledWith('stop', expect.objectContaining({ name: 'mysql', user: 'root' }))
+  })
+
+  it('LaunchAgents 里的 brew 副本,停止走 brew services 而不是 bootout', async () => {
+    const formula = '/opt/homebrew/opt/postgresql@18/sh.brew.postgresql@18.plist'
+    const copy = join(tmpdir(), 'LaunchAgents', 'sh.brew.postgresql@18.plist')
+    const rec: PlistFile = {
+      path: copy,
+      scope: 'user',
+      fileName: 'sh.brew.postgresql@18.plist',
+      xml: '',
+      value: { Label: 'sh.brew.postgresql@18', ProgramArguments: ['/opt/homebrew/opt/postgresql@18/bin/postgres'] },
+      label: 'sh.brew.postgresql@18',
+      desc: '',
+      isTask: true
+    }
+    const bootout = vi.fn()
+    const bootstrap = vi.fn()
+    const brew = { list: vi.fn(async () => []), action: vi.fn(async () => undefined) }
+    const svc = createAgentService({
+      runner: { run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null }) } as never,
+      launchctl: {
+        list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set(), system: new Set() } }),
+        bootout,
+        bootstrap,
+        kickstart: vi.fn()
+      } as unknown as LaunchctlService,
+      plists: { scanAll: async () => [rec], read: async () => rec } as unknown as PlistService,
+      brew: brew as never,
+      getXmlIndent: () => '  ',
+      brewFormulaPlists: async () => [formula]
+    })
+    await svc.ops('user:sh.brew.postgresql@18', 'stop')
+    expect(brew.action).toHaveBeenCalledWith('stop', expect.objectContaining({ name: 'postgresql@18' }))
+    expect(bootout).not.toHaveBeenCalled()
+    await svc.ops('user:sh.brew.postgresql@18', 'reload')
+    expect(bootstrap).toHaveBeenCalledWith(copy, 'user')
+    expect(bootstrap).not.toHaveBeenCalledWith(formula, 'user')
+  })
+
+  it('1.5s 内不重复扫描公式目录', async () => {
+    let scans = 0
+    const svc = createAgentService({
+      runner: { run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null }) } as never,
+      launchctl: {
+        list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set(), system: new Set() } })
+      } as unknown as LaunchctlService,
+      plists: { scanAll: async () => [], read: async () => Promise.reject(new Error('no')) } as unknown as PlistService,
+      brew: { list: async () => [], action: async () => undefined } as never,
+      getXmlIndent: () => '  ',
+      brewFormulaPlists: async () => {
+        scans += 1
+        return []
+      }
+    })
+    await svc.list()
+    await svc.snapshotRuntime()
+    expect(scans).toBe(1)
+  })
+
+  it('快照里的任务集合变了才通知整表刷新,只变状态不通知', async () => {
+    const membership: string[] = []
+    const files: PlistFile[] = []
+    const svc = createAgentService({
+      runner: { run: async () => ({ code: 0, signal: null, stdout: '', stderr: '', timedOut: false, error: null }) } as never,
+      launchctl: {
+        list: async () => ({ gui: new Map(), system: new Map(), disabled: { gui: new Set(), system: new Set() } })
+      } as unknown as LaunchctlService,
+      plists: { scanAll: async () => files, read: async () => Promise.reject(new Error('no')) } as unknown as PlistService,
+      brew: { list: async () => [], action: async () => undefined } as never,
+      getXmlIndent: () => '  ',
+      brewFormulaPlists: async () => [],
+      onMembershipChange: () => membership.push('changed')
+    })
+    await svc.snapshotRuntime()
+    expect(membership).toEqual([])
+    files.push({
+      path: '/tmp/a.plist',
+      scope: 'user',
+      fileName: 'a.plist',
+      xml: '',
+      value: { Label: 'com.a' },
+      label: 'com.a',
+      desc: '',
+      isTask: true
+    })
+    await svc.snapshotRuntime()
+    await svc.snapshotRuntime()
+    expect(membership).toEqual(['changed'])
   })
 
   it('同作用域两个非任务文件 id 不同,各自读到自己那份(身份不能撞车)', async () => {

@@ -1,12 +1,23 @@
 // Agents 数据 store:demo agents.js 的状态部分(selectedAgent/activeFilter + 数据数组)
 import { create } from 'zustand'
-import type { Agent } from '@shared/models'
+import type { Agent, AgentRuntimePayload } from '@shared/models'
 import type { MissingAgent } from '@shared/ipc'
 import type { AgentFilter, AgentStatusFilter } from '../data/ports'
 import { dataSource } from '../data'
 
+/** 抽屉状态页用。卡片不读这三项。 */
+export interface AgentProcExtra {
+  cpu: string | null
+  mem: string | null
+  startTime: string | null
+}
+
 interface AgentsState {
   agents: Agent[]
+  /** 最近一次整表的代数。比它旧的运行态快照丢掉。 */
+  epoch: number
+  /** 按 id 的 cpu/mem/启动时间。快照合并进来,整表刷新时清掉缺席的。 */
+  procExtras: Record<string, AgentProcExtra>
   /** 已加载但 plist 已不存在的孤儿(定向复核;refresh 时 diff 出消失条目后核对) */
   missingPlists: MissingAgent[]
   filter: AgentFilter
@@ -16,6 +27,8 @@ interface AgentsState {
   loaded: boolean
   loadVersion: number
   load(): Promise<void>
+  /** 合并一次运行态快照。不换整表,不复核孤儿 plist。 */
+  applyRuntime(payload: AgentRuntimePayload): void
   setFilter(f: AgentFilter): void
   setStatusFilter(f: AgentStatusFilter): void
   select(id: string): void
@@ -24,8 +37,12 @@ interface AgentsState {
   createDraft(scope: 'user' | 'system' | 'daemon', label: string): Promise<Agent>
 }
 
+const RUNTIME_KEYS = ['status', 'pid', 'uptime', 'exitCode', 'isDisabledByOverride'] as const
+
 export const useAgentsStore = create<AgentsState>((set, get) => ({
   agents: [],
+  epoch: 0,
+  procExtras: {},
   missingPlists: [],
   filter: 'all',
   statusFilter: 'all',
@@ -37,10 +54,17 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     const loadVersion = get().loadVersion + 1
     set({ loadVersion })
     const prev = get().agents
-    const { agents } = await dataSource().agents.list()
+    const { agents, epoch } = await dataSource().agents.list()
     if (get().loadVersion !== loadVersion) return
+    const keep = new Set(agents.map((a) => a.id))
+    const procExtras: Record<string, AgentProcExtra> = {}
+    for (const [id, extra] of Object.entries(get().procExtras)) {
+      if (keep.has(id)) procExtras[id] = extra
+    }
     set({
       agents,
+      epoch,
+      procExtras,
       loaded: true,
       // demo: let selectedAgent = agentData[0]
       selectedId: get().selectedId ?? agents[0]?.id ?? null
@@ -64,6 +88,40 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     } catch {
       /* 复核失败不阻断列表 */
     }
+  },
+
+  applyRuntime(payload) {
+    if (payload.epoch < get().epoch) return
+    const byId = new Map(payload.rows.map((row) => [row.id, row]))
+    const prev = get().agents
+    let agents = prev
+    let changed = false
+    const nextAgents = prev.map((agent) => {
+      const row = byId.get(agent.id)
+      if (!row) return agent
+      const same = RUNTIME_KEYS.every((key) => agent[key] === row[key])
+      if (same) return agent
+      changed = true
+      return {
+        ...agent,
+        status: row.status,
+        pid: row.pid,
+        uptime: row.uptime,
+        exitCode: row.exitCode,
+        isDisabledByOverride: row.isDisabledByOverride
+      }
+    })
+    if (changed) agents = nextAgents
+    const procExtras = { ...get().procExtras }
+    let extrasChanged = false
+    for (const row of payload.rows) {
+      const cur = procExtras[row.id]
+      if (cur && cur.cpu === row.cpu && cur.mem === row.mem && cur.startTime === row.startTime) continue
+      procExtras[row.id] = { cpu: row.cpu, mem: row.mem, startTime: row.startTime }
+      extrasChanged = true
+    }
+    if (!changed && !extrasChanged) return
+    set(extrasChanged ? { agents, procExtras } : { agents })
   },
 
   setFilter(f) {

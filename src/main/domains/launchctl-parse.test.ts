@@ -32,6 +32,11 @@ describe('parseDomainServices(system 域服务表)', () => {
     expect(m.get('com.apple.appleh13camerad')).toMatchObject({ pid: null, lastExitCode: 78 })
     expect(m.get('com.apple.diskimagesiod.09000001-0000-0000-9BD3-5B0100000000')?.pid).toBe(66884)
   })
+  it('label 含 @ / + 的行不能丢掉(Homebrew postgresql@14 这类 daemon)', () => {
+    const m = parseDomainServices('\t\t   99666      0 \thomebrew.mxcl.postgresql@14\n\t\t     76274      - \tio.github.clash-verge-rev.clash-verge-rev.service\n')
+    expect(m.get('homebrew.mxcl.postgresql@14')).toMatchObject({ pid: 99666, lastExitCode: 0 })
+    expect(m.get('io.github.clash-verge-rev.clash-verge-rev.service')?.pid).toBe(76274)
+  })
   it('真实机输出回放:能解析出 BSPrintMonitor 且带 pid', () => {
     // 取真实 launchctl print system 片段(实测该服务 pid 非 0)
     const real = '\t\t     324      - \tcom.brocadesoft.BSPrintMonitor\n\t\t     143      - \tcom.apple.usbmuxd\n'

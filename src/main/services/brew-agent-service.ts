@@ -24,7 +24,7 @@ export interface BrewAgentService {
   action(kind: BrewActionKind, info: BrewServiceInfo): Promise<void>
 }
 
-const BREW_LABEL_PREFIX = 'homebrew.mxcl.'
+const BREW_LABEL_PREFIXES = ['homebrew.mxcl.', 'sh.brew.'] as const
 const HOMEBREW_PATH_RE = /\/homebrew\/|\/opt\/homebrew\/|\/usr\/local\/(?:opt|Cellar)\//
 
 /** brew 记录的 file 字段与 agent plist 文件名一致 → 精确命中(前缀无关;file 字段是 brew 输出的 plist 路径,天然带扩展名) */
@@ -39,7 +39,17 @@ function matchByFile(plistPath: string, services: BrewServiceInfo[]): BrewServic
   )
 }
 
-/** 匹配顺序:brew file 字段(精确)→ `homebrew.mxcl.` 前缀(开源原规则)→ Homebrew 安装路径推断(纯函数,可单测) */
+function matchByLabelPrefix(label: string, services: BrewServiceInfo[]): BrewServiceInfo | null {
+  for (const prefix of BREW_LABEL_PREFIXES) {
+    if (!label.startsWith(prefix)) continue
+    const name = label.slice(prefix.length)
+    if (name === '') return null
+    return services.find((s) => s.name === name) ?? { name, status: 'unknown', user: null, file: null, exitCode: null }
+  }
+  return null
+}
+
+/** 匹配顺序:brew file 字段(精确)→ `sh.brew.` / `homebrew.mxcl.` 前缀→ Homebrew 安装路径推断(纯函数,可单测) */
 export function matchBrewService(
   label: string,
   program: string,
@@ -48,12 +58,8 @@ export function matchBrewService(
 ): BrewServiceInfo | null {
   const byFile = matchByFile(plistPath, services)
   if (byFile) return byFile
-  if (label.startsWith(BREW_LABEL_PREFIX)) {
-    const name = label.slice(BREW_LABEL_PREFIX.length)
-    return (
-      services.find((s) => s.name === name) ?? { name, status: 'unknown', user: null, file: null, exitCode: null }
-    )
-  }
+  const byPrefix = matchByLabelPrefix(label, services)
+  if (byPrefix) return byPrefix
   if (!HOMEBREW_PATH_RE.test(program)) return null
   // 取最后一个 /opt|Cellar/<公式>/ 段(路径可能先出现 /opt/homebrew/ 前缀)
   const matches = [...program.matchAll(/\/(?:opt|Cellar)\/([^/]+)/g)]

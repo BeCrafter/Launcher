@@ -18,6 +18,7 @@ import {
 import { isAllowedExternalUrl } from '../shared/url-guard'
 import type { AgentScope, CloneInput, CronJob, CronScope, RenameInput, SaveFormInput, SaveXmlInput } from '../shared/models'
 import type { AgentService } from './services/agent-service'
+import type { AgentRuntimeWatch } from './services/agent-runtime'
 import type { CrontabService } from './services/crontab-service'
 import type { DockerService } from './services/docker-service'
 import { toServicesPayload as buildServicesPayload } from './services/process-discovery'
@@ -55,6 +56,8 @@ export interface IpcDeps {
   store: SettingsStore
   tray: TrayController
   agents: AgentService
+  /** 运行态轮询。MCP 进程不传:它没有窗口,也不该扫 launchctl。 */
+  runtime?: AgentRuntimeWatch
   cron: CrontabService
   discovery: ProcessDiscovery
   termination: TerminationService
@@ -168,6 +171,9 @@ export function registerIpc(deps: IpcDeps): void {
 
   // ── Launch Agents(阶段 1) ──
   ipcMain.handle(IPC.agList, () => deps.agents.list())
+  ipcMain.handle(IPC.agSetWatch, (_e, on: boolean) => {
+    deps.runtime?.setWatch(on)
+  })
   ipcMain.handle(IPC.agBrewAction, (_e, kind: 'start' | 'stop', id: string) => deps.agents.brewAction(kind, id))
   ipcMain.handle(IPC.agCreateDraft, (_e, scope: AgentScope, label: string) => deps.agents.createDraft(scope, label))
   ipcMain.handle(IPC.agSaveForm, (_e, input: SaveFormInput) => deps.agents.saveForm(input))

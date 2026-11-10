@@ -20,6 +20,7 @@ const EVENT_CHANNELS: readonly IpcEventChannel[] = [
   IPC_EVENTS.settingsChanged,
   IPC_EVENTS.agentsDirChanged,
   IPC_EVENTS.agentsChanged,
+  IPC_EVENTS.agentsRuntime,
   IPC_EVENTS.servicesUpdated,
   IPC_EVENTS.aiRunEvent,
   IPC_EVENTS.notesChanged,
@@ -58,6 +59,7 @@ const api: LauncherApi = {
   },
   agents: {
     list: () => ipcRenderer.invoke(IPC.agList),
+    setWatch: (on) => ipcRenderer.invoke(IPC.agSetWatch, on),
     brewAction: (kind, id) => ipcRenderer.invoke(IPC.agBrewAction, kind, id),
     createDraft: (scope, label) => ipcRenderer.invoke(IPC.agCreateDraft, scope, label),
     readDocument: (id) => ipcRenderer.invoke(IPC.agReadDocument, id),

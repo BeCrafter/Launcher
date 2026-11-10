@@ -17,6 +17,11 @@ describe('matchBrewService', () => {
     expect(hit).toMatchObject({ name: 'php@7.1', status: 'unknown' })
   })
 
+  it('sh.brew. 前缀在 brew 列表为空时也能对上公式名', () => {
+    const hit = matchBrewService('sh.brew.postgresql@18', '', [])
+    expect(hit).toMatchObject({ name: 'postgresql@18', status: 'unknown' })
+  })
+
   it('Homebrew 安装路径推断公式名(含 @版本归一)', () => {
     const s = [svc('postgresql@16', null)]
     expect(matchBrewService('org.postgres', '/opt/homebrew/opt/postgresql@16/bin/postgres', s)?.name).toBe('postgresql@16')

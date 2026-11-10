@@ -1,13 +1,13 @@
 // Agents 门面服务(阶段 1):plist 扫描 + launchctl 状态 → Agent 列表与操作
 // 机制对齐开源 AgentStore/PlistService/LaunchctlService;isBrew 纯启发式判定(见 brew-heuristic),
-// brew 数据只在 brewAction(用户显式启停)时按需拉取;BrewManagedSupport 合并规则见 brew-agent-service
+// brew 数据只在显式启停(brewAction, 或 ops 判定为 brew 管理)时按需拉取;合并规则见 brew-agent-service
 // id 约定:任务是 `<scope>:<label>`;非任务文件(占位/损坏)是 `<scope>:file:<fileName>`(label 为空,身份只能来自文件名);
 // 草稿 id 同构 label 形态,落盘发生在 save
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { ELEVATION_CANCELLED, ELEVATION_FAILED } from '../../shared/ipc'
-import type { Agent, AgentForm, AgentScope, DrawerStatusModel, LogLine, OpsState } from '../../shared/models'
+import type { Agent, AgentForm, AgentRuntimePayload, AgentRuntimeRow, AgentScope, DrawerStatusModel, LogLine, OpsState } from '../../shared/models'
 import type { MissingAgent } from '../../shared/ipc'
 import {
   formFromPlist,
@@ -44,7 +44,9 @@ import type { ShellRunner } from './shell-runner'
 export type OpAction = 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable'
 
 export interface AgentService {
-  list(): Promise<{ agents: Agent[] }>
+  list(): Promise<{ agents: Agent[]; epoch: number }>
+  /** 对一次 launchctl + ps。任务集合变了会另发 onMembershipChange,状态变化由调用方推 agents:runtime。 */
+  snapshotRuntime(): Promise<AgentRuntimePayload>
   brewAction(kind: 'start' | 'stop', id: string): Promise<Agent>
   createDraft(scope: AgentScope, label: string): Promise<Agent>
   /** 文档读取(表单 + 原文 + 兼容报告 + revision) */
@@ -109,11 +111,28 @@ export function createAgentService(deps: {
    * 没有这个事件,列表会一直停在旧状态,直到用户重启应用。
    */
   onChange?(): void
+  /** 快照里的任务集合变了(外部删了 plist,或公式目录补进一条)。渲染层据此整表刷新,而不是只改已有行。 */
+  onMembershipChange?(): void
+  /**
+   * 已安装公式的服务 plist(不在 Launch* 目录里)。
+   * brew services stop 会删掉 LaunchAgents 里的副本;不补这一份,条目就从列表消失。
+   * 不传时不扫(单测不读本机 Homebrew)。
+   */
+  brewFormulaPlists?(): Promise<string[]>
 }): AgentService {
   const { runner, launchctl, plists, brew } = deps
+  const formulaPlists = deps.brewFormulaPlists ?? (async () => [] as string[])
+  /** catalog() 刚读到的公式 plist 路径。这些文件不能写,也不能被 bootstrap。 */
+  let formulaPaths = new Set<string>()
+  /** 与 scanAll 同一档:3s 轮询不应该每次都 readdir 整个 opt/。 */
+  let formulaMemo: { at: number; paths: string[] } | null = null
+  /** 上一份快照里的任务 id。成员变了才通知整表刷新,状态变化仍走 agents:runtime。 */
+  let lastSnapshotIds: string[] | null = null
   const drafts = new Map<string, Agent>() // 未落盘草稿(createDraft → save)
   /** 运行态变更 → 通知宿主(AI/MCP 路径绕过 renderer store) */
   const notifyChange = (): void => deps.onChange?.()
+  // 与 snapshotRuntime 共用。整表 list() 先加,快照若更旧,渲染层丢掉。
+  let epoch = 0
 
   /** gui 域(用户态 list)与 system 域(`print system` 服务表)按作用域取用 */
   const tableFor = (tables: LaunchctlTables, scope: AgentScope): LaunchctlTables['gui'] =>
@@ -147,15 +166,26 @@ export function createAgentService(deps: {
     return out
   }
 
-  /** 单个 pid 的 cpu/mem/启动时间/运行时长(同上:一次全量 `ps -eo`,替掉两次 `ps -p`) */
-  async function procInfoFor(pid: number): Promise<{ cpu: number; mem: number; startTime: string; etime: string } | null> {
+  /** 一次全量 `ps -eo`,把关心的 pid 的 cpu/mem/启动时间/运行时长一起取出。 */
+  async function procStatsFor(
+    pids: number[]
+  ): Promise<Map<number, { cpu: number; mem: number; startTime: string; etime: string }>> {
+    const out = new Map<number, { cpu: number; mem: number; startTime: string; etime: string }>()
+    if (pids.length === 0) return out
+    const want = new Set(pids)
     const r = await runner.run('ps', ['-eo', 'pid=,%cpu=,%mem=,etime=,lstart='])
     for (const line of r.stdout.split('\n')) {
       const m = line.match(/^\s*(\d+)\s+([\d.]+)\s+([\d.]+)\s+(\S+)\s+(.*)$/)
-      if (!m || Number.parseInt(m[1], 10) !== pid) continue
-      return { cpu: Number(m[2]), mem: Number(m[3]), startTime: m[5].trim(), etime: m[4] }
+      if (!m) continue
+      const pid = Number.parseInt(m[1], 10)
+      if (!want.has(pid)) continue
+      out.set(pid, { cpu: Number(m[2]), mem: Number(m[3]), startTime: m[5].trim(), etime: m[4] })
     }
-    return null
+    return out
+  }
+
+  async function procInfoFor(pid: number): Promise<{ cpu: number; mem: number; startTime: string; etime: string } | null> {
+    return (await procStatsFor([pid])).get(pid) ?? null
   }
 
   function etimeToText(etime: string): string {
@@ -193,7 +223,7 @@ export function createAgentService(deps: {
       }
     }
     const entry = entries.get(pf.label)
-    const program = typeof pf.value.Program === 'string' ? pf.value.Program : Array.isArray(pf.value.ProgramArguments) ? String(pf.value.ProgramArguments[0] ?? '') : ''
+    const program = programOf(pf)
     return {
       id: agentId(pf.scope, pf.label),
       label: pf.label,
@@ -213,8 +243,64 @@ export function createAgentService(deps: {
     }
   }
 
-  async function findAgent(id: string): Promise<{ scope: AgentScope; label: string; pf: PlistFile } | null> {
+  function programOf(pf: PlistFile): string {
+    if (typeof pf.value.Program === 'string') return pf.value.Program
+    if (Array.isArray(pf.value.ProgramArguments)) return String(pf.value.ProgramArguments[0] ?? '')
+    return ''
+  }
+
+  /**
+   * 合成匹配没有 user 时,按 plist 自己补 root。
+   * 否则 brew.action 看到 user=null,就不提权,和列表上的 daemon 作用域对不上。
+   */
+  function asRootBrew(found: { scope: AgentScope; pf: PlistFile }, info: BrewServiceInfo): BrewServiceInfo {
+    if (info.user !== null) return info
+    const userName = typeof found.pf.value.UserName === 'string' ? found.pf.value.UserName : ''
+    const root = userName === 'root' || found.scope === 'daemon' || found.pf.path.startsWith('/Library/LaunchDaemons')
+    return root ? { ...info, user: 'root' } : info
+  }
+
+  async function loadFormulaPaths(): Promise<string[]> {
+    const now = Date.now()
+    if (formulaMemo && now - formulaMemo.at < 1500) return formulaMemo.paths
+    try {
+      const paths = await formulaPlists()
+      formulaMemo = { at: Date.now(), paths }
+      return paths
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Launch* 目录里的文件,再加上「已安装但没注册」的 brew 服务。
+   * 同一 Label 已在管理目录里就不再补:那份才是 launchd 真正在用的。
+   */
+  async function catalog(): Promise<PlistFile[]> {
     const files = await plists.scanAll()
+    const paths = await loadFormulaPaths()
+    formulaPaths = new Set(paths)
+    if (paths.length === 0) return files
+    const labels = new Set(files.filter((f) => f.isTask && f.label !== '').map((f) => f.label))
+    const extras: PlistFile[] = []
+    for (const path of paths) {
+      let pf: PlistFile
+      try {
+        pf = await plists.read('user', path)
+      } catch {
+        continue
+      }
+      if (!pf.isTask || pf.label === '' || labels.has(pf.label)) continue
+      labels.add(pf.label)
+      // read() 固定用 user 读盘,但 root 服务的启停要提权,作用域必须是 daemon。
+      const userName = typeof pf.value.UserName === 'string' ? pf.value.UserName : ''
+      extras.push(userName === 'root' ? { ...pf, scope: 'daemon' } : pf)
+    }
+    return extras.length === 0 ? files : files.concat(extras)
+  }
+
+  async function findAgent(id: string): Promise<{ scope: AgentScope; label: string; pf: PlistFile } | null> {
+    const files = await catalog()
     const pf = files.find((p) => idFor(p) === id)
     if (!pf) return null
     // 作用域/label 取自记录而非 id 反解:非任务文件没有 label,只能靠记录本身
@@ -252,6 +338,9 @@ export function createAgentService(deps: {
     conflictMessage: string
   ): Promise<{ found: { scope: AgentScope; label: string; pf: PlistFile } | null } | { fail: SaveOutcome }> {
     const found = await findAgent(id)
+    if (found && formulaPaths.has(found.pf.path)) {
+      return { fail: { ok: false, kind: 'invalid', message: '这是 Homebrew 公式自带的 plist,不能在这里修改或删除。请用 brew services 启停' } }
+    }
     if (!found) {
       // 真草稿(createDraft 登记过)才允许「无文件」;其余 = 文件被外部删除,绝不静默重建
       if (!drafts.has(id) && parseAgentId(id)) {
@@ -352,17 +441,55 @@ export function createAgentService(deps: {
     return { ok: true }
   }
 
-  async function listImpl(): Promise<{ agents: Agent[] }> {
+  async function listImpl(): Promise<{ agents: Agent[]; epoch: number }> {
     // brew 不在关键路径(brew services list 实测 11-13s):isBrew 用纯启发式判定,机制同源开源 AgentStore
-    const [files, tables] = await Promise.all([plists.scanAll(), launchctl.list()])
+    const [files, tables] = await Promise.all([catalog(), launchctl.list()])
     const runningPids = files
       .map((p) => (p.isTask ? (tableFor(tables, p.scope).get(p.label)?.pid ?? null) : null))
       .filter((p): p is number => p !== null)
     const uptimes = await uptimesFor(runningPids)
     // 每个 .plist 一行(含占位/损坏):文件在磁盘上存在就必须可见,置灰由渲染层负责
     const agents = files.map((pf) => buildAgent(pf, tableFor(tables, pf.scope), tables, uptimes))
+    epoch += 1
     // 草稿(未落盘)不占列表行:保存后经 reload 出现
-    return { agents }
+    return { agents, epoch }
+  }
+
+  /**
+   * 运行态快照。目录用 scanAll 的 1.5s 缓存(plist 正文不变就不用重读盘),
+   * 域表每次现查。非任务行没有 launchd 身份,不进快照。
+   */
+  async function snapshotRuntime(): Promise<AgentRuntimePayload> {
+    // 入口就记下。进行中若有人 list() 把 epoch 加一,这份旧快照会被渲染层丢掉。
+    const seen = epoch
+    const [files, tables] = await Promise.all([catalog(), launchctl.list()])
+    const tasks = files.filter((pf) => pf.isTask)
+    const ids = tasks.map((pf) => agentId(pf.scope, pf.label)).sort()
+    if (lastSnapshotIds !== null && ids.join('\n') !== lastSnapshotIds.join('\n')) {
+      deps.onMembershipChange?.()
+    }
+    lastSnapshotIds = ids
+    const pids = tasks
+      .map((pf) => tableFor(tables, pf.scope).get(pf.label)?.pid ?? null)
+      .filter((pid): pid is number => pid !== null)
+    const stats = await procStatsFor(pids)
+    const rows: AgentRuntimeRow[] = tasks.map((pf) => {
+      const entry = tableFor(tables, pf.scope).get(pf.label)
+      const pid = entry?.pid ?? null
+      const proc = pid !== null ? stats.get(pid) : undefined
+      return {
+        id: agentId(pf.scope, pf.label),
+        status: entry ? (pid !== null ? 'running' : 'loaded') : 'stopped',
+        pid,
+        uptime: proc ? etimeToText(proc.etime) : null,
+        exitCode: entry?.lastExitCode ?? null,
+        isDisabledByOverride: disabledFor(tables, pf.scope).has(pf.label),
+        cpu: proc ? `${proc.cpu.toFixed(1)}%` : null,
+        mem: proc ? `${proc.mem.toFixed(1)}%` : null,
+        startTime: proc?.startTime ?? null
+      }
+    })
+    return { epoch: seen, rows }
   }
 
   // ─────────── 文档模型与写入事务(P0-2 / P0-3 / P0-4 / P1-1) ───────────
@@ -880,6 +1007,7 @@ export function createAgentService(deps: {
 
   return {
     list: listImpl,
+    snapshotRuntime,
 
     async brewAction(kind, id) {
       return withAgentWriteLock(async () => {
@@ -887,12 +1015,12 @@ export function createAgentService(deps: {
         if (!found) throw new Error(`agent not found: ${id}`)
         const before = await currentAgent(id).catch(() => null)
         const brews = await brewList()
-        const program = typeof found.pf.value.Program === 'string' ? found.pf.value.Program : ''
-        const info = matchBrewService(found.label, program, brews, found.pf.path)
+        const info = matchBrewService(found.label, programOf(found.pf), brews, found.pf.path)
         if (!info) throw new Error(`not a brew-managed service: ${id}`)
-        await brew.action(kind, info)
+        await brew.action(kind, asRootBrew(found, info))
         notifyChange()
-        // brew 的 stop 会移除 plist(条目从列表消失)→ 容错返回动作前状态并修正 status
+        // stop 会删掉 LaunchAgents 里的副本。公式 plist 还在时,下一次 list 会把它补成已停止;
+        // 公式文件也没了,才退回动作前的快照,避免这次调用直接抛错。
         try {
           return await currentAgent(id)
         } catch {
@@ -1282,7 +1410,22 @@ const located = await locateFresh(id, expectedRevision, '源文件已被外部�
       // 非任务文件不是 launchd 任务:bootstrap 必失败(launchd 会报 error 5)。UI 已置灰,这里是兜底
       if (!found.pf.isTask) throw new Error('该文件未定义 launchd 任务,无法执行启停操作')
       const tables = await launchctl.list()
-      if (action === 'start') await intentStart(found.pf, tables)
+      // 已注册的副本也走 brew services。只对公式路径特判会让卡片和抽屉对运行中的 postgresql 做 bootout,
+      // 副本还在,RunAtLoad 又会把它拉起来。对不上的仍走 launchctl。
+      // reload 不能 bootstrap 公式文件本身;已注册副本的 reload 仍然重读那份 LaunchAgents 文件。
+      const onFormula = formulaPaths.has(found.pf.path)
+      const lifecycle = action === 'start' || action === 'stop' || action === 'restart'
+      const brewLike = onFormula || isBrewManaged(found.label, programOf(found.pf))
+      if ((lifecycle || (action === 'reload' && onFormula)) && brewLike) {
+        const info = matchBrewService(found.label, programOf(found.pf), await brewList(), found.pf.path)
+        if (info) {
+          await brew.action(action === 'reload' ? 'restart' : action, asRootBrew(found, info))
+        } else if (onFormula) {
+          throw new Error(`not a brew-managed service: ${id}`)
+        } else if (action === 'start') await intentStart(found.pf, tables)
+        else if (action === 'stop') await intentStop(found.pf)
+        else await intentRestart(found.pf, tables)
+      } else if (action === 'start') await intentStart(found.pf, tables)
       else if (action === 'stop') await intentStop(found.pf)
       else if (action === 'restart') await intentRestart(found.pf, tables)
       else if (action === 'reload') await intentReload(found.pf, tables)

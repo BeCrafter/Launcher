@@ -26,23 +26,26 @@ export async function runAgentIntent(agent: Agent, action: AgentIntent): Promise
   // 整表刷新要重扫目录 + launchctl 表 + ps(约 0.5-1s),等它会让按钮看起来「点了没反应」。
   if (next) {
     void useAgentsStore.getState().load()
-    if (action === 'restart') void refreshUntilRunning(agent.id)
+    // 开机自启只改覆盖位,不碰进程。启动/停止/重启都要等到这一条的状态稳住:
+    // kickstart 之后常有几秒「已载入、还没 pid」。不 await,按钮先按返回的 OpsState 翻面。
+    if (action === 'start' || action === 'restart' || action === 'stop') void refreshUntilSettled(agent.id, action)
   }
   return next
 }
 
 /**
- * 重启后 launchd 是异步拉起的(`kickstart -k` 先杀后起;实测刚启动过的任务有 ~3s 的
- * 「已载入未运行」窗口,期间 `launchctl print` 甚至报"服务找不到")。
- * 非阻塞地轮询刷新,直到该任务重新变为运行中(最多 ~6s),避免 UI 停在「待运行」。
- * 不用固定延迟:拿到运行中即停,任务起不来也不会一直刷。
+ * launchd 拉起是异步的(`kickstart -k` 先杀后起;实测刚启动过的任务有 ~3s 的
+ * 「已载入未运行」窗口)。非阻塞地轮询整表,直到这一条进入目标状态(最多 ~6s)。
+ * 启动/重启等到运行中;停止等到不再运行。到点就停,不一直刷。
  */
-async function refreshUntilRunning(id: string, maxMs = 6000): Promise<void> {
+async function refreshUntilSettled(id: string, action: 'start' | 'stop' | 'restart', maxMs = 6000): Promise<void> {
   const deadline = Date.now() + maxMs
+  const settled = (status: string | undefined): boolean =>
+    action === 'stop' ? status !== 'running' : status === 'running'
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 700))
     await useAgentsStore.getState().load()
-    if (useAgentsStore.getState().agents.find((a) => a.id === id)?.status === 'running') return
+    if (settled(useAgentsStore.getState().agents.find((a) => a.id === id)?.status)) return
   }
 }
 
@@ -51,6 +54,13 @@ async function dispatch(agent: Agent, action: AgentIntent): Promise<OpsState | n
   const label = agent.label
   try {
     // 联动询问:停止一个「开机自启」的任务时,它下次登录仍会回来——唯一的真正矛盾决定
+    // Homebrew 的停止走 brew services:它自己删掉 LaunchAgents 副本,和开机自启不是同一件事。
+    if (action === 'stop' && agent.isBrew) {
+      if (!(await elevate(agent, tr(LABEL_KEY[action])))) return null
+      const next = await dataSource().agents.ops(agent.id, 'stop')
+      showToast(tr('ops.toast.stopped').replace('{L}', label), '#60a5fa', 'fa-stop')
+      return next
+    }
     if (action === 'stop' && !agent.isDisabledByOverride) {
       const pick = await CHOICE.request({
         header: tr('ops.stopConfirm.header'),

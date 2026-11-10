@@ -14,6 +14,7 @@ import { createTermination, type TerminationService } from './services/terminati
 import { createPlistService, type PlistService } from './services/plist-service'
 import { createLaunchctlService, type LaunchctlService } from './services/launchctl-service'
 import { createBrewAgentService, type BrewAgentService } from './services/brew-agent-service'
+import { listBrewFormulaServicePlists } from './services/brew-formula-plists'
 import { createNotesService, type NotesService } from './services/notes-service'
 import type { ElevationExecutor } from './services/elevation'
 
@@ -46,6 +47,8 @@ export function createCoreServices(opts: {
   onNotesChange?(ids: string[]): void
   /** Agent 文件/运行态被 main 侧改变(应用内传广播;独立进程不需要) */
   onAgentsChange?(): void
+  /** 运行态快照发现任务集合变了(外部删了 plist,或公式目录补进一条)。应用内据此整表刷新。 */
+  onAgentsMembershipChange?(): void
   /** 删除笔记的落点(应用传 shell.trashItem;不传则移到 <dir>/.trash/) */
   trashNote?(path: string): Promise<void>
   log?(msg: string): void
@@ -78,7 +81,9 @@ export function createCoreServices(opts: {
     plists,
     brew,
     getXmlIndent: opts.getXmlIndent,
-    onChange: opts.onAgentsChange
+    onChange: opts.onAgentsChange,
+    onMembershipChange: opts.onAgentsMembershipChange,
+    brewFormulaPlists: listBrewFormulaServicePlists
   })
 
   const docker = createDockerService({ runner: opts.runner })
