@@ -5,7 +5,7 @@
 //   · 它自己能通过应用自己的解析(写进去之后读得回来,标题/正文都没坏)。
 
 import { describe, expect, it } from 'vitest'
-import { sampleNoteBody, sampleNoteTitle } from './note-sample'
+import { sampleNoteBody, sampleNoteTags, sampleNoteTitle } from './note-sample'
 import { MAX_NOTE_BYTES } from '../../shared/notes'
 
 const LANGS = ['zh-CN', 'en-US'] as const
@@ -34,6 +34,41 @@ describe('sampleNoteBody / sampleNoteTitle', () => {
   it('以一级标题开头 —— 即使调用方不给标题,也能从正文推出一个', () => {
     for (const lang of LANGS) {
       expect(sampleNoteBody(lang).startsWith('# ')).toBe(true)
+    }
+  })
+})
+
+describe('sampleNoteTags(示例自带的标签)', () => {
+  it.each(LANGS)('%s 至少两条,可直接当 frontmatter tags 用', (lang) => {
+    const tags = sampleNoteTags(lang)
+    expect(tags.length).toBeGreaterThanOrEqual(2)
+    for (const tag of tags) {
+      // 标签面板里的 key 会去掉前导 #,数据本身不该带
+      expect(tag).toBe(tag.trim())
+      expect(tag.startsWith('#')).toBe(false)
+      expect(tag).not.toBe('')
+    }
+    expect(new Set(tags).size).toBe(tags.length)
+  })
+
+  it('中英各给一套 —— 换语言时标签跟着换', () => {
+    expect(sampleNoteTags('zh-CN')).not.toEqual(sampleNoteTags('en-US'))
+  })
+
+  it('未知语言退回英文(和正文/标题的兜底一致)', () => {
+    expect(sampleNoteTags('fr-FR')).toEqual(sampleNoteTags('en-US'))
+  })
+
+  it('每次返回新数组 —— 调用方改它不该污染下一次', () => {
+    const first = sampleNoteTags('zh-CN')
+    first.push('临时')
+    expect(sampleNoteTags('zh-CN')).not.toContain('临时')
+  })
+
+  it('正文里点名的标签就是真正写入的那几条 —— 文案与数据不能各说各话', () => {
+    for (const lang of LANGS) {
+      const body = sampleNoteBody(lang)
+      for (const tag of sampleNoteTags(lang)) expect(body).toContain(`\`${tag}\``)
     }
   })
 })

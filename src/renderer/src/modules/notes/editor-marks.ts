@@ -20,7 +20,6 @@ import { RangeSetBuilder } from '@codemirror/state'
 import { syntaxTree } from '@codemirror/language'
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import { inCodeBlock } from '../../lib/editor-code-block'
-import { scanInlineTagsInLine } from '@shared/inline-tags'
 import { scanWikilinksInLine } from '@shared/wikilinks'
 import { parseListLine } from '../../lib/md-list-syntax'
 import { CALLOUT_KINDS, type CalloutKind } from '../../lib/markdown'
@@ -142,11 +141,11 @@ export const extraHeadingMarks = ViewPlugin.fromClass(
 )
 
 /**
- * `[[wikilink]]` 与 `#行内标签` 的着色。
+ * `[[wikilink]]` 的着色。
  *
- * 两者都不在 Lezer 的语法树里(Obsidian 扩展语法),与 `==高亮==` 一样只能自己扫。
- * 扫描规则复用共享模块 —— 编辑器上色的范围必须与预览渲染、标签索引完全一致,
- * 否则同一个 `#tag` 会「这里算、那里不算」。
+ * 它不在 Lezer 的语法树里(Obsidian 扩展语法),与 `==高亮==` 一样只能自己扫。
+ * 扫描规则复用共享模块 —— 编辑器上色的范围必须与预览渲染一致,
+ * 否则同一个 `[[链接]]` 会「这里算、那里不算」。
  */
 function buildNoteInlineMarks(view: EditorView): DecorationSet {
   const ranges: { from: number; to: number; cls: string }[] = []
@@ -157,15 +156,11 @@ function buildNoteInlineMarks(view: EditorView): DecorationSet {
       for (const link of scanWikilinksInLine(line.text)) {
         ranges.push({ from: line.from + link.from, to: line.from + link.to, cls: 'tk-wikilink' })
       }
-      for (const tag of scanInlineTagsInLine(line.text)) {
-        ranges.push({ from: line.from + tag.from, to: line.from + tag.to, cls: 'tk-hashtag' })
-      }
     }
     if (line.number >= last) break
     line = view.state.doc.line(line.number + 1)
   }
-  // 两类区间是分开扫的,合到一起后必须重新按位置排序 —— RangeSetBuilder 只收有序区间
-  ranges.sort((a, b) => a.from - b.from || a.to - b.to)
+  // 逐行扫描本身按位置递增,RangeSetBuilder 只收有序区间
   const builder = new RangeSetBuilder<Decoration>()
   for (const r of ranges) builder.add(r.from, r.to, Decoration.mark({ class: r.cls }))
   return builder.finish()

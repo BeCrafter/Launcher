@@ -50,7 +50,7 @@ import { toggleTaskLine } from '../../lib/note-task'
 import { showToast } from '../../lib/utils'
 import { getCurrentLang, makeT } from '../../i18n'
 import { calloutCompletion, calloutMarks, extraHeadingMarks, highlightMarks, lenientTaskMarks, noteInlineMarks, syntaxMarks } from './editor-marks'
-import { tagCompletion, wikilinkCompletion, type WikiTarget } from './note-completions'
+import { wikilinkCompletion, type WikiTarget } from './note-completions'
 import { applyWrap, suppressSelectionBubble } from '../../lib/note-marks'
 import { findHighlights, setFindHighlights as setFindHighlightsEffect } from '../../lib/editor-find'
 import type { FindMatch } from '../../lib/note-find'
@@ -418,7 +418,7 @@ const MD_EXTENSIONS: Extension[] = [
   extraHeadingMarks,
   highlightMarks,
   calloutMarks,
-  // `[[笔记]]` 与 `#行内标签` 的着色(Obsidian 扩展语法,语法树里没有)
+  // `[[笔记]]` 的着色(Obsidian 扩展语法,语法树里没有)
   noteInlineMarks,
   // 列选择 / 多光标:Option(Alt)+拖动是矩形选择,多光标输入天然同时生效。
   // 不开 allowMultipleSelections 的话,多选区会被折回单光标。
@@ -441,8 +441,7 @@ export function NoteEditor({
   onBlockMenu,
   onEmptyMenu,
   pinnedLine,
-  wikiTargets,
-  tagNames
+  wikiTargets
 }: {
   value: string
   /** 笔记 store 的 docSession:变化即「换了一篇文档」,复位滚动/选区/撤销栈 */
@@ -461,8 +460,6 @@ export function NoteEditor({
   pinnedLine?: number | null
   /** `[[` 补全的候选(笔记 id + 标题) */
   wikiTargets: readonly WikiTarget[]
-  /** `#` 补全的候选(已在用标签) */
-  tagNames: readonly string[]
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -476,8 +473,6 @@ export function NoteEditor({
   // 补全候选随笔记库刷新;编辑器只挂载一次,所以走 ref —— 与 onChange 同一套路
   const wikiTargetsRef = useRef(wikiTargets)
   wikiTargetsRef.current = wikiTargets
-  const tagNamesRef = useRef(tagNames)
-  tagNamesRef.current = tagNames
   const onScrollRef = useRef(onScroll)
   onScrollRef.current = onScroll
   const onBlockMenuRef = useRef(onBlockMenu)
@@ -1055,13 +1050,12 @@ export function NoteEditor({
           markdownSelectionBubble(),
           // 查找匹配的底色（面板派发 effect 才出现，平时是空集）
           findHighlights,
-          // 输入 `> ` 提示五种提示块;`[[` 提示笔记;`#` 提示行内标签。
+          // 输入 `> ` 提示五种提示块;`[[` 提示笔记。
           // 候选从 ref 读 —— 编辑器只挂载一次,笔记库刷新后闭包仍拿得到新数组
           autocompletion({
             override: [
               calloutCompletion((kind) => t()(`notes.callout.${kind}`)),
-              wikilinkCompletion(() => wikiTargetsRef.current),
-              tagCompletion(() => tagNamesRef.current)
+              wikilinkCompletion(() => wikiTargetsRef.current)
             ]
           }),
           indentUnit.of('  '),

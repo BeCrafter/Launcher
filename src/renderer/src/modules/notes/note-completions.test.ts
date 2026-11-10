@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  buildTagOptions,
   buildWikiOptions,
   COMPLETION_LIMIT,
-  tagTriggerAt,
   wikiTriggerAt,
   type WikiTarget
 } from './note-completions'
@@ -25,26 +23,6 @@ describe('wikiTriggerAt', () => {
 
   it('光标不在行尾时只看光标之前', () => {
     expect(wikiTriggerAt('[[Beta]] tail', 6)).toEqual({ from: 2, query: 'Beta' })
-  })
-})
-
-describe('tagTriggerAt', () => {
-  it('要求 # 后至少一个字符,from 落在标签名开头', () => {
-    expect(tagTriggerAt('x #al', 5)).toEqual({ from: 3, query: 'al' })
-    expect(tagTriggerAt('#al', 3)).toEqual({ from: 1, query: 'al' })
-    expect(tagTriggerAt('# 标题', 4)).toBeNull()
-    expect(tagTriggerAt('#', 1)).toBeNull()
-  })
-
-  it('URL 片段 / 词内 / 连续 # / 转义都不算标签', () => {
-    expect(tagTriggerAt('https://x/#frag', 15)).toBeNull()
-    expect(tagTriggerAt('foo#bar', 7)).toBeNull()
-    expect(tagTriggerAt('##tag', 5)).toBeNull()
-    expect(tagTriggerAt('\\#tag', 5)).toBeNull()
-  })
-
-  it('中文标签可用', () => {
-    expect(tagTriggerAt('见 #笔记/子', 8)).toEqual({ from: 3, query: '笔记/子' })
   })
 })
 
@@ -84,30 +62,5 @@ describe('buildWikiOptions', () => {
     // 根层且 id 与标题相同 → detail 只是重复,不显示
     expect(buildWikiOptions([{ id: 'Solo', title: 'Solo' }], '')[0]!.detail).toBeUndefined()
     expect(COMPLETION_LIMIT).toBe(50)
-  })
-})
-
-describe('buildTagOptions', () => {
-  const tags = ['alpha', 'Alpha', 'beta', '123', 'note/sub', '-bad', 'x']
-
-  it('大小写无关去重,保留首次写法', () => {
-    const opts = buildTagOptions(tags, 'al')
-    expect(opts.map((o) => o.label)).toEqual(['#alpha'])
-    expect(opts[0]!.apply).toBe('#alpha')
-  })
-
-  it('只收合法标签(纯数字 / 首尾分隔符不行)', () => {
-    const labels = buildTagOptions(tags, '').map((o) => o.label)
-    expect(labels).toContain('#note/sub')
-    expect(labels).not.toContain('#123')
-    expect(labels).not.toContain('#-bad')
-  })
-
-  it('前缀匹配优先,再按名称排序,受上限约束', () => {
-    const labels = buildTagOptions(tags, 'a').map((o) => o.label)
-    // alpha 前缀命中;beta 不在前缀位但包含 a
-    expect(labels[0]).toBe('#alpha')
-    expect(labels).toContain('#beta')
-    expect(buildTagOptions(tags, '', 2)).toHaveLength(2)
   })
 })

@@ -42,7 +42,6 @@ import { MermaidBlock } from './MermaidBlock'
 import { NoteEditor, type NoteEditorHandle } from './NoteEditor'
 import { Skeleton } from '../../components/ui/Skeleton'
 import type { WikiTarget } from './note-completions'
-import { aggregateTags } from '../../lib/note-tags'
 import { NoteBlockMenu, NoteInsertMenu, type InsertMenuMode } from './NoteBlockMenus'
 import { NoteMovePicker } from './NoteMovePicker'
 import { NoteFindBar } from './NoteFindBar'
@@ -349,7 +348,6 @@ export function NotesView(): React.JSX.Element {
     () => notes.map((n) => ({ id: n.id, title: n.title })),
     [notes]
   )
-  const tagNames = useMemo(() => aggregateTags(notes, 500).map((t) => t.tag), [notes])
   const resolveWiki = useCallback(
     (target: string) => resolveWikiTarget(wikiIndex, target, useNotesStore.getState().currentId ?? ''),
     [wikiIndex]
@@ -358,8 +356,7 @@ export function NotesView(): React.JSX.Element {
     () => ({
       create: (target) => t('notes.wikilink.create').replace('{NAME}', target),
       missing: (target) => t('notes.wikilink.missing').replace('{NAME}', target),
-      unsupportedEmbed: (target) => t('notes.wikilink.unsupportedEmbed').replace('{NAME}', target),
-      filterTag: (tag) => t('notes.wikilink.filterTag').replace('{NAME}', tag)
+      unsupportedEmbed: (target) => t('notes.wikilink.unsupportedEmbed').replace('{NAME}', target)
     }),
     [t]
   )
@@ -395,12 +392,6 @@ export function NotesView(): React.JSX.Element {
     },
     [t]
   )
-
-  const onTagClick = useCallback((tag: string) => {
-    const s = useNotesStore.getState()
-    s.setTagFilter(tag)
-    s.setRailCollapsed(false)
-  }, [])
 
   // 目标笔记渲染完成后滚动到标题。按 id 找,不用 textContent 重算 ——
   // 标题里带行内标记时,源码与渲染文本的 slug 会不一致。
@@ -911,7 +902,6 @@ export function NotesView(): React.JSX.Element {
               // 菜单开着时把块手柄钉在那一行（按钮与弹框一起消失，一起留下）
               pinnedLine={blockMenu?.line ?? null}
               wikiTargets={wikiTargets}
-              tagNames={tagNames}
             />
             {findOpen && (
               <NoteFindBar
@@ -957,7 +947,6 @@ export function NotesView(): React.JSX.Element {
                 tableVars={tableVars}
                 resolveWiki={resolveWiki}
                 onWikiClick={onWikiClick}
-                onTagClick={onTagClick}
                 wikiLabels={wikiLabels}
               />
             </div>
@@ -1108,7 +1097,6 @@ function NotePreview({
   tableVars,
   resolveWiki,
   onWikiClick,
-  onTagClick,
   wikiLabels
 }: {
   body: string
@@ -1126,7 +1114,6 @@ function NotePreview({
   tableVars: CSSProperties
   resolveWiki: (target: string) => WikiResolution | null
   onWikiClick: (link: WikiLink, resolved: WikiResolution | null) => void
-  onTagClick: (tag: string) => void
   wikiLabels: WikiLabels
 }): React.JSX.Element {
   const t = useT()
@@ -1151,7 +1138,6 @@ function NotePreview({
         anchors: true,
         resolveWiki,
         onWikiClick,
-        onTagClick,
         wikiLabels,
         // 块级元素带上源行号 —— 编辑区与预览区的联动滚动全靠它
         lineAnchors: true
@@ -1170,7 +1156,6 @@ function NotePreview({
       tableLabels,
       resolveWiki,
       onWikiClick,
-      onTagClick,
       wikiLabels
     ]
   )

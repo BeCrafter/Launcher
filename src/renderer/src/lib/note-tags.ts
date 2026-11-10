@@ -1,10 +1,15 @@
-// 标签的界面侧聚合:frontmatter tags 与正文 inlineTags 在这里合并。
+// 标签的界面侧聚合:标签只有一个来源 —— frontmatter 的 tags。
 //
-// 两者存储上**故意分开**:frontmatter 的 tags 会被保存写回文件,正文标签只是派生索引。
-// 合并只发生在展示/筛选/补全这一层,避免一次保存把正文里的 #tag 塞进 frontmatter。
+// 正文里的 `#xxx` 是普通文字,不参与索引/筛选/搜索(颜色码就是 `#ff5733`,
+// 和标签写法无法区分,所以干脆不把正文当标签来源)。标签统一在元数据行的
+// 输入框里维护,写回文件。
 
-import { normalizeTag } from '@shared/inline-tags'
 import type { NoteMeta } from '@shared/notes'
+
+/** 标签比较用的规范 key:去前导 #、NFC、小写。只用于比较,不用于显示。 */
+export function normalizeTag(tag: string): string {
+  return (tag.startsWith('#') ? tag.slice(1) : tag).trim().normalize('NFC').toLowerCase()
+}
 
 export interface TagCount {
   /** 规范化 key(小写),筛选与比较用 */
@@ -15,11 +20,11 @@ export interface TagCount {
   count: number
 }
 
-/** 一篇笔记的全部标签(frontmatter + 正文),按规范化 key 去重 */
+/** 一篇笔记的全部标签(只来自 frontmatter),按规范化 key 去重 */
 export function noteTagsOf(note: NoteMeta): string[] {
   const seen = new Set<string>()
   const out: string[] = []
-  for (const tag of [...note.tags, ...(note.inlineTags ?? [])]) {
+  for (const tag of note.tags) {
     const key = normalizeTag(tag)
     if (key === '' || seen.has(key)) continue
     seen.add(key)

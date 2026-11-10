@@ -2,6 +2,7 @@
 //
 // 为什么单独抽出来:这条规则是「搜索框里打标签名,先出这个标签下的东西」的全部依据,
 // 塞在组件里没法测。抽成纯函数之后,排序行为有单测钉住,也不会被后续改动悄悄带偏。
+// 标签只来自 frontmatter;正文里的 `#xxx` 是普通文字,不参与标签命中。
 
 import type { NoteMeta } from '@shared/notes'
 
@@ -17,7 +18,7 @@ export function tagHitsOf(notes: NoteMeta[], query: string): Map<string, string>
   const hit = new Map<string, string>()
   if (q === '') return hit
   for (const n of notes) {
-    const tag = [...n.tags, ...(n.inlineTags ?? [])].find((tg) => tg.toLowerCase().includes(q))
+    const tag = n.tags.find((tg) => tg.toLowerCase().includes(q))
     if (tag !== undefined) hit.set(n.id, tag)
   }
   return hit

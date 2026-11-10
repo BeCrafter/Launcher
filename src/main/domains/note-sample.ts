@@ -23,8 +23,25 @@ import en from '../../../resources/note-sample/en.md?raw'
 export const SAMPLE_NOTE_TITLE_ZH = '随心手记示例'
 export const SAMPLE_NOTE_TITLE_EN = 'Notes feature tour'
 
+/**
+ * 示例笔记自带的两条 frontmatter 标签。
+ *
+ * 为什么示例自己也要带标签:标签面板只在**库里有标签**时才出现,左侧列表、筛选 chip、
+ * 搜索置顶也都得有真实数据才看得出来。只写一段「标签怎么用」的说明,首次打开的人
+ * 既看不到面板,也没有东西可点 —— 所以示例必须自己就是一份可操作的演示。
+ *
+ * ⚠ 正文里的「这篇自带两条标签:…」直接点名了这两个标签,改这里记得同步改
+ * resources/note-sample/*.md;note-sample.test.ts 会做一致性检查。
+ */
+export const SAMPLE_NOTE_TAGS_ZH = ['示例', '用法演示']
+export const SAMPLE_NOTE_TAGS_EN = ['sample', 'demo']
+
 export function sampleNoteBody(language: string): string {
   return language.startsWith('zh') ? zh : en
+}
+
+export function sampleNoteTags(language: string): string[] {
+  return [...(language.startsWith('zh') ? SAMPLE_NOTE_TAGS_ZH : SAMPLE_NOTE_TAGS_EN)]
 }
 
 export function sampleNoteTitle(language: string): string {

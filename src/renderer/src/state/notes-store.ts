@@ -7,7 +7,6 @@
 //   · 冲突未决时**暂停自动保存**,只由用户的显式选择恢复。
 
 import { create } from 'zustand'
-import { normalizeTag } from '@shared/inline-tags'
 import {
   baseNameOf,
   type Note,
@@ -17,6 +16,7 @@ import {
   type NoteRef
 } from '@shared/notes'
 import { slugifyNoteTitle } from '@shared/note-slug'
+import { normalizeTag } from '../lib/note-tags'
 import { dataSource } from '../data'
 import { getCurrentLang, makeT } from '../i18n'
 import { cleanIpcErrorMessage } from '../lib/ipc-error'

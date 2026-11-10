@@ -498,32 +498,11 @@ describe('全文检索', () => {
   })
 })
 
-describe('行内标签索引', () => {
-  it('正文标签去重后进 NoteMeta,代码/URL/转义里的不算', async () => {
-    const svc = makeService()
-    const note = await svc.create({
-      title: 't',
-      body: [
-        '正文 #alpha 与 #Beta,重复 #alpha',
-        '',
-        '```',
-        '#fenced',
-        '```',
-        '`#inline` \\#escaped https://x/#frag',
-        '## 标题里 #headingTag'
-      ].join('\n')
-    })
-
-    expect(note.inlineTags).toEqual(['alpha', 'Beta', 'headingTag'])
-    const list = await svc.list()
-    expect(list.notes[0]!.inlineTags).toEqual(['alpha', 'Beta', 'headingTag'])
-  })
-
-  it('不污染 frontmatter tags;保存正文后重新解析', async () => {
+describe('正文里的 # 不是标签', () => {
+  it('不写回 frontmatter;保存正文后 tags 不变', async () => {
     const svc = makeService()
     const note = await svc.create({ title: 't', body: '#inline', tags: ['fm'] })
     expect(note.tags).toEqual(['fm'])
-    expect(note.inlineTags).toEqual(['inline'])
     expect(read(svc.dir(), `${note.id}.md`)).toContain('tags:\n  - fm')
 
     const out = await svc.save({
@@ -534,13 +513,12 @@ describe('行内标签索引', () => {
     expect(out.ok).toBe(true)
     if (!out.ok || !('note' in out)) throw new Error('save failed')
     expect(out.note.tags).toEqual(['fm'])
-    expect(out.note.inlineTags).toEqual(['next', 'inline'])
     const text = read(svc.dir(), `${note.id}.md`)
     expect(text).toContain('tags:\n  - fm')
     expect(text).not.toContain('next\n  -')
   })
 
-  it('搜索命中正文标签', async () => {
+  it('全文搜索仍能命中正文里的 # 文本(只是不算标签命中)', async () => {
     const svc = makeService()
     await svc.create({ title: '甲', body: '正文 #project/foo' })
     await svc.create({ title: '乙', body: '无关' })
@@ -1294,6 +1272,15 @@ describe('ensureSample(首次运行的示例笔记)', () => {
     expect(note?.title).toBe('随心手记示例')
     expect(note?.body).toContain('正文')
   })
+
+  it('示例自带的标签写进 frontmatter —— 首启就有标签面板可看、可点', async () => {
+    const svc = makeService()
+    await svc.ensureSample({ ...sample, tags: ['示例', '用法演示'] })
+    const note = await svc.read('随心手记示例')
+    expect(note?.tags).toEqual(['示例', '用法演示'])
+    // 列表里也读得到:左侧标签面板的数据源就是它
+    expect((await svc.list()).notes[0]?.tags).toEqual(['示例', '用法演示'])
+  })
 })
 
 describe('ensureSample:跟随界面语言', () => {
@@ -1315,6 +1302,28 @@ describe('ensureSample:跟随界面语言', () => {
     const list = await svc.list()
     expect(list.notes.map((n) => n.title)).toEqual(['Notes feature tour'])
     expect((await svc.read('Notes feature tour'))?.body).toContain('body')
+  })
+
+  it('换语言后示例带的是新语言那套标签,不是旧的那套', async () => {
+    const svc = makeService()
+    await svc.ensureSample({ ...zhInput, tags: ['示例', '用法演示'] })
+    expect(await svc.ensureSample({ ...enInput, tags: ['sample', 'demo'] })).toBe('switched')
+    expect((await svc.read('Notes feature tour'))?.tags).toEqual(['sample', 'demo'])
+  })
+
+  it('用户动过标签(哪怕正文没改)也不换 —— 那篇已经是他的笔记了', async () => {
+    const svc = makeService()
+    await svc.ensureSample({ ...zhInput, tags: ['示例', '用法演示'] })
+    const n = await svc.read('随心手记示例')
+    await svc.save({
+      id: n!.id,
+      body: n!.body,
+      expectedRevision: n!.revision,
+      meta: { tags: ['示例'] }
+    })
+    const en = { ...EN, other: { ...ZH, tags: ['示例', '用法演示'] } }
+    expect(await svc.ensureSample(en)).toBe('none')
+    expect((await svc.list()).notes.map((x) => x.title)).toEqual(['随心手记示例'])
   })
 
   it('**用户改过一个字就不换** —— 那已经是他的笔记了', async () => {

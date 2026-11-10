@@ -43,13 +43,13 @@ export default [
   },
 
   {
-    id: 'input/tag-autocomplete-insert',
+    id: 'input/no-tag-autocomplete',
     area: 'input',
-    title: '输入 # 查询行内标签:补全弹层出现,回车插入完整标签',
+    title: '正文输入 #:不再弹标签补全(标签只在元数据行维护)',
     tags: ['input', 'completion'],
     fixture: BASIC,
     async run(ctx, t) {
-      // 标签候选来自笔记库;先给当前笔记加一个标签,再去正文里补全它。
+      // 即使笔记库里有同名标签,正文的 # 也只是普通文字
       await ctx.cdp.eval(`document.querySelector('.notes-tag-input')?.focus()`)
       await ctx.cdp.type('e2e补全标签')
       await ctx.press('Enter')
@@ -57,24 +57,19 @@ export default [
         `document.querySelector('.notes-tag-chip')?.textContent?.includes('e2e补全标签')`,
         { message: '标签已添加到笔记' }
       )
-      // 标签候选来自笔记库列表元数据,要等这次添加落盘、列表刷新之后才看得到。
       await ctx.waitSaved()
 
       const line = '第一节第一段。'
       await ctx.setCursor(line, line.length)
       await ctx.typeText(' #e2e')
-      await ctx.cdp.waitFor(`document.querySelector('.cm-tooltip-autocomplete') !== null`, {
-        message: 'tag 补全弹层出现'
-      })
-      await ctx.cdp.waitFor(
-        `[...document.querySelectorAll('.cm-tooltip-autocomplete .cm-completionMatchedText')]
-          .some((el) => el.textContent === 'e2e')`,
-        { message: '补全结果已按查询词更新' }
+      // 补全弹层有约 100ms 防抖;负向断言只能用一段有界等待来证明「没有弹」
+      await sleep(400)
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.cm-tooltip-autocomplete') === null`),
+        true,
+        '正文输入 # 不弹标签补全'
       )
-      await sleep(350)
-      await ctx.press('Enter')
-      await sleep(150)
-      includes(await ctx.body(), '#e2e补全标签', '插入完整标签')
+      includes(await ctx.body(), '#e2e', '输入的 # 保持字面')
 
       // 清掉刚加的标签,别让后续用例看到多余元数据。
       await ctx.cdp.eval(`document.querySelector('.notes-tag-chip button')?.click()`)

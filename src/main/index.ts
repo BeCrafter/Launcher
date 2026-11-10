@@ -26,7 +26,12 @@ import { connectSync } from './services/vault-sync/connect'
 import { createSyncSecrets } from './services/vault-sync/secrets'
 import { createVaultSync } from './services/vault-sync/service'
 import { installFrameScrollbar } from './services/frame-scrollbar'
-import { otherLang, sampleNoteBody, sampleNoteTitle } from './domains/note-sample'
+import {
+  otherLang,
+  sampleNoteBody,
+  sampleNoteTags,
+  sampleNoteTitle
+} from './domains/note-sample'
 import { createAiStack } from './ai'
 import type { ApplyCtx } from './settings/types'
 import { registerIpc } from './ipc'
@@ -596,12 +601,18 @@ async function startApp(): Promise<void> {
       .ensureSample({
         title: sampleNoteTitle(lang),
         body: sampleNoteBody(lang),
+        // 示例自己带标签:标签面板、筛选与搜索置顶才有真实数据可演示
+        tags: sampleNoteTags(lang),
         onSeed: () =>
           seedSampleAssets(
             resolveNotesDir({ notesDir: store.get().notesDir, home: app.getPath('home'), e2eUserData })
           ),
         // 另一种语言的版本:用来认出「那篇是我们的示例,而且用户没动过」
-        other: { title: sampleNoteTitle(otherLang(lang)), body: sampleNoteBody(otherLang(lang)) }
+        other: {
+          title: sampleNoteTitle(otherLang(lang)),
+          body: sampleNoteBody(otherLang(lang)),
+          tags: sampleNoteTags(otherLang(lang))
+        }
       })
       .then((r) => {
         if (r === 'created') console.log('[notes] 已写入示例笔记')

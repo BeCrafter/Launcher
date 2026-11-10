@@ -67,7 +67,7 @@ const WIKI_RE = /!?\[\[[^\[\]\n]{1,600}\]\]/g
 /** 一行里的 wikilink 区间(代码/转义/URL 内的不算) */
 export function scanWikilinksInLine(line: string): Array<{ from: number; to: number; link: WikiLink }> {
   // 保留 `[[...]]` 本身,只屏蔽代码/转义/URL
-  const masked = maskInlineLiterals(line, { maskWikilinks: false })
+  const masked = maskInlineLiterals(line)
   const out: Array<{ from: number; to: number; link: WikiLink }> = []
   for (const m of masked.matchAll(WIKI_RE)) {
     if (m.index === undefined) continue

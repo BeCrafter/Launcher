@@ -148,7 +148,15 @@ export default [
       includes(html, '<sup>2</sup>', '上标')
       ok(await ctx.cdp.eval(`document.querySelector('.notes-editor-pane .tk-hl') !== null`), '编辑器内 ==高亮== 有 tk-hl 着色')
       ok(await ctx.cdp.eval(`document.querySelector('.notes-editor-pane .tk-wikilink') !== null`), '编辑器内 wikilink 有着色')
-      ok(await ctx.cdp.eval(`document.querySelector('.notes-editor-pane .tk-hashtag') !== null`), '编辑器内 #标签 有着色')
+      ok(
+        await ctx.cdp.eval(`document.querySelector('.notes-editor-pane .tk-hashtag') === null`),
+        '正文 #标签 在编辑器里不着色(标签只来自 frontmatter)'
+      )
+      ok(
+        await ctx.cdp.eval(`document.querySelector('.notes-preview-body .md-tag') === null`),
+        '正文 #标签 不渲染成标签 chip'
+      )
+      includes(await ctx.previewText(), '#e2e标签', '正文 #标签 仍是普通文本')
     }
   },
 
@@ -194,17 +202,67 @@ export default [
   },
 
   {
-    id: 'markdown/tag-click-filters-rail',
+    id: 'markdown/tag-panel-filters-rail',
     area: 'markdown',
-    title: '行内标签:可点击,点击后在列表里按标签筛选',
+    title: '标签面板:frontmatter 标签可点选筛选列表,正文 #标签 不进面板',
     tags: ['tags'],
     fixture: INLINE,
     async run(ctx, t) {
-      ok(await ctx.cdp.eval(`document.querySelector('.notes-preview-body .md-tag') !== null`), '预览渲染 #标签')
-      await ctx.cdp.eval(`document.querySelector('.notes-preview-body .md-tag')?.click()`)
-      await ctx.cdp.waitFor(`document.querySelector('.notes-rail-active')?.textContent?.includes('e2e标签')`, {
+      // 唯一入口:元数据行回车加标签(写 frontmatter)
+      await ctx.cdp.eval(`document.querySelector('.notes-tag-input')?.focus()`)
+      await ctx.cdp.type('e2e筛选标签')
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-tag-chip')?.textContent?.includes('e2e筛选标签')`, {
+        message: '元数据行出现标签 chip'
+      })
+      // 面板的聚合来自保存后刷新的列表元数据
+      await ctx.waitSaved()
+
+      if (!(await ctx.cdp.eval(`document.querySelector('.notes-tag-list') !== null`))) {
+        await ctx.cdp.eval(`document.querySelector('.notes-tag-panel-hd')?.click()`)
+      }
+      await ctx.cdp.waitFor(
+        `[...document.querySelectorAll('.notes-tag-pill')].some((el) => (el.textContent ?? '').includes('e2e筛选标签'))`,
+        { message: '标签面板出现 frontmatter 标签' }
+      )
+      // pill 里 `#` 与标签名是两个相邻文本节点,计数在 .notes-tag-count 里:克隆后摘掉计数再取文本
+      const pills = await ctx.cdp.json(
+        `[...document.querySelectorAll('.notes-tag-pill')].map((el) => {
+          const c = el.cloneNode(true)
+          c.querySelector('.notes-tag-count')?.remove()
+          return (c.textContent ?? '').trim().toLowerCase()
+        })`
+      )
+      ok(!pills.some((tag) => tag.includes('e2e标签')), `正文 #e2e标签 不进标签面板(实际 ${pills.join(', ')})`)
+
+      // 点 pill 按 frontmatter 标签筛选
+      await ctx.cdp.eval(
+        `[...document.querySelectorAll('.notes-tag-pill')].find((el) => (el.textContent ?? '').includes('e2e筛选标签'))?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-rail-active')?.textContent?.includes('e2e筛选标签')`, {
         message: '列表出现标签筛选 chip'
       })
+      const rows = await ctx.cdp.json(
+        `[...document.querySelectorAll('.notes-row-main')].map((el) => el.textContent ?? '')`
+      )
+      ok(rows.some((row) => row.includes('E2E 主笔记')), '主笔记仍在列表')
+      ok(!rows.some((row) => row.includes('E2E 链接目标')), `不匹配的笔记被筛掉(实际 ${rows.join(' | ')})`)
+
+      // 清理:取消筛选、删掉标签 chip、收起面板,别污染后续用例
+      await ctx.cdp.eval(
+        `[...document.querySelectorAll('.notes-tag-pill')].find((el) => (el.textContent ?? '').includes('e2e筛选标签'))?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-rail-active') === null`, {
+        message: '筛选已清除'
+      })
+      await ctx.cdp.eval(
+        `[...document.querySelectorAll('.notes-tag-chip')].find((el) => (el.textContent ?? '').includes('e2e筛选标签'))?.querySelector('button')?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `![...document.querySelectorAll('.notes-tag-chip')].some((el) => (el.textContent ?? '').includes('e2e筛选标签'))`,
+        { message: '标签已清理' }
+      )
+      await ctx.cdp.eval(`document.querySelector('.notes-tag-panel-hd')?.click()`)
     }
   },
 

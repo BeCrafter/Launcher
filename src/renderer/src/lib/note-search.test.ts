@@ -2,14 +2,13 @@ import { describe, expect, it } from 'vitest'
 import type { NoteMeta } from '@shared/notes'
 import { rankByTagHits, tagHitsOf } from './note-search'
 
-function note(id: string, tags: string[] = [], inlineTags?: string[]): NoteMeta {
+function note(id: string, tags: string[] = []): NoteMeta {
   return {
     id,
     title: id,
     created: '2026-10-09T10:00:00+08:00',
     updated: '2026-10-09T10:00:00+08:00',
     tags,
-    inlineTags,
     pinned: false,
     refs: [],
     excerpt: '',
@@ -43,9 +42,9 @@ describe('tagHitsOf', () => {
     expect(hits.size).toBe(1)
   })
 
-  it('正文标签也参与命中', () => {
-    const hits = tagHitsOf([note('a', [], ['Project/Foo'])], 'project')
-    expect(hits.get('a')).toBe('Project/Foo')
+  it('正文里的 # 文本不参与标签命中', () => {
+    // 标签只来自 frontmatter;正文 `#Project/Foo` 是普通文字,不算标签命中
+    expect(tagHitsOf([note('a', [])], 'project').size).toBe(0)
   })
 
   it('没有标签命中就是空表', () => {

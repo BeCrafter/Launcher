@@ -74,7 +74,6 @@ import {
 import { decodeTextBytes, encodeTextBytes, normalizeEol } from '../../shared/text-file'
 import { resolveContainedFile } from '../domains/note-file'
 import { importPathsIntoNotes, resolveNoteFile as resolveFileInNotes } from './note-import'
-import { scanInlineTags } from '../../shared/inline-tags'
 import {
   assembleFile,
   bodyText,
@@ -111,8 +110,11 @@ export interface NotesService {
    */
   ensureSample(
     input: NoteCreateInput & {
-      /** 另一种语言的版本,用来认出「那篇是我们的示例且没被改过」 */
-      other?: { title: string; body: string }
+      /**
+       * 另一种语言的版本,用来认出「那篇是我们的示例且没被改过」。
+       * `tags` 也参与比对:用户点 × 删过一条标签,那篇就已经是他的了。
+       */
+      other?: { title: string; body: string; tags?: string[] }
       /** 只在**首次创建**前调一次:把示例用到的媒体文件播种进 assets/ */
       onSeed?: () => void
     }
@@ -432,9 +434,6 @@ export function createNotesService(opts: {
         created: fields.created ?? localIso(birthMs),
         updated: fields.updated ?? localIso(mtimeMs),
         tags: fields.tags ?? [],
-        // 正文标签是派生索引:frontmatter 的 tags 仍然只代表 frontmatter,
-        // 两者在界面/筛选层合并,但保存时绝不把 inlineTags 写回 frontmatter。
-        inlineTags: size > MAX_NOTE_BYTES ? [] : scanInlineTags(body),
         pinned: fields.pinned ?? false,
         refs: fields.refs ?? [],
         excerpt: excerptOf(body),
@@ -679,7 +678,7 @@ export function createNotesService(opts: {
         try {
           // 目录是空的,assets/ 里也不会有同名文件 —— 这是「不覆盖用户文件」的天然保证
           input.onSeed?.()
-          await this.create({ title: input.title, body: input.body })
+          await this.create({ title: input.title, body: input.body, tags: input.tags })
           return 'created'
         } catch (err) {
           opts.log?.(`示例笔记写入失败:${String(err)}`)
@@ -693,11 +692,19 @@ export function createNotesService(opts: {
       const hit = p.notes.find((n) => n.title === other.title)
       if (hit === undefined) return 'none'
       const full = await this.read(hit.id)
-      // 逐字比对(只忽略行尾空白):用户动过一个字就当它是他的笔记,永远不再碰
+      // 逐字比对(只忽略行尾空白):用户动过一个字就当它是他的笔记,永远不再碰。
+      // 标签也一起比 —— 正文没动、但标签被增删过,同样算「他已经动过手」。
       if (full === null || full.body.trimEnd() !== other.body.trimEnd()) return 'none'
+      const otherTags = other.tags
+      if (
+        otherTags !== undefined &&
+        (full.tags.length !== otherTags.length || full.tags.some((tag, i) => tag !== otherTags[i]))
+      ) {
+        return 'none'
+      }
       try {
         await this.remove({ id: full.id, expectedRevision: full.revision })
-        await this.create({ title: input.title, body: input.body })
+        await this.create({ title: input.title, body: input.body, tags: input.tags })
         return 'switched'
       } catch (err) {
         opts.log?.(`示例笔记换语言失败:${String(err)}`)
@@ -1329,7 +1336,6 @@ export function createNotesService(opts: {
         const hit =
           e.meta.title.toLowerCase().includes(q) ||
           e.meta.tags.some((t) => t.toLowerCase().includes(q)) ||
-          e.meta.inlineTags?.some((t) => t.toLowerCase().includes(q)) ||
           e.meta.refs.some((r) => r.label.toLowerCase().includes(q)) ||
           e.body.toLowerCase().includes(q)
         if (hit) hits.push(e.meta)

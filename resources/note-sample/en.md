@@ -556,9 +556,31 @@ Beyond the body, a note can carry a few things of its own — all on the metadat
 - **Linked services** — click "+ link a service" to attach this note to an agent, a cron job or a
   port service. The link is **two-way**: the service card grows a "related notes" entry, and it
   keeps pointing at the right thing after a rename or a restart.
-- **Tags** — type in the metadata row's input and press Enter; they live in the frontmatter, and the
-  search box on the left matches them.
+- **Tags** — type in the metadata row's input and press Enter; they live in the frontmatter, and
+  the × on a chip removes one. Tags exist **only on the metadata row**: a `#xxx` written in the
+  body is plain text, never a tag — so noting a colour like `#ff5733` in prose cannot leak into
+  the tag panel.
 - **Search** — the box on the left searches titles, bodies and tags at once.
+
+### Tag demo: this note ships with two — try them now
+
+When this sample was created the app gave it two frontmatter tags: **`sample`** and **`demo`**.
+The "Tags" panel above the list on the left is built from exactly that data — it starts collapsed,
+so expand it first.
+
+Go through it once:
+
+1. Click `sample` in the panel: the list filters down to notes carrying that tag, and a `#sample`
+   filter chip appears above it. Click `sample` again — or the × on the chip — to clear it.
+2. Type `my tag` into the metadata-row input and press Enter: the note grows a chip, and the
+   left panel grows an entry.
+3. Click the × on that new chip: the tag leaves the frontmatter and the panel loses the entry.
+4. Type `sample` into the search box: titles, bodies and tags are searched together; notes
+   carrying that tag are ranked first and the row shows `#sample` at the end, explaining why.
+
+The boundary is just as easy to check: `#not-a-tag` and the colour code `#ff5733` in this
+paragraph never show up in the panel and no filter finds them — **the only place a tag can live is
+the frontmatter**; a `#` in the body is always literal text.
 
 The file is an ordinary `.md`, so editing it in Obsidian / iCloud / git works too — the app notices
 outside changes and reloads. If you have unsaved edits at that moment it asks which copy to keep

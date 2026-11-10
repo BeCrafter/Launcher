@@ -237,7 +237,6 @@ export const enUS: Record<string, string> = {
   "notes.wikilink.missing": "Note “{NAME}” not found",
   "notes.wikilink.unsupportedEmbed": "Embedding “{NAME}” is not supported yet",
   "notes.wikilink.invalid": "Link target is not a valid title: {NAME}",
-  "notes.wikilink.filterTag": "Filter by #{NAME}",
   "notes.truncated": "{N} more not listed",
   "notes.truncatedFiles": "{N} more files not listed",
   "notes.rail.search": "Search titles, body and tags…",

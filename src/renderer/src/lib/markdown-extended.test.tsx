@@ -1164,7 +1164,7 @@ describe('折叠块(<details> / <summary>)', () => {
   })
 })
 
-describe('wikilink 与行内标签', () => {
+describe('wikilink', () => {
   const resolveImage = (): string => 'launcher-asset://asset/x'
 
   it('已解析链接渲染为可点击的 md-wikilink,别名生效', () => {
@@ -1192,37 +1192,18 @@ describe('wikilink 与行内标签', () => {
   })
 
   it('没有点击回调时是不可点的 inert span(帮助页/AI 消息)', () => {
-    const out = html('[[A]] #tag')
+    const out = html('[[A]]')
     expect(out).toContain('md-wikilink inert')
     expect(out).not.toContain('<a')
-    expect(out).toContain('md-tag')
     expect(out).not.toContain('<button')
   })
 
-  it('点击标签回调拿到标签名', () => {
-    const seen: string[] = []
-    const nodes = renderMarkdown('正文 #Alpha 与 #项目/子项', 't', {
-      extended: true,
-      onTagClick: (tag) => seen.push(tag)
-    })
-    const buttons = collect(nodes, 'button')
-    expect(buttons).toHaveLength(2)
-    ;(buttons[0]!.props.onClick as () => void)()
-    ;(buttons[1]!.props.onClick as () => void)()
-    expect(seen).toEqual(['Alpha', '项目/子项'])
-  })
-
-  it('非法标签、URL 片段、代码、转义保持字面量', () => {
-    const out = html('#123 foo#bar https://x/#frag `#code` \\#escaped')
+  it('正文里的 #标签 与颜色码保持字面量(标签只来自 frontmatter)', () => {
+    const out = html('正文 #tag #项目/子项 #ff5733 与 ## 关于 #tag')
     expect(out).not.toContain('md-tag')
-    expect(out).toContain('#123')
-    expect(out).toContain('#frag')
-    expect(out).toContain('#escaped')
-  })
-
-  it('标题行里的标签仍识别', () => {
-    const out = html('## 关于 #tag')
-    expect(out).toContain('md-tag')
+    expect(out).toContain('#tag')
+    expect(out).toContain('#项目/子项')
+    expect(out).toContain('#ff5733')
   })
 
   it('转义的 wikilink 保持字面量', () => {

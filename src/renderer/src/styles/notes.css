@@ -2465,27 +2465,6 @@ body.cm-block-dragging {
   font-size: 11.5px;
 }
 
-/* 行内 #标签:小圆角 pill。预览里可点(点一下按标签筛选侧栏) */
-.notes-preview-body .md-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--wash-accent);
-  color: var(--accent2);
-  font-size: 0.94em;
-  line-height: 1.55;
-  font-family: inherit;
-}
-.notes-preview-body button.md-tag {
-  cursor: pointer;
-}
-.notes-preview-body button.md-tag:hover {
-  color: var(--text);
-}
-
-
 /* 关联选择器(根级浮层) */
 .note-ref-picker {
   position: fixed;
@@ -2949,7 +2928,6 @@ body.cm-block-dragging {
 .note-editor-host .tk-callout-caution { color: var(--red); }
 /* Obsidian 扩展语法(语法树里没有,由 editor-marks 扫描上色)。源码模式:只改颜色 */
 .note-editor-host .tk-wikilink { color: var(--cyan); }
-.note-editor-host .tk-hashtag { color: var(--accent2); }
 
 /* ══════════════════════════════════════════════════════════════════
    编辑器:源码模式(没有块级装饰)

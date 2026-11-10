@@ -237,7 +237,6 @@ export const zhCN: Record<string, string> = {
   "notes.wikilink.missing": "找不到笔记「{NAME}」",
   "notes.wikilink.unsupportedEmbed": "暂不支持嵌入「{NAME}」",
   "notes.wikilink.invalid": "链接目标不是合法标题：{NAME}",
-  "notes.wikilink.filterTag": "按 #{NAME} 筛选",
   "notes.truncated": "另有 {N} 篇未列出",
   "notes.truncatedFiles": "另有 {N} 个文件未列出",
   "notes.rail.search": "搜索标题、正文与标签…",
