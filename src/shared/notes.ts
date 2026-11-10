@@ -5,6 +5,18 @@
 
 import { LAUNCHER_CONFIG_DIR_SUFFIX } from './constants'
 
+/**
+ * 同步的默认排除。gitignore 风格,预填在设置里。
+ * 用户清空后就是明确要全部同步,normalize 不会把空串填回这一段。
+ */
+export const DEFAULT_SYNC_IGNORE = ['.*', '*.tmp', '*.md.tmp'].join('\n')
+
+/** 排除规则文本上限。设置文件是明文,不设界时损坏文件能把它撑大 */
+export const SYNC_IGNORE_MAX = 8 * 1024
+
+/** WebDAV / S3 单文件上限。再大的跳过并记进结果,不按格式另设 */
+export const SYNC_HTTP_MAX_BYTES = 128 * 1024 * 1024
+
 // ── 上限 ──
 /** 单篇笔记正文上限:超过则读/写都拒绝(README 的「笔记」不该是数据仓库) */
 export const MAX_NOTE_BYTES = 1024 * 1024

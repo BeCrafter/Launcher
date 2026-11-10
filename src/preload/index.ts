@@ -23,7 +23,8 @@ const EVENT_CHANNELS: readonly IpcEventChannel[] = [
   IPC_EVENTS.servicesUpdated,
   IPC_EVENTS.aiRunEvent,
   IPC_EVENTS.notesChanged,
-  IPC_EVENTS.appUpdateChanged
+  IPC_EVENTS.appUpdateChanged,
+  IPC_EVENTS.notesSyncChanged
 ]
 
 const api: LauncherApi = {
@@ -145,6 +146,14 @@ const api: LauncherApi = {
     saveFile: (input) => ipcRenderer.invoke(IPC.notesSaveFile, input),
     createFile: (input) => ipcRenderer.invoke(IPC.notesCreateFile, input),
     renameFile: (input) => ipcRenderer.invoke(IPC.notesRenameFile, input)
+  },
+  notesSync: {
+    status: () => ipcRenderer.invoke(IPC.notesSyncStatus),
+    syncNow: () => ipcRenderer.invoke(IPC.notesSyncNow),
+    resolve: (path, keep) => ipcRenderer.invoke(IPC.notesSyncResolve, path, keep),
+    setSecret: (provider, secret) => ipcRenderer.invoke(IPC.notesSyncSetSecret, provider, secret),
+    revealSecret: (provider) => ipcRenderer.invoke(IPC.notesSyncRevealSecret, provider),
+    test: () => ipcRenderer.invoke(IPC.notesSyncTest)
   }
 }
 

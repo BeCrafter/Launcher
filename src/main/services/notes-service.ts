@@ -173,6 +173,8 @@ export interface NotesService {
   /** 仅应用内:目录监听。独立进程不调用 */
   start(): void
   stop(): void
+  /** 目录有变动(含应用自己的保存)。同步用来去抖,不依赖扫描出的 id */
+  onDirChange(cb: () => void): () => void
 }
 
 export type NoteAssetFailReason = 'invalid' | 'not-image' | 'too-large' | 'io'
@@ -210,6 +212,9 @@ export function createNotesService(opts: {
 }): NotesService {
   const log = opts.log ?? ((): void => {})
   const now = opts.now ?? ((): number => Date.now())
+
+  /** 目录变动的旁路。同步用它去抖,不走「外部改动」那条(那条会漏掉应用自己的保存) */
+  const dirListeners = new Set<() => void>()
 
   /** 索引:元数据 + 用于判「要不要重读」的 (mtimeMs, size) + 已算出的 revision */
   interface Entry {
@@ -1401,6 +1406,7 @@ export function createNotesService(opts: {
         dirs: [dir],
         debounceMs: 400,
         onChange: () => {
+          for (const cb of dirListeners) cb()
           const { changed, foldersChanged, filesChanged } = scan()
           // 目录 / 文件变化也要上报:新建一个空目录、丢进一个 PDF 时没有任何笔记 id 可带,
           // 但界面必须刷新出它
@@ -1414,6 +1420,11 @@ export function createNotesService(opts: {
     stop() {
       watcher?.stop()
       watcher = null
+    },
+
+    onDirChange(cb) {
+      dirListeners.add(cb)
+      return () => dirListeners.delete(cb)
     }
   }
 }

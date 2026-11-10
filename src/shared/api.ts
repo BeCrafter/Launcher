@@ -10,6 +10,8 @@ import type {
   CronUpdateResult,
   IpcEventChannel,
   KillOutcome,
+  NotesSyncStatus,
+  NotesSyncTestResult,
   RestartOutcome,
   ServicesListPayload,
   SettingsPatch,
@@ -44,7 +46,7 @@ import type {
   SaveOutcome,
   SaveXmlInput
 } from './models'
-import type { LauncherSettings, AiProviderId } from './settings'
+import type { LauncherSettings, AiProviderId, NotesSyncProvider } from './settings'
 import type { AiEngineState, AiMessage, AiSession, AiSkillInfo } from './ai'
 import type {
   Note,
@@ -246,6 +248,15 @@ export interface LauncherApi {
     createFile: (input: NoteFileCreateInput) => Promise<NoteFileCreateOutcome>
     /** 重命名文件(只改主名,扩展名固定) */
     renameFile: (input: NoteFileRenameInput) => Promise<NoteFileRenameOutcome>
+  }
+  /** 笔记目录同步。秘密明文只在设置页点眼睛时取一次 */
+  notesSync: {
+    status: () => Promise<NotesSyncStatus>
+    syncNow: () => Promise<NotesSyncStatus>
+    resolve: (path: string, keep: 'local' | 'remote') => Promise<NotesSyncStatus>
+    setSecret: (provider: Exclude<NotesSyncProvider, 'smb'>, secret: string) => Promise<NotesSyncStatus>
+    revealSecret: (provider: Exclude<NotesSyncProvider, 'smb'>) => Promise<string>
+    test: () => Promise<NotesSyncTestResult>
   }
   /**
    * 从拖入的 File 取本地绝对路径(Electron 44 已移除 File.path)。

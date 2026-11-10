@@ -140,7 +140,21 @@ export function installLauncherStub(options: LauncherStubOptions = {}): MockedLa
       skills: vi.fn(async () => []),
       catalog: vi.fn(async () => [])
     },
-    notes: { search: vi.fn(async () => []) }
+    notes: { search: vi.fn(async () => []) },
+    notesSync: {
+      status: vi.fn(async () => ({
+        phase: 'idle',
+        lastSyncAt: 0,
+        conflicts: [],
+        errors: [],
+        hasSecret: {}
+      })),
+      syncNow: vi.fn(async () => ({ phase: 'idle', lastSyncAt: 0, conflicts: [], errors: [], hasSecret: {} })),
+      resolve: vi.fn(async () => ({ phase: 'idle', lastSyncAt: 0, conflicts: [], errors: [], hasSecret: {} })),
+      setSecret: vi.fn(async () => ({ phase: 'idle', lastSyncAt: 0, conflicts: [], errors: [], hasSecret: {} })),
+      revealSecret: vi.fn(async () => ''),
+      test: vi.fn(async () => ({ ok: true, message: 'ok' }))
+    }
   }
 
   // 一层深合并:覆盖 ai.respondApproval 不会把 ai 其它默认值整块丢掉。

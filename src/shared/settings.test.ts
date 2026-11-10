@@ -53,6 +53,34 @@ describe('normalizeSettings', () => {
     expect(out.language).toBe('en-US')
     expect(out.cmdTimeout).toBe(DEFAULT_SETTINGS.cmdTimeout)
   })
+
+  it('笔记同步:默认关闭,空排除保持空,没选中的协议配置留着', () => {
+    expect(normalizeSettings({}).notesSync).toEqual(DEFAULT_SETTINGS.notesSync)
+    const out = normalizeSettings({
+      notesSync: {
+        enabled: true,
+        provider: 'webdav',
+        ignore: '',
+        github: { repo: 'o/r', branch: 'dev', apiBaseUrl: '' },
+        webdav: { url: ' https://dav.example/notes ', username: 'me' },
+        s3: { forcePathStyle: true, bucket: 'vault' }
+      }
+    })
+    expect(out.notesSync.enabled).toBe(true)
+    expect(out.notesSync.provider).toBe('webdav')
+    expect(out.notesSync.ignore).toBe('')
+    expect(out.notesSync.github.repo).toBe('o/r')
+    expect(out.notesSync.webdav).toEqual({ url: 'https://dav.example/notes', username: 'me' })
+    expect(out.notesSync.s3.bucket).toBe('vault')
+    expect(out.notesSync.s3.forcePathStyle).toBe(true)
+    expect(out.notesSync.gitlab.repo).toBe('')
+  })
+
+  it('笔记同步:非法协议回默认,超长排除被截断', () => {
+    const out = normalizeSettings({ notesSync: { provider: 'gitee', ignore: 'a'.repeat(9000) } })
+    expect(out.notesSync.provider).toBe('github')
+    expect(out.notesSync.ignore.length).toBe(8 * 1024)
+  })
 })
 
 describe('normalizeServiceOverrides', () => {

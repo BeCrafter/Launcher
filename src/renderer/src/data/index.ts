@@ -7,6 +7,7 @@ import { createIpcCronRepo } from './ipc/cron-source'
 import { createIpcServicesRepo } from './ipc/services-source'
 import { createIpcNotesRepo } from './ipc/notes-source'
 import { createIpcAiRepo } from './ipc/ai-source'
+import { createIpcNotesSyncRepo } from './ipc/notes-sync-source'
 
 let instance: DataSource | null = null
 
@@ -17,7 +18,8 @@ export function dataSource(): DataSource {
       crons: createIpcCronRepo(),
       services: createIpcServicesRepo(),
       notes: createIpcNotesRepo(),
-      ai: createIpcAiRepo()
+      ai: createIpcAiRepo(),
+      notesSync: createIpcNotesSyncRepo()
     }
   }
   return instance

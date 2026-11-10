@@ -7,13 +7,12 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { safeStorage } from 'electron'
-import type { AiProviderId } from '../../shared/settings'
 
-export interface SecretStore {
-  get(providerId: AiProviderId): string | null
-  set(providerId: AiProviderId, apiKey: string): void
-  clear(providerId: AiProviderId): void
-  has(providerId: AiProviderId): boolean
+export interface SecretStore<K extends string = string> {
+  get(id: K): string | null
+  set(id: K, secret: string): void
+  clear(id: K): void
+  has(id: K): boolean
 }
 
 interface Options {
@@ -31,7 +30,7 @@ interface Options {
  * safeStorage 不可用(极少数无钥匙串的环境)时**拒绝写入**而不是降级明文 ——
  * 降级会让「加密保存」的界面承诺变成谎话,而用户无从察觉。
  */
-export function createSecretStore(opts: Options): SecretStore {
+export function createSecretStore<K extends string = string>(opts: Options): SecretStore<K> {
   const crypto = opts.crypto ?? {
     available: () => safeStorage.isEncryptionAvailable(),
     encrypt: (s: string) => safeStorage.encryptString(s).toString('base64'),
@@ -62,8 +61,8 @@ export function createSecretStore(opts: Options): SecretStore {
   }
 
   return {
-    get(providerId) {
-      const enc = read()[providerId]
+    get(id) {
+      const enc = read()[id]
       if (!enc) return null
       try {
         return crypto.decrypt(enc)
@@ -72,24 +71,24 @@ export function createSecretStore(opts: Options): SecretStore {
         return null
       }
     },
-    set(providerId, apiKey) {
-      const key = apiKey.trim()
+    set(id, secret) {
+      const key = secret.trim()
       if (key === '') {
-        this.clear(providerId)
+        this.clear(id)
         return
       }
       if (!crypto.available()) {
-        throw new Error('系统钥匙串不可用,无法安全保存 API Key')
+        throw new Error('系统钥匙串不可用,无法安全保存密钥')
       }
-      write({ ...read(), [providerId]: crypto.encrypt(key) })
+      write({ ...read(), [id]: crypto.encrypt(key) })
     },
-    clear(providerId) {
+    clear(id) {
       const data = read()
-      delete data[providerId]
+      delete data[id]
       write(data)
     },
-    has(providerId) {
-      return this.get(providerId) !== null
+    has(id) {
+      return this.get(id) !== null
     }
   }
 }

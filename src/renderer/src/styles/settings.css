@@ -278,6 +278,18 @@
   margin-top: 2px;
 }
 
+#sp-notes {
+  --cfg-field-w: 280px;
+}
+
+.settings-sync-errors {
+  margin: 4px 0 8px;
+  padding-left: 16px;
+  color: var(--dim);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
 .settings-select {
   min-width: 160px;
   background: rgba(255, 255, 255, 0.06);

@@ -12,6 +12,7 @@ import {
   type PickedFile,
   type PickFileMode,
   type ServicesListPayload,
+  type NotesSyncStatus,
   type SettingsPatch
 } from '../shared/ipc'
 import { isAllowedExternalUrl } from '../shared/url-guard'
@@ -27,6 +28,8 @@ import type { TrayController } from './settings/types'
 import type { AiStack } from './ai'
 import type { NotesService } from './services/notes-service'
 import type { UpdateController } from './services/update-controller'
+import type { VaultSync } from './services/vault-sync/service'
+import { SYNC_SECRET_IDS, type SyncSecretId, type SyncSecrets } from './services/vault-sync/secrets'
 import type {
   NoteCreateInput,
   NoteFileCreateInput,
@@ -69,6 +72,8 @@ export interface IpcDeps {
   notes: NotesService
   /** 应用内更新(检查/下载/重启) */
   updater: UpdateController
+  /** 笔记同步。独立进程不传:它没有网络和设置 */
+  sync?: { engine: VaultSync; secrets: SyncSecrets; test: () => Promise<{ ok: boolean; message: string }> }
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -356,4 +361,49 @@ export function registerIpc(deps: IpcDeps): void {
     }
     await shell.openPath(deps.notes.dir())
   })
+
+  // ── 笔记同步 ──
+  // 状态只含布尔,秘密明文只在设置页点眼睛时取一次
+  const isSecretId = (provider: string): provider is SyncSecretId =>
+    (SYNC_SECRET_IDS as readonly string[]).includes(provider)
+  const syncStatus = (): NotesSyncStatus => {
+    const base = deps.sync?.engine.status() ?? {
+      phase: 'idle' as const,
+      lastSyncAt: 0,
+      conflicts: [],
+      errors: []
+    }
+    const hasSecret: NotesSyncStatus['hasSecret'] = {}
+    for (const id of SYNC_SECRET_IDS) hasSecret[id] = deps.sync?.secrets.has(id) ?? false
+    return { ...base, hasSecret }
+  }
+  ipcMain.handle(IPC.notesSyncStatus, () => syncStatus())
+  const pushSync = (): NotesSyncStatus => {
+    const status = syncStatus()
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w.isDestroyed() || w.webContents.isDestroyed()) continue
+      w.webContents.send(IPC_EVENTS.notesSyncChanged, status)
+    }
+    return status
+  }
+  ipcMain.handle(IPC.notesSyncNow, async () => {
+    if (deps.sync) await deps.sync.engine.syncNow()
+    return pushSync()
+  })
+  ipcMain.handle(IPC.notesSyncResolve, async (_e, path: string, keep: 'local' | 'remote') => {
+    if (deps.sync && (keep === 'local' || keep === 'remote')) {
+      await deps.sync.engine.resolve(String(path ?? ''), keep)
+    }
+    return pushSync()
+  })
+  ipcMain.handle(IPC.notesSyncSetSecret, (_e, provider: string, secret: string) => {
+    if (!deps.sync || !isSecretId(provider)) return syncStatus()
+    deps.sync.secrets.set(provider, String(secret ?? ''))
+    return syncStatus()
+  })
+  ipcMain.handle(IPC.notesSyncRevealSecret, (_e, provider: string) => {
+    if (!deps.sync || !isSecretId(provider)) return ''
+    return deps.sync.secrets.get(provider) ?? ''
+  })
+  ipcMain.handle(IPC.notesSyncTest, () => deps.sync?.test() ?? { ok: false, message: '同步未启用' })
 }

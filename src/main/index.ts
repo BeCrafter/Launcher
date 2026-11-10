@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { APP_NAME } from '../shared/constants'
 import { resolveNotesDir } from '../shared/notes'
-import { IPC, IPC_EVENTS, type BootPaintPhase, type InstallChannel } from '../shared/ipc'
+import { IPC, IPC_EVENTS, type BootPaintPhase, type InstallChannel, type NotesSyncStatus } from '../shared/ipc'
 import { createSettingsStore, defaultConfigPath, type SettingsStore } from './settings/store'
 import { applyDockIcon } from './settings/appliers/dock'
 import { applyThemeSource, windowBgColor } from './settings/appliers/appearance'
@@ -22,6 +22,9 @@ import { appBundleFromExecutable } from './services/update-target'
 import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
 import { handleNotesProtocol, registerNotesScheme } from './services/notes-protocol'
+import { connectSync } from './services/vault-sync/connect'
+import { createSyncSecrets } from './services/vault-sync/secrets'
+import { createVaultSync } from './services/vault-sync/service'
 import { installFrameScrollbar } from './services/frame-scrollbar'
 import { otherLang, sampleNoteBody, sampleNoteTitle } from './domains/note-sample'
 import { createAiStack } from './ai'
@@ -459,6 +462,52 @@ async function startApp(): Promise<void> {
     emit: (ev) => broadcast(IPC_EVENTS.aiRunEvent, ev)
   })
 
+  // 笔记同步。秘密和快照都在 userData,不进笔记目录。MCP 进程不走这里。
+  const userDataDir = app.getPath('userData')
+  const notesSyncSecrets = createSyncSecrets({ path: join(userDataDir, 'notes-sync-secrets.json') })
+  const syncHttp = {
+    fetch: ((input: RequestInfo | URL, init?: RequestInit) => net.fetch(input as never, init as never)) as typeof fetch
+  }
+  const notesRoot = (): string =>
+    resolveNotesDir({
+      notesDir: store.get().notesDir,
+      home: app.getPath('home'),
+      e2eUserData
+    })
+  const vaultSync = createVaultSync({
+    getRoot: notesRoot,
+    getIgnore: () => store.get().notesSync.ignore,
+    getTargetId: () => '',
+    getStore: () => {
+      const cfg = store.get().notesSync
+      if (!cfg.enabled) return null
+      return connectSync(cfg, notesSyncSecrets, syncHttp)?.store ?? null
+    },
+    statePath: join(userDataDir, 'notes-sync-state.json'),
+    maxBytes: () => connectSync(store.get().notesSync, notesSyncSecrets, syncHttp)?.maxBytes ?? 0,
+    debounceMs: 30_000,
+    onPulled: () => {
+      // 拉取是外部写入。扫一遍让打开着的笔记走现有的重载/冲突,不在这里改 lastKnownRevision
+      void notes.list().then((payload) => broadcast(IPC_EVENTS.notesChanged, { ids: payload.notes.map((n) => n.id) }))
+    },
+    trash: (path) => shell.trashItem(path),
+    log: (m) => console.log(`[notes-sync] ${m}`)
+  })
+  const publishSync = (): void => {
+    const status: NotesSyncStatus = { ...vaultSync.status(), hasSecret: {} }
+    broadcast(IPC_EVENTS.notesSyncChanged, status)
+  }
+  const syncTest = async (): Promise<{ ok: boolean; message: string }> => {
+    const connected = connectSync(store.get().notesSync, notesSyncSecrets, syncHttp)
+    if (connected === null) return { ok: false, message: '还没填完' }
+    try {
+      await connected.store.list()
+      return { ok: true, message: '' }
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
   // ⚠ 顺序约束(别顺手调换):
   //   · 主题必须在建窗**之前**(否则窗口底色跟随系统而不是应用主题);
   //   · registerIpc() 也必须在建窗**之前** —— 渲染层启动瞬间就会调 settings:get / agents:list;
@@ -477,7 +526,8 @@ async function startApp(): Promise<void> {
     getInstallChannel,
     ai,
     notes,
-    updater
+    updater,
+    sync: { engine: vaultSync, secrets: notesSyncSecrets, test: syncTest }
   })
 
   createWindow()
@@ -512,6 +562,19 @@ async function startApp(): Promise<void> {
     (m) => console.log(`[notes] ${m}`)
   )
   notes.start() // 笔记目录 fs.watch(仅上报外部改动;正确性不依赖它 —— list() 每次都 stat)
+
+  // 目录变动(应用自己的保存、以及访达里的改动)都进同步。去抖在引擎里。
+  notes.onDirChange(() => {
+    if (store.get().notesSync.enabled) vaultSync.notifyLocalChange()
+  })
+  // 较长的一轮,盖住没触发目录事件的情况。设置关掉就空转。
+  const syncInterval = setInterval(() => {
+    if (store.get().notesSync.enabled) void vaultSync.syncNow().then(publishSync)
+  }, 15 * 60 * 1000)
+  app.once('before-quit', () => {
+    clearInterval(syncInterval)
+    vaultSync.stop()
+  })
 
   // launchd 日志轮转:user 作用域且位于 ~/Library/Logs 下的 stdout/stderr。
   // 建窗后才启动,启动 5s 后跑一轮,之后每小时;settings 改动在下一轮生效。

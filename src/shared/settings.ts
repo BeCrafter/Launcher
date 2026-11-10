@@ -3,6 +3,7 @@
 // 键名承接原型 localStorage(launcherTheme → theme 等)
 
 import { TABLE_BORDERS, type TableBorder } from './note-table-style'
+import { DEFAULT_SYNC_IGNORE, SYNC_IGNORE_MAX } from './notes'
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 export type Language = 'zh-CN' | 'en-US'
@@ -126,6 +127,61 @@ export interface LauncherSettings {
   aiRequestTimeout: number
   /** MCP 外部访问权限模式 */
   mcpPermission: McpPermission
+  // ── 笔记同步 ──
+  /** 同步哪一种远端。只启用这一项,没有自动探测 */
+  notesSync: NotesSyncSettings
+}
+
+export type NotesSyncProvider = 'github' | 'gitlab' | 'webdav' | 'smb' | 's3'
+
+/** GitHub 与 GitLab 共用的非秘密字段。Token 在 notes-sync-secrets.json */
+export interface NotesSyncGitConfig {
+  /** GitHub 是 owner/repo,GitLab 是 namespace/project */
+  repo: string
+  /** 空 = 仓库默认分支(GitHub)或 main(GitLab) */
+  branch: string
+  /** 空 = 官方 API。自建填这里 */
+  apiBaseUrl: string
+}
+
+export interface NotesSyncWebDavConfig {
+  /** 目录 URL */
+  url: string
+  username: string
+}
+
+export interface NotesSyncSmbConfig {
+  /** 访达挂载点。密码不进应用 */
+  mountPath: string
+}
+
+export interface NotesSyncS3Config {
+  endpoint: string
+  region: string
+  bucket: string
+  /** 只同步这个前缀下面;空 = 整个桶 */
+  prefix: string
+  accessKeyId: string
+  forcePathStyle: boolean
+}
+
+/**
+ * 笔记目录同步。秘密(Token / 密码 / S3 Secret)不在这里 —— 设置文件是明文 JSON。
+ * 五枝各自留着:切走再切回来,没选中的那一枝不会被清掉。
+ */
+export interface NotesSyncSettings {
+  enabled: boolean
+  provider: NotesSyncProvider
+  /**
+   * gitignore 风格的排除文本。默认是 {@link DEFAULT_SYNC_IGNORE}。
+   * 空串是用户明确要全部同步,不要填回默认。
+   */
+  ignore: string
+  github: NotesSyncGitConfig
+  gitlab: NotesSyncGitConfig
+  webdav: NotesSyncWebDavConfig
+  smb: NotesSyncSmbConfig
+  s3: NotesSyncS3Config
 }
 
 export const DEFAULT_SETTINGS: LauncherSettings = {
@@ -169,7 +225,17 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   aiToolCallLimit: 8,
   aiStream: true,
   aiRequestTimeout: 60,
-  mcpPermission: 'readOnly'
+  mcpPermission: 'readOnly',
+  notesSync: {
+    enabled: false,
+    provider: 'github',
+    ignore: DEFAULT_SYNC_IGNORE,
+    github: { repo: '', branch: '', apiBaseUrl: '' },
+    gitlab: { repo: '', branch: '', apiBaseUrl: '' },
+    webdav: { url: '', username: '' },
+    smb: { mountPath: '' },
+    s3: { endpoint: '', region: '', bucket: '', prefix: '', accessKeyId: '', forcePathStyle: false }
+  }
 }
 
 const THEME_VALUES: ThemeMode[] = ['system', 'light', 'dark']
@@ -184,6 +250,8 @@ const AI_PROVIDER_VALUES: AiProviderId[] = ['anthropic', 'openai-compatible']
 const AI_TOOL_ROUNDS_VALUES = [4, 8, 16]
 const AI_TIMEOUT_VALUES = [30, 60, 120]
 const MCP_PERMISSION_VALUES: McpPermission[] = ['readOnly', 'full']
+const NOTES_SYNC_PROVIDERS: NotesSyncProvider[] = ['github', 'gitlab', 'webdav', 'smb', 's3']
+const SYNC_FIELD_MAX = 400
 /** 模型 id 上限:防损坏文件塞进超长串(正常模型 id 数十字符) */
 const AI_MODEL_ID_MAX = 200
 /** 快捷填入最多留几个模型:再多会把这一行撑爆(demo 原本列整个目录,用户要求收敛到最近 3 个) */
@@ -369,6 +437,50 @@ export function normalizeSettings(raw: unknown): LauncherSettings {
     aiToolCallLimit: enumNumberOr(r.aiToolCallLimit, AI_TOOL_ROUNDS_VALUES, d.aiToolCallLimit),
     aiStream: boolOr(r.aiStream, d.aiStream),
     aiRequestTimeout: enumNumberOr(r.aiRequestTimeout, AI_TIMEOUT_VALUES, d.aiRequestTimeout),
-    mcpPermission: enumOr(r.mcpPermission, MCP_PERMISSION_VALUES, d.mcpPermission)
+    mcpPermission: enumOr(r.mcpPermission, MCP_PERMISSION_VALUES, d.mcpPermission),
+    notesSync: normalizeNotesSync(r.notesSync)
+  }
+}
+
+function syncText(v: unknown, max = SYNC_FIELD_MAX): string {
+  return typeof v === 'string' ? v.trim().slice(0, max) : ''
+}
+
+function syncGit(v: unknown): NotesSyncGitConfig {
+  const o = typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+  return {
+    repo: syncText(o.repo),
+    branch: syncText(o.branch),
+    apiBaseUrl: syncText(o.apiBaseUrl)
+  }
+}
+
+/**
+ * 五枝都读,不因当前 provider 丢掉其余枝。
+ * ignore 只截断,空串保持空串。
+ */
+export function normalizeNotesSync(v: unknown): NotesSyncSettings {
+  const d = DEFAULT_SETTINGS.notesSync
+  const o = typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+  const web = typeof o.webdav === 'object' && o.webdav !== null ? (o.webdav as Record<string, unknown>) : {}
+  const smb = typeof o.smb === 'object' && o.smb !== null ? (o.smb as Record<string, unknown>) : {}
+  const s3 = typeof o.s3 === 'object' && o.s3 !== null ? (o.s3 as Record<string, unknown>) : {}
+  const ignore = typeof o.ignore === 'string' ? o.ignore.slice(0, SYNC_IGNORE_MAX) : d.ignore
+  return {
+    enabled: boolOr(o.enabled, d.enabled),
+    provider: enumOr(o.provider, NOTES_SYNC_PROVIDERS, d.provider),
+    ignore,
+    github: syncGit(o.github),
+    gitlab: syncGit(o.gitlab),
+    webdav: { url: syncText(web.url), username: syncText(web.username) },
+    smb: { mountPath: syncText(smb.mountPath) },
+    s3: {
+      endpoint: syncText(s3.endpoint),
+      region: syncText(s3.region),
+      bucket: syncText(s3.bucket),
+      prefix: syncText(s3.prefix),
+      accessKeyId: syncText(s3.accessKeyId),
+      forcePathStyle: boolOr(s3.forcePathStyle, d.s3.forcePathStyle)
+    }
   }
 }

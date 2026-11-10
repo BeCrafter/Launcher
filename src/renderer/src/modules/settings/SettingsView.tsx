@@ -13,6 +13,7 @@ import { SettingsSection, SettingsRow, SettingsHero } from './SettingsBits'
 import { UpdatePanel } from './UpdatePanel'
 import { ThemeCards } from './ThemeCards'
 import { AiPane } from './AiPane'
+import { NotesSyncPane } from './NotesSyncPane'
 import { useSettingsNav } from '../../state/settings-nav-store'
 import { Toggle } from '../../components/ui/Toggle'
 import { GITHUB_REPO_URL } from '@shared/constants'
@@ -470,6 +471,7 @@ export function SettingsView(): React.JSX.Element {
                   }
                 />
               </SettingsSection>
+              <NotesSyncPane />
               <SettingsSection
                 icon="fa-solid fa-circle-info"
                 title={t('settings.notes.hint.sectionTitle')}

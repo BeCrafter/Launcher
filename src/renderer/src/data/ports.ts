@@ -35,10 +35,12 @@ import type {
   AiRetractInput,
   AiRetractResult,
   AiSendInput,
-  AiTestResult
+  AiTestResult,
+  NotesSyncStatus,
+  NotesSyncTestResult
 } from '@shared/ipc'
 import type { AiEngineState, AiMessage, AiRunEvent, AiSession, AiSkillInfo } from '@shared/ai'
-import type { AiProviderId } from '@shared/settings'
+import type { AiProviderId, NotesSyncProvider } from '@shared/settings'
 import type {
   Note,
   NoteCreateInput,
@@ -134,6 +136,17 @@ export interface DataSource {
   services: ServiceRepository
   notes: NotesRepository
   ai: AiRepository
+  notesSync: NotesSyncRepository
+}
+
+export interface NotesSyncRepository {
+  status(): Promise<NotesSyncStatus>
+  syncNow(): Promise<NotesSyncStatus>
+  resolve(path: string, keep: 'local' | 'remote'): Promise<NotesSyncStatus>
+  setSecret(provider: Exclude<NotesSyncProvider, 'smb'>, secret: string): Promise<NotesSyncStatus>
+  revealSecret(provider: Exclude<NotesSyncProvider, 'smb'>): Promise<string>
+  test(): Promise<NotesSyncTestResult>
+  onChanged(cb: (status: NotesSyncStatus) => void): () => void
 }
 
 /**

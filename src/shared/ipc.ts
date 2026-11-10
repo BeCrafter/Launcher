@@ -2,7 +2,7 @@
 
 import type { AgentScope, CronJob } from './models'
 import type { CronScope, DockerContainer, DockerUnavailableReason, PortService } from './models'
-import type { LauncherSettings } from './settings'
+import type { LauncherSettings, NotesSyncProvider } from './settings'
 import type { AiApprovalDecision, AiAttachment, AiMention, AiUserSegment } from './ai'
 
 // ── invoke 通道 ──
@@ -121,7 +121,14 @@ export const IPC = {
   /** 在指定目录新建空文件(非 Markdown) */
   notesCreateFile: 'notes:createFile',
   /** 重命名文件(只改主名,扩展名固定) */
-  notesRenameFile: 'notes:renameFile'
+  notesRenameFile: 'notes:renameFile',
+  // ── 笔记同步 ──
+  notesSyncStatus: 'notesSync:status',
+  notesSyncNow: 'notesSync:syncNow',
+  notesSyncResolve: 'notesSync:resolve',
+  notesSyncSetSecret: 'notesSync:setSecret',
+  notesSyncRevealSecret: 'notesSync:revealSecret',
+  notesSyncTest: 'notesSync:test'
 } as const
 
 // ── main → renderer 推送事件(preload onEvent 白名单) ──
@@ -136,7 +143,9 @@ export const IPC_EVENTS = {
   /** 笔记目录被外部改动(去抖命中;ids = 内容真的变了的那些) */
   notesChanged: 'notes:changed',
   /** 应用更新状态快照(阶段变化 + 下载进度,节流后推送) */
-  appUpdateChanged: 'app:updateChanged'
+  appUpdateChanged: 'app:updateChanged',
+  /** 笔记同步状态变化(跑完一轮、冲突、失败) */
+  notesSyncChanged: 'notesSync:changed'
 } as const
 
 export type IpcEventChannel = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]
@@ -342,6 +351,22 @@ export const ELEVATION_FAILED = 'ELEVATION_FAILED'
 
 // settings:set 的合法 patch(部分键)
 export type SettingsPatch = Partial<LauncherSettings>
+
+/** 笔记同步状态。秘密不在这里,只回每个协议有没有配 */
+export interface NotesSyncStatus {
+  phase: 'idle' | 'running' | 'conflict' | 'error'
+  lastSyncAt: number
+  conflicts: string[]
+  errors: { path: string; message: string }[]
+  message?: string
+  /** github / gitlab / webdav / s3。SMB 没有秘密,不出现 */
+  hasSecret: Partial<Record<Exclude<NotesSyncProvider, 'smb'>, boolean>>
+}
+
+export interface NotesSyncTestResult {
+  ok: boolean
+  message: string
+}
 
 // ── AI 助手负载(阶段 4) ──
 
