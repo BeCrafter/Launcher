@@ -4,7 +4,7 @@
 //   · 不能把新笔记的 dirty 清掉(否则新笔记的输入再也不会被保存);
 //   · 旧笔记的冲突不能挂到新笔记的裁决上(否则「使用磁盘版本」会把旧内容灌进新草稿)。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Note } from '@shared/notes'
+import type { Note, NoteFileStat, NoteFileTextDoc } from '@shared/notes'
 
 const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
@@ -13,7 +13,11 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   search: vi.fn(),
   createFile: vi.fn(),
-  renameFile: vi.fn()
+  renameFile: vi.fn(),
+  move: vi.fn(),
+  statFile: vi.fn(),
+  flushFile: vi.fn(),
+  repath: vi.fn()
 }))
 
 vi.mock('../lib/utils', () => ({ showToast: mocks.toast }))
@@ -26,12 +30,26 @@ vi.mock('../data', () => ({
       search: mocks.search,
       createFile: mocks.createFile,
       renameFile: mocks.renameFile,
+      move: mocks.move,
+      statFile: mocks.statFile,
       rename: vi.fn()
     }
   })
 }))
+vi.mock('./files-store', () => ({
+  useFilesStore: {
+    getState: (): unknown => ({
+      file: filesState.file,
+      flush: mocks.flushFile,
+      repath: mocks.repath
+    })
+  }
+}))
 
 import { useNotesStore } from './notes-store'
+
+/** files-store 被桩掉了,移动用例用这个对象模拟「当前打开的文件」。 */
+const filesState: { file: NoteFileTextDoc | null } = { file: null }
 
 function noteOf(id: string, body: string): Note {
   return {
@@ -385,5 +403,153 @@ describe('notes-store:renameFile(重命名文件)', () => {
     expect(await useNotesStore.getState().renameFile('a.js', 'b')).toBeNull()
     expect(mocks.toast).toHaveBeenCalled()
     expect(mocks.list).not.toHaveBeenCalled()
+  })
+})
+
+const emptyList = {
+  notes: [],
+  folders: [] as string[],
+  files: [] as NoteFileStat[],
+  dir: '/notes',
+  truncated: 0,
+  truncatedFiles: 0,
+  error: null
+}
+
+function fileDoc(path: string): NoteFileTextDoc {
+  const name = path.slice(path.lastIndexOf('/') + 1)
+  const dot = name.lastIndexOf('.')
+  return {
+    path,
+    name,
+    ext: dot < 0 ? '' : name.slice(dot + 1),
+    kind: 'text',
+    mime: 'text/plain',
+    size: 4,
+    mtimeMs: 1,
+    editable: true,
+    tooLarge: false,
+    revision: 'rev-1',
+    encoding: 'utf8',
+    eol: '\n',
+    text: 'hello'
+  }
+}
+
+describe('notes-store:moveNote(拖拽移动)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    mocks.toast.mockReset()
+    mocks.move.mockReset()
+    mocks.statFile.mockReset()
+    mocks.flushFile.mockReset()
+    mocks.repath.mockReset()
+    mocks.list.mockReset()
+    mocks.list.mockResolvedValue(emptyList)
+    mocks.flushFile.mockResolvedValue(undefined)
+    filesState.file = null
+    useNotesStore.setState({
+      moving: false,
+      draft: null,
+      currentId: null,
+      dirty: false,
+      expanded: new Set(),
+      selectedFolder: ''
+    })
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    filesState.file = null
+  })
+
+  it('move 挂起时 moving 为真,结束后为假;挂起期间第二次调用不再请求', async () => {
+    let release: ((value: unknown) => void) | null = null
+    mocks.move.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve
+        })
+    )
+
+    const first = useNotesStore.getState().moveNote('甲', '乙', 'folder')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useNotesStore.getState().moving).toBe(true)
+    expect(mocks.move).toHaveBeenCalledTimes(1)
+
+    await useNotesStore.getState().moveNote('甲', '丙', 'folder')
+    expect(mocks.move).toHaveBeenCalledTimes(1)
+
+    release!({ ok: true, id: '乙/甲' })
+    await first
+    expect(useNotesStore.getState().moving).toBe(false)
+    expect([...useNotesStore.getState().expanded]).toEqual(['乙'])
+    // 目录树播完才清。这里不挂目录树,落地信息留着。
+    expect(useNotesStore.getState().moveLand).toEqual({ fromId: '甲', toId: '乙/甲', kind: 'folder' })
+  })
+
+  it('移动失败也要清掉 moving', async () => {
+    useNotesStore.setState({ moveLand: { fromId: '旧', toId: '旧/处', kind: 'note' } })
+    mocks.move.mockResolvedValue({ ok: false, message: '不能把目录移动到它自己里面' })
+    await useNotesStore.getState().moveNote('甲', '甲', 'folder')
+    expect(useNotesStore.getState().moving).toBe(false)
+    expect(useNotesStore.getState().moveLand).toBeNull()
+    expect(mocks.toast).toHaveBeenCalled()
+    expect(mocks.list).not.toHaveBeenCalled()
+  })
+
+  it('打开的文件路径跟着换,展开的子目录前缀和目标祖先一起换', async () => {
+    filesState.file = fileDoc('甲/note.txt')
+    useNotesStore.setState({
+      expanded: new Set(['甲', '甲/子', '旁路']),
+      selectedFolder: '甲/子'
+    })
+    const next: NoteFileStat = {
+      path: '乙/甲/note.txt',
+      name: 'note.txt',
+      ext: 'txt',
+      kind: 'text',
+      mime: 'text/plain',
+      size: 4,
+      mtimeMs: 2,
+      editable: true,
+      tooLarge: false
+    }
+    mocks.move.mockResolvedValue({ ok: true, id: '乙/甲' })
+    mocks.statFile.mockResolvedValue(next)
+
+    await useNotesStore.getState().moveNote('甲', '乙', 'folder')
+
+    expect(mocks.flushFile).toHaveBeenCalledTimes(1)
+    expect(mocks.statFile).toHaveBeenCalledWith('乙/甲/note.txt')
+    expect(mocks.repath).toHaveBeenCalledWith('甲/note.txt', next)
+    expect([...useNotesStore.getState().expanded].sort()).toEqual(['乙', '乙/甲', '乙/甲/子', '旁路'])
+    expect(useNotesStore.getState().selectedFolder).toBe('乙/甲/子')
+    expect(useNotesStore.getState().moving).toBe(false)
+    expect(useNotesStore.getState().moveLand).toEqual({ fromId: '甲', toId: '乙/甲', kind: 'folder' })
+  })
+
+  it('文件移动直接用返回的元信息,不再 stat', async () => {
+    filesState.file = fileDoc('pic.png')
+    const next: NoteFileStat = {
+      path: '乙/pic.png',
+      name: 'pic.png',
+      ext: 'png',
+      kind: 'image',
+      mime: 'image/png',
+      size: 4,
+      mtimeMs: 2,
+      editable: false,
+      tooLarge: false
+    }
+    mocks.move.mockResolvedValue({ ok: true, id: '乙/pic.png', file: next })
+
+    await useNotesStore.getState().moveNote('pic.png', '乙', 'file')
+
+    expect(mocks.statFile).not.toHaveBeenCalled()
+    expect(mocks.repath).toHaveBeenCalledWith('pic.png', next)
+    expect([...useNotesStore.getState().expanded]).toEqual(['乙'])
+    expect(useNotesStore.getState().moveLand).toEqual({ fromId: 'pic.png', toId: '乙/pic.png', kind: 'file' })
   })
 })

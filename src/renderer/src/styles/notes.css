@@ -452,7 +452,8 @@
  * 都是滚动内容的绝对定位子元素 —— 随内容一起滚动;
  * 排在所有行之前,所以永远在行文字下面,行尾动作(acts,z-index:2)仍在最上面。
  * 选中层放在悬停层之后:两者偶尔重叠时,选中的颜色压在上面。
- * 行自身不铺 :hover 底色;目录选中/投放态用自身底色压住它们,
+ * 行自身不铺 :hover 底色;目录选中与系统文件投放用自身底色压住它们,
+ * 内部移动的落点是 .notes-rail-drop,不给行铺底。
  * 脚本会在这些行和当前文档行上收起悬停色块(半透明底色叠两层会变色)。
  */
 .notes-rail-hover,
@@ -484,6 +485,133 @@
 .notes-rail-hover[data-visible='true'],
 .notes-rail-selection[data-visible='true'] {
   opacity: 1;
+}
+
+/*
+ * 内部移动的落点:一整层色块滑到目标文件夹(或根条)上,右侧写「移入」。
+ * 不画行与行之间的插入线 —— 松手是移进这个文件夹,不是插到两行之间。
+ * 行自己不再铺底,半透明底叠两层会变色。
+ */
+.notes-rail-drop,
+.notes-rail-drop-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 0;
+  height: 0;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+  transition:
+    transform 120ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    width 120ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    height 120ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    opacity 90ms ease;
+}
+.notes-rail-drop {
+  z-index: 0;
+  background: var(--wash-accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent2);
+}
+.notes-rail-drop-label {
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+  overflow: hidden;
+}
+.notes-rail-drop-label > span {
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface3);
+  color: var(--accent2);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* pointer-events 不继承。父级是 none 时,子元素默认 auto 仍会接住 dragover/drop,
+     根条的提示正好居中,松手就落不到投放条上。 */
+  pointer-events: none;
+}
+/* 根条自己已经居中写着「移到最外层」。标签贴在同一位置,避免右侧再重复一句。 */
+.notes-rail-drop-label[data-drop-path=''] {
+  justify-content: center;
+  padding-right: 0;
+}
+.notes-rail-drop-label[data-drop-path=''] > span {
+  padding: 0;
+  background: transparent;
+}
+.notes-rail-drop[data-visible='true'],
+.notes-rail-drop-label[data-visible='true'] {
+  opacity: 1;
+}
+
+/*
+ * 松手后的飞行层:外观就是被移的那一行,从旧坐标滑到新坐标。
+ * 位置由脚本写 inline。滑的期间真正的新行先藏住。
+ */
+.notes-rail-flight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: var(--surface3);
+  box-shadow: inset 2px 0 var(--accent2), 0 8px 20px rgb(0 0 0 / 24%);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 16px;
+  pointer-events: none;
+  overflow: hidden;
+  transition:
+    transform 180ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    width 180ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    height 180ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.notes-rail-flight > i {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--accent2);
+  font-size: 11px;
+}
+.notes-rail-flight > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-row[data-landing='true'],
+.notes-folder-row[data-landing='true'] {
+  opacity: 0;
+}
+
+/*
+ * 展开中的目录先在原位收起。子项包在里面,高度收到 0,下面的行跟着上移。
+ * 高度由脚本从量好的值写成 0。
+ */
+.notes-rail-collapse {
+  overflow: hidden;
+  pointer-events: none;
+  transition: height 140ms cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .notes-rail-drop,
+  .notes-rail-drop-label {
+    transition: none;
+  }
 }
 
 /*
@@ -660,10 +788,88 @@
   color: var(--red);
 }
 
-/* 拖拽反馈:被拖的那行淡出,目标目录描边 */
+/* 拖拽反馈:被拖的那行淡出,左侧留一条不改布局的强调色。
+   名字本身才是拖拽源,行只负责留下影子。落点色块在 .notes-rail-drop。 */
 .notes-row.dragging,
 .notes-folder-row.dragging {
   opacity: 0.4;
+  box-shadow: inset 2px 0 var(--accent2);
+}
+
+/* 跟手预览:替换浏览器默认的整行拖影。挂在 body 上,setDragImage 截完就拆。 */
+.notes-drag-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  min-height: 32px;
+  padding: 0 10px 0 8px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface3);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 32%);
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0.96;
+}
+.notes-drag-card > i {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 12px;
+}
+.notes-drag-card > i:not(.notes-file-icon) {
+  color: var(--accent2);
+}
+.notes-drag-card-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notes-drag-card-kind {
+  flex: none;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+/* 移动还没结束时的不确定条。同盘 rename 通常一闪而过,
+   组件会等约 200ms 才挂上,这里不再做入场动画。 */
+.notes-move-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 2px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+.notes-move-progress-track {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.notes-move-progress-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--blue));
+  animation: notes-move-indeterminate 1.15s ease-in-out infinite;
+}
+@keyframes notes-move-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
 }
 
 /* 根层投放条:只在拖拽时出现。明确写出「移到最外层」——
@@ -682,11 +888,16 @@
   pointer-events: auto;
 }
 .notes-rootdrop.active {
-  background: var(--wash-accent);
   color: var(--accent2);
+  border-color: var(--accent2);
 }
-/* 投放高亮**只改背景色**:加描边、加阴影之类都会让行看起来在动 */
-.notes-folder-row.drop-target,
+.notes-rootdrop.active > span {
+  /* 这句话改由落点标签居中画出,避免和色块上的字叠两遍 */
+  visibility: hidden;
+}
+/* 内部移动的落点色块在 .notes-rail-drop,行自己不再铺底(两层半透明会变色)。
+   系统文件拖入仍用行背景,那条路径没有这层色块。
+   不给行加描边或外阴影:盒子一变,看起来就像行自己挪了一下。 */
 .notes-folder-row.file-drop-target {
   background: var(--wash-accent);
 }
@@ -2841,7 +3052,7 @@ body.cm-block-dragging {
 /* ── 拖拽期间:关掉一切会改变布局的悬停效果 ──
    行内按钮是 display:none → inline-flex 才出现的,一出现就挤占同一行的宽度,
    鼠标拖着扫过每一行时这些按钮此起彼伏,看上去就是内容在抖。
-   拖拽时只保留背景色的变化(投放高亮),其余一律不参与。 */
+   拖拽时落点由色块表达,行尾按钮一律不参与。 */
 .notes-rail-list[data-dragging='true'] .notes-folder-row:hover .notes-folder-acts,
 .notes-rail-list[data-dragging='true'] .notes-row:hover .notes-row-acts {
   display: none;

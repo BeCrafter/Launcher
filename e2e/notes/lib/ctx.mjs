@@ -694,6 +694,17 @@ export class NoteE2EContext {
        document.querySelector('.cm-block-outline') === null`,
       { timeout: 3000, message: '覆盖层已关闭' }
     )
+    // 目录树的新建/改名输入框不认 body 上的指针事件,只认自己的 Escape。
+    // 上一条用例超时停在半开的输入框时,这里不收的话,下一条用例的点击会把它提交掉。
+    // 不在输入框上点击:那一下会把编辑器焦点移走,后面的块手柄就不再出现。
+    if ((await this.cdp.eval(`document.querySelector('.notes-create-fields, .notes-folder-input') !== null`)) === true) {
+      await this.cdp.eval(`document.querySelector('.notes-create-name, .notes-folder-input')?.focus()`)
+      await this.cdp.key('Escape', 'Escape', 27)
+      await this.cdp.waitFor(
+        `document.querySelector('.notes-create-fields, .notes-folder-input') === null`,
+        { timeout: 3000, message: '目录树的新建/改名输入框已关闭' }
+      )
+    }
   }
 
   /** Node 侧的轮询等待（用于跨多次 CDP 调用才能判断的条件）。 */

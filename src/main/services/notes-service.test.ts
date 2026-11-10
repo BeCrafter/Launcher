@@ -948,7 +948,7 @@ describe('移动', () => {
     await svc.createFolder({ parent: '', name: '工作' })
     const note = await svc.create({ title: 'n' })
 
-    const out = await svc.move({ id: note.id, parent: '工作' })
+    const out = await svc.move({ id: note.id, kind: 'note', parent: '工作' })
     expect(out).toEqual({ ok: true, id: '工作/n' })
     expect(existsSync(join(svc.dir(), '工作', 'n.md'))).toBe(true)
     expect(existsSync(join(svc.dir(), 'n.md'))).toBe(false)
@@ -959,7 +959,7 @@ describe('移动', () => {
     const svc = makeService()
     await svc.createFolder({ parent: '', name: '工作' })
     const note = await svc.create({ title: 'n', parent: '工作' })
-    expect(moved(await svc.move({ id: note.id, parent: '' }))).toBe('n')
+    expect(moved(await svc.move({ id: note.id, kind: 'note', parent: '' }))).toBe('n')
     expect(existsSync(join(svc.dir(), 'n.md'))).toBe(true)
   })
 
@@ -969,7 +969,7 @@ describe('移动', () => {
     await svc.createFolder({ parent: '', name: 'b' })
     await svc.create({ title: 'n', parent: 'a' })
 
-    expect(moved(await svc.move({ id: 'a', parent: 'b' }))).toBe('b/a')
+    expect(moved(await svc.move({ id: 'a', kind: 'folder', parent: 'b' }))).toBe('b/a')
     expect(existsSync(join(svc.dir(), 'b', 'a', 'n.md'))).toBe(true)
     const list = await svc.list()
     expect(list.notes.map((n) => n.id)).toEqual(['b/a/n'])
@@ -981,8 +981,8 @@ describe('移动', () => {
     await svc.createFolder({ parent: '', name: 'a' })
     await svc.createFolder({ parent: 'a', name: 'b' })
 
-    expect((await svc.move({ id: 'a', parent: 'a' })).ok).toBe(false)
-    expect((await svc.move({ id: 'a', parent: 'a/b' })).ok).toBe(false)
+    expect((await svc.move({ id: 'a', kind: 'folder', parent: 'a' })).ok).toBe(false)
+    expect((await svc.move({ id: 'a', kind: 'folder', parent: 'a/b' })).ok).toBe(false)
     // 磁盘上原样未动
     expect(existsSync(join(svc.dir(), 'a', 'b'))).toBe(true)
   })
@@ -992,7 +992,7 @@ describe('移动', () => {
     await svc.createFolder({ parent: '', name: '工作' })
     const note = await svc.create({ title: 'n', parent: '工作' })
     const before = statSync(join(svc.dir(), '工作', 'n.md')).mtimeMs
-    expect(moved(await svc.move({ id: note.id, parent: '工作' }))).toBe('工作/n')
+    expect(moved(await svc.move({ id: note.id, kind: 'note', parent: '工作' }))).toBe('工作/n')
     expect(statSync(join(svc.dir(), '工作', 'n.md')).mtimeMs).toBe(before)
   })
 
@@ -1001,22 +1001,91 @@ describe('移动', () => {
     await svc.createFolder({ parent: '', name: '工作' })
     await svc.create({ title: 'n', parent: '工作' })
     const other = await svc.create({ title: 'n' })
-    expect(moved(await svc.move({ id: other.id, parent: '工作' }))).toBe('工作/n-2')
+    expect(moved(await svc.move({ id: other.id, kind: 'note', parent: '工作' }))).toBe('工作/n-2')
   })
 
   it('目录路径的穿越防护', async () => {
     const svc = makeService()
     const note = await svc.create({ title: 'n' })
     for (const evil of ['../x', 'a/../../x', '/etc', 'a//b', '.hidden']) {
-      expect((await svc.move({ id: note.id, parent: evil })).ok).toBe(false)
-      expect((await svc.move({ id: evil, parent: '' })).ok).toBe(false)
+      expect((await svc.move({ id: note.id, kind: 'note', parent: evil })).ok).toBe(false)
+      expect((await svc.move({ id: evil, kind: 'note', parent: '' })).ok).toBe(false)
     }
     expect(existsSync(join(svc.dir(), 'n.md'))).toBe(true)
   })
 
   it('找不到的对象', async () => {
     const svc = makeService()
-    expect((await svc.move({ id: 'nope', parent: '' })).ok).toBe(false)
+    expect((await svc.move({ id: 'nope', kind: 'note', parent: '' })).ok).toBe(false)
+  })
+
+  it('文件按普通文件移动,字节不变,扩展名留在原位', async () => {
+    const svc = makeService()
+    await svc.createFolder({ parent: '', name: '工作' })
+    writeFileSync(join(svc.dir(), 'pic.png'), Buffer.from([1, 2, 3, 4]))
+
+    const out = await svc.move({ id: 'pic.png', kind: 'file', parent: '工作' })
+    expect(out.ok).toBe(true)
+    if (!out.ok) return
+    expect(out.id).toBe('工作/pic.png')
+    expect(out.file?.path).toBe('工作/pic.png')
+    expect(out.file?.ext).toBe('png')
+    expect(readFileSync(join(svc.dir(), '工作', 'pic.png'))).toEqual(Buffer.from([1, 2, 3, 4]))
+    expect(existsSync(join(svc.dir(), 'pic.png'))).toBe(false)
+    // 文件不进笔记索引
+    expect((await svc.list()).notes.map((n) => n.id)).toEqual([])
+    expect((await svc.list()).files.map((f) => f.path)).toEqual(['工作/pic.png'])
+  })
+
+  it('文件撞名保留扩展名:pic.png → pic-2.png,不是 pic.png-2', async () => {
+    const svc = makeService()
+    await svc.createFolder({ parent: '', name: '工作' })
+    writeFileSync(join(svc.dir(), '工作', 'pic.png'), Buffer.from('old'))
+    writeFileSync(join(svc.dir(), 'pic.png'), Buffer.from('new'))
+
+    const out = await svc.move({ id: 'pic.png', kind: 'file', parent: '工作' })
+    expect(out).toMatchObject({
+      ok: true,
+      id: '工作/pic-2.png',
+      renamed: { from: 'pic.png', to: 'pic-2.png' }
+    })
+    expect(readFileSync(join(svc.dir(), '工作', 'pic.png'), 'utf8')).toBe('old')
+    expect(readFileSync(join(svc.dir(), '工作', 'pic-2.png'), 'utf8')).toBe('new')
+    expect(existsSync(join(svc.dir(), '工作', 'pic.png-2'))).toBe(false)
+  })
+
+  it('无扩展名文件不会把旁边同名笔记搬走', async () => {
+    const svc = makeService()
+    await svc.createFolder({ parent: '', name: '工作' })
+    const note = await svc.create({ title: 'readme', body: '这是笔记' })
+    writeFileSync(join(svc.dir(), 'readme'), '这是文件')
+
+    const asFile = await svc.move({ id: 'readme', kind: 'file', parent: '工作' })
+    expect(asFile.ok).toBe(true)
+    if (!asFile.ok) return
+    expect(asFile.id).toBe('工作/readme')
+    expect(readFileSync(join(svc.dir(), '工作', 'readme'), 'utf8')).toBe('这是文件')
+    // 笔记还在根层,正文一个字没动
+    expect((await svc.read(note.id))?.body).toBe('这是笔记')
+    expect(existsSync(join(svc.dir(), 'readme.md'))).toBe(true)
+
+    // 反过来:按笔记移动也不会把文件当笔记
+    writeFileSync(join(svc.dir(), '工作', 'plain'), '文件')
+    expect((await svc.move({ id: '工作/plain', kind: 'note', parent: '' })).ok).toBe(false)
+    expect(existsSync(join(svc.dir(), '工作', 'plain'))).toBe(true)
+  })
+
+  it('种类和磁盘不符就失败,不改名', async () => {
+    const svc = makeService()
+    await svc.createFolder({ parent: '', name: '工作' })
+    await svc.createFolder({ parent: '', name: '目标' })
+    writeFileSync(join(svc.dir(), 'pic.png'), Buffer.from('x'))
+
+    expect((await svc.move({ id: 'pic.png', kind: 'folder', parent: '目标' })).ok).toBe(false)
+    expect((await svc.move({ id: '工作', kind: 'file', parent: '目标' })).ok).toBe(false)
+    expect((await svc.move({ id: '工作', kind: 'note', parent: '目标' })).ok).toBe(false)
+    expect(existsSync(join(svc.dir(), 'pic.png'))).toBe(true)
+    expect(existsSync(join(svc.dir(), '工作'))).toBe(true)
   })
 })
 
@@ -1081,7 +1150,7 @@ describe('移动撞名', () => {
     await svc.create({ title: 'n', parent: 'dst', body: '原有的' })
     const src = await svc.create({ title: 'n', body: '要移过去的' })
 
-    const out = await svc.move({ id: src.id, parent: 'dst' })
+    const out = await svc.move({ id: src.id, kind: 'note', parent: 'dst' })
     expect(out).toEqual({ ok: true, id: 'dst/n-2', renamed: { from: 'n', to: 'n-2' } })
     // 两边都在,内容都没丢
     expect((await svc.read('dst/n'))?.body).toBe('原有的')
@@ -1094,7 +1163,7 @@ describe('移动撞名', () => {
     await svc.create({ title: 'n', parent: 'dst' })
     const src = await svc.create({ title: 'n' })
 
-    const out = await svc.move({ id: src.id, parent: 'dst' })
+    const out = await svc.move({ id: src.id, kind: 'note', parent: 'dst' })
     if (!out.ok) throw new Error('move failed')
     const moved = await svc.read(out.id)
     expect(moved?.title).toBe('n-2') // 与文件名一致
@@ -1108,7 +1177,7 @@ describe('移动撞名', () => {
     writeFileSync(join(dir, 'dst', 'bare.md'), '原有的')
     writeFileSync(join(dir, 'bare.md'), '要移过去的')
 
-    const out = await svc.move({ id: 'bare', parent: 'dst' })
+    const out = await svc.move({ id: 'bare', kind: 'note', parent: 'dst' })
     expect(out).toEqual({ ok: true, id: 'dst/bare-2', renamed: { from: 'bare', to: 'bare-2' } })
     expect(read(dir, 'dst/bare-2.md')).toBe('要移过去的') // 正文一个字没动
   })
@@ -1119,7 +1188,7 @@ describe('移动撞名', () => {
     await svc.createFolder({ parent: 'dst', name: 'sub' })
     await svc.createFolder({ parent: '', name: 'sub' })
 
-    const out = await svc.move({ id: 'sub', parent: 'dst' })
+    const out = await svc.move({ id: 'sub', kind: 'folder', parent: 'dst' })
     expect(out).toEqual({ ok: true, id: 'dst/sub-2', renamed: { from: 'sub', to: 'sub-2' } })
     expect(existsSync(join(svc.dir(), 'dst', 'sub-2'))).toBe(true)
   })
@@ -1128,7 +1197,7 @@ describe('移动撞名', () => {
     const svc = makeService()
     await svc.createFolder({ parent: '', name: 'dst' })
     const src = await svc.create({ title: 'unique' })
-    const out = await svc.move({ id: src.id, parent: 'dst' })
+    const out = await svc.move({ id: src.id, kind: 'note', parent: 'dst' })
     expect(out).toEqual({ ok: true, id: 'dst/unique' })
   })
 
@@ -1137,7 +1206,7 @@ describe('移动撞名', () => {
     await svc.createFolder({ parent: '', name: 'dst' })
     await svc.create({ title: 'x', parent: 'dst' })
     const src = await svc.create({ title: 'x' })
-    const out = await svc.move({ id: src.id, parent: 'dst' })
+    const out = await svc.move({ id: src.id, kind: 'note', parent: 'dst' })
     if (!out.ok) throw new Error('move failed')
     const note = await svc.read(out.id)
     expect(note?.title).toBe(out.id.split('/').pop())
@@ -1203,7 +1272,7 @@ describe('移动不得破坏附件(禁忌项)', () => {
     const note = await svc.create({ title: '带图', parent: '工作', body: `![图](${asset.relPath})` })
     const before = (await svc.read(note.id))!.body
 
-    const moved = await svc.move({ id: note.id, parent: '随手记' })
+    const moved = await svc.move({ id: note.id, kind: 'note', parent: '随手记' })
     if (!moved.ok) throw new Error('move failed')
 
     // 正文一个字节没变 → 引用仍然指向同一个附件
@@ -1221,7 +1290,7 @@ describe('移动不得破坏附件(禁忌项)', () => {
     const note = await svc.create({ title: 'n', parent: 'a', body: `![图](${asset.relPath})` })
     const before = (await svc.read(note.id))!.body
 
-    const moved = await svc.move({ id: 'a', parent: 'b' })
+    const moved = await svc.move({ id: 'a', kind: 'folder', parent: 'b' })
     if (!moved.ok) throw new Error('move failed')
     expect((await svc.read(moved.id + '/n'))!.body).toBe(before)
     expect(existsSync(join(svc.dir(), asset.relPath))).toBe(true)

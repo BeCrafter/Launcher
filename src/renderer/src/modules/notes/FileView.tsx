@@ -117,6 +117,7 @@ export function FileView(): React.JSX.Element {
             data-kind={file.kind}
             aria-hidden="true"
           />
+          {dirPart !== '' && <span className="notes-path-dir">{dirPart}/</span>}
           <span className="notes-title-wrap">
             <span className="file-name">{file.name}</span>
           </span>

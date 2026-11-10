@@ -9,6 +9,7 @@ export class CDP {
     this.url = url
     this.id = 0
     this.pending = new Map()
+    this.listeners = new Map()
     this.closed = false
   }
 
@@ -20,6 +21,13 @@ export class CDP {
     })
     this.ws.onmessage = (event) => {
       const message = JSON.parse(event.data)
+      if (message.method) {
+        const handlers = this.listeners.get(message.method)
+        if (handlers !== undefined) {
+          for (const handler of handlers) handler(message.params ?? {})
+        }
+      }
+      if (message.id === undefined) return
       const waiter = this.pending.get(message.id)
       if (waiter === undefined) return
       this.pending.delete(message.id)
@@ -33,6 +41,17 @@ export class CDP {
     }
     await this.send('Runtime.enable')
     await this.send('Page.enable')
+  }
+
+  /** 订阅 CDP 事件。返回取消函数。 */
+  on(method, handler) {
+    let handlers = this.listeners.get(method)
+    if (handlers === undefined) {
+      handlers = new Set()
+      this.listeners.set(method, handlers)
+    }
+    handlers.add(handler)
+    return () => handlers.delete(handler)
   }
 
   send(method, params = {}, sessionId = undefined) {
@@ -157,6 +176,56 @@ export class CDP {
       clickCount: 1,
       ...extra
     })
+  }
+
+  /**
+   * 在 `gesture` 这一下按住移动里截住真实的 HTML5 拖拽。
+   *
+   * CDP 的 mouseMoved 能让 dragstart 发火(页面拿到的就是按钮上那一份载荷),
+   * 但接下来的移动不会把 dragover 送进页面。Chromium 要先 `Input.setInterceptDrags`,
+   * 用截住的 DragData 再 `Input.dispatchDragEvent` 才能继续这一次拖拽。
+   * 这不是 `new DragEvent`:载荷来自页面自己的 dragstart。
+   *
+   * 没有开始拖拽时返回 null(按钮仍然按着,调用方要自己松开)。
+   */
+  async captureDrag(gesture) {
+    let data = null
+    const off = this.on('Input.dragIntercepted', (params) => {
+      const payload = params?.data?.items ? params.data : params
+      if (payload && Array.isArray(payload.items)) data = payload
+    })
+    await this.send('Input.setInterceptDrags', { enabled: true })
+    try {
+      await gesture()
+      const started = Date.now()
+      while (data === null && Date.now() - started < 3000) await sleep(20)
+    } finally {
+      off()
+      await this.send('Input.setInterceptDrags', { enabled: false }).catch(() => {})
+    }
+    if (data === null) return null
+    const session = this
+    const drag = {
+      data,
+      async hover(x, y) {
+        await session.send('Input.dispatchDragEvent', { type: 'dragEnter', x, y, data })
+        await session.send('Input.dispatchDragEvent', { type: 'dragOver', x, y, data })
+      },
+      async drop(x, y) {
+        await session.send('Input.dispatchDragEvent', { type: 'drop', x, y, data })
+      },
+      async cancel() {
+        await session
+          .send('Input.dispatchDragEvent', {
+            type: 'dragCancel',
+            x: 0,
+            y: 0,
+            data: { items: [], dragOperationsMask: 65535 }
+          })
+          .catch(() => {})
+      }
+    }
+    return drag
   }
 
   async click(x, y) {

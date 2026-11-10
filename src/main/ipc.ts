@@ -297,8 +297,15 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.notesRenameFolder, (_e, input: { id: string; name: string }) =>
     deps.notes.renameFolder({ id: String(input?.id ?? ''), name: String(input?.name ?? '') })
   )
-  ipcMain.handle(IPC.notesMove, (_e, input: { id: string; parent: string }) =>
-    deps.notes.move({ id: String(input?.id ?? ''), parent: String(input?.parent ?? '') })
+  ipcMain.handle(
+    IPC.notesMove,
+    (_e, input: { id?: unknown; parent?: unknown; kind?: unknown }) =>
+      deps.notes.move({
+        id: String(input?.id ?? ''),
+        parent: String(input?.parent ?? ''),
+        // 缺省不猜成笔记:无扩展名文件和同名笔记会撞车,猜错就把旁边那份搬走
+        kind: input?.kind as 'note' | 'folder' | 'file'
+      })
   )
   ipcMain.handle(IPC.notesImport, (_e, input: NoteImportInput) =>
     deps.notes.importPaths({

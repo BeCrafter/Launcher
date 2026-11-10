@@ -131,11 +131,19 @@ export interface NotesService {
   /** 目录改名(整体搬迁,目录内的笔记 id 前缀随之变化) */
   renameFolder(input: { id: string; name: string }): Promise<{ id: string }>
   /**
-   * 移动到另一个目录(笔记与目录共用);parent 为空串 = 根层。
-   * 目标已有同名项时**不覆盖**,自动加序号,并在 `renamed` 里如实带回改名前后的名字。
+   * 移动到另一个目录。parent 为空串 = 根层。
+   * kind 由调用方指明,服务端用 stat 核对:目录必须是目录,笔记必须是 `${id}.md`,文件必须是该路径上的普通文件。
+   * 不符就失败,不按「路径在不在」猜种类 —— 无扩展名文件 `readme` 和笔记 `readme` 会撞车。
+   * 目标已有同名项时**不覆盖**,自动加序号;文件撞名保留扩展名(`pic.png` → `pic-2.png`)。
+   * 文件移动成功时带上新的 `file`,渲染层不自己拼元信息。
    */
-  move(input: { id: string; parent: string }): Promise<
-    | { ok: true; id: string; renamed?: { from: string; to: string } }
+  move(input: { id: string; parent: string; kind: 'note' | 'folder' | 'file' }): Promise<
+    | {
+        ok: true
+        id: string
+        renamed?: { from: string; to: string }
+        file?: NoteFileStat
+      }
     | { ok: false; message: string }
   >
   /** 把 OS 文件/文件夹原样复制进目标目录(批量导入) */
@@ -949,6 +957,10 @@ export function createNotesService(opts: {
     async move(input) {
       const dir = opts.getDir()
       const { id } = input
+      const kind = input.kind
+      if (kind !== 'note' && kind !== 'folder' && kind !== 'file') {
+        return { ok: false, message: `非法种类:${String(kind)}` }
+      }
       if (!isSafeNoteId(id)) return { ok: false, message: `非法 id:${id}` }
       const rawParent = input.parent.trim()
       if (rawParent !== '' && !isSafeNoteId(rawParent)) {
@@ -956,33 +968,65 @@ export function createNotesService(opts: {
       }
       const parent = rawParent
 
-      // ⚠ 存在性检查必须排在「原地不动」之前:否则对不存在的 id 调 move(id, 根层)
+      // ⚠ 存在性与种类核对必须排在「原地不动」之前:否则对不存在的 id 调 move(id, 根层)
       // 会因为 parentOf(id) === '' 命中那条捷径,报成功却什么也没做。
-      const isFolder = existsSync(join(dir, id))
-      const src = isFolder ? join(dir, id) : join(dir, `${id}.md`)
-      if (!existsSync(src)) return { ok: false, message: `找不到 ${id}` }
+      // 种类用 stat 核对,不看「路径在不在」。文件 `pic.png` 的路径存在,不能被当成目录搬走;
+      // 无扩展名文件 `readme` 也不能把旁边的笔记 `readme.md` 搬走。
+      const src = join(dir, kind === 'note' ? `${id}.md` : id)
+      let st: Stats
+      try {
+        st = statSync(src)
+      } catch {
+        return { ok: false, message: `找不到 ${id}` }
+      }
+      if (kind === 'folder') {
+        if (!st.isDirectory()) return { ok: false, message: `不是目录:${id}` }
+      } else if (!st.isFile()) {
+        return { ok: false, message: `不是文件:${id}` }
+      }
 
       // 拖到原地:直接当成功,免得平白多一次文件操作
-      if (parent === parentOf(id)) return { ok: true, id }
+      if (parent === parentOf(id)) {
+        return kind === 'file' ? { ok: true, id, file: fileStatOf(id, st) } : { ok: true, id }
+      }
       // 目录不能移进它自己或它的子孙里 —— 那会把整棵子树从磁盘上摘掉
-      if (parent === id || parent.startsWith(`${id}/`)) {
+      if (kind === 'folder' && (parent === id || parent.startsWith(`${id}/`))) {
         return { ok: false, message: '不能把目录移动到它自己里面' }
       }
 
       const base = baseNameOf(id)
-      let next = joinNoteId(parent, base)
-      for (let n = 2; n < 100 && pathTaken(dir, next); n++) next = joinNoteId(parent, `${base}-${n}`)
+      // 文件撞名要留住扩展名:pic.png → pic-2.png,而不是 pic.png-2
+      const { base: stem, ext } = kind === 'file' ? splitFileExt(base) : { base, ext: '' }
+      const nameAt = (n: number): string => {
+        const numbered = n === 1 ? stem : `${stem}-${n}`
+        return ext === '' ? numbered : `${numbered}.${ext}`
+      }
+      let n = 1
+      let next = joinNoteId(parent, nameAt(n))
+      const taken = (rel: string): boolean =>
+        kind === 'file' ? existsSync(join(dir, rel)) : pathTaken(dir, rel)
+      for (; n < 100 && taken(next); n++) next = joinNoteId(parent, nameAt(n))
+      if (taken(next)) return { ok: false, message: `目标目录里同名项太多:${base}` }
       const renamed = next !== joinNoteId(parent, base)
 
       mkdirSync(join(dir, parent), { recursive: true })
-      renameSync(src, isFolder ? join(dir, next) : join(dir, `${next}.md`))
-      reprefixIndex(id, next)
+      const dest = join(dir, kind === 'note' ? `${next}.md` : next)
+      try {
+        renameSync(src, dest)
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code
+        // 跨卷 rename 会 EXDEV。源和目标都在笔记目录里,正常不会发生;
+        // 发生了就失败,不做拷贝兜底 —— 拷一半比直接失败更糟。
+        if (code === 'EXDEV') return { ok: false, message: '不能跨卷移动,请把笔记目录放在同一块盘上' }
+        return { ok: false, message: `移动失败:${String(err)}` }
+      }
+      if (kind !== 'file') reprefixIndex(id, next)
 
       // ⚠ 因撞名而改名时,必须把 frontmatter 的 title 一起改掉。
       // 不改的话 title 与文件名就不一致了 —— 而渲染层在标题失焦时会调用 syncFileName,
       // 它发现两者不一致就会把文件改回原标题,于是再次撞名、再加序号,陷入连锁重命名。
-      if (renamed && !isFolder) {
-        const file = join(dir, `${next}.md`)
+      if (renamed && kind === 'note') {
+        const file = dest
         const text = readFileSync(file, 'utf8')
         const split = splitFrontmatter(text)
         const { fields } = readFrontmatter(split)
@@ -999,8 +1043,14 @@ export function createNotesService(opts: {
         }
       }
 
-      log(`moved ${id}${isFolder ? '/' : '.md'} → ${next}${isFolder ? '/' : '.md'}${renamed ? '(撞名,已加序号)' : ''}`)
-      return renamed ? { ok: true, id: next, renamed: { from: base, to: baseNameOf(next) } } : { ok: true, id: next }
+      log(`moved ${kind} ${id} → ${next}${renamed ? '(撞名,已加序号)' : ''}`)
+      const renamedField = renamed ? { renamed: { from: base, to: baseNameOf(next) } } : {}
+      if (kind !== 'file') return { ok: true, id: next, ...renamedField }
+      try {
+        return { ok: true, id: next, ...renamedField, file: fileStatOf(next, statSync(dest)) }
+      } catch (err) {
+        return { ok: false, message: `读取文件信息失败:${String(err)}` }
+      }
     },
 
     async importPaths(input) {

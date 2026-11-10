@@ -69,6 +69,132 @@ function openingSpinnerDelay(): number {
   return Number.isFinite(value) && value >= 0 ? value : OPENING_SPINNER_DELAY_MS
 }
 
+/** 拖拽载荷。text/plain 仍是路径(旧的落点只读它);种类另带一份,避免无扩展名文件和同名笔记撞车。 */
+type DragKind = 'note' | 'folder' | 'file'
+const DRAG_KIND_TYPE = 'application/x-launcher-notes-kind'
+
+function readDragKind(e: React.DragEvent): DragKind | null {
+  const raw = e.dataTransfer.getData(DRAG_KIND_TYPE)
+  return raw === 'note' || raw === 'folder' || raw === 'file' ? raw : null
+}
+
+function dragKindLabelKey(kind: DragKind): string {
+  if (kind === 'folder') return 'notes.move.kind.folder'
+  if (kind === 'note') return 'notes.move.kind.note'
+  return 'notes.move.kind.file'
+}
+
+/**
+ * 用一张紧凑卡片替换浏览器默认拖影。
+ * 默认拖影是拉满整行的名字按钮:图标和文字后面跟着一大片透明。
+ * setDragImage 在调用当下就截图,节点随即拆掉,不留在页面里。
+ */
+function dragSourceName(source: HTMLElement | null): string {
+  if (source === null) return ''
+  const titled = source.querySelector('.notes-row-title')
+  const text = (titled ?? source.querySelector('span'))?.textContent ?? ''
+  return text.trim()
+}
+
+function mountDragCard(e: React.DragEvent, kindLabel: string): void {
+  const source = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
+  const icon = source?.querySelector('i') ?? null
+  const card = document.createElement('div')
+  card.className = 'notes-drag-card'
+  card.setAttribute('aria-hidden', 'true')
+  if (icon !== null) {
+    const glyph = document.createElement('i')
+    glyph.setAttribute('aria-hidden', 'true')
+    glyph.className = icon.className
+    const kindAttr = icon.getAttribute('data-kind')
+    if (kindAttr !== null) glyph.dataset.kind = kindAttr
+    card.appendChild(glyph)
+  }
+  const title = document.createElement('span')
+  title.className = 'notes-drag-card-name'
+  title.textContent = dragSourceName(source)
+  const kind = document.createElement('span')
+  kind.className = 'notes-drag-card-kind'
+  kind.textContent = kindLabel
+  card.append(title, kind)
+  card.style.position = 'fixed'
+  card.style.left = '-1000px'
+  card.style.top = '0'
+  document.body.appendChild(card)
+  const hotY = Math.max(10, Math.round(card.offsetHeight / 2))
+  try {
+    e.dataTransfer.setDragImage(card, 16, hotY)
+  } finally {
+    requestAnimationFrame(() => card.remove())
+  }
+}
+
+/** 收起、飞行的时长。轮询间隔要短于它们,端到端才看得到中间态。 */
+const FOLD_MS = 140
+const FLIGHT_MS = 180
+/** 位移小于这个就不播,避免原地抖一下。 */
+const FLIGHT_MIN_PX = 4
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+/** 松手时记下的那一行。飞行层按它画,不另做一张拖影卡。 */
+interface FlightSource {
+  fromId: string
+  kind: DragKind
+  name: string
+  iconClass: string
+  iconKind: string | null
+  /** 相对列表内容的坐标,加上当时的 scrollTop。列表滚动不会把起点弄错。 */
+  box: { x: number; y: number; w: number; h: number }
+}
+
+/** 行相对列表内容的坐标。绝对定位的飞行层随内容一起滚,要用内容坐标。 */
+function contentBox(
+  list: HTMLElement,
+  row: HTMLElement
+): { x: number; y: number; w: number; h: number } {
+  const listRect = list.getBoundingClientRect()
+  const rowRect = row.getBoundingClientRect()
+  return {
+    x: rowRect.left - listRect.left,
+    y: rowRect.top - listRect.top + list.scrollTop,
+    w: rowRect.width,
+    h: rowRect.height
+  }
+}
+
+function findRailRow(list: HTMLElement, id: string, kind: DragKind): HTMLElement | null {
+  const attr = kind === 'note' ? 'data-note-id' : kind === 'folder' ? 'data-folder-path' : 'data-file-path'
+  for (const row of list.querySelectorAll<HTMLElement>(`[${attr}]`)) {
+    if (row.getAttribute(attr) === id) return row
+  }
+  return null
+}
+
+/** 行在列表视口外时,只滚这个容器把它带进来。不用 scrollIntoView,它会把整页一起滚。 */
+function scrollRowIntoList(list: HTMLElement, row: HTMLElement): void {
+  const box = list.getBoundingClientRect()
+  const r = row.getBoundingClientRect()
+  if (r.top < box.top || r.bottom > box.bottom) {
+    list.scrollTop += r.top - box.top - (box.height - r.height) / 2
+  }
+}
+
+/** 落点色块要贴住的那一行。根层是底部投放条,其余是目录行本身。 */
+function findDropAnchor(list: HTMLElement, target: string): HTMLElement | null {
+  if (target === '') return list.querySelector('.notes-rootdrop')
+  for (const row of list.querySelectorAll<HTMLElement>('.notes-folder-row')) {
+    if (row.dataset.folderPath === target) return row
+  }
+  return null
+}
+
 /** 等主动作持续到阈值再显示;提前结束就保持原图标 */
 function useDelayedOpening(active: boolean, delayMs: number): boolean {
   const [shown, setShown] = useState(false)
@@ -110,8 +236,9 @@ const ROW_SELECTOR = '.notes-row, .notes-folder-row'
 
 /**
  * 行自身的状态底色优先于悬停高亮 —— 与旧 CSS 的层叠顺序一致
- * (`.selected` / 投放态都写在 `:hover` 之后)。
+ * (`.selected` / 系统文件投放态都写在 `:hover` 之后)。
  * 这些底色是半透明的,不能只靠绘制顺序:高亮透上来就变成双层色。
+ * 内部移动的落点色块自己画,不靠行背景,所以 `.drop-target` 也收起悬停层。
  * `.active` / `.opening` 也在这里收起悬停层:笔记/文件的选中底色
  * 由 `.notes-rail-selection` 那一层统一绘制,行自己不再铺底。
  */
@@ -124,6 +251,17 @@ function hoverSuppressed(row: Element): boolean {
     row.classList.contains('file-drop-target') ||
     row.classList.contains('dragging')
   )
+}
+
+/** 这一行是不是正在飞过去的那一项。目录的子项也藏住,避免子项先冒出来。 */
+function landingOf(
+  flight: { toId: string; kind: DragKind } | null,
+  id: string,
+  kind: DragKind
+): boolean {
+  if (flight === null) return false
+  if (flight.kind === 'folder') return id === flight.toId || id.startsWith(`${flight.toId}/`)
+  return flight.kind === kind && id === flight.toId
 }
 
 /** 行的文档身份。笔记/文件各一个命名空间,路径里的冒号不会冲突。 */
@@ -332,6 +470,10 @@ export function NotesRail(): React.JSX.Element {
   const createFile = useNotesStore((s) => s.createFile)
   const renameFile = useNotesStore((s) => s.renameFile)
   const moveNote = useNotesStore((s) => s.moveNote)
+  const moving = useNotesStore((s) => s.moving)
+  const moveLand = useNotesStore((s) => s.moveLand)
+  const clearMoveLand = useNotesStore((s) => s.clearMoveLand)
+  const showMoving = useDelayedOpening(moving, openingSpinnerDelay())
   const importPaths = useNotesStore((s) => s.importPaths)
   const openFile = useNotesStore((s) => s.openFile)
   const removeFile = useNotesStore((s) => s.removeFile)
@@ -356,7 +498,7 @@ export function NotesRail(): React.JSX.Element {
   // ⚠ 被拖的 id 用 ref 而不是只靠 state:dragstart → dragover 可能落在同一次事件循环里,
   //   那时 React 还没重渲染,state 仍是旧值 —— 合法性判断会误判成「没在拖」而拒绝放下。
   //   ref 是同步写入的,高亮另用 state(那个可以晚一帧)。
-  const draggingRef = useRef<string | null>(null)
+  const draggingRef = useRef<{ id: string; kind: DragKind } | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   // OS 文件拖入是**另一套**状态:null = 没在拖;'' = 根层;其余 = 目标目录
@@ -408,6 +550,41 @@ export function NotesRail(): React.JSX.Element {
     el: HTMLElement
     box: { x: number; y: number; w: number; h: number }
   } | null>(null)
+  /** 内部移动的落点色块。几何跟悬停层一样,目标一换就滑过去。 */
+  const dropPillRef = useRef<HTMLDivElement | null>(null)
+  const dropLabelRef = useRef<HTMLDivElement | null>(null)
+  const dropBoxRef = useRef<{
+    path: string
+    x: number
+    y: number
+    w: number
+    h: number
+  } | null>(null)
+  /** 松手时记下的旧行。旧行还在就重量一次:目标展开会把它挤动。 */
+  const flightSourceRef = useRef<FlightSource | null>(null)
+  /** 展开中的目录先收起。记下拿掉的路径,失败时按原路径放回,落地后按新路径放回。 */
+  const foldRef = useRef<{
+    fromId: string
+    kind: DragKind
+    parent: string
+    paths: string[]
+    height: number
+    timer: ReturnType<typeof setTimeout>
+  } | null>(null)
+  const [foldingId, setFoldingId] = useState<string | null>(null)
+  /** 正在滑向新位置的那一行。新行和它的子项先藏住,落地再显。 */
+  const [flight, setFlight] = useState<{
+    name: string
+    iconClass: string
+    iconKind: string | null
+    toId: string
+    kind: DragKind
+    from: { x: number; y: number; w: number; h: number }
+    to: { x: number; y: number; w: number; h: number }
+  } | null>(null)
+  const flightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 飞行结束才放回的展开路径。减少动画时直接放回,不经过飞行。 */
+  const reopenRef = useRef<string[] | null>(null)
 
   const hideRailSelection = (): void => {
     selectionRef.current = null
@@ -598,6 +775,202 @@ export function NotesRail(): React.JSX.Element {
     paintRailSelection()
   })
 
+  /**
+   * 落点色块贴住当前合法目标。第一次出现原地淡入;换成另一个文件夹时
+   * 沿用 CSS 过渡滑过去。不合法或拖结束则淡出,不留在上一个文件夹上。
+   */
+  const paintRailDrop = (): void => {
+    const pill = dropPillRef.current
+    const label = dropLabelRef.current
+    const list = listRef.current
+    if (pill === null || label === null || list === null) return
+
+    const hide = (): void => {
+      pill.dataset.visible = 'false'
+      label.dataset.visible = 'false'
+      pill.style.opacity = ''
+      label.style.opacity = ''
+      dropBoxRef.current = null
+    }
+
+    if (dropTarget === null) {
+      hide()
+      return
+    }
+    const anchor = findDropAnchor(list, dropTarget)
+    if (anchor === null) {
+      hide()
+      return
+    }
+
+    const listRect = list.getBoundingClientRect()
+    const rowRect = anchor.getBoundingClientRect()
+    const box = {
+      path: dropTarget,
+      x: rowRect.left - listRect.left,
+      y: rowRect.top - listRect.top + list.scrollTop,
+      w: rowRect.width,
+      h: rowRect.height
+    }
+    const prev = dropBoxRef.current
+    const shown = pill.dataset.visible === 'true'
+    if (
+      shown &&
+      prev !== null &&
+      prev.path === box.path &&
+      Math.abs(prev.x - box.x) < 0.5 &&
+      Math.abs(prev.y - box.y) < 0.5 &&
+      Math.abs(prev.w - box.w) < 0.5 &&
+      Math.abs(prev.h - box.h) < 0.5
+    ) {
+      return
+    }
+
+    const reveal = !shown || prev === null
+    if (reveal) {
+      pill.style.transition = 'none'
+      label.style.transition = 'none'
+      pill.style.opacity = '0'
+      label.style.opacity = '0'
+    }
+    const place = (el: HTMLElement): void => {
+      el.style.width = `${box.w}px`
+      el.style.height = `${box.h}px`
+      el.style.transform = `translate3d(${box.x}px, ${box.y}px, 0)`
+    }
+    place(pill)
+    place(label)
+    pill.dataset.visible = 'true'
+    label.dataset.visible = 'true'
+    if (reveal) {
+      void pill.offsetWidth
+      pill.style.transition = ''
+      label.style.transition = ''
+      pill.style.opacity = ''
+      label.style.opacity = ''
+    }
+    dropBoxRef.current = box
+  }
+
+  useLayoutEffect(() => {
+    paintRailDrop()
+  })
+
+  /**
+   * 新行出现的那一帧播放。旧行还在就只重量起点:
+   * 目标展开会把旧行挤动,起点必须是挤完之后的位置。
+   */
+  useLayoutEffect(() => {
+    const source = flightSourceRef.current
+    const list = listRef.current
+    if (source === null || list === null) return
+
+    const oldRow = findRailRow(list, source.fromId, source.kind)
+    if (oldRow !== null) {
+      source.box = contentBox(list, oldRow)
+      return
+    }
+    if (moveLand === null || moveLand.fromId !== source.fromId) return
+
+    const reduced = prefersReducedMotion()
+    const row = findRailRow(list, moveLand.toId, moveLand.kind)
+    if (row === null) return
+    scrollRowIntoList(list, row)
+    const to = contentBox(list, row)
+    const distance = Math.hypot(to.x - source.box.x, to.y - source.box.y)
+    const reopen = reopenRef.current?.map((path) =>
+      path === moveLand.fromId || path.startsWith(`${moveLand.fromId}/`)
+        ? `${moveLand.toId}${path.slice(moveLand.fromId.length)}`
+        : path
+    )
+    reopenRef.current = reopen ?? null
+    flightSourceRef.current = null
+    clearMoveLand()
+
+    if (reduced || distance < FLIGHT_MIN_PX) {
+      const paths = reopenRef.current
+      reopenRef.current = null
+      if (paths !== null) {
+        const next = new Set(useNotesStore.getState().expanded)
+        for (const path of paths) next.add(path)
+        useNotesStore.setState({ expanded: next })
+      }
+      return
+    }
+
+    setFlight({
+      name: source.name,
+      iconClass: source.iconClass,
+      iconKind: source.iconKind,
+      toId: moveLand.toId,
+      kind: moveLand.kind,
+      from: source.box,
+      to
+    })
+  })
+
+  /** 收起容器挂上的那一帧:从量好的高度收到 0。 */
+  useLayoutEffect(() => {
+    const node = listRef.current?.querySelector<HTMLElement>('.notes-rail-collapse') ?? null
+    if (node === null || node.dataset.started === 'true') return
+    node.dataset.started = 'true'
+    void node.offsetHeight
+    node.style.height = '0px'
+  }, [foldingId])
+
+  /** 飞行层挂上的那一帧:先放在旧坐标,强制重排,再滑到新坐标。 */
+  useLayoutEffect(() => {
+    const node = listRef.current?.querySelector<HTMLElement>('.notes-rail-flight') ?? null
+    if (node === null || flight === null || node.dataset.flying === 'true') return
+    node.dataset.flying = 'true'
+    node.style.transition = 'none'
+    node.style.width = `${flight.from.w}px`
+    node.style.height = `${flight.from.h}px`
+    node.style.transform = `translate3d(${flight.from.x}px, ${flight.from.y}px, 0)`
+    void node.offsetWidth
+    node.style.transition = ''
+    node.style.width = `${flight.to.w}px`
+    node.style.height = `${flight.to.h}px`
+    node.style.transform = `translate3d(${flight.to.x}px, ${flight.to.y}px, 0)`
+
+    let done = false
+    const finish = (): void => {
+      if (done) return
+      done = true
+      node.removeEventListener('transitionend', onEnd)
+      if (flightTimerRef.current !== null) {
+        clearTimeout(flightTimerRef.current)
+        flightTimerRef.current = null
+      }
+      const reopen = reopenRef.current
+      reopenRef.current = null
+      setFlight(null)
+      if (reopen !== null) {
+        const next = new Set(useNotesStore.getState().expanded)
+        for (const path of reopen) next.add(path)
+        useNotesStore.setState({ expanded: next })
+      }
+    }
+    const onEnd = (event: TransitionEvent): void => {
+      if (event.target !== node || event.propertyName !== 'transform') return
+      finish()
+    }
+    node.addEventListener('transitionend', onEnd)
+    flightTimerRef.current = setTimeout(finish, FLIGHT_MS + 80)
+  }, [flight])
+
+  /** 移动失败:没有落地信息,把收起时拿掉的展开记录按原路径放回去。 */
+  useEffect(() => {
+    if (moving || moveLand !== null || flightSourceRef.current === null) return
+    flightSourceRef.current = null
+    const reopen = reopenRef.current
+    reopenRef.current = null
+    if (reopen === null) return
+    const next = new Set(useNotesStore.getState().expanded)
+    for (const path of reopen) next.add(path)
+    useNotesStore.setState({ expanded: next })
+  }, [moving, moveLand])
+
   const onListPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (e.pointerType !== 'mouse') return
     const target = e.target as Element
@@ -684,7 +1057,6 @@ export function NotesRail(): React.JSX.Element {
     [unpinned, folders, files]
   )
 
-  /** 能不能把正在拖的那个放进 target 目录 */
   // 内容或容器尺寸变化都要重算(展开目录、搜索出结果、窗口缩放)
   useEffect(() => {
     syncThumb()
@@ -695,15 +1067,167 @@ export function NotesRail(): React.JSX.Element {
     return () => ro.disconnect()
   }, [syncThumb, visible, expanded, pinnedCollapsed, refFilter])
 
+  /** 名字才是拖拽源。行上的 draggable 从按钮开始不起作用:Chromium 不让按钮拖它的父节点。 */
+  const beginDrag = (e: React.DragEvent, id: string, kind: DragKind): void => {
+    if (moving || flat || foldRef.current !== null) {
+      e.preventDefault()
+      return
+    }
+    cancelFlight()
+    e.dataTransfer.setData('text/plain', id)
+    e.dataTransfer.setData(DRAG_KIND_TYPE, kind)
+    e.dataTransfer.effectAllowed = 'move'
+    mountDragCard(e, t(dragKindLabelKey(kind)))
+    draggingRef.current = { id, kind }
+    setDraggingId(id)
+    hideRailHover()
+  }
+
+  const endDrag = (): void => {
+    draggingRef.current = null
+    setDraggingId(null)
+    setDropTarget(null)
+  }
+
+  /** 记下松手时那一行的样子和位置。旧行拆掉之后,飞行层靠这份快照画。 */
+  const captureFlightSource = (id: string, kind: DragKind): void => {
+    const list = listRef.current
+    const row = list === null ? null : findRailRow(list, id, kind)
+    if (list === null || row === null) {
+      flightSourceRef.current = null
+      return
+    }
+    const icon = row.querySelector('i')
+    flightSourceRef.current = {
+      fromId: id,
+      kind,
+      name: dragSourceName(row.querySelector('button, .notes-file-main')),
+      iconClass: icon?.className ?? '',
+      iconKind: icon?.getAttribute('data-kind') ?? null,
+      box: contentBox(list, row)
+    }
+  }
+
+  const finishDrop = (e: React.DragEvent, parent: string): void => {
+    if (hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const drag = draggingRef.current
+    const id = e.dataTransfer.getData('text/plain')
+    const kind = readDragKind(e) ?? drag?.kind ?? null
+    endDrag()
+    if (id === '' || kind === null || id !== drag?.id) return
+    if (moving || foldRef.current !== null) return
+
+    // 展开中的目录先在原位收起,再移动。现在换列表会把子项当帧拆掉,看不到收起。
+    const openPaths =
+      kind === 'folder'
+        ? [...expanded].filter((path) => path === id || path.startsWith(`${id}/`))
+        : []
+    if (openPaths.length > 0 && !prefersReducedMotion()) {
+      // 先量子项占的高度。提交之后它们不再占位,收起就没有高度可过渡。
+      const list = listRef.current
+      const row = list === null ? null : findRailRow(list, id, 'folder')
+      let height = 0
+      if (list !== null && row !== null) {
+        const top = row.getBoundingClientRect().bottom
+        let next = row.nextElementSibling
+        while (next instanceof HTMLElement) {
+          const child =
+            next.dataset.folderPath?.startsWith(`${id}/`) === true ||
+            next.dataset.noteId?.startsWith(`${id}/`) === true ||
+            next.dataset.filePath?.startsWith(`${id}/`) === true
+          if (!child) break
+          height = next.getBoundingClientRect().bottom - top
+          next = next.nextElementSibling
+        }
+      }
+      // setExpanded 一次只动一个路径。子目录要一起收,否则收起的只是第一层。
+      const folded = new Set(expanded)
+      for (const path of openPaths) folded.delete(path)
+      useNotesStore.setState({ expanded: folded })
+      const timer = setTimeout(() => {
+        const pending = foldRef.current
+        if (pending === null || pending.fromId !== id) return
+        foldRef.current = null
+        setFoldingId(null)
+        // 记下的是原路径。失败时按原路径放回;成功后 moveLand 到了再换成新路径。
+        reopenRef.current = openPaths
+        captureFlightSource(id, kind)
+        void moveNote(id, parent, kind)
+      }, FOLD_MS + 20)
+      foldRef.current = { fromId: id, kind, parent, paths: openPaths, height, timer }
+      setFoldingId(id)
+      return
+    }
+    captureFlightSource(id, kind)
+    void moveNote(id, parent, kind)
+  }
+
+  const cancelFlight = (): void => {
+    if (flightTimerRef.current !== null) {
+      clearTimeout(flightTimerRef.current)
+      flightTimerRef.current = null
+    }
+    flightSourceRef.current = null
+    reopenRef.current = null
+    setFlight(null)
+  }
+
+  /** 收起被取消(再次拖动、卸载):展开记录按原路径放回去,这次不移动。 */
+  const cancelFold = (): void => {
+    const pending = foldRef.current
+    if (pending === null) return
+    clearTimeout(pending.timer)
+    foldRef.current = null
+    setFoldingId(null)
+    const restored = new Set(useNotesStore.getState().expanded)
+    for (const path of pending.paths) restored.add(path)
+    useNotesStore.setState({ expanded: restored })
+  }
+
+  useEffect(
+    () => () => {
+      const pending = foldRef.current
+      if (pending !== null) clearTimeout(pending.timer)
+      if (flightTimerRef.current !== null) clearTimeout(flightTimerRef.current)
+    },
+    []
+  )
+
+  /** 能不能把正在拖的那个放进 target 目录 */
   const canDropInto = (target: string): boolean => {
-    const id = draggingRef.current
-    if (id === null) return false
-    if (id === target || target.startsWith(`${id}/`)) return false
-    return parentOf(id) !== target
+    const drag = draggingRef.current
+    if (drag === null || moving) return false
+    // 搜索/标签筛选把树摊平了,没有文件夹可接,不接受内部拖拽
+    if (flat) return false
+    if (drag.id === target || target.startsWith(`${drag.id}/`)) return false
+    return parentOf(drag.id) !== target
   }
 
   /** 拖进来的是不是 OS 文件(内部笔记拖拽只带 text/plain) */
   const hasFiles = (e: React.DragEvent): boolean => e.dataTransfer.types.includes('Files')
+
+  /**
+   * 列表级 dragover:合法文件夹或根条才留下落点,其余(笔记行、文件行、空白、
+   * 自己、子孙、当前父目录)把色块收掉。文件夹行自己不发 dragleave,不在这里清,
+   * 上一个目标的底色会粘着不走。
+   * OS 文件拖入不归这里管,留给 rail 根上的复制落点。
+   */
+  const onListDragOver = (e: React.DragEvent<HTMLDivElement>): void => {
+    if (hasFiles(e) || draggingRef.current === null) return
+    const el = e.target instanceof Element ? e.target : null
+    const folderRow = el?.closest<HTMLElement>('.notes-folder-row') ?? null
+    const onRoot = folderRow === null && el?.closest('.notes-rootdrop') !== null
+    const path = folderRow !== null ? (folderRow.dataset.folderPath ?? null) : onRoot ? '' : null
+    if (path !== null && canDropInto(path)) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      setDropTarget((cur) => (cur === path ? cur : path))
+      return
+    }
+    setDropTarget((cur) => (cur === null ? cur : null))
+  }
 
   /** 指针下最近一行的落点目录;行上的 data-drop-folder 由目录/笔记/文件行统一提供 */
   const fileDropPath = (e: React.DragEvent): string => {
@@ -858,26 +1382,16 @@ export function NotesRail(): React.JSX.Element {
         (draggingId === n.id ? ' dragging' : '')
       }
       style={{ paddingLeft: rowPad(depth) }}
+      data-landing={landingOf(flight, n.id, 'note') ? 'true' : undefined}
       data-note-id={n.id}
       data-drop-folder={parentOf(n.id)}
-      draggable
       // 点击热区放在整行:标题按钮只占内容区 16px,行的上下留白、左侧缩进、
       // 右侧留白和悬停动作浮层的背景都在按钮之外 —— 只挂在按钮上会「点了没反应」。
       // 改名时点别处只该失焦/提交,不能把笔记切走。
+      // 拖拽源是名字按钮本身:行上的 draggable 从按钮开始不起作用。
       onClick={() => {
         if (renaming) return
         openNoteDoc(n.id)
-      }}
-      onDragStart={(e) => {
-        e.dataTransfer.setData('text/plain', n.id)
-        e.dataTransfer.effectAllowed = 'move'
-        draggingRef.current = n.id
-        setDraggingId(n.id)
-      }}
-      onDragEnd={() => {
-        draggingRef.current = null
-        setDraggingId(null)
-        setDropTarget(null)
       }}
     >
       <IndentGuides depth={depth} />
@@ -887,8 +1401,14 @@ export function NotesRail(): React.JSX.Element {
         <button
           type="button"
           className="notes-row-main"
+          draggable={!flat && !moving}
           title={opening ? t('notes.opening') : `${n.id} · ${relTime(n.updated, t)}`}
           aria-busy={opening || undefined}
+          onDragStart={(e) => {
+            e.stopPropagation()
+            beginDrag(e, n.id, 'note')
+          }}
+          onDragEnd={endDrag}
         >
           <RowIconSlot opening={opening} icon="fa-file-lines" kind="markdown" />
           {n.pinned && <i className="fa-solid fa-thumbtack notes-row-pin" />}
@@ -958,9 +1478,11 @@ export function NotesRail(): React.JSX.Element {
         className={
           'notes-row notes-file-row' +
           (active ? ' active' : '') +
-          (opening ? ' opening' : '')
+          (opening ? ' opening' : '') +
+          (draggingId === f.path ? ' dragging' : '')
         }
         style={{ paddingLeft: rowPad(depth) }}
+        data-landing={landingOf(flight, f.path, 'file') ? 'true' : undefined}
         data-file-path={f.path}
         data-file-kind={kind}
         data-drop-folder={parentOf(f.path)}
@@ -983,8 +1505,14 @@ export function NotesRail(): React.JSX.Element {
             className="notes-row-main notes-file-main"
             role="button"
             tabIndex={0}
+            draggable={!flat && !moving}
             title={t('notes.file.open')}
             aria-busy={opening || undefined}
+            onDragStart={(e) => {
+              e.stopPropagation()
+              beginDrag(e, f.path, 'file')
+            }}
+            onDragEnd={endDrag}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
@@ -1068,7 +1596,8 @@ export function NotesRail(): React.JSX.Element {
   const folderBranch = (node: NoteFolderNode, depth: number): React.JSX.Element[] => {
     const out: React.JSX.Element[] = []
     for (const f of node.folders) {
-      const isOpen = expanded.has(f.path)
+      const folding = foldingId === f.path
+      const isOpen = expanded.has(f.path) || folding
       const renaming = edit !== null && edit.mode === 'rename' && edit.path === f.path
       out.push(
         <div
@@ -1081,20 +1610,9 @@ export function NotesRail(): React.JSX.Element {
             (draggingId === f.path ? ' dragging' : '')
           }
           style={{ paddingLeft: rowPad(depth) }}
+          data-landing={landingOf(flight, f.path, 'folder') ? 'true' : undefined}
           data-folder-path={f.path}
           data-drop-folder={f.path}
-          draggable
-          onDragStart={(e) => {
-            e.dataTransfer.setData('text/plain', f.path)
-            e.dataTransfer.effectAllowed = 'move'
-            draggingRef.current = f.path
-            setDraggingId(f.path)
-          }}
-          onDragEnd={() => {
-            draggingRef.current = null
-            setDraggingId(null)
-            setDropTarget(null)
-          }}
           onDragOver={(e) => {
             // OS 文件拖入由 rail 根节点统一处理(要借用 data-drop-folder 取落点)
             if (hasFiles(e) || !canDropInto(f.path)) return
@@ -1102,16 +1620,7 @@ export function NotesRail(): React.JSX.Element {
             e.dataTransfer.dropEffect = 'move'
             setDropTarget(f.path)
           }}
-          onDrop={(e) => {
-            if (hasFiles(e)) return
-            e.preventDefault()
-            e.stopPropagation() // 别让列表容器的「放到根层」也接一手
-            const id = e.dataTransfer.getData('text/plain')
-            draggingRef.current = null
-            setDropTarget(null)
-            setDraggingId(null)
-            if (id !== '') void moveNote(id, f.path)
-          }}
+          onDrop={(e) => finishDrop(e, f.path)}
         >
           <IndentGuides depth={depth} />
           {renaming ? (
@@ -1120,14 +1629,20 @@ export function NotesRail(): React.JSX.Element {
             <button
               type="button"
               className="notes-folder-name"
+              draggable={!flat && !moving}
               aria-expanded={isOpen}
               onClick={() => {
                 setSelectedFolder(f.path)
                 toggleFolder(f.path)
               }}
               title={f.path}
+              onDragStart={(e) => {
+                e.stopPropagation()
+                beginDrag(e, f.path, 'folder')
+              }}
+              onDragEnd={endDrag}
             >
-              <i className={isOpen ? 'fa-regular fa-folder-open' : 'fa-regular fa-folder'} />
+              <i className={isOpen && !folding ? 'fa-regular fa-folder-open' : 'fa-regular fa-folder'} />
               <span>{f.name}</span>
             </button>
           )}
@@ -1191,7 +1706,20 @@ export function NotesRail(): React.JSX.Element {
           </div>
         )
       }
-      if (isOpen) out.push(...folderBranch(f, depth + 1))
+      if (folding) {
+        out.push(
+          <div
+            key={`fold:${f.path}`}
+            className="notes-rail-collapse"
+            data-collapsing="true"
+            style={{ height: foldRef.current?.fromId === f.path ? foldRef.current.height : 0 }}
+          >
+            {folderBranch(f, depth + 1)}
+          </div>
+        )
+      } else if (isOpen) {
+        out.push(...folderBranch(f, depth + 1))
+      }
     }
     for (const n of node.notes) out.push(noteRow(n, depth))
     for (const f of node.files) out.push(fileRow(f, depth))
@@ -1288,6 +1816,16 @@ export function NotesRail(): React.JSX.Element {
       )}
 
       <div className="notes-rail-listwrap">
+      {/* 移动还没结束。同盘 rename 很快,超过约 200ms 才挂上,避免一闪。
+          不做确定百分比:rename 没有字节进度可报,用户看到的等待是这次 IPC 加上随后的整棵重扫。 */}
+      {showMoving && (
+        <div className="notes-move-progress" role="status">
+          <span>{t('notes.move.moving')}</span>
+          <div className="notes-move-progress-track" aria-hidden="true">
+            <div className="notes-move-progress-bar" />
+          </div>
+        </div>
+      )}
       {/* OS 文件拖入的落点提示:骑在列表顶部,不参与命中检测 */}
       {fileDragTarget !== null && (
         <div className="notes-import-hint" aria-hidden="true">
@@ -1308,9 +1846,35 @@ export function NotesRail(): React.JSX.Element {
         onScroll={onListScroll}
         onPointerMove={onListPointerMove}
         onPointerLeave={onListPointerLeave}
+        onDragOver={onListDragOver}
       >
         <div ref={hoverPillRef} className="notes-rail-hover" aria-hidden="true" />
         <div ref={selectionPillRef} className="notes-rail-selection" aria-hidden="true" />
+        <div ref={dropPillRef} className="notes-rail-drop" aria-hidden="true" />
+        <div
+          ref={dropLabelRef}
+          className="notes-rail-drop-label"
+          aria-hidden="true"
+          data-drop-path={dropTarget === null ? undefined : dropTarget}
+        >
+          {dropTarget === null ? null : (
+            <span>
+              {dropTarget === ''
+                ? t('notes.move.toRoot')
+                : t('notes.move.into').replace('{NAME}', baseNameOf(dropTarget))}
+            </span>
+          )}
+        </div>
+        {flight !== null && (
+          <div
+            className="notes-rail-flight"
+            data-to-path={flight.toId}
+            aria-hidden="true"
+          >
+            <i className={flight.iconClass} data-kind={flight.iconKind ?? undefined} />
+            <span>{flight.name}</span>
+          </div>
+        )}
         {error !== null && (
           <div className="notes-rail-error">
             <i className="fa-solid fa-triangle-exclamation" />
@@ -1368,14 +1932,7 @@ export function NotesRail(): React.JSX.Element {
               e.dataTransfer.dropEffect = 'move'
               setDropTarget('')
             }}
-            onDrop={(e) => {
-              e.preventDefault()
-              const id = e.dataTransfer.getData('text/plain')
-              draggingRef.current = null
-              setDropTarget(null)
-              setDraggingId(null)
-              if (id !== '') void moveNote(id, '')
-            }}
+            onDrop={(e) => finishDrop(e, '')}
           >
             <i className="fa-solid fa-arrow-turn-up" />
             <span>{t('notes.move.toRoot')}</span>

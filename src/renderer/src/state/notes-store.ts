@@ -9,6 +9,7 @@
 import { create } from 'zustand'
 import {
   baseNameOf,
+  joinNoteId,
   type Note,
   type NoteFileMeta,
   type NoteFileStat,
@@ -24,6 +25,7 @@ import { ancestorsOf } from '../lib/note-tree'
 import { toggleTaskLine } from '../lib/note-task'
 import { CHOICE } from '../lib/choice'
 import { showToast } from '../lib/utils'
+import { useFilesStore } from './files-store'
 
 const t = (): ((k: string) => string) => makeT(getCurrentLang())
 
@@ -189,8 +191,16 @@ interface NotesState {
   setExpanded(path: string, open: boolean): void
   setSelectedFolder(path: string): void
   remove(id: string): Promise<void>
-  /** 跨目录移动(笔记与目录共用);parent 为空串 = 根层 */
-  moveNote(id: string, parent: string): Promise<void>
+  /** 一次移动还没结束:目录顶部出不确定进度,期间不再接第二次拖拽 */
+  moving: boolean
+  /**
+   * 刚成功落地的那一次移动。和换列表的那次 set 写在一起,
+   * 目录树才能在新行出现的同一帧从旧位置滑过去。播完由目录树清掉。
+   */
+  moveLand: { fromId: string; toId: string; kind: 'note' | 'folder' | 'file' } | null
+  clearMoveLand(): void
+  /** 跨目录移动(笔记、目录、文件共用);parent 为空串 = 根层 */
+  moveNote(id: string, parent: string, kind: 'note' | 'folder' | 'file'): Promise<void>
   /** 把 OS 文件/文件夹原样复制进目标目录(空串 = 根层) */
   importPaths(target: string, paths: string[]): Promise<void>
   /** 用系统默认应用打开文件 */
@@ -264,7 +274,7 @@ function snapshot(d: NoteDraft): string {
 
 export const useNotesStore = create<NotesState>((set, get) => {
   /** 结构性改动(建/删/改名)后重载列表 —— id 可能变了,不能只打补丁 */
-  async function reload(): Promise<void> {
+  async function reload(patch?: { moveLand: NotesState['moveLand'] }): Promise<void> {
     const payload = await dataSource().notes.list()
     set({
       notes: payload.notes,
@@ -274,7 +284,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
       truncated: payload.truncated,
       truncatedFiles: payload.truncatedFiles,
       error: payload.error,
-      loaded: true
+      loaded: true,
+      ...(patch ?? {})
     })
     if (get().query.trim() !== '') await get().setQuery(get().query)
   }
@@ -319,6 +330,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
     savedAt: 0,
     externalChanged: false,
     conflict: null,
+    moving: false,
+    moveLand: null,
     viewMode: readLs(VIEW_MODE_LS_KEY, ['split', 'edit', 'preview'] as const, 'split'),
     splitRatio: 0.5,
     scrollSync: lsGet(SCROLL_SYNC_LS_KEY) !== '0',
@@ -790,30 +803,68 @@ export const useNotesStore = create<NotesState>((set, get) => {
       }
     },
 
-    async moveNote(id, parent) {
+    async moveNote(id, parent, kind) {
+      if (get().moving) return
+      // 上一次的落地信息如果还在,这次失败会让目录树再飞一遍。先清掉,成功时再写。
+      set({ moving: true, moveLand: null })
       try {
-        const out = await dataSource().notes.move({ id, parent })
+        // 被移的就是打开中的那份(或它的父目录):先等在飞的保存落盘。
+        // 不落的话,缓冲里还没写出去的字会写到旧路径,等于丢在原处。
+        const d = get().draft
+        const openFile = useFilesStore.getState().file
+        const movesNote = d !== null && (d.id === id || d.id.startsWith(`${id}/`))
+        const movesFile = openFile !== null && (openFile.path === id || openFile.path.startsWith(`${id}/`))
+        if (movesNote) await get().flush()
+        if (movesFile) await useFilesStore.getState().flush()
+
+        const out = await dataSource().notes.move({ id, parent, kind })
         if (!out.ok) {
           showToast(out.message, '#f87171', 'fa-circle-exclamation')
           return
         }
         // 打开中的笔记(或它所在的目录)被移动了 → id 前缀跟着换,否则下次保存会 not-found
-        const d = get().draft
-        if (d !== null && (d.id === id || d.id.startsWith(`${id}/`))) {
-          const moved = `${out.id}${d.id.slice(id.length)}`
-          set({ currentId: moved, draft: { ...d, id: moved } })
+        const freshDraft = get().draft
+        if (freshDraft !== null && (freshDraft.id === id || freshDraft.id.startsWith(`${id}/`))) {
+          const moved = `${out.id}${freshDraft.id.slice(id.length)}`
+          set({ currentId: moved, draft: { ...freshDraft, id: moved } })
           // 撞名时服务端会连 frontmatter 的 title 一起改。草稿不同步的话,
           // 下次标题失焦 syncFileName 会认为「标题与文件名不符」而把文件改回去 —— 又撞名,
           // 于是陷入连锁重命名。所以这里必须从磁盘重读一遍。
           if (out.renamed !== undefined) {
             const fresh = await dataSource().notes.read(moved)
             if (fresh !== null) {
-              set({ draft: { ...draftOf(fresh), unclosed: d.unclosed }, dirty: false })
+              set({ draft: { ...draftOf(fresh), unclosed: freshDraft.unclosed }, dirty: false })
             }
           }
         }
-        if (get().selectedFolder === id) set({ selectedFolder: out.id })
-        await reload()
+        // 打开中的文件(或它所在的目录)跟着换路径。元信息用服务端带回的,
+        // 渲染层不自己拼;目录移动时只知道新前缀,要再 stat 一次。
+        const fileNow = useFilesStore.getState().file
+        if (fileNow !== null && (fileNow.path === id || fileNow.path.startsWith(`${id}/`))) {
+          const nextPath = `${out.id}${fileNow.path.slice(id.length)}`
+          const stat =
+            out.file !== undefined && out.file.path === nextPath
+              ? out.file
+              : await dataSource().notes.statFile(nextPath)
+          if (stat !== null) useFilesStore.getState().repath(fileNow.path, stat)
+        }
+        // 展开状态和选中目录按前缀一起换。
+        // 再展开目标所在的每一层(不含被移项自己),折叠着的目标移完也看得见。
+        const expanded = new Set<string>()
+        for (const path of get().expanded) {
+          if (path === id || path.startsWith(`${id}/`)) expanded.add(`${out.id}${path.slice(id.length)}`)
+          else expanded.add(path)
+        }
+        for (const a of ancestorsOf(joinNoteId(parent, baseNameOf(out.id)))) expanded.add(a)
+        const selected = get().selectedFolder
+        const selectedFolder =
+          selected === id || selected.startsWith(`${id}/`)
+            ? `${out.id}${selected.slice(id.length)}`
+            : selected
+        persistExpanded(expanded)
+        set({ expanded, selectedFolder })
+        // 新行和落地信息必须同一次提交。分开写的话,新行会先出现一帧再飞。
+        await reload({ moveLand: { fromId: id, toId: out.id, kind } })
         // 目标已有同名项 → 服务端不会覆盖,而是加序号;这件事必须说出来,
         // 否则用户会以为文件没动(名字变了却不吭声是最难排查的一类)
         if (out.renamed !== undefined) {
@@ -827,7 +878,13 @@ export const useNotesStore = create<NotesState>((set, get) => {
         showToast(t()('toast.noteMoved'), '#4ade80', 'fa-folder-tree')
       } catch (err) {
         showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
+      } finally {
+        set({ moving: false })
       }
+    },
+
+    clearMoveLand() {
+      if (get().moveLand !== null) set({ moveLand: null })
     },
 
     async renameNote(id, title) {

@@ -6,7 +6,8 @@
 //   · 图片 / PDF / 媒体 / Office / 压缩包 / 3D 是只读的,`editable = false`,
 //     其内容由 viewer 自己按需读字节或走 launcher-note:// 协议。
 //
-// 两个 store 互不 import:笔记 ↔ 文件的切换由 modules/notes/doc-actions.ts 协调。
+// 笔记 ↔ 文件的切换由 modules/notes/doc-actions.ts 协调。
+// notes-store 移动打开中的文件时会调这边的 repath(单向,本文件不引 notes-store)。
 
 import { create } from 'zustand'
 import type {
