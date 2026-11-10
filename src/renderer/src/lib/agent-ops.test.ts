@@ -1,17 +1,37 @@
 // 意图层的「停用任务启动」确认(P1 复审项):enable 副作用必须由用户明确选择,不能藏在 start 内部
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  ops: vi.fn(),
-  load: vi.fn()
-}))
+const mocks = vi.hoisted(() => {
+  const working: Record<string, string> = {}
+  return {
+    ops: vi.fn(),
+    load: vi.fn(async () => {}),
+    working,
+    beginWork(id: string, action: string): void {
+      if (working[id]) return
+      working[id] = action
+    },
+    endWork(id: string): void {
+      delete working[id]
+    },
+    clearWorking(): void {
+      for (const id of Object.keys(working)) delete working[id]
+    }
+  }
+})
 
 vi.mock('../data', () => ({
   dataSource: (): unknown => ({ agents: { ops: mocks.ops } })
 }))
 vi.mock('../state/agents-store', () => ({
   useAgentsStore: {
-    getState: (): unknown => ({ agents: [], load: mocks.load })
+    getState: (): unknown => ({
+      agents: [],
+      load: mocks.load,
+      working: mocks.working,
+      beginWork: mocks.beginWork,
+      endWork: mocks.endWork
+    })
   }
 }))
 vi.mock('./utils', () => ({ showToast: vi.fn() }))
@@ -50,6 +70,7 @@ function answerChoice(value: string | null): { last: () => ChoiceRequest | null;
 describe('runAgentIntent:停用任务的启动', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.clearWorking()
   })
 
   it('先弹选择(说明无法「仅本次启动」);取消 → 零 ops 调用', async () => {
@@ -89,5 +110,17 @@ describe('runAgentIntent:停用任务的启动', () => {
     expect(mocks.ops).toHaveBeenCalledWith('user:com.a', 'start')
     expect(c.last()).toBeNull() // 没有出现任何选择请求
     c.stop()
+  })
+
+  it('第一次 ops 还没返回时再点,丢掉,且只调一次', async () => {
+    let release: (value: unknown) => void = () => {}
+    mocks.ops.mockImplementation(() => new Promise((resolve) => {
+      release = resolve
+    }))
+    const pending = runAgentIntent(agent(), 'start')
+    expect(await runAgentIntent(agent(), 'start')).toBeNull()
+    expect(mocks.ops).toHaveBeenCalledTimes(1)
+    release({ loaded: true, enabled: true, running: true })
+    await pending
   })
 })

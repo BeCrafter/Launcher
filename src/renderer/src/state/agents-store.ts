@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type { Agent, AgentRuntimePayload } from '@shared/models'
 import type { MissingAgent } from '@shared/ipc'
 import type { AgentFilter, AgentStatusFilter } from '../data/ports'
+import type { AgentIntent } from '../lib/agent-ops'
 import { dataSource } from '../data'
 
 /** 抽屉状态页用。卡片不读这三项。 */
@@ -18,6 +19,10 @@ interface AgentsState {
   epoch: number
   /** 按 id 的 cpu/mem/启动时间。快照合并进来,整表刷新时清掉缺席的。 */
   procExtras: Record<string, AgentProcExtra>
+  /** 这一条正在做的意图。点下去就写上,结束或取消才清,用来挡住连点。 */
+  working: Record<string, AgentIntent>
+  beginWork(id: string, action: AgentIntent): void
+  endWork(id: string): void
   /** 已加载但 plist 已不存在的孤儿(定向复核;refresh 时 diff 出消失条目后核对) */
   missingPlists: MissingAgent[]
   filter: AgentFilter
@@ -43,6 +48,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   agents: [],
   epoch: 0,
   procExtras: {},
+  working: {},
   missingPlists: [],
   filter: 'all',
   statusFilter: 'all',
@@ -122,6 +128,18 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
     }
     if (!changed && !extrasChanged) return
     set(extrasChanged ? { agents, procExtras } : { agents })
+  },
+
+  beginWork(id, action) {
+    if (get().working[id]) return
+    set({ working: { ...get().working, [id]: action } })
+  },
+
+  endWork(id) {
+    if (!get().working[id]) return
+    const working = { ...get().working }
+    delete working[id]
+    set({ working })
   },
 
   setFilter(f) {

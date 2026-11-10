@@ -19,18 +19,33 @@ const LABEL_KEY: Record<AgentIntent, string> = {
   autostart: 'ops.autostart'
 }
 
-/** 返回动作后的 OpsState;用户取消(提权/询问被否)返回 null */
+/** 返回动作后的 OpsState;用户取消(提权/询问被否)、或这一条还在进行中,返回 null */
 export async function runAgentIntent(agent: Agent, action: AgentIntent): Promise<OpsState | null> {
-  const next = await dispatch(agent, action)
-  // 列表刷新不阻塞调用方:动作结果(OpsState)由 main 直接返回,UI 据此立即翻面。
-  // 整表刷新要重扫目录 + launchctl 表 + ps(约 0.5-1s),等它会让按钮看起来「点了没反应」。
-  if (next) {
-    void useAgentsStore.getState().load()
-    // 开机自启只改覆盖位,不碰进程。启动/停止/重启都要等到这一条的状态稳住:
-    // kickstart 之后常有几秒「已载入、还没 pid」。不 await,按钮先按返回的 OpsState 翻面。
-    if (action === 'start' || action === 'restart' || action === 'stop') void refreshUntilSettled(agent.id, action)
+  // 同步占住。brew services 要十几秒,这中间再点一次会排进主进程的锁,把上一次做反。
+  const store = useAgentsStore.getState()
+  if (store.working[agent.id]) return null
+  store.beginWork(agent.id, action)
+  const finish = (): void => useAgentsStore.getState().endWork(agent.id)
+  try {
+    const next = await dispatch(agent, action)
+    // 列表刷新不阻塞调用方。整表刷新要重扫目录 + launchctl 表 + ps(约 0.5-1s)。
+    if (next) {
+      void useAgentsStore.getState().load()
+      // 开机自启只改覆盖位,不碰进程。启动/停止/重启要等状态稳住再放开按钮:
+      // kickstart 之后常有几秒「已载入、还没 pid」。不 await,否则调用方会被轮询拖住。
+      if (action === 'start' || action === 'restart' || action === 'stop') {
+        void refreshUntilSettled(agent.id, action).finally(finish)
+      } else {
+        finish()
+      }
+    } else {
+      finish()
+    }
+    return next
+  } catch (err) {
+    finish()
+    throw err
   }
-  return next
 }
 
 /**
