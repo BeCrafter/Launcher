@@ -131,9 +131,15 @@ describe('cli 冒烟', () => {
       res.writeHead(404).end('nope')
     })
     await new Promise((r) => server.listen(0, '127.0.0.1', r))
-    const env = { LAUNCHER_R2_BASE: `http://127.0.0.1:${server.address().port}/launcher` }
 
     const dir = mkdtempSync(join(tmpdir(), 'launcher-cli-manifest-'))
+    // 断开与本机安装状态的耦合:/Applications 里真装了一份同版本时,versions 会给它
+    // 打上 `[已安装]`,把下面的 `0.3.0 [最新]` 断言挤开。指向临时空目录,
+    // 只让带 --dir 的 status 看到夹具(显式目录优先于这个环境变量)。
+    const env = {
+      LAUNCHER_R2_BASE: `http://127.0.0.1:${server.address().port}/launcher`,
+      LAUNCHER_INSTALL_DIR: join(dir, 'not-installed')
+    }
     mkdirSync(join(dir, 'Launcher.app', 'Contents'), { recursive: true })
     writeFileSync(
       join(dir, 'Launcher.app', 'Contents', 'Info.plist'),
