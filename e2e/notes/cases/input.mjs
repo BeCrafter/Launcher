@@ -7,6 +7,20 @@ const WRAP = ['# 反引号升级', '', '待升级的文字。', ''].join('\n')
 const LIST = ['# 列表续行', '', '- 外层甲', ''].join('\n')
 const TASK = ['# 任务续行', '', '- [] 宽松任务', ''].join('\n')
 const COLUMNS = ['# 列选择', '', '甲行文字', '乙行文字', ''].join('\n')
+const LEVELS = [
+  '# 列表层级',
+  '',
+  '- 一级甲',
+  '  - 二级甲',
+  '    - 三级甲',
+  '      - 四级甲',
+  '',
+  '结尾段落。'
+].join('\n')
+const QUOTED = ['# 引用列表', '', '> - 引用甲', '>   - 引用乙', ''].join('\n')
+const SAME_MARKER = ['# 同级标记', '', '* 甲', '* 乙', ''].join('\n')
+const MIXED_MARKERS = ['# 标记', '', '- [ ] 任务甲', '* [x] 任务乙', '1. 有序甲', ''].join('\n')
+const CODE_LIST = ['# 代码块', '', '```', '- 不是列表', '```', ''].join('\n')
 
 function nonEmpty(lines) {
   return lines.filter((line) => line.trim() !== '')
@@ -158,16 +172,179 @@ export default [
   {
     id: 'input/tab-indents-list',
     area: 'input',
-    title: 'Tab / Shift+Tab:列表项整行增减一级缩进',
+    title: 'Tab / Shift+Tab:列表项整行增减一级缩进,无序标记跟随上一级',
     tags: ['input', 'list', 'tab'],
     fixture: NESTED,
     async run(ctx, t) {
       const line = '  - 内层甲一'
       await ctx.setCursor(line, 0)
       await ctx.press('Tab')
-      includes(await ctx.lines(), '    - 内层甲一', 'Tab 增加一级缩进')
+      // 标记由**上一级**决定:上一级是 `- 外层甲` → 本级 `*`;反缩进后仍是 `*`。
+      includes(await ctx.lines(), '    * 内层甲一', 'Tab 增加一级缩进,标记跟随上一级变为 *')
       await ctx.press('Tab', 8)
-      includes(await ctx.lines(), '  - 内层甲一', 'Shift+Tab 恢复原缩进')
+      includes(await ctx.lines(), '  * 内层甲一', 'Shift+Tab 恢复原缩进,标记仍跟随上一级为 *')
+    }
+  },
+
+  {
+    // 复现用户报告:选中/停在列表项后按 Tab 没有缩进,焦点被移到工具栏。
+    // 根因是 CodeMirror 在 Escape 后有 2 秒「Tab 交给浏览器」模式,它在 keymap 之前
+    // 就 return 了 —— 这里先按 Escape 把这个状态摆出来。
+    id: 'input/tab-after-escape-indents-list',
+    area: 'input',
+    title: '刚按过 Escape 后的 Tab / Shift+Tab:仍在编辑器内缩进,焦点不跑到工具栏',
+    tags: ['input', 'list', 'tab', 'focus'],
+    fixture: NESTED,
+    async run(ctx, t) {
+      const line = '  - 内层甲一'
+      await ctx.setCursor(line, 0)
+      await ctx.press('Escape')
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '    * 内层甲一', 'Escape 后 Tab 仍缩进一级')
+      eq(
+        await ctx.cdp.eval(`document.activeElement?.classList.contains('cm-content') === true`),
+        true,
+        'Tab 后焦点留在编辑器'
+      )
+      await ctx.press('Escape')
+      await ctx.press('Tab', 8)
+      includes(await ctx.lines(), '  * 内层甲一', 'Escape 后 Shift+Tab 仍反缩进')
+      eq(
+        await ctx.cdp.eval(`document.activeElement?.classList.contains('cm-content') === true`),
+        true,
+        'Shift+Tab 后焦点仍在编辑器'
+      )
+    }
+  },
+
+  {
+    id: 'input/tab-marker-follows-parent-chain',
+    area: 'input',
+    title: '选中多级列表按 Tab:每层的标记跟随它的上一级,- → * → + 逐层递进',
+    tags: ['input', 'list', 'tab'],
+    fixture: LEVELS,
+    async run(ctx, t) {
+      await ctx.selectLines('- 一级甲', '      - 四级甲')
+      await ctx.press('Tab')
+      const lines = await ctx.lines()
+      includes(lines, '  - 一级甲', '没有上级 → -')
+      includes(lines, '    * 二级甲', '上级 - → *')
+      includes(lines, '      + 三级甲', '上级 * → +')
+      includes(lines, '        - 四级甲', '上级 + → -')
+    }
+  },
+
+  {
+    // 用户报告的差异:上一级是 `*`,`Tab` 后本级必须是 `+`,而不是按绝对深度算成 `*`。
+    id: 'input/tab-marker-follows-parent',
+    area: 'input',
+    title: '同级 `*` 列表上按 Tab:新标记跟随上一级 `*` 变为 `+`',
+    tags: ['input', 'list', 'tab'],
+    fixture: SAME_MARKER,
+    async run(ctx, t) {
+      await ctx.setCursor('* 乙', 0)
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '  + 乙', '上一级是 * → 本级 +')
+      // 反缩进回顶格后没有上级,按基础标记归一成 `-`
+      await ctx.press('Tab', 8)
+      includes(await ctx.lines(), '- 乙', '回到顶格没有上级,标记归一为 -')
+    }
+  },
+
+  {
+    id: 'input/tab-caret-follows-content',
+    area: 'input',
+    title: 'Tab 缩进列表项时光标跟着文字走,不会被挤到行首',
+    tags: ['input', 'list', 'tab', 'caret'],
+    fixture: NESTED,
+    async run(ctx, t) {
+      await ctx.setCursor('  - 内层甲一', 6) // 落在「甲」上
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '    * 内层甲一', 'Tab 增加缩进并换标记')
+      const caret = await ctx.cdp.eval(`(() => {
+        const v = document.querySelector('.notes-editor-pane .cm-content')?.cmTile?.root?.view
+        if (!v) return null
+        const head = v.state.selection.main.head
+        const line = v.state.doc.lineAt(head)
+        return { column: head - line.from, char: v.state.sliceDoc(head, head + 1) }
+      })()`)
+      eq(caret?.char, '甲', '光标仍停在同一文字上')
+      eq(caret?.column, 8, '光标列随缩进和标记宽度一起后移')
+    }
+  },
+
+  {
+    id: 'input/tab-quoted-list',
+    area: 'input',
+    title: '引用里的列表 Tab:缩进加在 > 之后,标记跟随引用内的上一级',
+    tags: ['input', 'list', 'tab', 'quote'],
+    fixture: QUOTED,
+    async run(ctx, t) {
+      await ctx.setCursor('>   - 引用乙', 0)
+      await ctx.press('Tab')
+      includes(
+        await ctx.lines(),
+        '>     * 引用乙',
+        '缩进在引用前缀之后,标记跟随上一级 `> - 引用甲` 变为 *'
+      )
+      await ctx.press('Tab', 8)
+      includes(await ctx.lines(), '>   * 引用乙', 'Shift+Tab 缩回一级,标记仍为 *')
+    }
+  },
+
+  {
+    id: 'input/tab-task-and-ordered-markers',
+    area: 'input',
+    title: '任务与有序列表 Tab:只缩进,不换标记(Obsidian Tasks 只认 `-`)',
+    tags: ['input', 'list', 'tab', 'task'],
+    fixture: MIXED_MARKERS,
+    async run(ctx, t) {
+      await ctx.selectLines('- [ ] 任务甲', '1. 有序甲')
+      await ctx.press('Tab')
+      const lines = await ctx.lines()
+      includes(lines, '  - [ ] 任务甲', '未勾选任务只缩进,标记保持 -')
+      includes(lines, '  * [x] 任务乙', '已勾选任务只缩进,标记保持 *')
+      includes(lines, '  1. 有序甲', '有序列表只缩进')
+    }
+  },
+
+  {
+    id: 'input/tab-code-block-list-like-line',
+    area: 'input',
+    title: '代码块里的列表样文本 Tab:只缩进,不换标记(那是代码)',
+    tags: ['input', 'list', 'tab', 'code'],
+    fixture: CODE_LIST,
+    async run(ctx, t) {
+      await ctx.setCursor('- 不是列表', 0)
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '  - 不是列表', '围栏内只加缩进')
+      await ctx.press('Tab', 8)
+      includes(await ctx.lines(), '- 不是列表', 'Shift+Tab 复原')
+    }
+  },
+
+  {
+    id: 'input/tab-paragraph-stays-in-editor',
+    area: 'input',
+    title: '普通段落 Tab:在光标处插空格,焦点不离开编辑器;有选区时整行缩进',
+    tags: ['input', 'tab', 'focus'],
+    fixture: NESTED,
+    async run(ctx, t) {
+      const line = '结尾段落。'
+      await ctx.setCursor(line, 2)
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '结尾  段落。', '光标处插入 2 个空格')
+      eq(
+        await ctx.cdp.eval(`document.activeElement?.classList.contains('cm-content') === true`),
+        true,
+        'Tab 后焦点留在编辑器'
+      )
+      await ctx.press('Tab', 8)
+      includes(await ctx.lines(), '结尾段落。', 'Shift+Tab 删掉刚插入的空格')
+      // 有选区时仍走整行缩进,与列表项一致
+      await ctx.selectWholeLine(line)
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '  结尾段落。', '选区 Tab 仍是整行缩进')
     }
   },
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  type IndentOptions,
   indentMarkdownLine,
   indentMarkdownLines,
   isListLine,
@@ -148,7 +149,89 @@ describe('缩进', () => {
 
   it('空行不动;没有可改的行时批量返回 null', () => {
     expect(indentMarkdownLine('   ', 'in')).toBe('   ')
-    expect(indentMarkdownLines(['- 甲', ''], 'out')).toBeNull()
-    expect(indentMarkdownLines(['- 甲', ''], 'in')).toEqual(['  - 甲', ''])
+    expect(indentMarkdownLines(['- 甲', ''], [0], 'out')).toBeNull()
+    expect(indentMarkdownLines(['- 甲', ''], [0], 'in')).toEqual(new Map([[0, '  - 甲']]))
+  })
+})
+
+describe('indentMarkdownLines:标记跟随上一级', () => {
+  const plan = (
+    lines: string[],
+    targets: number[],
+    dir: 'in' | 'out' = 'in',
+    options: IndentOptions = {}
+  ): Map<number, string> | null => indentMarkdownLines(lines, targets, dir, 2, options)
+
+  it('上级 - → 本级 *', () => {
+    expect(plan(['- 甲', '  - 乙'], [1])?.get(1)).toBe('    * 乙')
+  })
+
+  it('上级 * → 本级 +', () => {
+    expect(plan(['* 甲', '* 乙'], [1])?.get(1)).toBe('  + 乙')
+  })
+
+  it('上级 + → 本级 -', () => {
+    expect(plan(['+ 甲', '+ 乙'], [1])?.get(1)).toBe('  - 乙')
+  })
+
+  it('没有上级时落回基础标记 -', () => {
+    expect(plan(['* 甲'], [0])?.get(0)).toBe('  - 甲')
+    expect(plan(['- 甲', '  + 乙'], [1], 'out')?.get(1)).toBe('- 乙')
+  })
+
+  it('没有缩进可退时不动这一行(也不顺手归一标记)', () => {
+    expect(plan(['* 甲'], [0], 'out')).toBeNull()
+  })
+
+  it('多选时逐行按各自的上一级算', () => {
+    const out = plan(['* 甲', '* 乙', '* 丙'], [1, 2])
+    expect(out?.get(1)).toBe('  + 乙')
+    expect(out?.get(2)).toBe('  + 丙')
+  })
+
+  it('乱序传入也按行号升序处理,父项先更新', () => {
+    const out = plan(['- 甲', '  - 乙'], [1, 0])
+    expect(out?.get(0)).toBe('  - 甲')
+    expect(out?.get(1)).toBe('    * 乙')
+  })
+
+  it('反缩进按新的上一级重算', () => {
+    expect(plan(['- 甲', '  * 乙', '    + 丙'], [2], 'out')?.get(2)).toBe('  * 丙')
+  })
+
+  it('有序上级的孩子用 -;任务自身不改标记,但可作为上级', () => {
+    expect(plan(['1. 甲', '  - 乙'], [1])?.get(1)).toBe('    - 乙')
+    expect(plan(['- [ ] 甲'], [0])?.get(0)).toBe('  - [ ] 甲')
+    expect(plan(['* [x] 甲'], [0])?.get(0)).toBe('  * [x] 甲')
+    expect(plan(['- [ ] 甲', '  - 乙'], [1])?.get(1)).toBe('    * 乙')
+    expect(plan(['* [x] 甲', '  - 乙'], [1])?.get(1)).toBe('    + 乙')
+  })
+
+  it('续行要落在上级的内容列之内', () => {
+    expect(plan(['- 甲', '  续行', '  - 乙'], [2])?.get(2)).toBe('    * 乙')
+    expect(plan(['- 甲', ' 段', '  - 乙'], [2])?.get(2)).toBe('    - 乙')
+  })
+
+  it('顶格内容结束列表上下文', () => {
+    expect(plan(['- 甲', '', '普通段落', '    - 乙'], [3])?.get(3)).toBe('      - 乙')
+    expect(plan(['- 甲', '```js', '- foo', '```', '  - 乙'], [4])?.get(4)).toBe('    - 乙')
+  })
+
+  it('分隔线不算上级,自身也不换标记', () => {
+    expect(plan(['- - -', '  - 乙'], [1])?.get(1)).toBe('    - 乙')
+    expect(plan(['- 甲', '  - - -'], [1])?.get(1)).toBe('    - - -')
+  })
+
+  it('skipMarker 里的行只缩进', () => {
+    expect(plan(['- 甲'], [0], 'in', { skipMarker: new Set([0]) })?.get(0)).toBe('  - 甲')
+  })
+
+  it('引用内按引用后的上级算;跨引用上下文不算上级', () => {
+    expect(plan(['> - 甲', '>   - 乙'], [1])?.get(1)).toBe('>     * 乙')
+    expect(plan(['> - 甲', '  - 乙'], [1])?.get(1)).toBe('    - 乙')
+  })
+
+  it('没有任何行变化时返回 null', () => {
+    expect(plan(['- 甲'], [0], 'out')).toBeNull()
   })
 })

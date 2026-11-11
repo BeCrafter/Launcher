@@ -45,7 +45,8 @@ import { inCodeBlock } from '../../lib/editor-code-block'
 import { markdownFenceInput } from '../../lib/editor-fence'
 import { setBlockAlign } from '../../lib/note-align'
 import { planMarkdownContinuation } from '../../lib/md-list-continuation'
-import { indentMarkdownLine, listMarkerOf, parseListLine } from '../../lib/md-list-syntax'
+import { indentMarkdownLines, listMarkerOf, parseListLine } from '../../lib/md-list-syntax'
+import { minimalTextChange, type TextChange } from '../../lib/text-change'
 import { toggleTaskLine } from '../../lib/note-task'
 import { showToast } from '../../lib/utils'
 import { getCurrentLang, makeT } from '../../i18n'
@@ -106,22 +107,9 @@ function insertRuleAtPos(view: EditorView, at: number): void {
  * 撤销栈里也仍然只记一次(Cmd+Z 能整体退回)。
  */
 function applyDocText(view: EditorView, next: string): void {
-  const prev = view.state.doc.toString()
-  if (prev === next) return
-  let start = 0
-  const max = Math.min(prev.length, next.length)
-  while (start < max && prev.charCodeAt(start) === next.charCodeAt(start)) start += 1
-  let endPrev = prev.length
-  let endNext = next.length
-  while (
-    endPrev > start &&
-    endNext > start &&
-    prev.charCodeAt(endPrev - 1) === next.charCodeAt(endNext - 1)
-  ) {
-    endPrev -= 1
-    endNext -= 1
-  }
-  view.dispatch({ changes: { from: start, to: endPrev, insert: next.slice(start, endNext) } })
+  const change = minimalTextChange(view.state.doc.toString(), next)
+  if (change === null) return
+  view.dispatch({ changes: change })
 }
 
 /** 标题行前缀:已有 1–7 个 `#` 就整体替换,没有就直接加 */
@@ -173,21 +161,36 @@ function continueMarkdownMarkup(view: EditorView): boolean {
 }
 
 /**
- * Tab / Shift+Tab:有选区(单行或多行)就整批增减一级缩进;
- * 光标折叠时只接管列表项与代码块,普通段落仍让 Tab 把焦点移出编辑器。
+ * 缩进一批行:每行做「整行纯函数 → 新行」,但只替换真正变化的那一段。
+ * 整行替换会把行内光标映射到行首;最小 diff 让它留在原来的文字上。
+ * 无序标记由**上一级列表项**决定(见 `indentMarkdownLines`);
+ * 围栏 / 缩进代码块里的列表样文本只缩进、不换标记(那是代码,不是列表)。
+ * 一次 dispatch:撤销只记一步,自动保存只触发一次。
  */
-function indentSelection(view: EditorView, dir: 'in' | 'out'): boolean {
-  if (view.composing) return false
-  if (completionStatus(view.state) === 'active') return false
+function applyIndent(view: EditorView, lineNumbers: Iterable<number>, dir: 'in' | 'out'): void {
+  const doc = view.state.doc
+  const lines: string[] = []
+  for (let n = 1; n <= doc.lines; n += 1) lines.push(doc.line(n).text)
 
-  const { doc, selection } = view.state
-  const hasSelection = selection.ranges.some((range) => !range.empty)
-  if (!hasSelection) {
-    const head = selection.main.head
-    const line = doc.lineAt(head)
-    if (!inCodeBlock(view, head) && parseListLine(line.text) === null) return false
+  // 调用方给的是 1-based 文档行号;代码块里的目标行只缩进、不换标记
+  const targets = [...new Set(lineNumbers)].filter((n) => n >= 1 && n <= doc.lines)
+  const skipMarker = new Set<number>()
+  for (const n of targets) if (inCodeBlock(view, doc.line(n).from)) skipMarker.add(n - 1)
+
+  const next = indentMarkdownLines(lines, targets.map((n) => n - 1), dir, 2, { skipMarker })
+  if (next === null) return
+  const changes: TextChange[] = []
+  for (const [index, text] of next) {
+    const line = doc.line(index + 1)
+    const change = minimalTextChange(line.text, text, line.from)
+    if (change !== null) changes.push(change)
   }
+  if (changes.length > 0) view.dispatch({ changes, userEvent: 'input' })
+}
 
+/** 有选区(单行或多行)就整批增减一级缩进;始终消费按键。 */
+function indentSelection(view: EditorView, dir: 'in' | 'out'): boolean {
+  const { doc, selection } = view.state
   // 多光标时把每个光标覆盖的行并起来,同一行只改一次
   const lineNumbers = new Set<number>()
   for (const range of selection.ranges) {
@@ -195,17 +198,51 @@ function indentSelection(view: EditorView, dir: 'in' | 'out'): boolean {
     const last = doc.lineAt(range.to).number
     for (let n = first; n <= last; n += 1) lineNumbers.add(n)
   }
-
-  const changes: { from: number; to: number; insert: string }[] = []
-  for (const n of [...lineNumbers].sort((a, b) => a - b)) {
-    const line = doc.line(n)
-    if (line.text.trim() === '') continue
-    const next = indentMarkdownLine(line.text, dir)
-    if (next !== line.text) changes.push({ from: line.from, to: line.to, insert: next })
-  }
-  if (changes.length > 0) view.dispatch({ changes, userEvent: 'input' })
-  // 有选区时即使没有行可缩进也吃掉按键:Shift+Tab 不该把焦点移出编辑器
+  applyIndent(view, lineNumbers, dir)
   return true
+}
+
+/** 普通段落:Tab 在光标处插入一级空格。 */
+function insertSpacesAtCursor(view: EditorView, width: number): boolean {
+  view.dispatch(view.state.replaceSelection(' '.repeat(width)), { userEvent: 'input' })
+  return true
+}
+
+/** 普通段落:Shift+Tab 删掉光标前最多一级的空格(或一个 Tab)。 */
+function removeSpacesBeforeCursor(view: EditorView, width: number): boolean {
+  let changed = false
+  const state = view.state
+  const tr = state.changeByRange((range) => {
+    if (!range.empty) return { range }
+    const before = state.sliceDoc(Math.max(0, range.head - width), range.head)
+    const match = /(?:\t| +)$/.exec(before)
+    if (match === null) return { range }
+    changed = true
+    const from = range.head - match[0].length
+    return {
+      changes: { from, to: range.head, insert: '' },
+      range: EditorSelection.cursor(from)
+    }
+  })
+  if (changed) view.dispatch({ ...tr, userEvent: 'input' })
+  return true
+}
+
+/**
+ * Tab / Shift+Tab:编辑器内**始终消费**,焦点不再被移出到工具栏。
+ * 列表项与代码块整行增减缩进(无序标记跟随上一级);普通段落改光标处的空格。
+ * 输入法组合中与补全弹窗打开时不接管,避免抢掉它们的按键。
+ */
+function handleTab(view: EditorView, dir: 'in' | 'out'): boolean {
+  if (view.composing) return false
+  if (completionStatus(view.state) === 'active') return false
+  const { doc, selection } = view.state
+  if (selection.ranges.some((range) => !range.empty)) return indentSelection(view, dir)
+  const head = selection.main.head
+  if (inCodeBlock(view, head) || parseListLine(doc.lineAt(head).text) !== null) {
+    return indentSelection(view, dir)
+  }
+  return dir === 'in' ? insertSpacesAtCursor(view, 2) : removeSpacesBeforeCursor(view, 2)
 }
 
 /**
@@ -779,9 +816,7 @@ export function NoteEditor({
         if (!view) return
         const doc = view.state.doc
         const n = Math.min(Math.max(line, 0), doc.lines - 1)
-        const cur = doc.line(n + 1)
-        const next = indentMarkdownLine(cur.text, dir)
-        if (next !== cur.text) view.dispatch({ changes: { from: cur.from, to: cur.to, insert: next } })
+        applyIndent(view, [n + 1], dir)
         view.focus()
       },
 
@@ -791,17 +826,10 @@ export function NoteEditor({
         const { from, to } = view.state.selection.main
         const first = view.state.doc.lineAt(from).number
         const last = view.state.doc.lineAt(to).number
+        const lineNumbers: number[] = []
+        for (let n = first; n <= last; n++) lineNumbers.push(n)
         // 一次 dispatch 改所有行:撤销栈只记一步,选区由 CodeMirror 自动跟着位移
-        const changes: { from: number; to: number; insert: string }[] = []
-        for (let n = first; n <= last; n++) {
-          const line = view.state.doc.line(n)
-          // 空行不加空格:缩进本来就没有意义,还会在正文里留下看不见的尾随空白
-          if (line.text.trim() === '') continue
-          const next = indentMarkdownLine(line.text, dir)
-          if (next !== line.text) changes.push({ from: line.from, to: line.to, insert: next })
-        }
-        if (changes.length === 0) return
-        view.dispatch({ changes })
+        applyIndent(view, lineNumbers, dir)
         view.focus()
       },
 
@@ -1088,8 +1116,8 @@ export function NoteEditor({
               { key: 'Enter', run: continueMarkdownMarkup },
               {
                 key: 'Tab',
-                run: (v) => indentSelection(v, 'in'),
-                shift: (v) => indentSelection(v, 'out')
+                run: (v) => handleTab(v, 'in'),
+                shift: (v) => handleTab(v, 'out')
               },
               { key: 'Mod-Alt-c', run: addColumnCursors }
             ])
@@ -1131,7 +1159,20 @@ export function NoteEditor({
       })
     })
     viewRef.current = view
+
+    // Escape 会让 CodeMirror 进入 2 秒「Tab 交给浏览器」的无障碍模式;它在 keymap
+    // **之前**就 return,于是列表里的 Tab 不缩进、焦点反而跑到工具栏。
+    // 在祖先节点(不是 contentDOM)的 capture 阶段退出该模式,让最高优先级的
+    // Tab keymap 拿到同一个事件;输入法组合中与补全弹窗打开时不干预。
+    const onTabKeyDownCapture = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return
+      if (view.composing || completionStatus(view.state) === 'active') return
+      view.setTabFocusMode(false)
+    }
+    view.dom.addEventListener('keydown', onTabKeyDownCapture, true)
+
     return () => {
+      view.dom.removeEventListener('keydown', onTabKeyDownCapture, true)
       view.destroy()
       viewRef.current = null
     }

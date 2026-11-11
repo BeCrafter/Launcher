@@ -37,6 +37,15 @@ const LIST_MARK_RE = /^([ \t]*)([-+*]|\d{1,9}[.)])([ \t]*)/
 const TASK_MARK_RE = /^\[([ \t]*|[xX])\](?!\(|\[)/
 const CANONICAL_TASK_RE = /^\[[ xX]\][ \t]/
 
+/**
+ * 分隔线(`---` / `- - -` / `***` / `___`)。`- - -` 会被 `parseListLine` 当成列表,
+ * 但换掉标记就把分隔线拆坏了,所以按上一级换标记时要先把它排除。
+ */
+export const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/
+
+/** 无序标记的上下级关系:上级 `-` → 本级 `*`、`*` → `+`、`+` → `-`。 */
+const CHILD_MARKER: Record<string, string> = { '-': '*', '*': '+', '+': '-' }
+
 export function parseListLine(line: string): ListLineSyntax | null {
   const quoteMatch = QUOTE_PREFIX_RE.exec(line)
   const quote = quoteMatch === null ? '' : quoteMatch[1]
@@ -113,17 +122,98 @@ export function indentMarkdownLine(line: string, dir: 'in' | 'out', width = 2): 
   return out === null ? line : `${quote}${rest.slice(out[0].length)}`
 }
 
-/** 批量缩进;没有任何行需要改时返回 null,调用方据此省掉一次 dispatch。 */
+/** 引用前缀之后的主体(无引用时就是整行)。 */
+function bodyAfterQuote(line: string): string {
+  const match = QUOTE_PREFIX_RE.exec(line)
+  return match === null ? line : line.slice(match[1].length)
+}
+
+/** 主体行首空白宽度(字符数,与块模型 `indentOf` 一致)。 */
+function leadWidth(line: string): number {
+  return /^[ \t]*/.exec(bodyAfterQuote(line))?.[0].length ?? 0
+}
+
+/**
+ * 目标行的上一级列表项标记,以及由它推出的本级标记。
+ *
+ * 从近往远扫,跳过空行;中间的续行必须落在候选上级的内容列之内
+ * (`leadWidth >= taskFrom - quote.length`),否则列表上下文已经结束 ——
+ * 与块模型 `parseItemRun` / `inItem` 同一口径(不是预览的 `parseListExt`,
+ * 那边遇到缩进不足的续行会直接断开列表)。
+ * 没有上级、上级是有序列表、或中间存在更浅的续行 → 本级用基础标记 `-`。
+ */
+function parentMarkerOf(
+  lines: readonly string[],
+  index: number,
+  indent: number,
+  quote: string
+): string {
+  const leads: number[] = []
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const line = lines[i]
+    if (line.trim() === '') continue
+    if ((QUOTE_PREFIX_RE.exec(line)?.[1] ?? '') !== quote) return '-'
+    // 分隔线是列表样子的行,但不能当上级,也不参与续行判断
+    const syntax = THEMATIC_BREAK_RE.test(bodyAfterQuote(line)) ? null : parseListLine(line)
+    if (syntax !== null) {
+      if (syntax.indent.length < indent) {
+        const content = syntax.taskFrom - syntax.quote.length
+        if (leads.some((lead) => lead < content)) return '-'
+        return CHILD_MARKER[syntax.marker] ?? '-'
+      }
+      continue
+    }
+    leads.push(leadWidth(line))
+  }
+  return '-'
+}
+
+export interface IndentOptions {
+  /** 这些 0-based 行号在代码块里:只缩进、不换标记。扫描不感知代码块,最坏只是标记字符差异。 */
+  skipMarker?: ReadonlySet<number>
+}
+
+/**
+ * 给一批 0-based 行增减一级缩进。
+ *
+ * 无序、非任务项的标记由**上一级列表项**决定:
+ * 上级 `-` → 本级 `*`、`*` → `+`、`+` → `-`;上级有序或没有上级 → `-`。
+ * 有序 / 任务项只缩进。按行号升序处理;父项也在本批里时,用改过之后的标记继续算。
+ * 返回 行号 → 新文本;没有任何行变化时返回 null。
+ */
 export function indentMarkdownLines(
   lines: readonly string[],
+  lineNumbers: Iterable<number>,
   dir: 'in' | 'out',
-  width = 2
-): string[] | null {
-  let changed = false
-  const out = lines.map((line) => {
+  width = 2,
+  { skipMarker }: IndentOptions = {}
+): Map<number, string> | null {
+  const working = lines.slice()
+  const targets = [...new Set(lineNumbers)]
+    .filter((n) => n >= 0 && n < working.length)
+    .sort((a, b) => a - b)
+
+  for (const index of targets) {
+    const line = working[index]
+    if (line.trim() === '') continue
     const next = indentMarkdownLine(line, dir, width)
-    if (next !== line) changed = true
-    return next
-  })
-  return changed ? out : null
+    // out 且没有缩进可退:这一行不动,也不顺手把标记归一
+    if (next === line) continue
+    working[index] = next
+    if (skipMarker?.has(index) === true) continue
+    const syntax = parseListLine(next)
+    if (syntax === null || syntax.ordered || syntax.task) continue
+    // 按缩进**前**的样子判断分隔线:缩进后已经越过 3 个空格的上限,但那仍是用户的分隔线
+    if (THEMATIC_BREAK_RE.test(bodyAfterQuote(line))) continue
+    const marker = parentMarkerOf(working, index, syntax.indent.length, syntax.quote)
+    if (marker === syntax.marker) continue
+    const at = syntax.quote.length + syntax.indent.length
+    working[index] = next.slice(0, at) + marker + next.slice(at + syntax.marker.length)
+  }
+
+  const changed = new Map<number, string>()
+  for (const index of targets) {
+    if (working[index] !== lines[index]) changed.set(index, working[index])
+  }
+  return changed.size > 0 ? changed : null
 }

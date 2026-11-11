@@ -1,7 +1,7 @@
 import { noteAssetKindOfUrl, type NoteAssetKind } from '@shared/notes'
 import type { CalloutKind } from './markdown'
 import { alignOpenOf, isAlignClose, type TextAlign } from './note-align'
-import { parseListLine } from './md-list-syntax'
+import { parseListLine, THEMATIC_BREAK_RE } from './md-list-syntax'
 
 export type MarkdownBlockKind =
   | 'frontmatter'
@@ -74,7 +74,7 @@ interface ConsumedBlock {
 const HEADING_RE = /^ {0,3}(#{1,10})(?:[ \t]+|$)/
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})(?:[^`~]*)$/
 const QUOTE_RE = /^ {0,3}>/
-const THEMATIC_BREAK_RE = /^ {0,3}(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/
+// 分隔线正则与编辑器缩进共用一份(md-list-syntax 导出),避免两处口径漂移
 const CALLOUT_RE = /^ {0,3}>[ \t]*\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]/i
 const DETAILS_OPEN_RE = /^ {0,3}<details(?:\s|>)/i
 const DETAILS_CLOSE_RE = /^ {0,3}<\/details\s*>/i

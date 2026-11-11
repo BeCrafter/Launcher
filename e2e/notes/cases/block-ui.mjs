@@ -1,6 +1,6 @@
 import { eq, includes, ok } from '../lib/assert.mjs'
 import { sleep } from '../lib/cdp.mjs'
-import { BASIC, FOLD, TABLE_AND_DIAGRAM } from '../lib/fixtures.mjs'
+import { BASIC, FOLD, NESTED, TABLE_AND_DIAGRAM } from '../lib/fixtures.mjs'
 
 function nonEmpty(lines) {
   return lines.filter((line) => line.trim() !== '')
@@ -153,6 +153,30 @@ export default [
       await sleep(250)
       includes(await ctx.body(), '- [ ] 外层甲', '列表项变成任务项')
       ok(await ctx.cdp.eval(`document.querySelector('.notes-editor-pane .tk-task') !== null`), '任务标记 tk-task 着色')
+    }
+  },
+
+  {
+    // 块菜单的缩进与 Tab 共用同一套规则:按结果层级换无序标记,且不改到子项
+    id: 'block-ui/menu-indent-follows-parent',
+    area: 'block-ui',
+    title: '列表项块菜单「增加缩进」:只缩进这一项,标记跟随上一级变成 *,焦点回到编辑器',
+    tags: ['menu', 'list', 'indent'],
+    fixture: NESTED,
+    async run(ctx, t) {
+      await ctx.openBlockMenu('  - 内层甲一')
+      await ctx.cdp.eval(
+        `document.querySelector('.notes-block-menu .notes-block-indent button:first-child')?.click()`
+      )
+      await sleep(250)
+      const lines = await ctx.lines()
+      includes(lines, '    * 内层甲一', '本项缩进一级,标记跟随上一级变为 *')
+      includes(lines, '  - 内层甲二', '同级下一项不受影响')
+      eq(
+        await ctx.cdp.eval(`document.activeElement?.classList.contains('cm-content') === true`),
+        true,
+        '焦点回到编辑器'
+      )
     }
   },
 
