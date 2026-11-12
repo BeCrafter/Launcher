@@ -71,6 +71,11 @@ function openingSpinnerDelay(): number {
 
 /** 拖拽载荷。text/plain 仍是路径(旧的落点只读它);种类另带一份,避免无扩展名文件和同名笔记撞车。 */
 type DragKind = 'note' | 'folder' | 'file'
+/**
+ * 笔记行的副本身份。置顶笔记会在「置顶」栏和真实目录里各渲染一份,
+ * 同一个 data-note-id 因此可能对应两个 DOM 节点 —— 按 id 找行时要说明想找哪一份。
+ */
+type RailCopy = 'pinned' | 'tree'
 const DRAG_KIND_TYPE = 'application/x-launcher-notes-kind'
 
 function readDragKind(e: React.DragEvent): DragKind | null {
@@ -147,6 +152,8 @@ function prefersReducedMotion(): boolean {
 interface FlightSource {
   fromId: string
   kind: DragKind
+  /** 从哪一份副本拖起;pinned 笔记的另一次渲染不能被当成起点。文件/目录为 null。 */
+  copy: RailCopy | null
   name: string
   iconClass: string
   iconKind: string | null
@@ -169,12 +176,24 @@ function contentBox(
   }
 }
 
-function findRailRow(list: HTMLElement, id: string, kind: DragKind): HTMLElement | null {
+function findRailRow(
+  list: HTMLElement,
+  id: string,
+  kind: DragKind,
+  preferCopy: RailCopy | null = null
+): HTMLElement | null {
   const attr = kind === 'note' ? 'data-note-id' : kind === 'folder' ? 'data-folder-path' : 'data-file-path'
+  const matches: HTMLElement[] = []
   for (const row of list.querySelectorAll<HTMLElement>(`[${attr}]`)) {
-    if (row.getAttribute(attr) === id) return row
+    if (row.getAttribute(attr) === id) matches.push(row)
   }
-  return null
+  if (matches.length === 0) return null
+  // 置顶笔记同一 id 会有两份,优先调用方指定的那一份;找不到再回退(DOM 顺序下是置顶副本)
+  if (kind === 'note' && preferCopy !== null) {
+    const hit = matches.find((row) => row.dataset.railCopy === preferCopy)
+    if (hit !== undefined) return hit
+  }
+  return matches[0]
 }
 
 /** 行在列表视口外时,只滚这个容器把它带进来。不用 scrollIntoView,它会把整页一起滚。 */
@@ -239,12 +258,11 @@ const ROW_SELECTOR = '.notes-row, .notes-folder-row'
  * (`.selected` / 系统文件投放态都写在 `:hover` 之后)。
  * 这些底色是半透明的,不能只靠绘制顺序:高亮透上来就变成双层色。
  * 内部移动的落点色块自己画,不靠行背景,所以 `.drop-target` 也收起悬停层。
- * `.active` / `.opening` 也在这里收起悬停层:笔记/文件的选中底色
- * 由 `.notes-rail-selection` 那一层统一绘制,行自己不再铺底。
+ * `.active` 不在这里判断:置顶笔记的两份副本都带 active,只有选中色块真正所在的那一份
+ * 才该收起悬停层 —— 那需要元素身份,交给 paintRailHover 判。
  */
 function hoverSuppressed(row: Element): boolean {
   return (
-    row.classList.contains('active') ||
     row.classList.contains('opening') ||
     row.classList.contains('selected') ||
     row.classList.contains('drop-target') ||
@@ -255,13 +273,16 @@ function hoverSuppressed(row: Element): boolean {
 
 /** 这一行是不是正在飞过去的那一项。目录的子项也藏住,避免子项先冒出来。 */
 function landingOf(
-  flight: { toId: string; kind: DragKind } | null,
+  flight: { toId: string; kind: DragKind; copy: RailCopy | null } | null,
   id: string,
-  kind: DragKind
+  kind: DragKind,
+  copy: RailCopy | null = null
 ): boolean {
   if (flight === null) return false
   if (flight.kind === 'folder') return id === flight.toId || id.startsWith(`${flight.toId}/`)
-  return flight.kind === kind && id === flight.toId
+  if (flight.kind !== kind || id !== flight.toId) return false
+  // 笔记有两份时只藏真正在飞的那份;文件没有副本,行为不变
+  return flight.copy === null || flight.copy === copy
 }
 
 /** 行的文档身份。笔记/文件各一个命名空间,路径里的冒号不会冲突。 */
@@ -294,9 +315,19 @@ function railSelectionKey(
 }
 
 /** 按 key 找行。目标行可能没渲染(筛选/折叠),返回 null。 */
-function findRailSelectionRow(list: HTMLElement, key: string): HTMLElement | null {
+function findRailSelectionRow(
+  list: HTMLElement,
+  key: string,
+  preferCopy: RailCopy | null = null
+): HTMLElement | null {
   const rows = Array.from(list.querySelectorAll<HTMLElement>('.notes-row'))
-  return rows.find((row) => railRowKey(row) === key) ?? null
+  const matches = rows.filter((row) => railRowKey(row) === key)
+  if (matches.length === 0) return null
+  if (preferCopy !== null) {
+    const hit = matches.find((row) => row.dataset.railCopy === preferCopy)
+    if (hit !== undefined) return hit
+  }
+  return matches[0]
 }
 
 /** 正在编辑的目录名/文件名(新建或改名);null = 没有 */
@@ -308,6 +339,8 @@ interface NameEdit {
   parent: string
   /** 改名时的目标 id / 路径 */
   path: string
+  /** 置顶笔记有两份副本:改名输入只出现在被点的那一份 */
+  copy?: RailCopy
 }
 
 /** 新建文档时的默认主名与类型;类型是独立字段,编辑名字不会改类型 */
@@ -486,6 +519,12 @@ export function NotesRail(): React.JSX.Element {
   /** 新建文档时独立的扩展名字段(默认 md) */
   const [draftExt, setDraftExt] = useState(NEW_DOC_EXT)
   /**
+   * 用户实际点开的那一份副本。置顶笔记在置顶栏和目录树里各有一份,
+   * 用 state 而不是 ref:点同一篇笔记的另一份时 store 会提前 return、不重渲染,
+   * 只有这里变新对象才能把选中色块挪过去。
+   */
+  const [selectionTarget, setSelectionTarget] = useState<{ key: string; copy: RailCopy } | null>(null)
+  /**
    * Enter 与 blur 可能在同一轮里各调一次 commitEdit:第二次拿着已经改过名的旧路径去提交,
    * 会白撞一次 not-found。用一个同步 ref 挡住(下一次 startEdit 才重新放开)。
    */
@@ -498,8 +537,10 @@ export function NotesRail(): React.JSX.Element {
   // ⚠ 被拖的 id 用 ref 而不是只靠 state:dragstart → dragover 可能落在同一次事件循环里,
   //   那时 React 还没重渲染,state 仍是旧值 —— 合法性判断会误判成「没在拖」而拒绝放下。
   //   ref 是同步写入的,高亮另用 state(那个可以晚一帧)。
-  const draggingRef = useRef<{ id: string; kind: DragKind } | null>(null)
+  const draggingRef = useRef<{ id: string; kind: DragKind; copy: RailCopy | null } | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
+  /** 被拖的那一份副本;只有它进入 .dragging,置顶栏那份原样不动 */
+  const [draggingCopy, setDraggingCopy] = useState<RailCopy | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   // OS 文件拖入是**另一套**状态:null = 没在拖;'' = 根层;其余 = 目标目录
   const [fileDragTarget, setFileDragTarget] = useState<string | null>(null)
@@ -566,6 +607,7 @@ export function NotesRail(): React.JSX.Element {
   const foldRef = useRef<{
     fromId: string
     kind: DragKind
+    copy: RailCopy | null
     parent: string
     paths: string[]
     height: number
@@ -579,6 +621,8 @@ export function NotesRail(): React.JSX.Element {
     iconKind: string | null
     toId: string
     kind: DragKind
+    /** 真正在飞的副本;null = 目录/文件或未渲染,按无副本处理 */
+    copy: RailCopy | null
     from: { x: number; y: number; w: number; h: number }
     to: { x: number; y: number; w: number; h: number }
   } | null>(null)
@@ -622,12 +666,20 @@ export function NotesRail(): React.JSX.Element {
   /** 把色块摆到某一行。行高、行距都不固定(普通/置顶/目录行各不同),所以每次量矩形。 */
   const paintRailHover = (row: HTMLElement): void => {
     const rowKey = railRowKey(row)
+    // 置顶笔记有两份,只有选中色块真正贴住的那一份收起悬停层;
+    // 另一份仍照常显示悬停底色。选中层还没画过(selectedEl 为空)时按 key 收起。
+    const selectedEl = selectionRef.current?.el ?? null
+    const selectedHere =
+      rowKey !== null &&
+      rowKey === selectionKey &&
+      (selectedEl === null ||
+        selectedEl === row ||
+        selectedEl.dataset.railCopy === row.dataset.railCopy)
     if (
       draggingRef.current !== null ||
       hoverSuppressed(row) ||
-      // 选中行也收起悬停层,覆盖 active 尚未落上的空档。
       // rowKey 为 null 时不能比 —— 目录行的 key 也是 null。
-      (rowKey !== null && rowKey === selectionKey)
+      selectedHere
     ) {
       hideRailHover()
       return
@@ -716,7 +768,9 @@ export function NotesRail(): React.JSX.Element {
       hideRailSelection()
       return
     }
-    const row = findRailSelectionRow(list, selectionKey)
+    const prefer =
+      selectionTarget !== null && selectionTarget.key === selectionKey ? selectionTarget.copy : null
+    const row = findRailSelectionRow(list, selectionKey, prefer)
     if (row === null) {
       hideRailSelection()
       return
@@ -865,7 +919,7 @@ export function NotesRail(): React.JSX.Element {
     const list = listRef.current
     if (source === null || list === null) return
 
-    const oldRow = findRailRow(list, source.fromId, source.kind)
+    const oldRow = findRailRow(list, source.fromId, source.kind, source.copy)
     if (oldRow !== null) {
       source.box = contentBox(list, oldRow)
       return
@@ -873,8 +927,13 @@ export function NotesRail(): React.JSX.Element {
     if (moveLand === null || moveLand.fromId !== source.fromId) return
 
     const reduced = prefersReducedMotion()
-    const row = findRailRow(list, moveLand.toId, moveLand.kind)
+    // 落地优先量真实目录里的那一份:移动发生在树里,置顶栏那份只是快捷入口
+    const row = findRailRow(list, moveLand.toId, moveLand.kind, 'tree')
     if (row === null) return
+    const copy =
+      row.dataset.railCopy === 'pinned' || row.dataset.railCopy === 'tree'
+        ? row.dataset.railCopy
+        : null
     scrollRowIntoList(list, row)
     const to = contentBox(list, row)
     const distance = Math.hypot(to.x - source.box.x, to.y - source.box.y)
@@ -904,6 +963,7 @@ export function NotesRail(): React.JSX.Element {
       iconKind: source.iconKind,
       toId: moveLand.toId,
       kind: moveLand.kind,
+      copy,
       from: source.box,
       to
     })
@@ -1052,9 +1112,11 @@ export function NotesRail(): React.JSX.Element {
   // buildNoteTree 会按笔记的路径自动补出目录节点,而目录默认是折叠的 ——
   // 于是「命中一篇在目录里的笔记」会被塞进折叠的目录下面,界面上什么都看不到
   // (搜标签尤其明显:命中的笔记标题里根本没有搜索词,一旦被折叠就彻底没线索)。
+  // 目录树包含置顶项:置顶只是顶部多一份快捷入口,不影响它在真实目录里的位置。
+  // flat(搜索 / 标签筛选)仍只用 unpinned —— 结果是列表,同一条重复出现只会制造噪音。
   const tree = useMemo(
-    () => buildNoteTree(unpinned, folders, files),
-    [unpinned, folders, files]
+    () => buildNoteTree(visible, folders, files),
+    [visible, folders, files]
   )
 
   // 内容或容器尺寸变化都要重算(展开目录、搜索出结果、窗口缩放)
@@ -1068,7 +1130,7 @@ export function NotesRail(): React.JSX.Element {
   }, [syncThumb, visible, expanded, pinnedCollapsed, refFilter])
 
   /** 名字才是拖拽源。行上的 draggable 从按钮开始不起作用:Chromium 不让按钮拖它的父节点。 */
-  const beginDrag = (e: React.DragEvent, id: string, kind: DragKind): void => {
+  const beginDrag = (e: React.DragEvent, id: string, kind: DragKind, copy: RailCopy | null = null): void => {
     if (moving || flat || foldRef.current !== null) {
       e.preventDefault()
       return
@@ -1078,21 +1140,23 @@ export function NotesRail(): React.JSX.Element {
     e.dataTransfer.setData(DRAG_KIND_TYPE, kind)
     e.dataTransfer.effectAllowed = 'move'
     mountDragCard(e, t(dragKindLabelKey(kind)))
-    draggingRef.current = { id, kind }
+    draggingRef.current = { id, kind, copy }
     setDraggingId(id)
+    setDraggingCopy(copy)
     hideRailHover()
   }
 
   const endDrag = (): void => {
     draggingRef.current = null
     setDraggingId(null)
+    setDraggingCopy(null)
     setDropTarget(null)
   }
 
   /** 记下松手时那一行的样子和位置。旧行拆掉之后,飞行层靠这份快照画。 */
-  const captureFlightSource = (id: string, kind: DragKind): void => {
+  const captureFlightSource = (id: string, kind: DragKind, copy: RailCopy | null = null): void => {
     const list = listRef.current
-    const row = list === null ? null : findRailRow(list, id, kind)
+    const row = list === null ? null : findRailRow(list, id, kind, copy)
     if (list === null || row === null) {
       flightSourceRef.current = null
       return
@@ -1101,6 +1165,7 @@ export function NotesRail(): React.JSX.Element {
     flightSourceRef.current = {
       fromId: id,
       kind,
+      copy,
       name: dragSourceName(row.querySelector('button, .notes-file-main')),
       iconClass: icon?.className ?? '',
       iconKind: icon?.getAttribute('data-kind') ?? null,
@@ -1115,6 +1180,8 @@ export function NotesRail(): React.JSX.Element {
     const drag = draggingRef.current
     const id = e.dataTransfer.getData('text/plain')
     const kind = readDragKind(e) ?? drag?.kind ?? null
+    // endDrag 会清掉 draggingRef;起飞副本要先记下来,fold 分支延后到超时回调里才量
+    const copy = drag?.copy ?? null
     endDrag()
     if (id === '' || kind === null || id !== drag?.id) return
     if (moving || foldRef.current !== null) return
@@ -1153,14 +1220,14 @@ export function NotesRail(): React.JSX.Element {
         setFoldingId(null)
         // 记下的是原路径。失败时按原路径放回;成功后 moveLand 到了再换成新路径。
         reopenRef.current = openPaths
-        captureFlightSource(id, kind)
+        captureFlightSource(id, kind, pending.copy)
         void moveNote(id, parent, kind)
       }, FOLD_MS + 20)
-      foldRef.current = { fromId: id, kind, parent, paths: openPaths, height, timer }
+      foldRef.current = { fromId: id, kind, copy, parent, paths: openPaths, height, timer }
       setFoldingId(id)
       return
     }
-    captureFlightSource(id, kind)
+    captureFlightSource(id, kind, copy)
     void moveNote(id, parent, kind)
   }
 
@@ -1366,24 +1433,30 @@ export function NotesRail(): React.JSX.Element {
     />
   )
 
-  /** 笔记行:只有名字。可拖拽;悬停露出置顶与删除 */
-  const noteRow = (n: NoteMeta, depth: number): React.JSX.Element => {
-    const renaming = edit !== null && edit.mode === 'rename' && edit.kind === 'note' && edit.path === n.id
+  /** 笔记行:只有名字。可拖拽;悬停露出置顶与删除。lane 标记这是置顶栏副本还是目录树里的那一份 */
+  const noteRow = (n: NoteMeta, depth: number, lane: RailCopy): React.JSX.Element => {
+    const renaming =
+      edit !== null &&
+      edit.mode === 'rename' &&
+      edit.kind === 'note' &&
+      edit.path === n.id &&
+      (edit.copy === undefined || edit.copy === lane)
     const opening = n.id === openingId
     // 与文件行统一:目录里显示完整文件名。笔记都是 .md,标题里已经写了就不重复
     const fileName = /\.md$/i.test(n.title) ? n.title : `${n.title}.md`
     return (
     <div
-      key={n.id}
+      key={`${lane}:${n.id}`}
       className={
         'notes-row' +
         (n.id === currentId && activeFilePath === null ? ' active' : '') +
         (opening ? ' opening' : '') +
-        (draggingId === n.id ? ' dragging' : '')
+        (draggingId === n.id && (draggingCopy === null || draggingCopy === lane) ? ' dragging' : '')
       }
       style={{ paddingLeft: rowPad(depth) }}
-      data-landing={landingOf(flight, n.id, 'note') ? 'true' : undefined}
+      data-landing={landingOf(flight, n.id, 'note', lane) ? 'true' : undefined}
       data-note-id={n.id}
+      data-rail-copy={lane}
       data-drop-folder={parentOf(n.id)}
       // 点击热区放在整行:标题按钮只占内容区 16px,行的上下留白、左侧缩进、
       // 右侧留白和悬停动作浮层的背景都在按钮之外 —— 只挂在按钮上会「点了没反应」。
@@ -1391,6 +1464,7 @@ export function NotesRail(): React.JSX.Element {
       // 拖拽源是名字按钮本身:行上的 draggable 从按钮开始不起作用。
       onClick={() => {
         if (renaming) return
+        setSelectionTarget({ key: `note:${n.id}`, copy: lane })
         openNoteDoc(n.id)
       }}
     >
@@ -1406,7 +1480,7 @@ export function NotesRail(): React.JSX.Element {
           aria-busy={opening || undefined}
           onDragStart={(e) => {
             e.stopPropagation()
-            beginDrag(e, n.id, 'note')
+            beginDrag(e, n.id, 'note', lane)
           }}
           onDragEnd={endDrag}
         >
@@ -1429,7 +1503,7 @@ export function NotesRail(): React.JSX.Element {
           title={t('notes.row.rename')}
           onClick={(e) => {
             e.stopPropagation()
-            startEdit({ mode: 'rename', kind: 'note', parent: '', path: n.id }, n.title)
+            startEdit({ mode: 'rename', kind: 'note', parent: '', path: n.id, copy: lane }, n.title)
           }}
         >
           <i className="fa-solid fa-pen" />
@@ -1721,7 +1795,7 @@ export function NotesRail(): React.JSX.Element {
         out.push(...folderBranch(f, depth + 1))
       }
     }
-    for (const n of node.notes) out.push(noteRow(n, depth))
+    for (const n of node.notes) out.push(noteRow(n, depth, 'tree'))
     for (const f of node.files) out.push(fileRow(f, depth))
     return out
   }
@@ -1915,11 +1989,11 @@ export function NotesRail(): React.JSX.Element {
               <span>{t('notes.pinned.section')}</span>
               <span className="notes-group-count">{pinned.length}</span>
             </button>
-            {!pinnedCollapsed && pinned.map((n) => noteRow(n, 0))}
+            {!pinnedCollapsed && pinned.map((n) => noteRow(n, 0, 'pinned'))}
           </div>
         )}
 
-        {flat ? unpinned.map((n) => noteRow(n, 0)) : folderBranch(tree, 0)}
+        {flat ? unpinned.map((n) => noteRow(n, 0, 'tree')) : folderBranch(tree, 0)}
 
         {/* 新建目录只在这里出现:它是**根层**才需要的东西 ——
             子目录从目录行 hover 出来的按钮建,不需要再占一个常驻入口。 */}

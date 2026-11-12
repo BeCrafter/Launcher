@@ -18,12 +18,12 @@ function notesDir(ctx) {
   return join(ctx.profileDir, 'notes')
 }
 
-function absPath(ctx, rel) {
+export function absPath(ctx, rel) {
   return join(notesDir(ctx), rel)
 }
 
 /** 写一个笔记目录里的文件(自动建父目录)。 */
-function writeNoteFile(ctx, rel, content) {
+export function writeNoteFile(ctx, rel, content) {
   const full = absPath(ctx, rel)
   mkdirSync(dirname(full), { recursive: true })
   writeFileSync(full, content)
@@ -31,11 +31,11 @@ function writeNoteFile(ctx, rel, content) {
 }
 
 /** 直接建目录。UI 入口是悬停才出现的按钮,夹具不走那条路。 */
-function makeFolder(ctx, rel) {
+export function makeFolder(ctx, rel) {
   mkdirSync(absPath(ctx, rel), { recursive: true })
 }
 
-function folderSelector(path) {
+export function folderSelector(path) {
   return `.notes-folder-row[data-folder-path=${JSON.stringify(path)}]`
 }
 
@@ -43,12 +43,12 @@ function fileSelector(rel) {
   return `[data-file-path=${JSON.stringify(rel)}]`
 }
 
-function noteSelector(id) {
+export function noteSelector(id) {
   return `.notes-row[data-note-id=${JSON.stringify(id)}]`
 }
 
 /** 展开目录(已展开则不动)。夹具直接写盘时,先等目录行被监听推上来。 */
-async function expandFolder(ctx, path) {
+export async function expandFolder(ctx, path) {
   const selector = folderSelector(path)
   await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(selector)}) !== null`, {
     timeout: 10_000,
@@ -65,7 +65,7 @@ async function expandFolder(ctx, path) {
   await sleep(80)
 }
 
-async function collapseFolder(ctx, path) {
+export async function collapseFolder(ctx, path) {
   await ctx.cdp.eval(`(() => {
     const row = document.querySelector(${JSON.stringify(folderSelector(path))})
     const name = row?.querySelector('.notes-folder-name')
@@ -93,7 +93,7 @@ function center(rect) {
  *
  * 目标矩形在按下之前量好。按下之后再 scrollIntoView 会把正在进行的拖拽取消。
  */
-async function dragHold(ctx, sourceSelector, targetSelector) {
+export async function dragHold(ctx, sourceSelector, targetSelector) {
   // 先按住源再去找目标。两条不在同一屏时,先把目标滚进来会把源滚走,
   // 按下的坐标就落到别的行上(前面用例展开的目录越高,越容易踩中)。
   const source = center(await rectOf(ctx, sourceSelector))
@@ -129,7 +129,7 @@ async function dragHold(ctx, sourceSelector, targetSelector) {
  * 量矩形。行在列表视口外时,只滚 `.notes-rail-list` 把它带进来。
  * 不用 scrollIntoView:它会把整页一起滚,按下之后再滚还会取消正在进行的拖拽。
  */
-async function rectOf(ctx, selector) {
+export async function rectOf(ctx, selector) {
   const rect = await ctx.cdp.json(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)})
     if (el === null) return null
@@ -171,7 +171,7 @@ async function beginNameDrag(ctx, source) {
   return drag
 }
 
-async function expectNoMoveProgress(ctx) {
+export async function expectNoMoveProgress(ctx) {
   await ctx.cdp.waitFor(`document.querySelector('.notes-move-progress') === null`, {
     timeout: 8000,
     message: '移动结束后进度条不留下'
@@ -233,7 +233,7 @@ async function expectFlight(ctx, rowSelector, toPath) {
   )
 }
 
-async function expectFlightGone(ctx) {
+export async function expectFlightGone(ctx) {
   await ctx.cdp.waitFor(`document.querySelector('.notes-rail-flight') === null`, {
     interval: 16,
     timeout: 4000,
