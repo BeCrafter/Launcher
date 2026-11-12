@@ -640,7 +640,8 @@ export class NoteE2EContext {
       Home: ['Home', 'Home', 36],
       End: ['End', 'End', 35],
       Tab: ['Tab', 'Tab', 9],
-      Backspace: ['Backspace', 'Backspace', 8]
+      Backspace: ['Backspace', 'Backspace', 8],
+      Delete: ['Delete', 'Delete', 46]
     }
     const def = defs[name]
     if (def === undefined) throw new Error(`未登记按键:${name}`)

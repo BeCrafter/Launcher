@@ -18,6 +18,7 @@ export function createIpcNotesRepo(): NotesRepository {
     renameFolder: (input) => window.launcher.notes.renameFolder(input),
     move: (input) => window.launcher.notes.move(input),
     import: (input) => window.launcher.notes.import(input),
+    probeExternal: (input) => window.launcher.notes.probeExternal(input),
     removeFile: (path) => window.launcher.notes.removeFile(path),
     openFile: (path) => window.launcher.notes.openFile(path),
     statFile: (path) => window.launcher.notes.statFile(path),

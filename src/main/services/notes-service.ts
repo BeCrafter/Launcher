@@ -20,6 +20,7 @@ import {
 } from 'node:fs'
 import { extname, join } from 'node:path'
 import { resolveAssetRel } from '../domains/note-asset'
+import { resolveExternalPath } from './notes-protocol'
 import {
   EXCERPT_MAX,
   MAX_ASSET_BYTES,
@@ -61,6 +62,8 @@ import {
   type NoteFileSaveOutcome,
   type NoteFileStat,
   type NoteFileTextDoc,
+  type NoteExternalProbeInput,
+  type NoteExternalProbeResult,
   type NoteImportInput,
   type NoteImportResult,
   type NoteMeta,
@@ -148,6 +151,8 @@ export interface NotesService {
   >
   /** 把 OS 文件/文件夹原样复制进目标目录(批量导入) */
   importPaths(input: NoteImportInput): Promise<NoteImportResult>
+  /** 白板外部文件在这台电脑上还在不在。不读内容,不跟随符号链接。 */
+  probeExternal(input: NoteExternalProbeInput): NoteExternalProbeResult
   /** 文件相对路径 → 绝对路径;越界 / 根层 assets / 非普通文件返回 null */
   resolveNoteFile(rel: string): string | null
   /** 文件元信息与类型(不读内容);不存在/越界 → null */
@@ -255,7 +260,7 @@ export function createNotesService(opts: {
     const kind = noteFileKind(ext, name)
     const editable = isNoteFileEditable(kind)
     // 文本(含未知扩展名的「先按文本试读」)按 64 MiB,二进制按整读硬上限
-    const textLike = editable || kind === 'unsupported'
+    const textLike = editable || kind === 'unsupported' || kind === 'canvas'
     const tooLarge = st.size > (textLike ? MAX_TEXT_FILE_BYTES : MAX_FILE_BYTES_READ)
     return { path: rel, name, ext, kind, size: st.size, mtimeMs: st.mtimeMs, editable, tooLarge, mime: noteFileMime(ext) }
   }
@@ -1062,6 +1067,16 @@ export function createNotesService(opts: {
       })
     },
 
+    probeExternal(input) {
+      const source = String(input?.source ?? '')
+      // 不比电脑标识。路径还在、并且是可预览的普通文件,就算在。
+      if (source === '') return { sameHost: true, present: false, host: '' }
+      const abs = resolveExternalPath(
+        `launcher-note://external/?p=${encodeURIComponent(source)}`
+      )
+      return { sameHost: true, present: abs !== null, host: '' }
+    },
+
     resolveNoteFile(rel) {
       return resolveFileInNotes(opts.getDir(), String(rel ?? ''))
     },
@@ -1196,8 +1211,9 @@ export function createNotesService(opts: {
           return { ok: false, kind: 'not-found', message: '文件不存在或不是普通文件' }
         }
         const stat = fileStatOf(relS, st)
-        // 已知的二进制类型不读正文:调用方应走 readFileBytes / 预览协议
-        if (!stat.editable && stat.kind !== 'unsupported') {
+        // 已知的二进制类型不读正文:调用方应走 readFileBytes / 预览协议。
+        // canvas 是 Excalidraw 场景的文本文件,只是不用 CodeMirror 打开,所以跟 unsupported 一样读进来。
+        if (!stat.editable && stat.kind !== 'unsupported' && stat.kind !== 'canvas') {
           return { ok: true, doc: binaryDoc(stat, 'unsupported') }
         }
         if (st.size > MAX_TEXT_FILE_BYTES) {

@@ -271,4 +271,36 @@ describe('createVaultSync', () => {
     expect(status.conflicts).toEqual(['a.md'])
     expect(readFileSync(join(root, 'a.md'), 'utf8')).toBe('v1')
   })
+
+  it('白板外部文件在扫描前拷进项目,并跟着这次同步推上去', async () => {
+    const root = temp()
+    const outside = temp()
+    writeFileSync(join(outside, '说明.txt'), '带走')
+    writeFileSync(
+      join(root, '板.excal'),
+      JSON.stringify({
+        type: 'excalidraw',
+        elements: [
+          {
+            type: 'embeddable',
+            isDeleted: false,
+            link: 'launcher-note://file/占位.txt',
+            customData: { embed: { source: join(outside, '说明.txt'), project: '', host: 'pack-host' } }
+          }
+        ]
+      })
+    )
+    const store = memoryStore()
+    const sync = make(root, store, { maxBytes: 1024 * 1024 })
+
+    const status = await sync.syncNow()
+    expect(status.errors).toEqual([])
+    expect(status.phase).toBe('idle')
+    expect(readFileSync(join(root, '说明.txt'), 'utf8')).toBe('带走')
+    expect(store.files.get('说明.txt')?.toString()).toBe('带走')
+    const scene = JSON.parse(readFileSync(join(root, '板.excal'), 'utf8')) as {
+      elements: { customData: { embed: { project: string } } }[]
+    }
+    expect(scene.elements[0]?.customData.embed.project).toBe('说明.txt')
+  })
 })

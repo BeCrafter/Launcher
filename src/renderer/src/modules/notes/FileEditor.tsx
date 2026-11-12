@@ -35,13 +35,13 @@ const FILE_THEME = EditorView.theme({
   '&.cm-focused': { outline: 'none' },
   '.cm-gutters': {
     display: 'flex',
-    backgroundColor: 'transparent',
+    backgroundColor: 'var(--bg)',
     border: 'none',
     color: 'var(--dim)'
   },
   '.cm-lineNumbers .cm-gutterElement': { padding: '0 10px 0 14px', minWidth: '36px' },
   '.cm-activeLine': { backgroundColor: 'var(--wash-accent)' },
-  '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--muted)' },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--wash-accent)', color: 'var(--muted)' },
   '.cm-selectionLayer .cm-selectionBackground, &.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
     { backgroundColor: 'var(--wash-accent)' },
   '.cm-selectionMatch': { backgroundColor: 'var(--wash-accent)' }

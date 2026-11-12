@@ -14,6 +14,7 @@ export const IPC = {
   openExternal: 'shell:openExternal',
   shellPickFile: 'shell:pickFile',
   shellSaveText: 'shell:saveText',
+  shellSaveViewportPng: 'shell:saveViewportPng',
   shellRevealLog: 'agents:revealLog',
   agentsBadge: 'agents:badgeCount',
   /** 启动进度上报(renderer → main,单向):决定窗口何时显示,见 main/services/boot-gate.ts */
@@ -108,6 +109,8 @@ export const IPC = {
   notesMove: 'notes:move',
   /** 把 OS 文件/文件夹原样复制进目标目录 */
   notesImport: 'notes:import',
+  /** 白板外部文件在这台电脑上还在不在(不读内容) */
+  notesProbeExternal: 'notes:probeExternal',
   /** 删除文件(进系统废纸篓) */
   notesRemoveFile: 'notes:removeFile',
   /** 用系统默认应用打开文件(相对笔记目录的路径) */

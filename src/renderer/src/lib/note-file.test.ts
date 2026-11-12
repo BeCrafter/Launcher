@@ -13,9 +13,11 @@ describe('fileKind', () => {
     expect(fileKind('tsv')).toBe('csv')
     expect(fileKind('html')).toBe('html')
     expect(fileKind('png')).toBe('image')
+    expect(fileKind('apng')).toBe('image')
     expect(fileKind('svg')).toBe('image')
     expect(fileKind('pdf')).toBe('pdf')
     expect(fileKind('mp4')).toBe('video')
+    expect(fileKind('avi')).toBe('video')
     expect(fileKind('wav')).toBe('audio')
     expect(fileKind('docx')).toBe('docx')
     expect(fileKind('xlsx')).toBe('xlsx')
@@ -32,6 +34,8 @@ describe('fileKind', () => {
     expect(fileKind('psd')).toBe('psd')
     expect(fileKind('tiff')).toBe('tiff')
     expect(fileKind('heic')).toBe('heic')
+    expect(fileKind('excal')).toBe('canvas')
+    expect(fileKind('excalidraw')).toBe('canvas')
   })
 
   it('大小写不敏感', () => {
@@ -62,6 +66,8 @@ describe('noteFileIcon', () => {
     expect(noteFileIcon('csv')).toBe('fa-file-csv')
     expect(noteFileIcon('glb')).toBe('fa-cube')
     expect(noteFileIcon('', 'Dockerfile')).toBe('fa-file-code')
+    expect(noteFileIcon('excal')).toBe('fa-chalkboard')
+    expect(noteFileIcon('excalidraw')).toBe('fa-chalkboard')
   })
 
   it('不认识 / 无扩展名用通用图标', () => {

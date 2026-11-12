@@ -179,13 +179,16 @@ async function stopRailSelectionProbe(ctx) {
   })()`)
 }
 
-/** 点目录行的第 index 个悬停动作(0 新建笔记 / 1 新建子目录 / 2 改名 / 3 删除)。 */
+/** 点目录行的悬停动作。序号是改版前的位置:0 新建笔记 / 1 新建子目录 / 2 改名 / 3 删除。 */
+const FOLDER_ACTS = ['new-note', 'new-folder', 'rename', 'delete']
+
 async function indentFolderAct(ctx, path, index) {
+  const act = FOLDER_ACTS[index]
   const clicked = await ctx.cdp.eval(`(() => {
     const row = [...document.querySelectorAll('.notes-folder-row')]
       .find((el) => el.dataset.folderPath === ${JSON.stringify(path)})
     if (row === undefined) return false
-    row.querySelectorAll('.notes-folder-acts button')[${index}]?.click()
+    row.querySelector(${JSON.stringify(`[data-folder-act="${act}"]`)})?.click()
     return true
   })()`)
   ok(clicked, `找到目录行:${path}`)
@@ -1330,6 +1333,64 @@ export default [
       await ctx.cdp.waitFor(railSelectionAtRowExpr(rowExpr(LINK_NOTE.title)), {
         message: '指针离开后选中色块仍停在活动笔记行'
       })
+    }
+  },
+
+  {
+    id: 'basics/rail-new-labels',
+    area: 'basics',
+    title: '左侧目录根层新建入口用短标签,窄栏也能分清文件和文件夹',
+    tags: ['rail'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 文案本来是「新建」「新建文件夹」。窄栏强制不换行后省略号把两者都裁成「新建」,
+      // 所以可见文字改成「文件」「文件夹」,完整动作留在 title 里。
+      const labels = await ctx.cdp.json(`(() => {
+        const row = document.querySelector('.notes-new-row')
+        if (!row) return null
+        return [...row.querySelectorAll('.notes-new-folder')].map((el) => ({
+          text: el.querySelector('span')?.textContent ?? '',
+          title: el.getAttribute('title') ?? '',
+          canvas: el.dataset.new === 'canvas'
+        }))
+      })()`)
+      ok(labels !== null && labels.length === 3, `根层新建行应有三颗按钮(实际 ${labels?.length ?? 0})`)
+      eq(labels[0].text, '文件', '第一颗可见文字是文件')
+      eq(labels[0].title, '新建文件', '悬停仍说明是新建文件')
+      eq(labels[1].text, '文件夹', '第二颗可见文字是文件夹')
+      eq(labels[1].title, '新建文件夹', '悬停仍说明是新建文件夹')
+      eq(labels[2].text, '白板', '第三颗仍是白板')
+      eq(labels[2].canvas, true, '白板按钮仍带 data-new=canvas')
+      ok(labels[0].text !== labels[1].text, '文件与文件夹的可见文字不相同')
+
+      const fit = await ctx.cdp.json(`(() => {
+        const rail = document.querySelector('.notes-rail')
+        if (!rail) return null
+        const prev = rail.style.width
+        rail.style.width = '150px'
+        rail.classList.add('rail-narrow')
+        const buttons = [...document.querySelectorAll('.notes-new-row .notes-new-folder')]
+        const rows = buttons.map((el) => {
+          const span = el.querySelector('span')
+          const er = el.getBoundingClientRect()
+          const sr = span?.getBoundingClientRect()
+          // clientWidth 不含按钮的左右 padding,scrollWidth 含文字全宽,两者不能直接比
+          const visible = span === null ? 0 : Math.min(span.scrollWidth, sr.width)
+          return {
+            text: span?.textContent ?? '',
+            full: span !== null && visible >= span.scrollWidth - 1,
+            inside: sr !== undefined && sr.right <= er.right + 1 && sr.left >= er.left - 1
+          }
+        })
+        rail.style.width = prev
+        rail.classList.remove('rail-narrow')
+        return rows
+      })()`)
+      ok(fit !== null && fit.length === 3, '窄栏下仍能量到三颗按钮')
+      for (const row of fit) {
+        ok(row.full, `窄栏下「${row.text}」没有被省略号裁掉`)
+        ok(row.inside, `窄栏下「${row.text}」没有溢出按钮`)
+      }
     }
   }
 ]

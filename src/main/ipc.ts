@@ -36,6 +36,7 @@ import type {
   NoteFileCreateInput,
   NoteFileRenameInput,
   NoteFileSaveInput,
+  NoteExternalProbeInput,
   NoteImportInput,
   NoteRemoveInput,
   NoteRenameInput,
@@ -168,6 +169,42 @@ export function registerIpc(deps: IpcDeps): void {
     console.log(`[ipc] saveText ${r.filePath}`)
     return r.filePath
   })
+
+  // 只截发起这次调用的窗口,并且矩形必须落在页面里。不能拿来截别的屏幕。
+  ipcMain.handle(
+    IPC.shellSaveViewportPng,
+    async (
+      e,
+      opts: { x: number; y: number; width: number; height: number; suggestedName: string; title?: string }
+    ): Promise<string | null> => {
+      const win = BrowserWindow.fromWebContents(e.sender)
+      if (win === null) return null
+      const [contentWidth, contentHeight] = win.getContentSize()
+      const x = Math.round(Number(opts?.x))
+      const y = Math.round(Number(opts?.y))
+      const width = Math.round(Number(opts?.width))
+      const height = Math.round(Number(opts?.height))
+      if (![x, y, width, height].every((n) => Number.isFinite(n))) return null
+      if (width < 1 || height < 1 || width > 8000 || height > 8000) return null
+      if (x < 0 || y < 0 || x + width > contentWidth + 1 || y + height > contentHeight + 1) return null
+      const image = await e.sender.capturePage({
+        x,
+        y,
+        width: Math.min(width, contentWidth - x),
+        height: Math.min(height, contentHeight - y)
+      })
+      const suggested = typeof opts?.suggestedName === 'string' ? opts.suggestedName.replace(/[/\\]/g, '') : ''
+      const r = await dialog.showSaveDialog(win, {
+        title: opts?.title,
+        defaultPath: suggested === '' ? 'canvas.png' : suggested,
+        filters: [{ name: 'PNG', extensions: ['png'] }]
+      })
+      if (r.canceled || !r.filePath) return null
+      await fsp.writeFile(r.filePath, image.toPNG())
+      console.log(`[ipc] saveViewportPng ${r.filePath}`)
+      return r.filePath
+    }
+  )
 
   // ── Launch Agents(阶段 1) ──
   ipcMain.handle(IPC.agList, () => deps.agents.list())
@@ -317,6 +354,12 @@ export function registerIpc(deps: IpcDeps): void {
     deps.notes.importPaths({
       target: String(input?.target ?? ''),
       paths: Array.isArray(input?.paths) ? input.paths.map(String) : []
+    })
+  )
+  ipcMain.handle(IPC.notesProbeExternal, (_e, input: NoteExternalProbeInput) =>
+    deps.notes.probeExternal({
+      source: String(input?.source ?? ''),
+      host: String(input?.host ?? '')
     })
   )
   ipcMain.handle(IPC.notesRemoveFile, (_e, path: string) =>

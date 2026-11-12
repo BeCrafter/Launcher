@@ -33,6 +33,7 @@ import { relTime } from '../../lib/rel-time'
 import { showToast } from '../../lib/utils'
 import { referenceNoteInAi } from '../../lib/ai-nav'
 import { confirmDangerous } from '../../lib/elevation'
+import { useFilesStore } from '../../state/files-store'
 import { useNotesStore } from '../../state/notes-store'
 import { useNoteRefPickerStore } from '../../state/note-ref-picker-store'
 import { useLightboxStore } from '../../state/lightbox-store'
@@ -497,10 +498,14 @@ export function NotesView(): React.JSX.Element {
   )
 
   // 离开模块 / 失焦 / 关窗:一律先把缓冲落盘。失败也只是保持 dirty,绝不丢。
+  // 文件库(白板、代码文件)也在 900ms 去抖窗口里,只 flush 笔记会把刚改的白板丢掉。
   useEffect(() => {
-    const flush = (): void => void useNotesStore.getState().flush()
+    const flush = (): void => {
+      void useNotesStore.getState().flush()
+      void useFilesStore.getState().flush()
+    }
     const onBeforeUnload = (e: BeforeUnloadEvent): void => {
-      if (!useNotesStore.getState().dirty) return
+      if (!useNotesStore.getState().dirty && !useFilesStore.getState().dirty) return
       e.preventDefault()
       flush()
     }

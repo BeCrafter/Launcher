@@ -54,6 +54,8 @@ import type {
   NoteFileSaveInput,
   NoteFileSaveOutcome,
   NoteFileStat,
+  NoteExternalProbeInput,
+  NoteExternalProbeResult,
   NoteImportInput,
   NoteImportResult,
   NoteMeta,
@@ -181,6 +183,8 @@ export interface NotesRepository {
   >
   /** 把 OS 文件/文件夹原样复制进目标目录 */
   import(input: NoteImportInput): Promise<NoteImportResult>
+  /** 白板外部文件在这台电脑上还在不在(不读内容) */
+  probeExternal(input: NoteExternalProbeInput): Promise<NoteExternalProbeResult>
   /** 删除文件(进系统废纸篓) */
   removeFile(path: string): Promise<NoteFileOutcome>
   /** 用系统默认应用打开文件 */

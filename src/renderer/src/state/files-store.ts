@@ -190,7 +190,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       }
 
       let doc: FileDoc
-      if (stat.editable || stat.kind === 'unsupported') {
+      if (stat.editable || stat.kind === 'unsupported' || stat.kind === 'canvas') {
         // 文本 / 未知扩展名:按内容判断(未知扩展名解码成功 → 纯文本)
         const read = await dataSource().notes.readFile(path)
         if (seq !== openSeq) return
@@ -237,7 +237,8 @@ export const useFilesStore = create<FilesState>((set, get) => ({
   },
 
   setText(v) {    const f = get().file
-    if (f === null || !f.editable || f.text === v) return
+    // canvas 的 stat.editable 是 false(那表示「用 CodeMirror 打开」),但正文仍要能写回
+    if (f === null || (!f.editable && f.kind !== 'canvas') || f.text === v) return
     set({ file: { ...f, text: v }, dirty: true })
     get().scheduleSave()
   },
@@ -258,7 +259,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     }
     clearTimer()
     const { file, dirty, conflict, saving } = get()
-    if (file === null || !file.editable || file.revision === null) return
+    if (file === null || (!file.editable && file.kind !== 'canvas') || file.revision === null) return
     if (!dirty || conflict !== null || saving) return
 
     const sent = file.text
@@ -359,7 +360,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
 
   async resolveConflict(choice) {
     const { conflict, file } = get()
-    if (conflict === null || file === null || !file.editable) return
+    if (conflict === null || file === null || (!file.editable && file.kind !== 'canvas')) return
 
     if (choice === 'disk') {
       await get().reload()

@@ -11,10 +11,13 @@ import { FilePlaceholder } from './FilePlaceholder'
 
 export function BytesLoader({
   path,
+  url,
   maxBytes = MAX_FILE_BYTES_READ,
   children
 }: {
   path: string
+  /** 库外文件走协议 URL。笔记目录里的文件不传,仍走 readFileBytes。 */
+  url?: string
   maxBytes?: number
   children: (data: Uint8Array) => React.JSX.Element
 }): React.JSX.Element {
@@ -30,6 +33,26 @@ export function BytesLoader({
     setError(null)
     void (async () => {
       try {
+        if (url !== undefined) {
+          const response = await fetch(url)
+          if (cancelled) return
+          if (response.status === 413) {
+            setTooLarge(true)
+            return
+          }
+          if (!response.ok) {
+            setError(t('notes.canvas.embed.missing'))
+            return
+          }
+          const bytes = new Uint8Array(await response.arrayBuffer())
+          if (cancelled) return
+          if (bytes.byteLength > maxBytes) {
+            setTooLarge(true)
+            return
+          }
+          setData(bytes)
+          return
+        }
         const out = await dataSource().notes.readFileBytes(path, maxBytes)
         if (cancelled) return
         if (!out.ok) {
@@ -45,7 +68,7 @@ export function BytesLoader({
     return () => {
       cancelled = true
     }
-  }, [path, maxBytes])
+  }, [path, url, maxBytes, t])
 
   if (tooLarge) {
     return (

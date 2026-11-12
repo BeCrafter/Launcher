@@ -14,16 +14,19 @@
 // Chromium 对 `<video>` 总是发 Range,回 200 整份会让它以为不支持 seek。
 
 import { protocol } from 'electron'
+import { lstatSync, realpathSync } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
-import { extname } from 'node:path'
+import { basename, dirname, extname, isAbsolute, resolve } from 'node:path'
 import {
   MAX_FILE_BYTES_READ,
   NOTES_ASSET_SCHEME,
+  NOTES_EXTERNAL_HOST,
   NOTES_FILE_HOST,
   noteAssetMime,
   noteFileMime,
   type NoteAssetKind
 } from '../../shared/notes'
+import { isCanvasPreviewName } from '../../shared/canvas-external'
 import { resolveAssetRel, type ResolvedAsset } from '../domains/note-asset'
 import { resolveReadableFile } from '../domains/note-file'
 
@@ -120,6 +123,37 @@ export function resolveFilePath(dir: string, rawUrl: string): string | null {
     return null // 非法百分号编码
   }
   return resolveReadableFile(dir, rel)
+}
+
+/**
+ * `launcher-note://external/?p=<绝对路径>` → 可预览的普通文件。
+ * 不跟随符号链接,扩展名不在白板预览名单里的拒绝。目录外没有「根」,所以只认绝对路径本身。
+ */
+export function resolveExternalPath(rawUrl: string): string | null {
+  let url: URL
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return null
+  }
+  if (url.protocol !== `${NOTES_ASSET_SCHEME}:` || url.hostname !== NOTES_EXTERNAL_HOST) return null
+  const raw = url.searchParams.get('p')
+  if (raw === null || raw === '' || !isAbsolute(raw)) return null
+  const abs = resolve(raw)
+  if (!isCanvasPreviewName(basename(abs))) return null
+  try {
+    const st = lstatSync(abs)
+    if (!st.isFile() || st.isSymbolicLink()) return null
+    // 文件本身不是链接,但上层目录可能是。realpath 必须仍在原路径的父目录里,
+    // 这样 /var → /private/var 这种系统链接放行,指到别处的链接拒绝。
+    const real = realpathSync(abs)
+    const parent = realpathSync(dirname(abs))
+    const base = parent.endsWith('/') ? parent : `${parent}/`
+    if (!real.startsWith(base)) return null
+    return real
+  } catch {
+    return null
+  }
 }
 
 export interface ByteRange {
@@ -256,6 +290,15 @@ export function handleNotesProtocol(getDir: () => string, log?: (msg: string) =>
       host = new URL(req.url).hostname
     } catch {
       return new Response('forbidden', { status: 403 })
+    }
+
+    if (host === NOTES_EXTERNAL_HOST) {
+      const path = resolveExternalPath(req.url)
+      if (path === null) {
+        log?.(`拒绝:${req.url}`)
+        return new Response('forbidden', { status: 403 })
+      }
+      return serveFile(path, req, fileHeadersFor, MAX_FILE_BYTES_READ)
     }
 
     if (host === NOTES_FILE_HOST) {

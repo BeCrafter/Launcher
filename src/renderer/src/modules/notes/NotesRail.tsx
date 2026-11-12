@@ -1348,11 +1348,11 @@ export function NotesRail(): React.JSX.Element {
   const loading = !loaded && notes.length === 0
   /** 首次使用:一篇笔记、一个目录都没有 */
   const isEmpty = !loading && notes.length === 0 && folders.length === 0 && files.length === 0
-  const startEdit = (next: NameEdit, initial = ''): void => {
+  const startEdit = (next: NameEdit, initial = '', initialExt = NEW_DOC_EXT): void => {
     committingRef.current = false
     setEdit(next)
     setDraftName(initial)
-    if (next.mode === 'create' && next.kind === 'note') setDraftExt(NEW_DOC_EXT)
+    if (next.mode === 'create' && next.kind === 'note') setDraftExt(initialExt)
   }
   const cancelEdit = (): void => {
     committingRef.current = false
@@ -1723,6 +1723,7 @@ export function NotesRail(): React.JSX.Element {
           <span className="notes-folder-acts" style={renaming ? { display: 'none' } : undefined}>
             <button
               type="button"
+              data-folder-act="new-note"
               title={t('notes.folder.newNote')}
               onClick={() => {
                 setSelectedFolder(f.path)
@@ -1734,6 +1735,19 @@ export function NotesRail(): React.JSX.Element {
             </button>
             <button
               type="button"
+              data-folder-act="new-canvas"
+              title={t('notes.folder.newCanvas')}
+              onClick={() => {
+                setSelectedFolder(f.path)
+                useNotesStore.getState().setExpanded(f.path, true)
+                startEdit({ mode: 'create', kind: 'note', parent: f.path, path: '' }, NEW_DOC_NAME, 'excal')
+              }}
+            >
+              <i className="fa-solid fa-chalkboard" />
+            </button>
+            <button
+              type="button"
+              data-folder-act="new-folder"
               title={t('notes.folder.newSub')}
               onClick={() => {
                 setSelectedFolder(f.path)
@@ -1745,6 +1759,7 @@ export function NotesRail(): React.JSX.Element {
             </button>
             <button
               type="button"
+              data-folder-act="rename"
               title={t('notes.folder.rename')}
               onClick={() => startEdit({ mode: 'rename', kind: 'folder', parent: '', path: f.path }, f.name)}
             >
@@ -1753,6 +1768,7 @@ export function NotesRail(): React.JSX.Element {
             <button
               type="button"
               className="danger"
+              data-folder-act="delete"
               title={t('notes.folder.delete')}
               onClick={() => {
                 void (async () => {
@@ -2026,6 +2042,8 @@ export function NotesRail(): React.JSX.Element {
             <button
               type="button"
               className="notes-new-folder"
+              title={t('notes.action.newTitle')}
+              aria-label={t('notes.action.newTitle')}
               onClick={() => startEdit({ mode: 'create', kind: 'note', parent: '', path: '' }, NEW_DOC_NAME)}
             >
               <i className="fa-solid fa-plus" />
@@ -2034,10 +2052,25 @@ export function NotesRail(): React.JSX.Element {
             <button
               type="button"
               className="notes-new-folder"
+              title={t('notes.folder.newTitle')}
+              aria-label={t('notes.folder.newTitle')}
               onClick={() => startEdit({ mode: 'create', kind: 'folder', parent: '', path: '' })}
             >
               <i className="fa-solid fa-plus" />
               <span>{t('notes.folder.new')}</span>
+            </button>
+            <button
+              type="button"
+              className="notes-new-folder"
+              data-new="canvas"
+              title={t('notes.action.newCanvasTitle')}
+              aria-label={t('notes.action.newCanvasTitle')}
+              onClick={() =>
+                startEdit({ mode: 'create', kind: 'note', parent: '', path: '' }, NEW_DOC_NAME, 'excal')
+              }
+            >
+              <i className="fa-solid fa-chalkboard" />
+              <span>{t('notes.action.newCanvas')}</span>
             </button>
           </div>
         )}

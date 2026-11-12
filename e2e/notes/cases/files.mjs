@@ -131,6 +131,72 @@ async function textOfFileEditor(ctx) {
 
 // ── 夹具生成 ──
 
+/** 三页,目录两项分别指向第 1 页和第 3 页。 */
+function outlinedPdf() {
+  const page = (contentId) =>
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents ${contentId} 0 R /Resources << /Font << /F1 10 0 R >> >> >>`
+  const stream = (body) => `<< /Length ${body.length} >>\nstream\n${body}\nendstream`
+  const objs = []
+  objs[1] = '<< /Type /Catalog /Pages 2 0 R /Outlines 6 0 R >>'
+  objs[2] = '<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>'
+  objs[3] = page(11)
+  objs[4] = page(12)
+  objs[5] = page(13)
+  objs[6] = '<< /Type /Outlines /First 7 0 R /Last 8 0 R /Count 2 >>'
+  objs[7] =
+    '<< /Title (Chapter One) /Parent 6 0 R /Next 8 0 R /Dest [3 0 R /XYZ 0 200 0] >>'
+  objs[8] = '<< /Title (Chapter Three) /Parent 6 0 R /Prev 7 0 R /Dest [5 0 R /XYZ 0 200 0] >>'
+  objs[10] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  objs[11] = stream('BT /F1 18 Tf 36 120 Td (PAGE ONE) Tj ET')
+  objs[12] = stream('BT /F1 18 Tf 36 120 Td (PAGE TWO) Tj ET')
+  objs[13] = stream('BT /F1 18 Tf 36 120 Td (PAGE THREE) Tj ET')
+  let out = '%PDF-1.4\n'
+  const offsets = [0]
+  for (let i = 1; i < objs.length; i += 1) {
+    offsets[i] = out.length
+    if (objs[i] === undefined) continue
+    out += `${i} 0 obj\n${objs[i]}\nendobj\n`
+  }
+  const xref = out.length
+  out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`
+  for (let i = 1; i < objs.length; i += 1) {
+    const offset = objs[i] === undefined ? 0 : offsets[i]
+    const use = objs[i] === undefined ? 'f' : 'n'
+    out += `${String(offset).padStart(10, '0')} 00000 ${use} \n`
+  }
+  out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return out
+}
+
+/** 八页,没有书签。页数够多,目录才会自己滚。 */
+function plainPdf() {
+  const count = 8
+  const page = (contentId) =>
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents ${contentId} 0 R /Resources << /Font << /F1 ${6 + count} 0 R >> >> >>`
+  const stream = (body) => `<< /Length ${body.length} >>\nstream\n${body}\nendstream`
+  const objs = []
+  const kids = []
+  for (let n = 1; n <= count; n += 1) kids.push(`${2 + n} 0 R`)
+  objs[1] = '<< /Type /Catalog /Pages 2 0 R >>'
+  objs[2] = `<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${count} >>`
+  for (let n = 1; n <= count; n += 1) objs[2 + n] = page(2 + count + n)
+  objs[3 + count] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+  for (let n = 1; n <= count; n += 1) {
+    objs[3 + count + n] = stream(`BT /F1 18 Tf 36 120 Td (PAGE ${n}) Tj ET`)
+  }
+  let out = '%PDF-1.4\n'
+  const offsets = [0]
+  for (let i = 1; i < objs.length; i += 1) {
+    offsets[i] = out.length
+    out += `${i} 0 obj\n${objs[i]}\nendobj\n`
+  }
+  const xref = out.length
+  out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`
+  for (let i = 1; i < objs.length; i += 1) out += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`
+  out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return out
+}
+
 function onePagePdf(text) {
   const objs = []
   objs[1] = '<< /Type /Catalog /Pages 2 0 R >>'
@@ -645,18 +711,167 @@ export default [
   {
     id: 'files/pdf-and-audio',
     area: 'files',
-    title: 'PDF 交给阅读器 iframe;音频用原生控件且不自动播放',
+    title: 'PDF 在应用内画成页面,底色跟着主题,页宽跟容器走且可缩放可选中,能翻页并按目录或页列表跳转,工具条可收起;音频用原生控件且不自动播放',
     tags: ['files', 'pdf', 'media'],
     async run(ctx) {
-      writeFile(ctx, 'docs/sample.pdf', onePagePdf('BT /F1 28 Tf 72 750 Td (E2E PDF) Tj ET'))
+      writeFile(ctx, 'docs/sample.pdf', outlinedPdf())
+      writeFile(ctx, 'docs/plain.pdf', plainPdf())
       writeFile(ctx, 'audio/tone.wav', wavBytes())
 
       await openFile(ctx, 'docs/sample.pdf', { expand: ['docs'] })
-      await ctx.cdp.waitFor(`document.querySelector('.file-main iframe[data-file-frame="pdf"]') !== null`, {
-        message: 'PDF 阅读器 iframe 出现'
-      })
-      const handles = await ctx.cdp.attachFrame('sample.pdf')
-      ok(handles.length > 0, 'Chromium 为 PDF 创建了阅读器子目标')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-pdf canvas') !== null`,
+        { timeout: 20_000, message: 'PDF 画成 canvas,不走阅读器 iframe' }
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.file-main iframe[data-file-frame="pdf"]') === null`),
+        true,
+        '文件页不再开 Chromium 阅读器'
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const page = document.querySelector('.file-main .file-pdf-page')
+          const scroller = document.querySelector('.file-main .file-pdf')
+          if (page === null || scroller === null) return false
+          const pad = parseFloat(getComputedStyle(scroller).paddingLeft) || 0
+          return Math.abs(page.getBoundingClientRect().width - (scroller.clientWidth - pad * 2)) < 3
+        })()`,
+        { timeout: 10_000, message: '页宽跟滚动区走,不被画布像素撑开' }
+      )
+      await ctx.cdp.eval(`document.querySelector('.file-main .file-image-tools button[title="放大"]')?.click()`)
+      await ctx.cdp.waitFor(
+        `Number(document.querySelector('.file-main .file-pdf-view')?.dataset.pdfScale) > 1.2`,
+        { message: '放大后页变宽' }
+      )
+      ok(
+        (await ctx.cdp.eval(
+          `document.querySelector('.file-main .file-pdf-page .textLayer') !== null`
+        )) === true,
+        '页上有可选中的文字层'
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.file-main .file-pdf-view')?.dataset.pdfPage`),
+        '1',
+        '打开时停在第一页'
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.file-main .file-pdf-outline')`),
+        null,
+        '目录默认收着'
+      )
+      await ctx.cdp.eval(
+        `document.querySelector('.file-main .file-image-tools button[title="目录"]')?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const item = document.querySelector('.file-main .file-pdf-outline [data-outline-page="3"]')
+          if (item === null || item.textContent?.includes('Chapter Three') !== true) return false
+          const style = getComputedStyle(item)
+          return item.querySelector('.file-pdf-outline-thumb canvas') !== null && parseFloat(style.borderTopLeftRadius) >= 8
+        })()`,
+        { message: '目录把第三页画成带缩略图的卡片' }
+      )
+      await ctx.cdp.eval(
+        `document.querySelector('.file-main .file-pdf-outline [data-outline-page="3"]')?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const view = document.querySelector('.file-main .file-pdf-view')
+          const scroller = document.querySelector('.file-main .file-pdf')
+          const target = document.querySelector('.file-main .file-pdf-page[data-page="3"]')
+          if (view === null || scroller === null || target === null) return false
+          const box = scroller.getBoundingClientRect()
+          const page = target.getBoundingClientRect()
+          return view.dataset.pdfPage === '3' && page.top < box.bottom && page.bottom > box.top
+        })()`,
+        { message: '点目录跳到第三页,页码跟着变' }
+      )
+      const expanded = Number(
+        await ctx.cdp.eval(
+          `document.querySelector('.file-main .file-pdf-view .file-image-tools')?.getBoundingClientRect().width ?? 0`
+        )
+      )
+      await ctx.cdp.eval(
+        `document.querySelector('.file-main .file-pdf-view .file-image-tools button[title="收起工具条"]')?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const tools = document.querySelector('.file-main .file-pdf-view .file-image-tools')
+          const page = document.querySelector('.file-main .file-pdf-page')
+          if (tools === null || page === null) return false
+          if (tools.querySelector('button[title="放大"]') !== null) return false
+          if (tools.querySelector('button[title="展开工具条"]') === null) return false
+          const bar = tools.getBoundingClientRect()
+          const box = page.getBoundingClientRect()
+          const cx = box.left + box.width / 2
+          const cy = box.top + box.height / 2
+          const covers = cx >= bar.left && cx <= bar.right && cy >= bar.top && cy <= bar.bottom
+          return bar.width < 64 && !covers
+        })()`,
+        { message: '收起后工具条只剩展开按钮,不再盖住页面' }
+      )
+      const collapsed = Number(
+        await ctx.cdp.eval(
+          `document.querySelector('.file-main .file-pdf-view .file-image-tools')?.getBoundingClientRect().width ?? 0`
+        )
+      )
+      ok(expanded > 120 && collapsed < expanded / 2, '收起后工具条比展开时窄一半以上')
+      await ctx.cdp.eval(
+        `document.querySelector('.file-main .file-pdf-view .file-image-tools button[title="展开工具条"]')?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-pdf-view .file-image-tools button[title="放大"]') !== null`,
+        { message: '展开后缩放按钮回来' }
+      )
+
+      await openFile(ctx, 'docs/plain.pdf')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-pdf canvas') !== null`,
+        { timeout: 20_000, message: '没有目录的 PDF 也能画出页面' }
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.file-main .file-pdf-outline')`),
+        null,
+        '没有书签时页列表默认收着'
+      )
+      await ctx.cdp.eval(
+        `document.querySelector('.file-main .file-image-tools button[title="目录"]')?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const item = document.querySelector('.file-main .file-pdf-outline [data-outline-page="2"]')
+          if (item === null || item.textContent?.includes('第 2 页') !== true) return false
+          return item.querySelector('.file-pdf-outline-thumb canvas') !== null
+        })()`,
+        { message: '没有书签时按页画成卡片' }
+      )
+      await ctx.cdp.eval(
+        `document.querySelector('.file-main .file-pdf-outline [data-outline-page="2"]')?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const view = document.querySelector('.file-main .file-pdf-view')
+          const scroller = document.querySelector('.file-main .file-pdf')
+          const target = document.querySelector('.file-main .file-pdf-page[data-page="2"]')
+          if (view === null || scroller === null || target === null) return false
+          const box = scroller.getBoundingClientRect()
+          const page = target.getBoundingClientRect()
+          return view.dataset.pdfPage === '2' && page.top < box.bottom && page.bottom > box.top
+        })()`,
+        { message: '点页列表跳到第二页' }
+      )
+      const outlinePoint = await ctx.cdp.json(`(() => {
+        const outline = document.querySelector('.file-main .file-pdf-outline')
+        if (outline === null) return null
+        const box = outline.getBoundingClientRect()
+        return { x: box.left + box.width / 2, y: box.top + 24 }
+      })()`)
+      ok(outlinePoint !== null, '目录卡片区有一块可以滚的位置')
+      await ctx.cdp.wheel(outlinePoint.x, outlinePoint.y, 400)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-pdf-outline')?.scrollTop > 40`,
+        { message: '在目录上滑动时目录自己往下滚' }
+      )
 
       await openFile(ctx, 'audio/tone.wav', { expand: ['audio'] })
       await ctx.cdp.waitFor(
@@ -733,7 +948,7 @@ export default [
   {
     id: 'files/archive-preview',
     area: 'files',
-    title: '压缩包:条目树、文本/图片预览、HTML 条目脚本执行、嵌套压缩包、TAR.GZ',
+    title: '压缩包:条目栏可拖,文本行号列不透明;条目树、文本/图片预览、HTML 条目脚本执行、嵌套压缩包、TAR.GZ',
     tags: ['files', 'archive'],
     async run(ctx) {
       writeFile(ctx, 'bundle/bundle.zip', await makeZipBundle())
@@ -762,6 +977,34 @@ export default [
       await ctx.cdp.waitFor(
         `document.querySelector('.file-archive-preview .file-editor .cm-content')?.textContent?.includes('压缩包里的文本') === true`,
         { message: '文本条目用只读编辑器预览' }
+      )
+      ok(
+        (await ctx.cdp.eval(
+          `getComputedStyle(document.querySelector('.file-archive[data-archive-name="bundle.zip"] .file-archive-preview .cm-gutters')).backgroundColor !== 'rgba(0, 0, 0, 0)'`
+        )) === true,
+        '文本行号列不是透明的'
+      )
+      const grip = await ctx.cdp.json(`(() => {
+        const root = document.querySelector('.file-archive[data-archive-name="bundle.zip"]')
+        const bar = root?.querySelector(':scope > .file-archive-body > .file-archive-resize')
+        const list = root?.querySelector(':scope > .file-archive-body > .file-archive-list')
+        if (!bar || !list) return null
+        const r = bar.getBoundingClientRect()
+        return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: list.getBoundingClientRect().width }
+      })()`)
+      ok(grip !== null, '条目栏有拖动条')
+      await ctx.cdp.mouse('mousePressed', grip.x, grip.y, { buttons: 1 })
+      await ctx.cdp.mouse('mouseMoved', grip.x - 80, grip.y, { buttons: 1 })
+      await ctx.cdp.mouse('mouseReleased', grip.x - 80, grip.y, { buttons: 0 })
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-archive[data-archive-name="bundle.zip"] > .file-archive-body > .file-archive-list').getBoundingClientRect().width < ${grip.width - 40}`,
+        { message: '向左拖后条目栏变窄' }
+      )
+      ok(
+        (await ctx.cdp.eval(
+          `document.querySelector('.file-archive[data-archive-name="bundle.zip"] > .file-archive-body > .file-archive-preview') !== null`
+        )) === true,
+        '拖完预览还在'
       )
 
       // 图片条目
@@ -1033,7 +1276,7 @@ export default [
         { timeout: 10_000, message: '目录「新目录」出现' }
       )
 
-      await ctx.cdp.eval(`document.querySelector('.notes-folder-row[data-folder-path="新目录"]')?.querySelector('.notes-folder-acts button')?.click()`)
+      await ctx.cdp.eval(`document.querySelector('.notes-folder-row[data-folder-path="新目录"]')?.querySelector('[data-folder-act="new-note"]')?.click()`)
       await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
         timeout: 5000,
         message: '目录里出现新建名字输入框'

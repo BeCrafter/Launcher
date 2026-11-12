@@ -1,7 +1,7 @@
 // 压缩包:左侧条目树 + 右侧预览。条目是**字节源**,复用与磁盘文件相同的查看器;
 // 嵌套压缩包递归渲染,深度上限 3。压缩包内 HTML 用 srcdoc + data URL 内联同包资源。
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ARCHIVE_DEPTH_MAX,
   ARCHIVE_HTML_MAX,
@@ -25,6 +25,16 @@ import { OfficeView } from './OfficeView'
 interface TreeRow {
   entry: ArchiveEntry
   depth: number
+}
+
+const LIST_DEFAULT = 252
+const LIST_MIN = 96
+const PREVIEW_MIN = 120
+
+/** 条目栏最窄 96,右边预览至少留 120。容器太窄时以最窄为准。 */
+function clampListWidth(width: number, bodyWidth: number): number {
+  const max = bodyWidth > 0 ? Math.max(LIST_MIN, bodyWidth - PREVIEW_MIN) : width
+  return Math.min(Math.max(LIST_MIN, width), max)
 }
 
 /** 目录优先、同级按名字排序;目录本身也占一行(缩进靠 path 的层数) */
@@ -52,7 +62,41 @@ export function ArchiveView({
   const [source, setSource] = useState<ArchiveSource | null>(null)
   const [error, setError] = useState<'failed' | 'unpacked' | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const userSized = useRef(false)
+  const [listWidth, setListWidth] = useState(LIST_DEFAULT)
+  const [dragging, setDragging] = useState(false)
   const rows = useMemo(() => (source === null ? [] : treeRows(source.entries)), [source])
+
+  useEffect(() => {
+    const body = bodyRef.current
+    if (body === null) return
+    const fit = (): void => {
+      const width = body.getBoundingClientRect().width
+      setListWidth((current) => clampListWidth(userSized.current ? current : LIST_DEFAULT, width))
+    }
+    fit()
+    const observer = new ResizeObserver(fit)
+    observer.observe(body)
+    return () => observer.disconnect()
+  }, [source])
+
+  useEffect(() => {
+    if (!dragging) return
+    const onMove = (event: PointerEvent): void => {
+      const box = bodyRef.current?.getBoundingClientRect()
+      if (box === undefined || box.width === 0) return
+      userSized.current = true
+      setListWidth(clampListWidth(event.clientX - box.left, box.width))
+    }
+    const onUp = (): void => setDragging(false)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [dragging])
 
   useEffect(() => {
     let cancelled = false
@@ -114,8 +158,12 @@ export function ArchiveView({
       )}
 
       {source !== null && (
-        <div className="file-archive-body">
-          <div className="file-archive-list" role="tree">
+        <div
+          className="file-archive-body"
+          ref={bodyRef}
+          data-archive-drag={dragging ? 'true' : undefined}
+        >
+          <div className="file-archive-list" role="tree" style={{ width: listWidth }}>
             {rows.length === 0 && <div className="file-archive-empty">{t('notes.file.archiveEmpty')}</div>}
             {rows.map(({ entry, depth: d }) => (
               <button
@@ -144,6 +192,21 @@ export function ArchiveView({
               </button>
             ))}
           </div>
+          <div
+            className="file-archive-resize"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('notes.file.archiveResize')}
+            onPointerDown={(event) => {
+              event.preventDefault()
+              setDragging(true)
+            }}
+            onDoubleClick={() => {
+              userSized.current = false
+              const width = bodyRef.current?.getBoundingClientRect().width ?? 0
+              setListWidth(clampListWidth(LIST_DEFAULT, width))
+            }}
+          />
           <div className="file-archive-preview">
             {selected === null ? (
               <div className="file-placeholder">

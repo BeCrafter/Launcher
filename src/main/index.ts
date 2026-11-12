@@ -87,9 +87,9 @@ if (e2eUserData) {
 registerNotesScheme()
 
 /*
- * 预览里嵌进来的 PDF / 本地网页是跨源帧,父页面的 CSS 进不去;Chromium 的 PDF 阅读器
- * 还会在插件包装页上画一条系统风的白底粗滚动条。帧载入完成后由主进程补装一套细滚动条
- * (与 .notes-preview 同款,滚动时才显形),细节见 services/frame-scrollbar.ts。
+ * 预览和白板里嵌进来的 PDF、本地网页、外部网页都是跨源帧,父页面的 CSS 进不去。
+ * 帧载入完成后由主进程补装一套细滚动条(与 .notes-preview 同款,滚动时才显形)。
+ * 只处理子帧和笔记协议里的文档,不改应用自己的主框架。细节见 services/frame-scrollbar.ts。
  */
 app.on('web-contents-created', (_event, wc) => {
   wc.on('did-frame-finish-load', (_e, _isMain, processId, routingId) => {

@@ -29,6 +29,7 @@ const KIND_ICONS: Record<NoteFileKind, string> = {
   'archive-unsupported': 'fa-file-zipper',
   model: 'fa-cube',
   'legacy-office': 'fa-file',
+  canvas: 'fa-chalkboard',
   unsupported: 'fa-file'
 }
 

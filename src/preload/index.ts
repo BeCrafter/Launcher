@@ -45,6 +45,7 @@ const api: LauncherApi = {
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   pickFile: (opts) => ipcRenderer.invoke(IPC.shellPickFile, opts),
   saveTextFile: (opts) => ipcRenderer.invoke(IPC.shellSaveText, opts),
+  saveViewportPng: (opts) => ipcRenderer.invoke(IPC.shellSaveViewportPng, opts),
   reportBadgeCount: (count) => ipcRenderer.invoke(IPC.agentsBadge, count),
   // 启动进度上报:单向 send(不需要回执),main 据此决定何时显示窗口
   notifyBootPainted: (phase) => ipcRenderer.send(IPC.appBootPainted, phase),
@@ -140,6 +141,7 @@ const api: LauncherApi = {
     renameFolder: (input) => ipcRenderer.invoke(IPC.notesRenameFolder, input),
     move: (input) => ipcRenderer.invoke(IPC.notesMove, input),
     import: (input) => ipcRenderer.invoke(IPC.notesImport, input),
+    probeExternal: (input) => ipcRenderer.invoke(IPC.notesProbeExternal, input),
     removeFile: (path) => ipcRenderer.invoke(IPC.notesRemoveFile, path),
     openFile: (path) => ipcRenderer.invoke(IPC.notesOpenFile, path),
     statFile: (path) => ipcRenderer.invoke(IPC.notesStatFile, path),

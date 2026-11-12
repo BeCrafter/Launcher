@@ -61,6 +61,8 @@ import type {
   NoteFileSaveInput,
   NoteFileSaveOutcome,
   NoteFileStat,
+  NoteExternalProbeInput,
+  NoteExternalProbeResult,
   NoteImportInput,
   NoteImportResult,
   NoteMeta,
@@ -91,6 +93,15 @@ export interface LauncherApi {
   pickFile: (opts: { mode: PickFileMode; title?: string }) => Promise<PickedFile | null>
   /** 原生保存框 + 写文本(日志导出);取消 → null */
   saveTextFile: (opts: { suggestedName: string; content: string; title?: string }) => Promise<string | null>
+  /** 截当前窗口里的一块区域,弹出保存框写成 PNG;取消 → null */
+  saveViewportPng: (opts: {
+    x: number
+    y: number
+    width: number
+    height: number
+    suggestedName: string
+    title?: string
+  }) => Promise<string | null>
   // 运行中 Agent 计数上报(menubarBadge 角标;数据在 renderer,阶段 1 换真实源后由 main 自算)
   reportBadgeCount: (count: number) => Promise<void>
   /**
@@ -249,6 +260,8 @@ export interface LauncherApi {
     >
     /** 把 OS 文件/文件夹原样复制进目标目录 */
     import: (input: NoteImportInput) => Promise<NoteImportResult>
+    /** 白板外部文件在这台电脑上还在不在(不读内容) */
+    probeExternal: (input: NoteExternalProbeInput) => Promise<NoteExternalProbeResult>
     /** 删除文件(进系统废纸篓) */
     removeFile: (path: string) => Promise<NoteFileOutcome>
     /** 用系统默认应用打开文件 */

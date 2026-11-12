@@ -27,6 +27,7 @@ import { OfficeView } from './file-views/OfficeView'
 import { ArchiveView } from './file-views/ArchiveView'
 import { ModelView } from './file-views/ModelView'
 import { DecodedImageViewer } from './file-views/DecodedImageViewer'
+import { CanvasView } from './file-views/CanvasView'
 import { BytesLoader } from './file-views/BytesLoader'
 import { Skeleton } from '../../components/ui/Skeleton'
 
@@ -124,7 +125,7 @@ export function FileView(): React.JSX.Element {
           <span className="file-meta">{formatBytes(file.size)}</span>
         </div>
         <div className="notes-hd-actions">
-          {isTextKind(file.kind) &&
+          {(isTextKind(file.kind) || file.kind === 'canvas') &&
             (saving ? (
               <span className="notes-save-state">{t('notes.save.saving')}</span>
             ) : dirty ? (
@@ -232,6 +233,8 @@ export function FileView(): React.JSX.Element {
             saveNonce={saveNonce}
             onText={setText}
           />
+        ) : file.kind === 'canvas' ? (
+          <CanvasView key={docSession} text={file.text} />
         ) : isTextKind(file.kind) ? (
           <FileEditor
             key={docSession}

@@ -12,6 +12,7 @@ import files from './cases/files.mjs'
 import find from './cases/find.mjs'
 import railMove from './cases/rail-move.mjs'
 import pin from './cases/pin.mjs'
+import canvas from './cases/canvas.mjs'
 
 /**
  * 编辑器端到端用例的唯一清单。
@@ -33,7 +34,8 @@ export const CASES = [
   ...files,
   ...find,
   ...railMove,
-  ...pin
+  ...pin,
+  ...canvas
 ]
 
 export const AREA_TITLES = {
@@ -50,5 +52,6 @@ export const AREA_TITLES = {
   files: '文件查看与编辑:代码、HTML、CSV、图片、PDF/音视频、Office、压缩包、3D、占位与图标',
   find: '编辑器内查找替换、匹配导航、选项与撤销',
   'rail-move': '左侧目录树拖动移动文件夹、文件和笔记',
-  pin: '置顶:置顶区与目录树双份呈现、交互与移动'
+  pin: '置顶:置顶区与目录树双份呈现、交互与移动',
+  canvas: '白板:Excalidraw 场景文件,文字、画笔、缩放、删除与嵌入'
 }

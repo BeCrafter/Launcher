@@ -4,7 +4,9 @@ import {
   FRAME_SCROLLBAR_CSS,
   FRAME_SCROLLBAR_SCRIPT,
   installFrameScrollbar,
-  isEmbeddedDocUrl
+  isEmbeddedDocUrl,
+  isWebEmbedUrl,
+  shouldInstallFrameScrollbar
 } from './frame-scrollbar'
 
 describe('isEmbeddedDocUrl', () => {
@@ -28,7 +30,14 @@ describe('isEmbeddedDocUrl', () => {
     expect(isEmbeddedDocUrl('launcher-note://file/site/x.txt')).toBe(false)
   })
 
-  it('其它附件与外部页面不动', () => {
+  it('外部文件协议的路径在查询串里,PDF 和网页仍换细滚动条', () => {
+    expect(isEmbeddedDocUrl('launcher-note://external/?p=%2Ftmp%2Fa.pdf')).toBe(true)
+    expect(isEmbeddedDocUrl('launcher-note://external/?p=%2Ftmp%2Fa.html&v=2')).toBe(true)
+    expect(isEmbeddedDocUrl('launcher-note://external/?p=%2Ftmp%2Fa.mp4')).toBe(false)
+    expect(isEmbeddedDocUrl('launcher-note://external/?p=')).toBe(false)
+  })
+
+  it('其它附件与外部页面不归这条规则', () => {
     expect(isEmbeddedDocUrl('launcher-note://asset/assets/sample.png')).toBe(false)
     expect(isEmbeddedDocUrl('launcher-note://asset/assets/sample.mp4')).toBe(false)
     expect(isEmbeddedDocUrl('https://example.com/a.html')).toBe(false)
@@ -36,6 +45,38 @@ describe('isEmbeddedDocUrl', () => {
     expect(isEmbeddedDocUrl('about:blank')).toBe(false)
     // 前缀必须是 /asset/,别把 assets 之类近似路径放进来
     expect(isEmbeddedDocUrl('launcher-note://assets/a.html')).toBe(false)
+  })
+})
+
+describe('isWebEmbedUrl', () => {
+  it('只放行 http / https', () => {
+    expect(isWebEmbedUrl('https://example.com/a.html')).toBe(true)
+    expect(isWebEmbedUrl('https://www.baidu.com/s?wd=1')).toBe(true)
+    expect(isWebEmbedUrl('http://example.com/')).toBe(true)
+    expect(isWebEmbedUrl('file:///tmp/a.html')).toBe(false)
+    expect(isWebEmbedUrl('about:blank')).toBe(false)
+    expect(isWebEmbedUrl('launcher-note://file/site/index.html')).toBe(false)
+    expect(isWebEmbedUrl('javascript:alert(1)')).toBe(false)
+    expect(isWebEmbedUrl('')).toBe(false)
+    expect(isWebEmbedUrl('not a url')).toBe(false)
+  })
+})
+
+describe('shouldInstallFrameScrollbar', () => {
+  const child = { parent: {} }
+
+  it('外部网页只给子帧装,主帧不动', () => {
+    expect(shouldInstallFrameScrollbar({ url: 'https://example.com/a.html', ...child })).toBe(true)
+    expect(shouldInstallFrameScrollbar({ url: 'http://localhost:5173/', parent: null })).toBe(false)
+    expect(shouldInstallFrameScrollbar({ url: 'https://www.baidu.com/', parent: null })).toBe(false)
+    expect(shouldInstallFrameScrollbar({ url: 'file:///tmp/a.html', ...child })).toBe(false)
+    expect(shouldInstallFrameScrollbar({ url: 'about:blank', ...child })).toBe(false)
+  })
+
+  it('笔记协议的 PDF / 本地网页即使没有 parent 也装', () => {
+    expect(shouldInstallFrameScrollbar({ url: 'launcher-note://asset/a.html', parent: null })).toBe(
+      true
+    )
   })
 })
 
@@ -48,7 +89,9 @@ describe('注入内容', () => {
 
   it('脚本幂等,并在滚动时点亮、停下 900ms 后重新隐去', () => {
     expect(FRAME_SCROLLBAR_SCRIPT).toContain('window.__launcherFrameScrollbar === true')
+    expect(FRAME_SCROLLBAR_SCRIPT).toContain("style.id = 'launcher-frame-scrollbar'")
     expect(FRAME_SCROLLBAR_SCRIPT).toContain(JSON.stringify(FRAME_SCROLLBAR_CSS))
+    expect(FRAME_SCROLLBAR_SCRIPT).toContain('adoptedStyleSheets')
     expect(FRAME_SCROLLBAR_SCRIPT).toContain("setProperty('--launcher-frame-thumb'")
     expect(FRAME_SCROLLBAR_SCRIPT).toContain('removeProperty')
     expect(FRAME_SCROLLBAR_SCRIPT).toMatch(/removeProperty\('--launcher-frame-thumb'\), 900\)/)
@@ -57,8 +100,11 @@ describe('注入内容', () => {
 })
 
 describe('installFrameScrollbar', () => {
-  const fakeFrame = (url: string, run: () => Promise<unknown> = async () => 'installed') =>
-    ({ url, executeJavaScript: vi.fn(run) }) as unknown as WebFrameMain
+  const fakeFrame = (
+    url: string,
+    run: () => Promise<unknown> = async () => 'installed',
+    parent: WebFrameMain | null = null
+  ) => ({ url, parent, executeJavaScript: vi.fn(run) }) as unknown as WebFrameMain
 
   it('目标文档:注入脚本', async () => {
     const frame = fakeFrame('launcher-note://asset/a.html')
@@ -66,10 +112,22 @@ describe('installFrameScrollbar', () => {
     expect(frame.executeJavaScript).toHaveBeenCalledWith(FRAME_SCROLLBAR_SCRIPT)
   })
 
-  it('其它 URL:连执行都不执行', async () => {
-    const frame = fakeFrame('https://example.com/a.html')
-    await expect(installFrameScrollbar(frame)).resolves.toBe(false)
-    expect(frame.executeJavaScript).not.toHaveBeenCalled()
+  it('外部网页的子帧:注入同一套脚本', async () => {
+    const frame = fakeFrame('https://www.baidu.com/', async () => 'installed', {} as WebFrameMain)
+    await expect(installFrameScrollbar(frame)).resolves.toBe(true)
+    expect(frame.executeJavaScript).toHaveBeenCalledWith(FRAME_SCROLLBAR_SCRIPT)
+  })
+
+  it('应用自己的主帧、file 与 about:blank:连执行都不执行', async () => {
+    const main = fakeFrame('http://localhost:5173/')
+    await expect(installFrameScrollbar(main)).resolves.toBe(false)
+    expect(main.executeJavaScript).not.toHaveBeenCalled()
+
+    for (const url of ['file:///tmp/a.html', 'about:blank']) {
+      const frame = fakeFrame(url, async () => 'installed', {} as WebFrameMain)
+      await expect(installFrameScrollbar(frame)).resolves.toBe(false)
+      expect(frame.executeJavaScript).not.toHaveBeenCalled()
+    }
   })
 
   it('帧已销毁 / 注入失败:静默返回 false,不抛给调用方', async () => {

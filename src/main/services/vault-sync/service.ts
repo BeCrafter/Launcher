@@ -11,6 +11,7 @@ import { planSync } from './plan'
 import { contentHash, scanLocal, type LocalFile, type SnapshotFile } from './scan'
 import { loadSnapshot, saveSnapshot, type SyncSnapshot } from './state'
 import { ConflictError, IncompleteListError, type RemoteStore } from './store'
+import { packCanvasEmbeds } from '../canvas-pack'
 
 export interface SyncStatus {
   phase: 'idle' | 'running' | 'conflict' | 'error'
@@ -108,6 +109,10 @@ export function createVaultSync(opts: VaultSyncOptions): VaultSync {
     const matcher = ignore()
     const snapshot = snapshotFor(store)
     const previous = new Map(Object.entries(snapshot.files))
+    // 先把白板外部文件的当前内容拷进项目,再扫。这样副本会进本次同步。
+    const limitForPack = typeof opts.maxBytes === 'function' ? opts.maxBytes() : opts.maxBytes
+    const packed = packCanvasEmbeds({ root, maxBytes: limitForPack, log })
+    for (const message of packed.errors) log(`canvas pack: ${message.path}: ${message.message}`)
     const local = scanLocal(root, matcher, previous)
     let remote
     try {
@@ -119,7 +124,7 @@ export function createVaultSync(opts: VaultSyncOptions): VaultSync {
     const firstSync = previous.size === 0 && snapshot.cursor === undefined
     const plan = planSync({ local, remote, snapshot: previous, firstSync, ignore: matcher })
 
-    const errors: SyncStatus['errors'] = []
+    const errors: SyncStatus['errors'] = [...packed.errors]
     const pulled: string[] = []
     const files = { ...snapshot.files }
     /** 还没真正提交的路径。flush 没跑成时,这些项恢复成快照里的旧值 */

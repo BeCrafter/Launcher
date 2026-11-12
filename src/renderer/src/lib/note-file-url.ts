@@ -4,6 +4,13 @@
 // 查询串只做缓存版本(HTML 预览在保存后重载),不参与路径解析 —— 两侧都靠这一点防穿越。
 
 const PREFIX = 'launcher-note://file/'
+const EXTERNAL_PREFIX = 'launcher-note://external/?p='
+
+/** 白板外部文件的只读协议 URL。路径放在查询串里,不进 pathname。 */
+export function noteExternalUrl(abs: string, version?: number | string): string {
+  const query = version === undefined ? '' : `&v=${encodeURIComponent(String(version))}`
+  return `${EXTERNAL_PREFIX}${encodeURIComponent(abs)}${query}`
+}
 
 export function noteFileUrl(rel: string, version?: number | string): string {
   const path = rel

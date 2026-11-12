@@ -267,6 +267,7 @@ export type NoteFileKind =
   | 'archive-unsupported'
   | 'model'
   | 'legacy-office'
+  | 'canvas'
   | 'unsupported'
 
 /**
@@ -300,6 +301,11 @@ export const CSV_PREVIEW_BYTES = 8 * 1024 * 1024
 
 /** 文件协议 host:`launcher-note://file/<rel>` */
 export const NOTES_FILE_HOST = 'file'
+/**
+ * 白板外部文件的只读协议 host:`launcher-note://external/?p=<绝对路径>`。
+ * 路径放在查询串里,不放进 pathname,避免 `/` 被协议当成目录。
+ */
+export const NOTES_EXTERNAL_HOST = 'external'
 
 const EXT_KIND: Record<string, NoteFileKind> = {
   // 代码
@@ -397,6 +403,7 @@ const EXT_KIND: Record<string, NoteFileKind> = {
   gif: 'image',
   webp: 'image',
   avif: 'image',
+  apng: 'image',
   bmp: 'image',
   ico: 'image',
   svg: 'image',
@@ -407,6 +414,7 @@ const EXT_KIND: Record<string, NoteFileKind> = {
   m4v: 'video',
   ogv: 'video',
   mkv: 'video',
+  avi: 'video',
   mp3: 'audio',
   m4a: 'audio',
   wav: 'audio',
@@ -449,7 +457,12 @@ const EXT_KIND: Record<string, NoteFileKind> = {
   tif: 'tiff',
   tiff: 'tiff',
   heic: 'heic',
-  heif: 'heic'
+  heif: 'heic',
+  // 白板是 Excalidraw 场景的文本文件,但不用 CodeMirror 打开(见 isNoteFileEditable)。
+  // 库内新建用短后缀 .excal。导出仍是 Excalidraw 自己的 .excalidraw,
+  // 已经在库里的 .excalidraw 也按白板打开。
+  excal: 'canvas',
+  excalidraw: 'canvas'
 }
 
 /** 无扩展名但显然是代码/配置的文件名(小写) */
@@ -505,6 +518,8 @@ const FILE_MIME: Record<string, string> = {
   mjs: 'text/javascript; charset=utf-8',
   cjs: 'text/javascript; charset=utf-8',
   json: 'application/json; charset=utf-8',
+  excal: 'application/vnd.excalidraw+json',
+  excalidraw: 'application/vnd.excalidraw+json',
   jsonc: 'application/json; charset=utf-8',
   jsonl: 'application/x-ndjson; charset=utf-8',
   xml: 'application/xml; charset=utf-8',
@@ -537,6 +552,7 @@ const FILE_MIME: Record<string, string> = {
   gif: 'image/gif',
   webp: 'image/webp',
   avif: 'image/avif',
+  apng: 'image/apng',
   bmp: 'image/bmp',
   ico: 'image/x-icon',
   mp4: 'video/mp4',
@@ -545,6 +561,7 @@ const FILE_MIME: Record<string, string> = {
   m4v: 'video/x-m4v',
   ogv: 'video/ogg',
   mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
   mp3: 'audio/mpeg',
   m4a: 'audio/mp4',
   wav: 'audio/wav',
@@ -773,6 +790,23 @@ export interface NoteImportInput {
   target: string
   /** 源绝对路径(来自 preload 的 webUtils.getPathForFile) */
   paths: string[]
+}
+
+/** 白板外部文件在这台电脑上还在不在。不读内容。 */
+export interface NoteExternalProbeInput {
+  /** 录入时的绝对路径 */
+  source: string
+  /** 不再用来判断。留着,避免改调用形状。 */
+  host: string
+}
+
+export interface NoteExternalProbeResult {
+  /** 固定为 true。读原文件还是副本只看 present。 */
+  sameHost: boolean
+  /** 这个绝对路径是不是本机上可预览的普通文件 */
+  present: boolean
+  /** 固定为空串。不再当作电脑标识。 */
+  host: string
 }
 
 export type NoteImportResult =

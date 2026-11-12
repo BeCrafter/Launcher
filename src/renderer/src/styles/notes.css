@@ -365,8 +365,9 @@
 /* 有内容时:压到几乎看不见 —— 它是低频入口,不该跟笔记抢注意力。
    虚线边框 + 整块降透明度:轮廓还在(找得到),但不会跟实心的笔记行抢眼。 */
 .notes-new-folder {
-  /* 基准宽度 72:两颗 + 间距超过行宽时自动换行 */
-  flex: 1 1 72px;
+  /* 基准宽度只要容下「+」和三个字:栏被拖到窄模式(<160px)也不能把「文件」「文件夹」裁成同一个「新建」。
+     三颗放不下就换行,不要靠省略号区分。 */
+  flex: 1 1 64px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -4581,6 +4582,7 @@ video.md-media {
 .notes-file-icon[data-kind='archive'],
 .notes-file-icon[data-kind='archive-unsupported'] { color: var(--yellow); }
 .notes-file-icon[data-kind='model'] { color: var(--purple, var(--accent2)); }
+.notes-file-icon[data-kind='canvas'] { color: var(--accent); }
 
 .notes-row.active .notes-file-icon { color: var(--accent2); }
 
@@ -4593,6 +4595,260 @@ video.md-media {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ── 白板(Excalidraw) ── */
+.canvas-board {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--editor-bg);
+}
+.canvas-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+}
+.canvas-error-title { color: var(--text); }
+
+.canvas-embed-picker {
+  top: var(--embed-top);
+  left: max(8px, min(var(--embed-left), calc(100% - var(--embed-panel) - 8px)));
+}
+.canvas-embed {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--text);
+  pointer-events: none;
+  /* 选中时 Excalidraw 自己还有一圈。这里只描内容的边,深浅主题都用现成的分隔色。 */
+  border: 1px solid var(--border2);
+}
+/* iframe 和 video 默认还能接到指针。指针在卡片和画布之间来回跳,悬停提示就会一直闪。
+   没激活时整张卡片都不接;双击激活后再交给内容。 */
+.canvas-embed * {
+  pointer-events: none;
+}
+.canvas-embed[data-embed-active='true'],
+.canvas-embed[data-embed-active='true'] * {
+  pointer-events: auto;
+}
+/* 没点「开始交互」之前卡片不接指针,工具条浮在页面上只会挡内容。激活后再出来。 */
+.canvas-embed:not([data-embed-active='true']) .file-pdf-view .file-image-tools,
+.canvas-embed:not([data-embed-active='true']) .file-pdf-outline {
+  display: none;
+}
+/* 进入交互是在看里面的内容,不再改这块选区。左侧编辑栏收起,离开后若仍选中会再出来。 */
+.canvas-board:has(.canvas-embed[data-embed-active='true']) .selected-shape-actions {
+  display: none;
+}
+.excalidraw__embeddable-hint {
+  pointer-events: none;
+}
+/* 提示和卡片是同一层的兄弟。PDF 工具条自己的层叠上下文比提示高,
+   提示会被整块盖住。提到卡片前面,仍不接指针,点下去还是 Excalidraw 自己激活。 */
+.excalidraw__embeddable-container__inner {
+  position: relative;
+}
+/* Excalidraw 自己的样式在后面,同权重时会把 z-index 盖回 1。多一层才压得住。 */
+.excalidraw .excalidraw__embeddable-container .excalidraw__embeddable-hint {
+  z-index: 3;
+}
+.canvas-embed-note {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+}
+.canvas-embed-code {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+}
+.canvas-embed-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.canvas-embed .file-image-stage,
+.canvas-embed .file-media,
+.canvas-embed .file-pdf,
+.canvas-embed .file-pdf-view,
+.canvas-embed .file-pdf-body,
+.canvas-embed .file-placeholder {
+  flex: 1;
+  min-height: 0;
+}
+/* 文件页的视频四周留着 24px。嵌进白板后这块空白会跟着外框一起闪。卡片里贴边。 */
+.canvas-embed .file-media {
+  padding: 0;
+}
+.canvas-embed .file-video {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+.canvas-embed .file-preview-frame {
+  flex: 1;
+  min-height: 0;
+}
+.canvas-embed-web {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.canvas-embed-web .md-embed-frame {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  border-radius: 0;
+}
+/* Excalidraw 深色主题会把画布 canvas 反色。嵌进来的 HTML 不在那张 canvas 上,
+   但同一套滤镜若漏到卡片,视频、PDF 和网页会整块闪一下。这里钉死不反色。 */
+.excalidraw.theme--dark .excalidraw__embeddable-container {
+  filter: none;
+}
+/* 地址栏上的打开按钮在卡片不接指针时也要点得着,否则双击激活之前出不去 */
+.canvas-embed .md-embed-open,
+.canvas-embed .md-embed-open * {
+  pointer-events: auto;
+}
+.canvas-embed .md-embed-open {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* 选择器贴着「更多工具」,窄窗口时收回画布里。列表是唯一滚动的一块。 */
+.canvas-embed-picker {
+  position: absolute;
+  z-index: var(--zIndex-popup, 1001);
+  pointer-events: auto;
+  width: 320px;
+  max-height: min(420px, calc(100% - 72px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+.canvas-embed-picker-bar {
+  flex-shrink: 0;
+  display: flex;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.canvas-embed-picker-query {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.canvas-embed-picker-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  pointer-events: none;
+}
+.canvas-embed-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+}
+.canvas-embed-picker-back {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.canvas-embed-picker-back:hover {
+  background: var(--hover);
+}
+.canvas-embed-picker-back i {
+  width: 14px;
+  text-align: center;
+  color: var(--dim);
+}
+.canvas-embed-picker-chevron {
+  width: auto;
+  margin-left: auto;
+  font-size: 10px;
+}
+.canvas-embed-picker-label {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  color: var(--dim);
+}
+.canvas-embed-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.canvas-embed-picker-row:hover {
+  background: var(--hover);
+}
+.canvas-embed-picker-row i {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+  color: var(--dim);
+}
+.canvas-embed-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-embed-picker-empty {
+  padding: 16px 8px;
+  text-align: center;
+  color: var(--dim);
+  font-size: 12px;
 }
 
 /* 头部:文件名 + 大小 + 只读徽标;与笔记标题行同一高度 */
@@ -4640,6 +4896,7 @@ video.md-media {
   min-height: 0;
   display: flex;
   overflow: hidden;
+  background: var(--bg);
 }
 .file-editor-host {
   flex: 1;
@@ -4751,10 +5008,204 @@ video.md-media {
 .file-audio {
   width: min(560px, 80%);
 }
-.file-pdf {
+.file-pdf-view {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.file-pdf-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.file-pdf {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg);
+  padding: 16px;
+  /* 竖滚动条一直占位,避免它一出来页宽就跟着跳。 */
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.canvas-embed .file-pdf { padding: 8px; }
+.file-pdf-stack {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: max-content;
+  min-width: 100%;
+}
+.canvas-embed .file-pdf-stack { gap: 8px; }
+.file-pdf-page {
+  position: relative;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--border2);
+  --user-unit: 1;
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+}
+.file-pdf-page canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* 文字是透明的,只用来选中。尺寸跟 pdf.js 的文字层一样吃 --scale-factor。 */
+.file-pdf-page .textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  z-index: 1;
+  user-select: text;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+/* 滚动中每个字一块 DOM,会拖住滚动条。先藏起来,停下后再出现,仍可选中。 */
+.file-pdf.is-scrolling .textLayer {
+  display: none;
+}
+.file-pdf-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+.file-pdf-page .textLayer > :not(.markedContent),
+.file-pdf-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate, 0deg)) scaleX(var(--scale-x, 1)) scale(var(--min-font-size-inv));
+}
+.file-pdf-page .textLayer .markedContent { display: contents; }
+.file-pdf-page .textLayer ::selection {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.file-image-tools button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.file-image-tools button[aria-pressed='true'] {
+  background: var(--wash-accent);
+  color: var(--text);
+}
+.file-pdf-pager {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.file-pdf-page-input {
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+}
+.file-pdf-page-input:focus {
+  outline: none;
+  background: var(--hover);
+}
+.file-pdf-outline {
+  flex: 0 0 196px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+.canvas-embed .file-pdf-outline {
+  flex-basis: 136px;
+  gap: 6px;
+  padding: 6px;
+}
+.file-pdf-outline-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: default;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+button.file-pdf-outline-item {
+  cursor: pointer;
+}
+button.file-pdf-outline-item:hover {
+  border-color: var(--accent);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+.file-pdf-outline-item[aria-current='page'] {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  border-color: var(--accent);
+}
+.file-pdf-outline-label,
+.file-pdf-outline-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 2px;
+}
+.file-pdf-outline-meta {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.file-pdf-outline-thumb {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid var(--border);
+}
+.file-pdf-outline-thumb canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.canvas-embed .file-pdf-outline-item {
+  gap: 4px;
+  padding: 4px;
+  border-radius: 8px;
 }
 
 /* 占位(无法预览 / 加载失败 / 超限) */
@@ -4963,12 +5414,23 @@ video.md-media {
   display: flex;
 }
 .file-archive-list {
-  width: 252px;
   flex-shrink: 0;
   overflow: auto;
-  border-right: 1px solid var(--border);
   padding: 6px 4px;
   background: var(--surface);
+}
+.file-archive-resize {
+  width: 5px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  border-left: 1px solid var(--border);
+}
+.file-archive-resize:hover,
+.file-archive-body[data-archive-drag='true'] .file-archive-resize {
+  background: var(--wash-accent);
+}
+.file-archive-body[data-archive-drag='true'] {
+  user-select: none;
 }
 .file-archive-empty {
   padding: 16px;

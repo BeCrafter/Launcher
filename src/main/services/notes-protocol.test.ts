@@ -5,10 +5,10 @@
 // 尤其是**必须继续拒绝**的那几类(svg、js、md…)。
 
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { fileHeadersFor, parseRange, resolveAssetPath, resolveFilePath } from './notes-protocol'
+import { fileHeadersFor, parseRange, resolveAssetPath, resolveExternalPath, resolveFilePath } from './notes-protocol'
 
 const DIR = '/Users/tester/.config/launcher/notes'
 
@@ -175,6 +175,31 @@ describe('launcher-note://file/ host', () => {
     expect(resolveFilePath(dir, `launcher-note://asset/assets/a.png`)).toBeNull()
     expect(resolveFilePath(dir, fileUrl('sub'))).toBeNull()
     expect(resolveFilePath(dir, 'not a url')).toBeNull()
+  })
+})
+
+describe('launcher-note://external/ host', () => {
+  const roots: string[] = []
+  afterEach(() => {
+    for (const d of roots.splice(0)) rmSync(d, { recursive: true, force: true })
+  })
+
+  it('放行可预览的普通文件,拒绝目录、链接、旧版 Office 和相对路径', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'launcher-proto-ext-'))
+    roots.push(dir)
+    const pdf = join(dir, '说明.pdf')
+    writeFileSync(pdf, '%PDF')
+    writeFileSync(join(dir, '旧.doc'), 'doc')
+    symlinkSync(pdf, join(dir, '链.pdf'))
+
+    const external = (path: string): string =>
+      `launcher-note://external/?p=${encodeURIComponent(path)}`
+    expect(resolveExternalPath(external(pdf))).toBe(realpathSync(pdf))
+    expect(resolveExternalPath(external(join(dir, '旧.doc')))).toBeNull()
+    expect(resolveExternalPath(external(join(dir, '链.pdf')))).toBeNull()
+    expect(resolveExternalPath(external(dir))).toBeNull()
+    expect(resolveExternalPath('launcher-note://external/?p=说明.pdf')).toBeNull()
+    expect(resolveExternalPath('launcher-note://file/说明.pdf')).toBeNull()
   })
 })
 
