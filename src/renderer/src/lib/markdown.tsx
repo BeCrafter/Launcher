@@ -1273,8 +1273,21 @@ function renderListExt(node: ListNodeExt, keyBase: string, ctx: ExtCtx): ReactNo
               }
             />
           )}
-          {renderInlineExt(parseInlineExt(it.text, 0, srcLine(ctx, it.line)), `${keyBase}-i${n}`, ctx)}
-          {it.children !== null && renderListExt(it.children, `${keyBase}-c${n}`, ctx)}
+          {/*
+           * 任务项整行是 flex(复选框 + 内容)。子列表必须放进内容块里,
+           * 否则它会成为 flex 的兄弟项、被排到文字右边去 —— 看起来像横排多列。
+           */}
+          {it.task !== undefined ? (
+            <div className="md-task-body">
+              {renderInlineExt(parseInlineExt(it.text, 0, srcLine(ctx, it.line)), `${keyBase}-i${n}`, ctx)}
+              {it.children !== null && renderListExt(it.children, `${keyBase}-c${n}`, ctx)}
+            </div>
+          ) : (
+            <>
+              {renderInlineExt(parseInlineExt(it.text, 0, srcLine(ctx, it.line)), `${keyBase}-i${n}`, ctx)}
+              {it.children !== null && renderListExt(it.children, `${keyBase}-c${n}`, ctx)}
+            </>
+          )}
         </li>
       ))}
     </Tag>

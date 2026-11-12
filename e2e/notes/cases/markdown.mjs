@@ -36,6 +36,15 @@ const LINK = '# 链接\n\n[[E2E 链接目标]]\n'
 const MISSING = '# 链接\n\n[[E2E 新建的笔记]]\n'
 const MEDIA = ['# 媒体', '', '![[sample.png]]'].join('\n')
 const TASKS = ['# 任务', '', '- [ ] 待办事项'].join('\n')
+const NESTED_TASKS = [
+  '# 嵌套任务',
+  '',
+  '- [ ] 父任务甲',
+  '  - [ ] 子任务甲',
+  '    - [ ] 孙任务甲',
+  '  - [ ] 子任务乙',
+  '- [ ] 父任务乙'
+].join('\n')
 const TABLE_IMAGE = [
   '# 表格图片',
   '',
@@ -550,6 +559,70 @@ export default [
         await ctx.cdp.eval(`document.querySelector('.notes-preview-body .md-mermaid svg') !== null`),
         '关闭查看器后正文图表保留'
       )
+    }
+  },
+
+  {
+    // 复现:任务项整行是 flex,子列表若直接做它的孩子会被排到文字右边,
+    // 预览看起来像「横排多列」。这里同时守结构和几何。
+    id: 'markdown/nested-task-list-vertical',
+    area: 'markdown',
+    title: '嵌套任务清单:子项在父项下方缩进排列,不会被排成横向多列',
+    tags: ['task', 'preview', 'list'],
+    fixture: NESTED_TASKS,
+    async run(ctx, t) {
+      await ctx.cdp.waitFor(
+        `document.querySelectorAll('.notes-preview-body li.md-task').length === 5`,
+        { message: '预览渲染五个任务项' }
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelectorAll('.notes-preview-body li.md-task > .md-list').length`
+        ),
+        0,
+        '子列表不能直接挂在任务行下(那会变成 flex 的兄弟项)'
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.notes-preview-body li.md-task .md-task-body .md-list') !== null`
+        ),
+        '子列表在任务项的内容块里'
+      )
+
+      const rects = await ctx.cdp.json(`(() => {
+        const pick = (text) => {
+          const li = [...document.querySelectorAll('.notes-preview-body li.md-task')]
+            .find((el) => el.textContent?.trim().startsWith(text))
+          if (!li) return null
+          const r = li.getBoundingClientRect()
+          return { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+        }
+        const body = document.querySelector('.notes-preview-body')?.getBoundingClientRect()
+        return {
+          parentA: pick('父任务甲'),
+          childA: pick('子任务甲'),
+          grand: pick('孙任务甲'),
+          childB: pick('子任务乙'),
+          parentB: pick('父任务乙'),
+          bodyRight: body?.right ?? 0
+        }
+      })()`)
+      for (const [name, rect] of Object.entries(rects)) {
+        if (name === 'bodyRight') continue
+        ok(rect !== null, `找到任务项:${name}`)
+      }
+
+      ok(rects.childA.top > rects.parentA.top + 8, '子项在父项下方,而不是同一行右侧')
+      ok(rects.childA.left > rects.parentA.left + 8, '子项相对父项缩进')
+      ok(rects.grand.top > rects.childA.top + 8, '孙项在子项下方')
+      ok(rects.grand.left > rects.childA.left + 8, '孙项继续缩进')
+      ok(
+        Math.abs(rects.childB.left - rects.childA.left) <= 1,
+        `同级子项左对齐(实际 ${rects.childA.left} / ${rects.childB.left})`
+      )
+      ok(rects.childB.top > rects.childA.top + 8, '同级子项纵向排列')
+      ok(rects.parentB.top > rects.childB.bottom - 1, '下一个父项排在整个子树下方')
+      ok(rects.grand.right <= rects.bodyRight + 1, '嵌套内容不横向溢出预览区')
     }
   },
 

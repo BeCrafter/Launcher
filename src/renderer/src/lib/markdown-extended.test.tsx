@@ -171,6 +171,16 @@ describe('块级:任务清单', () => {
     expect(out.match(/class="md-task"/g)?.length).toBe(1)
   })
 
+  it('任务项的子列表包在内容块里,不会成为 flex 行的兄弟项', () => {
+    const out = html('- [ ] 父任务\n  - [ ] 子任务')
+    const body = out.indexOf('md-task-body')
+    const nested = out.lastIndexOf('<ul class="md-list">')
+    expect(body).toBeGreaterThan(-1)
+    // 子列表在内容块内部:预览里 li.md-task 是 flex 行,直接挂子列表会被排到文字右边
+    expect(nested).toBeGreaterThan(body)
+    expect(out.match(/class="md-task"/g)?.length).toBe(2)
+  })
+
   it('宽松写法也识别:`-[]` / `- []` / `- [x]文字` / 有序任务', () => {
     const out = html('-[] 甲\n- [] 乙\n- [x]文字\n1. [ ] 有序')
     expect(out.match(/<input[^>]*type="checkbox"/g)?.length).toBe(4)

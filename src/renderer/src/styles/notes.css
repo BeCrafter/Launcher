@@ -2611,6 +2611,14 @@ body.cm-block-dragging {
   align-items: flex-start;
   gap: 7px;
 }
+/*
+ * 任务项文字与子列表的共同容器。`li.md-task` 是 flex 行,子列表若直接做它的孩子
+ * 会被排到文字右边(横排多列);放进这个块里才会正常换行到下面并保持缩进。
+ */
+.notes-preview-body .md-task-body {
+  flex: 1;
+  min-width: 0;
+}
 .notes-preview-body .md-task-box {
   margin-top: 4px;
   flex-shrink: 0;
