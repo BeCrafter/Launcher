@@ -31,7 +31,8 @@ export interface ListLineSyntax {
 
 // 引用层只吃一个可选空格;多出来的空白留给列表缩进,否则差异会被抹平。
 // 首个 `>` 之前最多 3 个空格:4 个空格是缩进代码块,不算引用。
-const QUOTE_PREFIX_RE = /^([ \t]{0,3}(?:>[ \t]?)+)/
+// 回车退出引用(md-quote-continuation)也共用这一份口径。
+export const QUOTE_PREFIX_RE = /^([ \t]{0,3}(?:>[ \t]?)+)/
 const LIST_MARK_RE = /^([ \t]*)([-+*]|\d{1,9}[.)])([ \t]*)/
 // 括号内:空 / 纯空白 = 未勾选,x/X = 已勾选;紧跟 ( 或 [ 更像链接,不算任务。
 const TASK_MARK_RE = /^\[([ \t]*|[xX])\](?!\(|\[)/

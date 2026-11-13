@@ -45,6 +45,7 @@ import { inCodeBlock } from '../../lib/editor-code-block'
 import { markdownFenceInput } from '../../lib/editor-fence'
 import { setBlockAlign } from '../../lib/note-align'
 import { planMarkdownContinuation } from '../../lib/md-list-continuation'
+import { planQuoteExit } from '../../lib/md-quote-continuation'
 import { indentMarkdownLines, listMarkerOf, parseListLine } from '../../lib/md-list-syntax'
 import { minimalTextChange, type TextChange } from '../../lib/text-change'
 import { toggleTaskLine } from '../../lib/note-task'
@@ -123,18 +124,34 @@ function headingLine(text: string, level: HeadingLevel): string {
 }
 
 /**
- * 回车:接管上游不认的宽松任务写法(`-[]` / `- []` / `- [x]文字` / 有序任务)。
- * 规整当前行前缀与插入新行放在同一个 transaction 里 —— 一次撤销回到输入前。
- * 标准写法返回 false,继续走 `insertNewlineContinueMarkup`。
+ * 回车:接管上游不认的两类换行。
+ *
+ * 1. 空引用行上的回车:上游要连续两条空引用行才退出,这里第二次回车就把
+ *    最内层 `>` 清掉,只留一个空行(嵌套引用一次退一层)。
+ * 2. 宽松任务写法(`-[]` / `- []` / `- [x]文字` / 有序任务):规整当前行前缀并续出新任务。
+ *
+ * 规整/删除与插入新行放在同一个 transaction 里 —— 一次撤销回到输入前。
+ * 其余情况返回 false,继续走 `insertNewlineContinueMarkup`。
  */
 function continueMarkdownMarkup(view: EditorView): boolean {
   if (view.composing) return false
   if (view.state.selection.ranges.length !== 1) return false
+  if (!view.state.selection.main.empty) return false
   if (completionStatus(view.state) === 'active') return false
 
   const head = view.state.selection.main.head
   const line = view.state.doc.lineAt(head)
   if (inCodeBlock(view, head)) return false
+
+  const quoteExit = planQuoteExit(line.text, head - line.from)
+  if (quoteExit !== null) {
+    view.dispatch({
+      changes: { from: line.from + quoteExit.from, to: line.from + quoteExit.to },
+      selection: EditorSelection.cursor(line.from + quoteExit.caret),
+      userEvent: 'input'
+    })
+    return true
+  }
 
   const plan = planMarkdownContinuation(line.text, head - line.from)
   if (plan === null) return false

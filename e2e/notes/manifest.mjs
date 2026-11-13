@@ -45,7 +45,7 @@ export const AREA_TITLES = {
   markdown: 'Markdown 渲染与链接、标签、媒体、任务项',
   toolbar: '选区浮条与底部工具栏',
   'block-ui': '块手柄、块菜单、折叠、表格设置',
-  input: '输入自动化:补全、围栏、列表续行、缩进、列选择',
+  input: '输入自动化:补全、围栏、列表与引用续行、缩进、列选择',
   drag: '自由拖拽、自动滚动、右侧大纲',
   picker: '「移动到…」选择器',
   keyboard: 'Alt / Shift+Alt 键盘移动',

@@ -18,6 +18,8 @@ const LEVELS = [
   '结尾段落。'
 ].join('\n')
 const QUOTED = ['# 引用列表', '', '> - 引用甲', '>   - 引用乙', ''].join('\n')
+const QUOTE_EXIT = ['# 引用退出', '', '> 引用甲', '', '结尾段落。'].join('\n')
+const QUOTE_NESTED = ['# 嵌套引用退出', '', '> > 内层甲', '', '结尾段落。'].join('\n')
 const SAME_MARKER = ['# 同级标记', '', '* 甲', '* 乙', ''].join('\n')
 const MIXED_MARKERS = ['# 标记', '', '- [ ] 任务甲', '* [x] 任务乙', '1. 有序甲', ''].join('\n')
 const CODE_LIST = ['# 代码块', '', '```', '- 不是列表', '```', ''].join('\n')
@@ -166,6 +168,55 @@ export default [
       const lines = nonEmpty(await ctx.lines())
       includes(lines, '- [ ] 宽松任务', '当前行补成标准任务写法')
       eq(lines[lines.length - 1], '- [ ] ', '下一行续出未勾选任务')
+    }
+  },
+
+  {
+    id: 'input/quote-exit-enter',
+    area: 'input',
+    title: '引用块回车:第一次续出空引用行,第二次回车就清掉 > 只留一个空行,随后输入落在普通段落',
+    tags: ['input', 'quote'],
+    fixture: QUOTE_EXIT,
+    async run(ctx, t) {
+      const line = '> 引用甲'
+      await ctx.setCursor(line, line.length)
+      await ctx.press('Enter')
+      let lines = await ctx.lines()
+      const base = lines.indexOf(line)
+      ok(base >= 0, '找到引用行')
+      eq(lines[base + 1], '> ', '第一次回车续出空引用行')
+      await ctx.press('Enter')
+      lines = await ctx.lines()
+      eq(lines[base], line, '引用正文保留')
+      eq(lines[base + 1], '', '第二次回车清掉最内层 >,光标留在这一个空行')
+      eq(lines.includes('> '), false, '没有遗留空的引用行')
+      await ctx.typeText('普通段落')
+      lines = await ctx.lines()
+      eq(lines[base + 1], '普通段落', '随后输入落在普通段落上')
+    }
+  },
+
+  {
+    id: 'input/quote-exit-nested',
+    area: 'input',
+    title: '嵌套引用回车:每次只退最内层一层,`> > 内层甲` → `> > ` → `> ` → 空行',
+    tags: ['input', 'quote'],
+    fixture: QUOTE_NESTED,
+    async run(ctx, t) {
+      const line = '> > 内层甲'
+      await ctx.setCursor(line, line.length)
+      await ctx.press('Enter')
+      let lines = await ctx.lines()
+      const base = lines.indexOf(line)
+      ok(base >= 0, '找到嵌套引用行')
+      eq(lines[base + 1], '> > ', '续出空的内层引用')
+      await ctx.press('Enter')
+      lines = await ctx.lines()
+      eq(lines[base + 1], '> ', '只退一层,外层引用保留')
+      await ctx.press('Enter')
+      lines = await ctx.lines()
+      eq(lines[base + 1], '', '再退最后一层,只剩空行')
+      eq(lines.includes('> '), false, '没有遗留空的引用行')
     }
   },
 
