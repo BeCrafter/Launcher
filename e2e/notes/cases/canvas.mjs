@@ -9,11 +9,16 @@
 // 素材库的「打开」只接受 .excalidrawlib,图片不读内容,并提示不支持当前类型。
 // 拖到画布上的场景和素材库不读内容,也不替换当前白板。
 // 可预览的文件嵌进去,平时跟原文件,不拷进笔记目录;图片仍可以放上去。
+// 原文件不在时读项目副本;原文件还在就读它,不管记的是哪台电脑。
+// 各类文件嵌进卡片后,点一下要能进入交互:图片放大、表格换表、压缩包点条目、
+// 视频有控件且不自己播放。没点之前卡片不接指针。
 // Excalidraw 0.18 没有小地图,缩放看 `.reset-zoom-button` 里的百分比。
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import JSZip from 'jszip'
+import ExcelJS from 'exceljs'
 import { eq, includes, ok } from '../lib/assert.mjs'
 import { sleep } from '../lib/cdp.mjs'
 
@@ -30,6 +35,11 @@ function writeVaultFile(ctx, rel, content) {
   mkdirSync(dirname(full), { recursive: true })
   writeFileSync(full, content)
   return full
+}
+
+/** 直接写一份场景。目录扫描是异步的,调用方要等白板行出现再打开。 */
+function writeCanvas(ctx, rel, scene) {
+  return writeVaultFile(ctx, rel, scene)
 }
 
 /** 一页、带交叉引用的 PDF。空壳会被阅读器拒绝,卡片会掉进失败占位。 */
@@ -281,6 +291,163 @@ async function dropOnCanvas(ctx, paths) {
     canvas.dispatchEvent(new DragEvent('drop', init))
     return true
   })()`)
+}
+
+/** 一份只有一段文本的 docx。卡片要把这段字画出来。 */
+async function makeDocx(text) {
+  const zip = new JSZip()
+  zip.file(
+    '[Content_Types].xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+      '<Default Extension="xml" ContentType="application/xml"/>' +
+      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
+      '</Types>'
+  )
+  zip.file(
+    '_rels/.rels',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
+      '</Relationships>'
+  )
+  zip.file(
+    'word/document.xml',
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+      `<w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p><w:sectPr/></w:body></w:document>`
+  )
+  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+}
+
+/** 两张工作表。卡片里要能点到第二张。 */
+async function makeXlsx() {
+  const workbook = new ExcelJS.Workbook()
+  workbook.addWorksheet('数据').getCell('A1').value = '第一表'
+  workbook.addWorksheet('第二表').getCell('A1').value = '另一张表'
+  return Buffer.from(await workbook.xlsx.writeBuffer())
+}
+
+/** 一份只有一个文本条目的 zip。 */
+async function makeZip(name, text) {
+  const zip = new JSZip()
+  zip.file(name, text)
+  return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }))
+}
+
+/** 一个三角面。模型查看器要能画出自己的画布。 */
+const STL_ASCII = [
+  'solid e2e',
+  'facet normal 0 0 1',
+  'outer loop',
+  'vertex 0 0 0',
+  'vertex 1 0 0',
+  'vertex 0 1 0',
+  'endloop',
+  'endfacet',
+  'endsolid e2e'
+].join('\n')
+
+/** 四帧黑白的 H.264。卡片要能挂上带控件的 video,并且不自己开始播。 */
+const MP4_TINY = Buffer.from(
+  'AAAAHGZ0eXBtcDQyAAAAAWlzb21tcDQxbXA0MgAAAAFtZGF0AAAAAAAAAOQAAAA1BgUtR1ZK3FxMQz+U78URPNFDqAEAAAMAAQMAAAMAAQIAAeYACwAAAwAAAwAACFIMA5ErAYAAAAA5JbggH94I5Uz/n/9jf/JtF0gAh/2tp4akvq+1cKjJBcxGF+opkpW1SxvPfAAAK6hlS3gCyc+KDxIwAAAAHiHhDF/Eku94VQKkgu1okfxkMzyMiyZn4AASJVpZ0AAAABohqIKEv5xU+3GaET774o7QvEhEHKAATt5m6gAAABoBqMGP/6fK15GVOBRAUfGIojZKp6AAKVLFFwAAAv5tb292AAAAbG12aGQAAAAA5xvXIOcb1yEAAAJYAAAA8AABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAACinRyYWsAAABcdGtoZAAAAAHnG9ch5xvXIQAAAAEAAAAAAAAA8AAAAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAQAAAAEAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAAPAAAAB4AAEAAAAAAgJtZGlhAAAAIG1kaGQAAAAA5xvXIecb1yEAAAJYAAAA8FXEAAAAAAAxaGRscgAAAAAAAAAAdmlkZQAAAAAAAAAAAAAAAENvcmUgTWVkaWEgVmlkZW8AAAABqW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAWlzdGJsAAAAoXN0c2QAAAAAAAAAAQAAAJFhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAEAAQABIAAAASAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAJ2F2Y0MBZAAL/+EADCdkAAusVlDDeBBhFAEABCjuPLD9+PgAAAAACmZpZWwBAAAAAApjaHJtAAAAAAAYc3R0cwAAAAAAAAABAAAABAAAADwAAAAwY3R0cwAAAAAAAAAEAAAAAQAAAHgAAAABAAAA8AAAAAEAAAB4AAAAAQAAAAAAAAAUc3RzcwAAAAAAAAABAAAAAQAAABBzZHRwAAAAACAQEBgAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAQAAAABAAAAJHN0c3oAAAAAAAAAAAAAAAQAAAB2AAAAIgAAAB4AAAAeAAAAFHN0Y28AAAAAAAAAAQAAACw=',
+  'base64'
+)
+
+/** 一块带外部文件记录的嵌入。link 只放文件名,路径在 customData 里。 */
+function externalScene(fileName, embed) {
+  return JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'https://excalidraw.com',
+    elements: [
+      {
+        type: 'embeddable',
+        id: 'embed-1',
+        x: 0,
+        y: 0,
+        width: 720,
+        height: 480,
+        link: `launcher-note://file/${encodeURIComponent(fileName)}`,
+        strokeColor: 'transparent',
+        backgroundColor: 'transparent',
+        isDeleted: false,
+        customData: { embed }
+      }
+    ],
+    appState: {},
+    files: {}
+  })
+}
+
+/** 从「更多工具 → 嵌入」选一份库外文件。选择框被换成直接填路径。 */
+async function embedLocalFile(ctx, name, abs) {
+  await openEmbedPicker(ctx)
+  await ctx.cdp.eval(`(() => {
+    const proto = HTMLInputElement.prototype
+    if (proto.__embedClick) return
+    const click = proto.click
+    proto.click = function () {
+      if (this.type === 'file') return
+      return click.call(this)
+    }
+    proto.__embedClick = true
+  })()`)
+  await pointerClick(ctx, '[data-embed-kind="computer"]')
+  const inputId = await ctx.cdp.evalHandle(
+    `document.querySelector('.canvas-embed-picker-file')`
+  )
+  ok(inputId !== null && inputId !== undefined, '嵌入用的文件框在')
+  await ctx.cdp.send('DOM.setFileInputFiles', { files: [abs], objectId: inputId })
+  await ctx.cdp.send('Runtime.releaseObject', { objectId: inputId }).catch(() => {})
+  await ctx.cdp.waitFor(
+    `document.querySelector(${JSON.stringify(`[data-embed-label="${name}"]`)}) !== null`,
+    { timeout: 15_000, message: `卡片出现:${name}` }
+  )
+}
+
+/** 把指定文件的那张卡片滚到视口中间,返回它的中心。多块卡片叠着时靠文件名区分。 */
+async function cardCenter(ctx, name) {
+  const sel = `[data-embed-label=${JSON.stringify(name)}]`
+  const spot = await ctx.cdp.json(`(() => {
+    const card = document.querySelector(${JSON.stringify(sel)})
+    if (card === null) return null
+    card.scrollIntoView({ block: 'center', inline: 'center' })
+    const box = card.getBoundingClientRect()
+    return {
+      x: box.left + box.width / 2,
+      y: box.top + box.height / 2,
+      active: card.dataset.embedActive === 'true',
+      events: getComputedStyle(card).pointerEvents
+    }
+  })()`)
+  ok(spot !== null, `找到卡片:${name}`)
+  return spot
+}
+
+/** 这张白板上只有刚嵌进去的一块,并且还没打包。 */
+async function assertSingleEmbed(ctx, rel, name) {
+  const scene = await waitForScene(
+    ctx,
+    rel,
+    (next) => liveElements(next).filter((element) => element.type === 'embeddable').length === 1
+  )
+  const embed = liveElements(scene).find((element) => element.type === 'embeddable')
+  eq(embed.customData?.embed?.project, '', `${name} 嵌入时不写项目路径`)
+  ok(embed.customData?.embed?.source?.endsWith(name) === true, `${name} 记下的是这份源文件`)
+}
+
+/** 点一下进入交互。没点之前卡片不接指针,里面的按钮也点不到。 */
+async function activateCard(ctx, name) {
+  const before = await cardCenter(ctx, name)
+  eq(before.events, 'none', `${name} 没点之前不接指针`)
+  ok(before.active === false, `${name} 没点之前还不能交互`)
+  await ctx.cdp.click(before.x, before.y)
+  await ctx.cdp.waitFor(
+    `document.querySelector(${JSON.stringify(`[data-embed-label="${name}"]`)})?.dataset.embedActive === 'true'`,
+    { timeout: 5000, message: `${name} 点一下后可以交互` }
+  )
 }
 
 /** 链接里的路径是逐段编码的。比较时解回原路径。 */
@@ -960,6 +1127,155 @@ export default [
           `document.body.textContent.includes('找不到这个文件') === true`,
           { timeout: 10_000, message: '源文件删掉后显示找不到' }
         )
+      } finally {
+        rmSync(outside, { recursive: true, force: true })
+      }
+    }
+  },
+
+  {
+    id: 'canvas/embed-fallback',
+    area: 'canvas',
+    title: '原文件不在时卡片读项目副本,原文件还在就读它,记的是哪台电脑不影响',
+    tags: ['canvas', 'embed', 'external'],
+    async run(ctx) {
+      writeVaultFile(ctx, '副本.txt', '项目里的副本')
+      writeCanvas(ctx, '读副本.excal', externalScene('副本.txt', {
+        source: '/tmp/launcher-e2e-missing-source.txt',
+        project: '副本.txt',
+        host: '以前的电脑'
+      }))
+      await openCanvasFile(ctx, '读副本.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .canvas-embed-code')?.textContent === '项目里的副本'`,
+        { timeout: 10_000, message: '原文件不在时读项目副本' }
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed .file-pdf') === null && document.body.textContent.includes('找不到这个文件') !== true`
+        ),
+        '有副本时不显示找不到'
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed .canvas-embed-code')?.closest('.canvas-embed')?.querySelector('[src^="launcher-note://external"]') === null`
+        ),
+        true,
+        '副本不走外部协议'
+      )
+
+      const outside = mkdtempSync(join(tmpdir(), 'launcher-canvas-src-'))
+      const source = join(outside, '原件.txt')
+      writeFileSync(source, '还在的原文件')
+      writeVaultFile(ctx, '另一份副本.txt', '这份不该被读到')
+      try {
+        writeCanvas(ctx, '读原件.excal', externalScene('原件.txt', {
+          source,
+          project: '另一份副本.txt',
+          host: '另一台电脑'
+        }))
+        await openCanvasFile(ctx, '读原件.excal')
+        await ctx.cdp.waitFor(
+          `document.querySelector('.canvas-embed .canvas-embed-code')?.textContent === '还在的原文件'`,
+          { timeout: 10_000, message: '原文件还在就读它,不读项目副本' }
+        )
+      } finally {
+        rmSync(outside, { recursive: true, force: true })
+      }
+    }
+  },
+
+  {
+    id: 'canvas/embed-kinds',
+    area: 'canvas',
+    title: '图片、文档、表格、压缩包、模型和视频嵌进卡片后,点一下都能操作',
+    tags: ['canvas', 'embed', 'external'],
+    async run(ctx) {
+      const outside = mkdtempSync(join(tmpdir(), 'launcher-canvas-kinds-'))
+      const files = {
+        '一张图.png': PNG_1PX,
+        '说明.docx': await makeDocx('卡片里的文档'),
+        '数据.xlsx': await makeXlsx(),
+        '包.zip': await makeZip('里面.txt', '包里的字'),
+        '三角.stl': STL_ASCII,
+        '短片.mp4': MP4_TINY
+      }
+      for (const [name, bytes] of Object.entries(files)) writeFileSync(join(outside, name), bytes)
+      try {
+        // 每块都放在视口正中,后一块会盖住前一块。一种文件一张白板,点中心才点得到它自己。
+        await createCanvas(ctx, '图板')
+        await embedLocalFile(ctx, '一张图.png', join(outside, '一张图.png'))
+        await activateCard(ctx, '一张图.png')
+        await pointerClick(ctx, '[data-embed-label="一张图.png"] .file-image-tools button[title="放大"]')
+        await ctx.cdp.waitFor(
+          `Number(document.querySelector('[data-embed-label="一张图.png"] .file-image-stage')?.dataset.scale) > 1`,
+          { timeout: 5000, message: '卡片里的图片可以放大' }
+        )
+        await assertSingleEmbed(ctx, '图板.excal', '一张图.png')
+
+        await createCanvas(ctx, '文档板')
+        await embedLocalFile(ctx, '说明.docx', join(outside, '说明.docx'))
+        await activateCard(ctx, '说明.docx')
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-label="说明.docx"] [data-office-page]')?.textContent?.includes('卡片里的文档') === true`,
+          { timeout: 10_000, message: '卡片里的文档画出正文' }
+        )
+        await pointerClick(ctx, '[data-embed-label="说明.docx"] .file-zoom button[title="放大"]')
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-label="说明.docx"] .file-zoom')?.textContent?.includes('110%') === true`,
+          { timeout: 5000, message: '卡片里的文档可以放大' }
+        )
+        await assertSingleEmbed(ctx, '文档板.excal', '说明.docx')
+
+        await createCanvas(ctx, '表格板')
+        await embedLocalFile(ctx, '数据.xlsx', join(outside, '数据.xlsx'))
+        await activateCard(ctx, '数据.xlsx')
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-label="数据.xlsx"] [data-office-sheet]')?.textContent?.includes('第一表') === true`,
+          { timeout: 10_000, message: '卡片里的表格画出第一张表' }
+        )
+        await pointerClick(ctx, '[data-embed-label="数据.xlsx"] .file-sheet-tab:nth-of-type(2)')
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-label="数据.xlsx"] [data-office-sheet]')?.textContent?.includes('另一张表') === true`,
+          { timeout: 5000, message: '卡片里可以换到第二张表' }
+        )
+        await assertSingleEmbed(ctx, '表格板.excal', '数据.xlsx')
+
+        await createCanvas(ctx, '压缩包板')
+        await embedLocalFile(ctx, '包.zip', join(outside, '包.zip'))
+        await activateCard(ctx, '包.zip')
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-label="包.zip"] .file-archive-name')?.textContent === '里面.txt'`,
+          { timeout: 10_000, message: '卡片里的压缩包列出条目' }
+        )
+        await pointerClick(ctx, '[data-embed-label="包.zip"] .file-archive-row')
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-label="包.zip"] .file-archive-preview')?.textContent?.includes('包里的字') === true`,
+          { timeout: 5000, message: '点条目后卡片里能看到内容' }
+        )
+        await assertSingleEmbed(ctx, '压缩包板.excal', '包.zip')
+
+        await createCanvas(ctx, '模型板')
+        await embedLocalFile(ctx, '三角.stl', join(outside, '三角.stl'))
+        await activateCard(ctx, '三角.stl')
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-label="三角.stl"] canvas[data-model-canvas]') !== null`,
+          { timeout: 10_000, message: '卡片里的模型画出画布' }
+        )
+        await assertSingleEmbed(ctx, '模型板.excal', '三角.stl')
+
+        await createCanvas(ctx, '视频板')
+        await embedLocalFile(ctx, '短片.mp4', join(outside, '短片.mp4'))
+        await activateCard(ctx, '短片.mp4')
+        await ctx.cdp.waitFor(
+          `(() => {
+            const video = document.querySelector('[data-embed-label="短片.mp4"] video.file-video')
+            return video !== null && video.controls === true && video.paused === true
+              && getComputedStyle(video).width !== '0px'
+          })()`,
+          { timeout: 10_000, message: '卡片里的视频有控件且不自己播放' }
+        )
+        await assertSingleEmbed(ctx, '视频板.excal', '短片.mp4')
       } finally {
         rmSync(outside, { recursive: true, force: true })
       }

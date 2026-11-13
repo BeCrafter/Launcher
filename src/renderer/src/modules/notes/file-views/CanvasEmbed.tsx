@@ -56,8 +56,9 @@ export function CanvasEmbed({
   const target = canvasEmbedTarget(element.link)
   const activeEmbed = appState.activeEmbeddable
   const active = activeEmbed?.element.id === element.id && activeEmbed.state === 'active'
+  const label = external !== null ? fileNameOf(external.source || external.project) : element.link ?? ''
   return (
-    <div className="canvas-embed" data-embed-active={active ? 'true' : 'false'}>
+    <div className="canvas-embed" data-embed-active={active ? 'true' : 'false'} data-embed-label={label}>
       {external !== null ? (
         <CanvasExternalCard embed={external} />
       ) : target === null ? (
@@ -175,6 +176,11 @@ function CanvasWebEmbed({ url }: { url: string }): React.JSX.Element {
       )}
     </div>
   )
+}
+
+function fileNameOf(path: string): string {
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return slash < 0 ? path : path.slice(slash + 1)
 }
 
 function isSameOrigin(url: string): boolean {
