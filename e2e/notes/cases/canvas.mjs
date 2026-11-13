@@ -12,7 +12,7 @@
 // 原文件不在时读项目副本;原文件还在就读它,不管记的是哪台电脑。
 // 各类文件嵌进卡片后,点一下要能进入交互:图片放大、表格换表、压缩包点条目、
 // 视频有控件且不自己播放。没点之前卡片不接指针。
-// Excalidraw 0.18 没有小地图,缩放看 `.reset-zoom-button` 里的百分比。
+// 缩放看 `.reset-zoom-button` 里的百分比。小地图开关在帮助按钮左边,中间留空。
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -190,7 +190,7 @@ async function clearSpot(ctx) {
     if (board === null || canvas === null) return null
     const box = board.getBoundingClientRect()
     const blocked = [...document.querySelectorAll(
-      '.App-toolbar, .zoom-actions, .Stack, .excalidraw-wysiwyg'
+      '.App-toolbar, .zoom-actions, .Stack, .excalidraw-wysiwyg, .help-icon, .canvas-minimap-map, .canvas-minimap-toggle'
     )].map((el) => el.getBoundingClientRect())
     const clear = (x, y) => x > box.left + 24 && x < box.right - 24 && y > box.top + 24 && y < box.bottom - 24
       && blocked.every((rect) => rect.width === 0 || x < rect.left || x > rect.right || y < rect.top || y > rect.bottom)
@@ -265,6 +265,125 @@ async function readTextAt(ctx, spot) {
     message: '读完文字后收起编辑'
   })
   return value
+}
+
+/** 用矩形工具在画面中部拖出一块。默认描边是黑的,点小地图后会移到中间。 */
+async function drawRectangle(ctx) {
+  await clickTool(ctx, 'rectangle')
+  await sleep(200)
+  const board = await ctx.cdp.json(`(() => {
+    const box = document.querySelector('.canvas-board')?.getBoundingClientRect()
+    return box === undefined ? null : { left: box.left, right: box.right, top: box.top, height: box.height }
+  })()`)
+  ok(board !== null, '画布还在')
+  // 靠右,躲开选中后面打开的属性面板。离画面中心远一些,点小地图后才看得出移动。
+  const from = { x: board.right - 260, y: board.top + board.height * 0.3 }
+  ok(
+    await ctx.cdp.eval(
+      `document.elementFromPoint(${from.x}, ${from.y}) === document.querySelector('canvas.excalidraw__canvas.interactive')`
+    ),
+    '矩形落在画面右侧的空白上'
+  )
+  await ctx.cdp.mouse('mousePressed', from.x, from.y, { buttons: 1 })
+  await ctx.cdp.mouse('mouseMoved', from.x + 120, from.y + 80, { buttons: 1 })
+  await ctx.cdp.mouse('mouseReleased', from.x + 120, from.y + 80, { buttons: 0 })
+}
+
+/** 小地图上视口框外面的色块。框是描边,色块是实心的,取最靠右的一块。 */
+async function minimapOutsideBlock(ctx) {
+  const point = await ctx.cdp.json(`(() => {
+    const map = document.querySelector('.canvas-minimap-map')
+    if (map === null) return null
+    const context = map.getContext('2d')
+    if (context === null) return null
+    const pixels = context.getImageData(0, 0, map.width, map.height).data
+    const at = (x, y) => (y * map.width + x) * 4
+    const filled = (x, y) => {
+      const i = at(x, y)
+      return pixels[i + 3] > 200 && pixels[i] < 80 && pixels[i + 1] < 80 && pixels[i + 2] < 80
+    }
+    let best = null
+    for (let y = 2; y < map.height - 2; y += 1) {
+      for (let x = 2; x < map.width - 2; x += 1) {
+        if (!filled(x, y) || !filled(x - 1, y) || !filled(x + 1, y) || !filled(x, y - 1) || !filled(x, y + 1)) continue
+        if (best === null || x > best.x) best = { x, y }
+      }
+    }
+    if (best === null) return null
+    const box = map.getBoundingClientRect()
+    return {
+      x: box.left + (best.x + 0.5) * (box.width / map.width),
+      y: box.top + (best.y + 0.5) * (box.height / map.height)
+    }
+  })()`)
+  ok(point !== null && typeof point.x === 'number', '小地图框外找得到矩形色块')
+  return point
+}
+
+/** 画面上矩形描边的外接矩形。默认描边接近黑色,背景是白的。 */
+async function rectangleOnBoard(ctx) {
+  const seen = await ctx.cdp.json(`(() => {
+    const canvas = document.querySelector('.canvas-board canvas.excalidraw__canvas.static')
+    const board = document.querySelector('.canvas-board')?.getBoundingClientRect()
+    if (canvas === null || board === undefined || canvas.width === 0) return null
+    const context = canvas.getContext('2d')
+    if (context === null) return null
+    const scale = canvas.width / board.width
+    const step = Math.max(1, Math.round(scale * 4))
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+    // 只看画面中部。上面是工具栏,左下是缩放按钮,右下是小地图,都有深色。
+    const x0 = Math.floor(canvas.width * 0.28)
+    const x1 = Math.floor(canvas.width * 0.96)
+    const y0 = Math.floor(canvas.height * 0.18)
+    const y1 = Math.floor(canvas.height * 0.72)
+    let minX = canvas.width
+    let minY = canvas.height
+    let maxX = 0
+    let maxY = 0
+    let found = false
+    for (let y = y0; y < y1; y += step) {
+      for (let x = x0; x < x1; x += step) {
+        const at = (y * canvas.width + x) * 4
+        if (pixels[at] > 80 || pixels[at + 1] > 80 || pixels[at + 2] > 80 || pixels[at + 3] < 200) continue
+        found = true
+        minX = Math.min(minX, x)
+        minY = Math.min(minY, y)
+        maxX = Math.max(maxX, x)
+        maxY = Math.max(maxY, y)
+      }
+    }
+    if (!found) return null
+    return {
+      x: board.left + minX / scale,
+      y: board.top + minY / scale,
+      width: (maxX - minX) / scale,
+      height: (maxY - minY) / scale
+    }
+  })()`)
+  ok(seen !== null && seen.width > 20, '画面上找得到矩形描边')
+  return seen
+}
+
+/** 小地图上的相对位置换成屏幕坐标。0 在左上,1 在右下。 */
+async function mapPoint(ctx, xRatio, yRatio) {
+  const point = await ctx.cdp.json(`(() => {
+    const map = document.querySelector('.canvas-minimap-map')
+    if (map === null) return null
+    const box = map.getBoundingClientRect()
+    return { x: box.left + box.width * ${xRatio}, y: box.top + box.height * ${yRatio} }
+  })()`)
+  ok(point !== null && typeof point.x === 'number', '小地图还在,能取到落点')
+  return point
+}
+
+async function zoomPercent(ctx) {
+  const percent = Number(
+    await ctx.cdp.eval(
+      `document.querySelector('.reset-zoom-button')?.textContent?.replace('%', '').trim()`
+    )
+  )
+  ok(Number.isFinite(percent) && percent > 0, '缩放按钮上有百分比')
+  return percent
 }
 
 function liveElements(scene) {
@@ -1290,6 +1409,118 @@ export default [
       } finally {
         rmSync(outside, { recursive: true, force: true })
       }
+    }
+  },
+
+  {
+    id: 'canvas/minimap',
+    area: 'canvas',
+    title: '小地图默认打开,点击和滚轮都带动视口,关掉后滚轮不再带动白板',
+    tags: ['canvas', 'minimap'],
+    async run(ctx) {
+      await createCanvas(ctx, '小地图')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-map') !== null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'true'`,
+        { timeout: 10_000, message: '小地图默认打开' }
+      )
+      await drawRectangle(ctx)
+      await waitCanvasSaved(ctx)
+      const saved = JSON.parse(readFileSync(absPath(ctx, '小地图.excal'), 'utf8'))
+      const rectangle = liveElements(saved).find((element) => element.type === 'rectangle')
+      ok(rectangle !== undefined && rectangle.width > 40, '画布上有一块矩形')
+      // 挪到当前视口右边。小地图会把视口框缩小,矩形的色块落在框外,点击才是平移而不是拖框。
+      const shift = 900
+      rectangle.x += shift
+      writeFileSync(absPath(ctx, '小地图.excal'), JSON.stringify(saved))
+      await ctx.cdp.eval(`document.querySelector('.notes-row[data-note-id]')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+        timeout: 10_000,
+        message: '先离开白板,让改过的坐标重新读进来'
+      })
+      await openCanvasFile(ctx, '小地图.excal')
+      await ctx.cdp.waitFor(`document.querySelector('.canvas-minimap-map') !== null`, {
+        timeout: 10_000,
+        message: '重开后小地图还在'
+      })
+      const zoomButtons = await ctx.cdp.eval(
+        `['.zoom-in-button', '.zoom-out-button', '.reset-zoom-button'].every((sel) => document.querySelector(sel) !== null)`
+      )
+      ok(zoomButtons, '三个缩放按钮还在')
+      ok(
+        await ctx.cdp.eval(`(() => {
+          const help = document.querySelector('.help-icon')
+          if (help === null) return false
+          const box = help.getBoundingClientRect()
+          const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+          return top === help || help.contains(top)
+        })()`),
+        '小地图打开时,右下角的帮助按钮仍然可以点到'
+      )
+      ok(
+        await ctx.cdp.eval(`(() => {
+          const toggle = document.querySelector('.canvas-minimap-toggle')
+          const help = document.querySelector('.help-icon')
+          const map = document.querySelector('.canvas-minimap-map')
+          if (toggle === null || help === null || map === null) return false
+          const a = toggle.getBoundingClientRect()
+          const b = help.getBoundingClientRect()
+          const gap = b.left - a.right
+          const mapRight = map.getBoundingClientRect().right
+          return gap >= 4 && gap <= 16 && Math.abs(a.top - b.top) <= 2 && Math.abs(a.height - b.height) <= 2
+            && Math.abs(mapRight - b.right) <= 2
+        })()`),
+        '小地图开关在帮助按钮左边,地图右缘跟帮助按钮对齐'
+      )
+
+      const percentBefore = await zoomPercent(ctx)
+      const block = await minimapOutsideBlock(ctx)
+      await ctx.cdp.click(block.x, block.y)
+      await sleep(400)
+      const after = await rectangleOnBoard(ctx)
+      const board = await ctx.cdp.json(
+        `document.querySelector('.canvas-board').getBoundingClientRect()`
+      )
+      const centerX = after.x + after.width / 2
+      ok(
+        Math.abs(centerX - (board.left + board.width / 2)) < board.width * 0.25,
+        '点小地图框外的色块,矩形移到画面中间一带'
+      )
+      eq(await zoomPercent(ctx), percentBefore, '点击只平移,不改缩放')
+
+      const center = await mapPoint(ctx, 0.5, 0.5)
+      const percentBeforeWheel = await zoomPercent(ctx)
+      await ctx.cdp.wheel(center.x, center.y, -120)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const next = Number(document.querySelector('.reset-zoom-button')?.textContent?.replace('%', '').trim())
+          return Number.isFinite(next) && next > ${percentBeforeWheel}
+        })()`,
+        { timeout: 5000, message: '小地图上滚轮放大' }
+      )
+
+      const sceneBefore = JSON.parse(readFileSync(absPath(ctx, '小地图.excal'), 'utf8'))
+      await sleep(600)
+      const sceneAfter = JSON.parse(readFileSync(absPath(ctx, '小地图.excal'), 'utf8'))
+      const placed = (scene) =>
+        liveElements(scene).map((element) => [element.type, element.x, element.y, element.width, element.height])
+      eq(JSON.stringify(placed(sceneAfter)), JSON.stringify(placed(sceneBefore)), '视口变化不改元素')
+      eq(sceneAfter.appState.scrollX, undefined, '滚动位置不写进文件')
+
+      await pointerClick(ctx, '.canvas-minimap-toggle')
+      await ctx.cdp.waitFor(`document.querySelector('.canvas-minimap-map') === null`, {
+        timeout: 5000,
+        message: '关掉小地图后图消失'
+      })
+      const hiddenPercent = await zoomPercent(ctx)
+      await ctx.cdp.wheel(center.x, center.y, -120)
+      await sleep(300)
+      eq(await zoomPercent(ctx), hiddenPercent, '关掉之后,原来的位置滚轮不再改缩放')
+
+      await createCanvas(ctx, '另一块')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-map') === null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'false'`,
+        { timeout: 10_000, message: '关掉的小地图在另一块白板上仍然关着' }
+      )
     }
   }
 ]

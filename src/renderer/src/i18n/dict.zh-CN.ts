@@ -630,6 +630,7 @@ export const zhCN: Record<string, string> = {
   "notes.canvas.library.unsupported": "不支持当前类型，只能打开 .excalidrawlib 素材库",
   "notes.canvas.drop.unsupported": "不支持当前类型，画布上只能放可以预览的文件",
   "notes.canvas.drop.legacyOffice": "请另存为 docx、pptx 或 xlsx",
+  "notes.canvas.minimap": "小地图",
   "notes.file.source": "源码",
   "notes.file.preview": "预览",
   "notes.file.split": "分栏",

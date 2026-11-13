@@ -5005,6 +5005,84 @@ video.md-media {
 }
 .canvas-error-title { color: var(--text); }
 
+/* 开关在右下角帮助按钮左边,中间留 8px,不粘成一条。地图右缘跟帮助按钮对齐。
+   外层不接指针,只有图和开关可点。浅色看 body.light-theme。 */
+.canvas-minimap {
+  position: absolute;
+  z-index: 5;
+  right: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+.canvas-minimap-map {
+  width: 180px;
+  height: 120px;
+  pointer-events: auto;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+}
+.canvas-minimap-toggle {
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-inline-end: calc(2.25rem + 8px);
+  padding: 0;
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 0.5rem;
+  background: hsl(240, 8%, 15%);
+  color: #e3e3e8;
+  box-shadow: 0 0 0 1px hsl(0, 0%, 7%);
+  cursor: pointer;
+}
+.canvas-minimap-toggle svg {
+  width: 1rem;
+  height: 1rem;
+}
+body.light-theme .canvas-minimap-toggle {
+  background: #ececf4;
+  color: #1b1b1f;
+  box-shadow: 0 0 0 1px #fff;
+}
+.canvas-minimap-toggle:hover {
+  background: hsl(245, 10%, 21%);
+}
+body.light-theme .canvas-minimap-toggle:hover {
+  background: #f1f0ff;
+}
+.canvas-minimap-toggle[aria-pressed='true'] {
+  background: #403e6a;
+  color: #e0dfff;
+}
+body.light-theme .canvas-minimap-toggle[aria-pressed='true'],
+body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
+  background: #e0dfff;
+  color: #030064;
+}
+.canvas-minimap-toggle[aria-pressed='true']:hover {
+  background: #403e6a;
+}
+@media screen and (min-device-width: 1921px) {
+  .canvas-minimap-toggle {
+    width: 2.5rem;
+    height: 2.5rem;
+    margin-inline-end: calc(2.5rem + 8px);
+  }
+  .canvas-minimap-toggle svg {
+    width: 1.25rem;
+    height: 1.25rem;
+  }
+}
+
 .canvas-embed-picker {
   top: var(--embed-top);
   left: max(8px, min(var(--embed-left), calc(100% - var(--embed-panel) - 8px)));

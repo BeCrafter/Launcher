@@ -630,6 +630,7 @@ export const enUS: Record<string, string> = {
   "notes.canvas.library.unsupported": "This file type isn't supported. Only .excalidrawlib libraries can be opened",
   "notes.canvas.drop.unsupported": "This file type isn't supported. Only files that can be previewed can be put on the board",
   "notes.canvas.drop.legacyOffice": "Save it as docx, pptx, or xlsx",
+  "notes.canvas.minimap": "Minimap",
   "notes.file.source": "Source",
   "notes.file.preview": "Preview",
   "notes.file.split": "Split",

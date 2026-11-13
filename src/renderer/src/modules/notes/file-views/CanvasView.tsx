@@ -38,6 +38,7 @@ import { CanvasEmbedMenu } from './CanvasEmbedMenu'
 import type { CanvasEmbedPick } from './CanvasEmbedPicker'
 import { CanvasDropGuard } from './CanvasDropGuard'
 import { CanvasLibraryLoad } from './CanvasLibraryLoad'
+import { CanvasMinimap } from './CanvasMinimap'
 
 const ASSET_PATH = new URL('excalidraw-assets/', window.location.href).toString()
 window.EXCALIDRAW_ASSET_PATH = ASSET_PATH
@@ -274,6 +275,7 @@ function CanvasBoard({ text, blank }: { text: string; blank: boolean }): React.J
           <CanvasEmbedMenu board={boardRef.current} onPick={insertEmbed} onWeb={beginWebEmbed} />
           <CanvasLibraryLoad api={api} board={boardRef.current} />
           <CanvasDropGuard api={api} board={boardRef.current} onEmbed={insertEmbed} />
+          <CanvasMinimap api={api} />
         </>
       )}
     </div>
