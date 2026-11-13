@@ -76,6 +76,42 @@ describe('planMarkdownContinuation:引用容器', () => {
   })
 })
 
+describe('planMarkdownContinuation:字母与罗马数字', () => {
+  const at = (lines: string[], index: number) =>
+    planMarkdownContinuation(lines[index], lines[index].length, lines, index)
+
+  it('a. 行尾回车续出 b.,后面连号的兄弟一起 +1', () => {
+    expect(at(['1. 甲', '  a. 乙', '  b. 丙'], 1)).toMatchObject({
+      insert: '\n  b. ',
+      renumber: [{ lineOffset: 1, insert: 'c' }]
+    })
+  })
+
+  it('i. 行尾回车续出 ii.', () => {
+    expect(at(['1. 甲', '  a. 乙', '    i. 丙'], 2)?.insert).toBe('\n    ii. ')
+  })
+
+  it('断号就停,不把后面的 d. 改成连号', () => {
+    const plan = at(['1. 甲', '  a. 乙', '  c. 丙'], 1)
+    expect(plan?.renumber).toBeUndefined()
+  })
+
+  it('空的 a. 退回父列表,接上下一个十进制编号', () => {
+    expect(at(['1. 甲', '  a. '], 1)).toMatchObject({
+      normalize: { insert: '2. ' },
+      insert: ''
+    })
+  })
+
+  it('十进制非任务仍交给上游', () => {
+    expect(at(['1. 甲', '2. 乙'], 0)).toBeNull()
+  })
+
+  it('顶格 a. 不是列表,不接管回车', () => {
+    expect(at(['a. 注意'], 0)).toBeNull()
+  })
+})
+
 describe('planMarkdownContinuation:交给上游', () => {
   it('标准任务 / 标准引用任务 / 普通列表都返回 null', () => {
     expect(planMarkdownContinuation('- [ ] 文本', 8)).toBeNull()

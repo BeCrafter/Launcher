@@ -1,7 +1,7 @@
 import { noteAssetKindOfUrl, type NoteAssetKind } from '@shared/notes'
 import type { CalloutKind } from './markdown'
 import { alignOpenOf, isAlignClose, type TextAlign } from './note-align'
-import { parseListLine, THEMATIC_BREAK_RE } from './md-list-syntax'
+import { listSyntaxAt, THEMATIC_BREAK_RE } from './md-list-syntax'
 
 export type MarkdownBlockKind =
   | 'frontmatter'
@@ -178,11 +178,12 @@ interface ItemMark {
 
 /**
  * 列表标记的识别口径统一在 `md-list-syntax.ts`（与预览、勾选共用）。
+ * 字母 / 罗马要看整篇才知道是不是列表,所以这里收的是行号而不是单行。
  * 引用行（`> - x`）整体由 consumeQuote 处理，这里必须返回 null，
  * 否则它会被当成列表项、从引用里拆出来。
  */
-function itemMarkOf(line: string): ItemMark | null {
-  const syntax = parseListLine(line)
+function itemMarkAt(lines: readonly string[], index: number): ItemMark | null {
+  const syntax = listSyntaxAt(lines, index)
   if (syntax === null || syntax.quote !== '') return null
   return {
     indent: syntax.indent.length,
@@ -192,10 +193,10 @@ function itemMarkOf(line: string): ItemMark | null {
   }
 }
 
-/** 顶格列表行（0–3 个前导空格；4 个空格仍是代码块）。 */
-function isRootListLine(line: string): boolean {
-  const syntax = parseListLine(line)
-  return syntax !== null && syntax.quote === '' && /^ {0,3}$/.test(syntax.indent)
+/** 顶格列表行（0–3 个前导空格；4 个空格仍是代码块）。顶格 a. / i. 不是列表。 */
+function isRootListLine(lines: readonly string[], index: number): boolean {
+  const mark = itemMarkAt(lines, index)
+  return mark !== null && mark.indent <= 3
 }
 
 /**
@@ -221,10 +222,10 @@ interface ItemNode {
 }
 
 /** 该行是否仍在这个条目里：更深的条目算（子项），缩进达内容列的任意内容算（续行 / 围栏）。 */
-function inItem(line: string, mark: ItemMark): boolean {
-  const nested = itemMarkOf(line)
+function inItem(lines: readonly string[], index: number, mark: ItemMark): boolean {
+  const nested = itemMarkAt(lines, index)
   if (nested !== null) return nested.indent > mark.indent
-  return indentOf(line) >= mark.content
+  return indentOf(lines[index] ?? '') >= mark.content
 }
 
 /**
@@ -240,13 +241,13 @@ function itemRegionEnd(lines: string[], from: number, limit: number, mark: ItemM
     if (blank(line)) {
       let j = i
       while (j < limit && blank(lines[j])) j += 1
-      if (j < limit && inItem(lines[j], mark)) {
+      if (j < limit && inItem(lines, j, mark)) {
         i = j
         continue
       }
       break
     }
-    if (!inItem(line, mark)) break
+    if (!inItem(lines, i, mark)) break
     const fence = fenceOf(line)
     i = fence !== null ? Math.max(consumeFence(lines, i, fence, limit).contentTo, i + 1) : i + 1
     end = i
@@ -265,7 +266,7 @@ function parseItemRun(
   const items: ItemNode[] = []
   let i = start
   while (i < limit) {
-    const mark = itemMarkOf(lines[i])
+    const mark = itemMarkAt(lines, i)
     if (mark === null || mark.indent !== indent || mark.ordered !== ordered) break
 
     const regionEnd = itemRegionEnd(lines, i, limit, mark)
@@ -274,7 +275,7 @@ function parseItemRun(
     let ownEnd = i + 1
     let k = i + 1
     while (k < regionEnd) {
-      const nested = itemMarkOf(lines[k])
+      const nested = itemMarkAt(lines, k)
       if (nested !== null && nested.indent > mark.indent) {
         const sub = parseItemRun(lines, k, regionEnd, nested.indent, nested.ordered)
         children.push(...sub.items)
@@ -298,7 +299,7 @@ function parseItemRun(
     // 松列表：条目之间的空行归前一个条目的 `to`，槽位因此不留缝
     let j = i
     while (j < limit && blank(lines[j])) j += 1
-    const next = j < limit ? itemMarkOf(lines[j]) : null
+    const next = j < limit ? itemMarkAt(lines, j) : null
     if (next !== null && next.indent === indent && next.ordered === ordered) {
       i = j
       continue
@@ -479,8 +480,8 @@ function collectBlocks(
     }
 
     // 列表：逐项成块（每项带自己的子项），不再整段算一块
-    if (isRootListLine(lines[i])) {
-      const mark = itemMarkOf(lines[i])
+    if (isRootListLine(lines, i)) {
+      const mark = itemMarkAt(lines, i)
       const run = mark === null ? null : parseItemRun(lines, i, to, mark.indent, mark.ordered)
       // run.end 必须前进，否则这里的 while 会原地打转（渲染进程直接卡死）
       if (run !== null && run.end > i) {
@@ -707,7 +708,10 @@ export function reorderMarkdownBlocks(
 
 /** 接缝两侧是不是「同一个列表里相邻的两项」——是的话不该插空行分隔。 */
 function sameListRunSeam(above: string, below: string): boolean {
-  return itemMarkOf(above) !== null && itemMarkOf(below) !== null && indentOf(above) === indentOf(below)
+  const lines = [above, below]
+  const a = itemMarkAt(lines, 0)
+  const b = itemMarkAt(lines, 1)
+  return a !== null && b !== null && indentOf(above) === indentOf(below)
 }
 
 // ── 拖拽落点 ──

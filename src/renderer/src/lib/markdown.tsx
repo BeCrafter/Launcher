@@ -37,7 +37,7 @@ import {
   type MediaTarget
 } from './note-media-size'
 import { alignOpenOf, isAlignClose } from './note-align'
-import { isListLine, parseListLine } from './md-list-syntax'
+import { isListLineAt, listSyntaxAt, type OrderedStyle } from './md-list-syntax'
 import { openExternal } from './utils'
 import {
   clampTableCol,
@@ -1213,54 +1213,74 @@ interface ListItemExt {
   text: string
   /** undefined = 非任务项 */
   task: boolean | undefined
+  /** 源码里的序号。有序列表用它做 `<li value>`,避免浏览器从 1 / a 重数。 */
+  value: number | null
   children: ListNodeExt | null
 }
 interface ListNodeExt {
   ordered: boolean
+  /** 1 / a / i。无序为 null。按写进文件的标记,不按缩进档位强改旧笔记。 */
+  type: '1' | 'a' | 'i' | null
   items: ListItemExt[]
+}
+
+const ORDERED_TYPE: Record<OrderedStyle, '1' | 'a' | 'i'> = { 0: '1', 1: 'a', 2: 'i' }
+
+/** 预览认的列表行:顶格 a. / i. 不是列表;i. 落在罗马档时序号按罗马读,不按字母第 9 项。 */
+function previewListLine(lines: string[], index: number): ReturnType<typeof listSyntaxAt> {
+  const syntax = listSyntaxAt(lines, index)
+  if (syntax === null || syntax.quote !== '') return null
+  return syntax
 }
 
 /**
  * `baseLine` 把子数组里的下标换算回原文档的行号(提示块正文会用到)。
  * 宽松语法(`-[]` / `- []` / `- [x]文字`)由 `md-list-syntax` 统一识别,这里只做分组。
+ * 同一缩进上 `1.` 和 `a.` 拆成两个列表。
  */
 function parseListExt(lines: string[], start: number, baseLine = 0): { list: ListNodeExt; next: number } {
-  const first = parseListLine(lines[start])!
+  const first = previewListLine(lines, start)!
   const indent = first.indent.length
   const ordered = first.ordered
+  const type = first.style === null ? null : ORDERED_TYPE[first.style]
   const items: ListItemExt[] = []
   let i = start
 
   while (i < lines.length) {
-    const m = parseListLine(lines[i])
+    const m = previewListLine(lines, i)
     // 引用行整体由 renderBlocks 的引用分支处理,不能在这里当列表项
     if (m === null || m.quote !== '' || m.indent.length !== indent) break
-    // 同层混排 ul/ol → 另起一个列表(渲染成两个相邻列表,与 GFM 的松列表行为一致)
-    if (m.ordered !== ordered) break
+    // 同层混排 ul/ol,或有序的书写档不同 → 另起一个列表
+    if (m.ordered !== ordered || (m.style === null ? null : ORDERED_TYPE[m.style]) !== type) break
     const line = baseLine + i
     const task: boolean | undefined = m.task ? m.checked : undefined
     i++
     // 子列表:紧随其后、缩进更深的那一串
     let children: ListNodeExt | null = null
     if (i < lines.length) {
-      const n = parseListLine(lines[i])
+      const n = previewListLine(lines, i)
       if (n !== null && n.quote === '' && n.indent.length > indent) {
         const sub = parseListExt(lines, i, baseLine)
         children = sub.list
         i = sub.next
       }
     }
-    items.push({ line, text: m.content, task, children })
+    items.push({ line, text: m.content, task, value: m.number, children })
   }
-  return { list: { ordered, items }, next: i }
+  return { list: { ordered, type, items }, next: i }
 }
 
 function renderListExt(node: ListNodeExt, keyBase: string, ctx: ExtCtx): ReactNode {
   const Tag = node.ordered ? 'ol' : 'ul'
   return (
-    <Tag className="md-list" key={keyBase}>
+    <Tag className="md-list" key={keyBase} type={node.type ?? undefined}>
       {node.items.map((it, n) => (
-        <li key={n} className={it.task !== undefined ? 'md-task' : undefined} data-line={anchor(ctx, it.line)}>
+        <li
+          key={n}
+          className={it.task !== undefined ? 'md-task' : undefined}
+          data-line={anchor(ctx, it.line)}
+          value={node.ordered && it.value !== null ? it.value : undefined}
+        >
           {it.task !== undefined && (
             <input
               type="checkbox"
@@ -2625,7 +2645,9 @@ function alignmentsOf(sep: string): (('left' | 'center' | 'right') | undefined)[
   })
 }
 
-function isBlockStartExt(line: string, next?: string): boolean {
+function isBlockStartExt(line: string, next?: string, lines?: readonly string[], index?: number): boolean {
+  const list =
+    lines !== undefined && index !== undefined ? isListLineAt(lines, index) : isListLineAt([line], 0)
   return (
     alignOpenOf(line) !== null ||
     DETAILS_OPEN_RE.test(line) ||
@@ -2633,7 +2655,7 @@ function isBlockStartExt(line: string, next?: string): boolean {
     FENCE_EXT_RE.test(line) ||
     HR_EXT_RE.test(line) ||
     HEAD_EXT_RE.test(line) ||
-    isListLine(line) ||
+    list ||
     QUOTE_EXT_RE.test(line) ||
     (isTableRow(line) && next !== undefined && isTableSep(next))
   )
@@ -2958,7 +2980,7 @@ function renderBlocks(
       continue
     }
 
-    if (isListLine(line)) {
+    if (isListLineAt(lines, i)) {
       const parsed = parseListExt(lines, i, baseLine)
       out.push(renderListExt(parsed.list, key(), ctx))
       i = parsed.next
@@ -3026,7 +3048,7 @@ function renderBlocks(
     const startLine = i
     const para: string[] = [line]
     i++
-    while (i < lines.length && lines[i].trim() !== '' && !isBlockStartExt(lines[i], lines[i + 1])) {
+    while (i < lines.length && lines[i].trim() !== '' && !isBlockStartExt(lines[i], lines[i + 1], lines, i)) {
       para.push(lines[i++])
     }
     out.push(

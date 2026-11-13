@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import {
+  decodeAlpha,
+  decodeRoman,
+  encodeAlpha,
+  encodeRoman,
   type IndentOptions,
   indentMarkdownLine,
   indentMarkdownLines,
   isListLine,
   listMarkerOf,
+  listSyntaxAt,
   parseListLine
 } from './md-list-syntax'
 
@@ -116,10 +121,48 @@ describe('引用前缀', () => {
     expect(parseListLine('    > - []')).toBeNull()
   })
 
-  it('isListLine 只认顶格的列表行', () => {
+  it('isListLine 只认顶格的列表行,顶格 a. / i. 不是列表', () => {
     expect(isListLine('- [ ] 甲')).toBe(true)
     expect(isListLine('   - []')).toBe(true)
     expect(isListLine('> - [ ] 甲')).toBe(false)
+    expect(isListLine('1. 甲')).toBe(true)
+    expect(isListLine('a. 注意')).toBe(false)
+    expect(isListLine('i. 注意')).toBe(false)
+  })
+})
+
+describe('字母与罗马数字', () => {
+  it('字母是双射:a=1,z=26,aa=27', () => {
+    expect(encodeAlpha(1)).toBe('a')
+    expect(encodeAlpha(26)).toBe('z')
+    expect(encodeAlpha(27)).toBe('aa')
+    expect(decodeAlpha('aa')).toBe(27)
+    expect(decodeAlpha('z')).toBe(26)
+  })
+
+  it('罗马数字用减法写法,非法组合不认', () => {
+    expect(encodeRoman(1)).toBe('i')
+    expect(encodeRoman(4)).toBe('iv')
+    expect(encodeRoman(9)).toBe('ix')
+    expect(encodeRoman(40)).toBe('xl')
+    expect(decodeRoman('iii')).toBe(3)
+    expect(decodeRoman('iiii')).toBeNull()
+    expect(decodeRoman('abc')).toBeNull()
+  })
+
+  it('listSyntaxAt:顶格 a. 不是列表,落在 1. 下面才是', () => {
+    expect(listSyntaxAt(['a. 注意'], 0)).toBeNull()
+    expect(listSyntaxAt(['1. 甲', '  a. 乙'], 1)?.number).toBe(1)
+    expect(listSyntaxAt(['1. 甲', '  a. 乙', '    i. 丙'], 2)?.style).toBe(2)
+    // 字母档的 i. 是第 9 项,不是罗马数字的 1
+    expect(listSyntaxAt(['1. 甲', '  i. 第九'], 1)?.number).toBe(9)
+    // 十进制任何一层都认,旧笔记不因为缩进就被丢掉
+    expect(listSyntaxAt(['1. 甲', '  2. 乙'], 1)?.number).toBe(2)
+  })
+
+  it('listMarkerOf 把 a. / i. 也当成有序', () => {
+    expect(listMarkerOf('  a. 乙')).toBe('1. ')
+    expect(listMarkerOf('    i. 丙')).toBe('1. ')
   })
 })
 
@@ -199,12 +242,44 @@ describe('indentMarkdownLines:标记跟随上一级', () => {
     expect(plan(['- 甲', '  * 乙', '    + 丙'], [2], 'out')?.get(2)).toBe('  * 丙')
   })
 
-  it('有序上级的孩子用 -;任务自身不改标记,但可作为上级', () => {
+  it('有序上级的无序孩子用 -;任务自身不改标记,但可作为上级', () => {
     expect(plan(['1. 甲', '  - 乙'], [1])?.get(1)).toBe('    - 乙')
     expect(plan(['- [ ] 甲'], [0])?.get(0)).toBe('  - [ ] 甲')
     expect(plan(['* [x] 甲'], [0])?.get(0)).toBe('  * [x] 甲')
     expect(plan(['- [ ] 甲', '  - 乙'], [1])?.get(1)).toBe('    * 乙')
     expect(plan(['* [x] 甲', '  - 乙'], [1])?.get(1)).toBe('    + 乙')
+  })
+
+  it('有序项缩进后按有序上级的个数换档:1. → a. → i. → 1.', () => {
+    const lines = ['1. 甲', '  1. 乙', '    1. 丙', '      1. 丁']
+    const out = plan(lines, [0, 1, 2, 3])
+    // 顶格没有有序上级,档位不变,序号也不动
+    expect(out?.get(0)).toBe('  1. 甲')
+    expect(out?.get(1)).toBe('    a. 乙')
+    expect(out?.get(2)).toBe('      i. 丙')
+    expect(out?.get(3)).toBe('        1. 丁')
+  })
+
+  it('同一批里第二个有序项接着前一个编号', () => {
+    const out = plan(['1. 甲', '1. 乙', '1. 丙'], [1, 2])
+    expect(out?.get(1)).toBe('  a. 乙')
+    expect(out?.get(2)).toBe('  b. 丙')
+  })
+
+  it('反缩进回到父列表时接上下一个十进制编号', () => {
+    expect(plan(['1. 甲', '  a. 乙'], [1], 'out')?.get(1)).toBe('2. 乙')
+  })
+
+  it('上级是无序时有序项只缩进,不换档', () => {
+    expect(plan(['- 甲', '  1. 乙'], [1])?.get(1)).toBe('    1. 乙')
+  })
+
+  it('分隔符跟着这一行:1) 缩进成 a)', () => {
+    expect(plan(['1) 甲', '1) 乙'], [1])?.get(1)).toBe('  a) 乙')
+  })
+
+  it('有序任务只缩进,不写成 a. [ ]', () => {
+    expect(plan(['1. 甲', '  1. [ ] 任务'], [1])?.get(1)).toBe('    1. [ ] 任务')
   })
 
   it('续行要落在上级的内容列之内', () => {

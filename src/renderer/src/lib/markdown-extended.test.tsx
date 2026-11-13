@@ -228,14 +228,29 @@ describe('块级:嵌套列表', () => {
 
   it('有序列表嵌在无序里', () => {
     const out = html('- 一\n  1. 甲\n  2. 乙')
-    expect(out).toContain('<ol class="md-list">')
+    expect(out).toContain('<ol class="md-list" type="1">')
     expect(out).toContain('<ul class="md-list">')
   })
 
   it('同层 ul/ol 混排另起一个列表', () => {
     const out = html('- 一\n1. 甲')
     expect(out).toContain('<ul class="md-list">')
-    expect(out).toContain('<ol class="md-list">')
+    expect(out).toContain('<ol class="md-list" type="1">')
+  })
+
+  it('有序层级按源码标记渲染:a. 用 type=a,i. 用 type=i,序号不从 1 重数', () => {
+    const out = html('1. 甲\n  a. 乙\n  c. 丁\n    i. 戊')
+    expect(out).toContain('<ol class="md-list" type="a">')
+    expect(out).toContain('<ol class="md-list" type="i">')
+    expect(out).toContain('value="3"')
+    expect(out).toContain('value="1">戊')
+    // 顶格的 a. 是句子,不当列表
+    expect(html('a. 注意')).not.toContain('<ol')
+  })
+
+  it('同一缩进上 1. 和 a. 拆成两个列表', () => {
+    const out = html('1. 甲\n  1. 乙\n  a. 丙')
+    expect(out.match(/<ol class="md-list"/g)?.length).toBe(3)
   })
 })
 

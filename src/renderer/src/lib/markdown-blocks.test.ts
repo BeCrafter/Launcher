@@ -132,6 +132,17 @@ describe('list items', () => {
   const lines = TREE.split('\n')
   const items = (): MarkdownBlock[] => parseMarkdownBlocks(TREE).filter((b) => b.kind === 'listItem')
 
+  it('缩进后的 a. / i. 是列表项,顶格的 a. 仍是段落', () => {
+    const text = '1. 甲\n  a. 乙\n    i. 丙\n\na. 注意\n'
+    const all = parseMarkdownBlocks(text)
+    expect(all.filter((b) => b.kind === 'listItem').map((b) => text.split('\n')[b.from])).toEqual([
+      '1. 甲',
+      '  a. 乙',
+      '    i. 丙'
+    ])
+    expect(all.some((b) => b.kind === 'paragraph')).toBe(true)
+  })
+
   it('区分任务项、有序列表项与普通列表项', () => {
     const text = '- 普通\n- [ ] 待办\n- [x] 完成\n* [X] 星号任务\n1. 有序\n1. [ ] 有序任务\n'
     const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')

@@ -685,12 +685,17 @@ body.light-theme .skeleton-row {
 .md-list {
   margin: 4px 0;
   padding-left: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  /*
+   * 不用 flex:柔性子项会把 ::marker 丢掉,`a.` / `i.` 这些 type 就画不出来。
+   * 3px 的行距改由 li 的 margin 承担。任务项自己仍是 flex(见 notes.css 的 li.md-task)。
+   */
   font-size: 12.5px;
   line-height: 1.7;
   color: var(--text);
+}
+
+.md-list > li {
+  margin: 3px 0;
 }
 
 .md-quote {

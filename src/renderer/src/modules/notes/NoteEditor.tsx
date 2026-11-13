@@ -46,7 +46,7 @@ import { markdownFenceInput } from '../../lib/editor-fence'
 import { setBlockAlign } from '../../lib/note-align'
 import { planMarkdownContinuation } from '../../lib/md-list-continuation'
 import { planQuoteExit } from '../../lib/md-quote-continuation'
-import { indentMarkdownLines, listMarkerOf, parseListLine } from '../../lib/md-list-syntax'
+import { indentMarkdownLines, listMarkerOf, listSyntaxAt, parseListLine } from '../../lib/md-list-syntax'
 import { minimalTextChange, type TextChange } from '../../lib/text-change'
 import { toggleTaskLine } from '../../lib/note-task'
 import { showToast } from '../../lib/utils'
@@ -153,7 +153,9 @@ function continueMarkdownMarkup(view: EditorView): boolean {
     return true
   }
 
-  const plan = planMarkdownContinuation(line.text, head - line.from)
+  const docLines: string[] = []
+  for (let n = 1; n <= view.state.doc.lines; n += 1) docLines.push(view.state.doc.line(n).text)
+  const plan = planMarkdownContinuation(line.text, head - line.from, docLines, line.number - 1)
   if (plan === null) return false
 
   const changes: { from: number; to: number; insert: string }[] = []
@@ -164,11 +166,22 @@ function continueMarkdownMarkup(view: EditorView): boolean {
       insert: plan.normalize.insert
     })
   }
-  changes.push({
-    from: line.from + plan.insertAt,
-    to: line.from + plan.insertAt,
-    insert: plan.insert
-  })
+  if (plan.insert !== '') {
+    changes.push({
+      from: line.from + plan.insertAt,
+      to: line.from + plan.insertAt,
+      insert: plan.insert
+    })
+  }
+  // lineOffset 相对**改之前**的当前行。续行是在行尾插入,不挪动后面那些行的位置。
+  for (const item of plan.renumber ?? []) {
+    const docLine = view.state.doc.line(line.number + item.lineOffset)
+    changes.push({
+      from: docLine.from + item.from,
+      to: docLine.from + item.to,
+      insert: item.insert
+    })
+  }
   view.dispatch({
     changes,
     selection: EditorSelection.cursor(line.from + plan.caret),
@@ -256,7 +269,11 @@ function handleTab(view: EditorView, dir: 'in' | 'out'): boolean {
   const { doc, selection } = view.state
   if (selection.ranges.some((range) => !range.empty)) return indentSelection(view, dir)
   const head = selection.main.head
-  if (inCodeBlock(view, head) || parseListLine(doc.lineAt(head).text) !== null) {
+  const headLine = doc.lineAt(head)
+  const docLines: string[] = []
+  for (let n = 1; n <= doc.lines; n += 1) docLines.push(doc.line(n).text)
+  // 顶格的 `a. 注意` 不是列表,Tab 插空格;缩进在字母档里的 `a.` 仍整行缩进
+  if (inCodeBlock(view, head) || listSyntaxAt(docLines, headLine.number - 1) !== null) {
     return indentSelection(view, dir)
   }
   return dir === 'in' ? insertSpacesAtCursor(view, 2) : removeSpacesBeforeCursor(view, 2)

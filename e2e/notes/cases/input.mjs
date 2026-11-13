@@ -22,6 +22,17 @@ const QUOTE_EXIT = ['# 引用退出', '', '> 引用甲', '', '结尾段落。'].
 const QUOTE_NESTED = ['# 嵌套引用退出', '', '> > 内层甲', '', '结尾段落。'].join('\n')
 const SAME_MARKER = ['# 同级标记', '', '* 甲', '* 乙', ''].join('\n')
 const MIXED_MARKERS = ['# 标记', '', '- [ ] 任务甲', '* [x] 任务乙', '1. 有序甲', ''].join('\n')
+const ORDERED_LEVELS = [
+  '# 有序层级',
+  '',
+  '1. 一级甲',
+  '  1. 二级甲',
+  '    1. 三级甲',
+  '      1. 四级甲',
+  '',
+  '结尾段落。'
+].join('\n')
+const ORDERED_ALPHA = ['# 字母续行', '', '1. 甲', '  a. 乙', ''].join('\n')
 const CODE_LIST = ['# 代码块', '', '```', '- 不是列表', '```', ''].join('\n')
 
 function nonEmpty(lines) {
@@ -344,9 +355,11 @@ export default [
   },
 
   {
+    // 这一行没有有序上级,所以档位不变、序号也不动。有上级时会换成 a./i.,见
+    // input/tab-ordered-marker-follows-level。任务仍只缩进(Obsidian Tasks 只认 `-`)。
     id: 'input/tab-task-and-ordered-markers',
     area: 'input',
-    title: '任务与有序列表 Tab:只缩进,不换标记(Obsidian Tasks 只认 `-`)',
+    title: '任务只缩进不换标记;没有有序上级的有序项也只缩进',
     tags: ['input', 'list', 'tab', 'task'],
     fixture: MIXED_MARKERS,
     async run(ctx, t) {
@@ -355,7 +368,48 @@ export default [
       const lines = await ctx.lines()
       includes(lines, '  - [ ] 任务甲', '未勾选任务只缩进,标记保持 -')
       includes(lines, '  * [x] 任务乙', '已勾选任务只缩进,标记保持 *')
-      includes(lines, '  1. 有序甲', '有序列表只缩进')
+      includes(lines, '  1. 有序甲', '没有有序上级,只缩进,序号不变')
+    }
+  },
+
+  {
+    id: 'input/tab-ordered-marker-follows-level',
+    area: 'input',
+    title: '选中多级有序列表按 Tab:标记按有序上级换成 1. → a. → i. → 1.,再 Shift+Tab 退回',
+    tags: ['input', 'list', 'tab'],
+    fixture: ORDERED_LEVELS,
+    async run(ctx, t) {
+      await ctx.selectLines('1. 一级甲', '      1. 四级甲')
+      await ctx.press('Tab')
+      let lines = await ctx.lines()
+      includes(lines, '  1. 一级甲', '没有有序上级,仍是 1.')
+      includes(lines, '    a. 二级甲', '一个有序上级 → a.')
+      includes(lines, '      i. 三级甲', '两个有序上级 → i.')
+      includes(lines, '        1. 四级甲', '三个有序上级回到 1.')
+      // 四行一起退一级:子项仍嵌在有序上级下面,档位不变,标记保持刚换成的 a./i.。
+      // 只有单独把 a. 退到和父项同一层时,才会接成下一个十进制编号。
+      await ctx.press('Tab', 8)
+      lines = await ctx.lines()
+      includes(lines, '1. 一级甲', 'Shift+Tab 退回顶格')
+      includes(lines, '  a. 二级甲', '仍在 1. 下面,保持 a.')
+      includes(lines, '    i. 三级甲', '仍有两个有序上级,保持 i.')
+      includes(lines, '      1. 四级甲', '仍有三个有序上级,保持 1.')
+    }
+  },
+
+  {
+    id: 'input/enter-ordered-alpha',
+    area: 'input',
+    title: '字母有序项行尾回车:下一行续出同一档的下一个序号',
+    tags: ['input', 'list'],
+    fixture: ORDERED_ALPHA,
+    async run(ctx, t) {
+      await ctx.setCursor('  a. 乙', '  a. 乙'.length)
+      await ctx.press('Enter')
+      await ctx.typeText('丙')
+      const lines = nonEmpty(await ctx.lines())
+      includes(lines, '  a. 乙', '原项保留')
+      includes(lines, '  b. 丙', '回车续出 b.')
     }
   },
 
