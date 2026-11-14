@@ -453,7 +453,7 @@ export function indentMarkdownLines(
       index,
       syntax.indent.length,
       syntax.quote,
-      tier,
+      tier as OrderedStyle,
       syntax.delimiter
     )
     const number = (siblings.siblingNumber ?? 0) + 1
