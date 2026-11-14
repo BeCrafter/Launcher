@@ -2,6 +2,7 @@ import { eq, excludes, includes, ok } from '../lib/assert.mjs'
 import {
   BASIC,
   FOLD,
+  FOLD_H2,
   FOLD_SCROLLABLE,
   LONG,
   OUTLINE_MANY,
@@ -525,6 +526,145 @@ export default [
   },
 
   {
+    id: 'preview-outline/fold-first-heading-hit',
+    area: 'preview-outline',
+    title: '第一个标题(H1)前方的标记用真实鼠标点中就能折叠、再点展开;点之前先断言命中的确实是这枚按钮',
+    tags: ['preview-outline', 'fold'],
+    fixture: FOLD,
+    async run(ctx) {
+      await ctx.setMode('preview')
+      await ctx.cdp.waitFor(`document.querySelector('.md-h-fold-btn') !== null`, {
+        message: '预览标题前方出现折叠按钮'
+      })
+
+      const pointOf = (where) => `(() => {
+        const heading = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+          .find((h) => (h.textContent ?? '').trim().startsWith('可折叠节'))
+        const mark = heading?.querySelector(':scope > .md-h-fold-btn .md-h-mark')
+        if (mark === undefined || mark === null) return null
+        const r = mark.getBoundingClientRect()
+        const x = r.left + r.width / 2
+        const y = ${where}
+        const hit = document.elementFromPoint(x, y)
+        const onButton = hit?.closest('.md-h-fold-btn') === mark.closest('.md-h-fold-btn')
+        return { x, y, onButton, tag: hit?.tagName ?? null }
+      })()`
+
+      const center = await ctx.cdp.json(pointOf('r.top + r.height / 2'))
+      ok(center !== null, '找到第一个标题的 H')
+      ok(center.onButton, `H 中心应点在折叠按钮上,实际命中 ${center.tag}`)
+      await ctx.cdp.click(center.x, center.y)
+      await ctx.waitForNode(async () => {
+        const state = await ctx.previewFoldState('可折叠节')
+        return state.folded === true
+      }, '点在 H 中心后第一个标题折叠')
+      excludes(await ctx.previewText(), '折叠节正文。', '本节正文被收起')
+
+      const foot = await ctx.cdp.json(pointOf('r.bottom - 1'))
+      ok(foot !== null, '还能量到 H 的下沿')
+      ok(foot.onButton, `H 下沿应点在折叠按钮上,实际命中 ${foot.tag}`)
+      await ctx.cdp.click(foot.x, foot.y)
+      await ctx.waitForNode(async () => {
+        const state = await ctx.previewFoldState('可折叠节')
+        return state.folded === false
+      }, '点在 H 下沿后第一个标题展开')
+      includes(await ctx.previewText(), '折叠节正文。', '展开后本节正文回来')
+    }
+  },
+
+  {
+    id: 'preview-outline/fold-first-heading-ink-hit',
+    area: 'preview-outline',
+    title:
+      '第一个标题(H2,正文第一行就是 ##)的 H 上沿与标记底边都要能点中折叠按钮:字形带 line-height 0.8,会画出自己的行盒,命中区只按字形盒子中心量是不够的',
+    tags: ['preview-outline', 'fold'],
+    fixture: FOLD_H2,
+    async run(ctx) {
+      await ctx.setMode('preview')
+      await ctx.cdp.waitFor(`document.querySelector('.md-h-fold-btn') !== null`, {
+        message: '预览标题前方出现折叠按钮'
+      })
+
+      // 按真实字形量:行盒只包住字的身高,字形会画出它;取基线后按大写 H 的墨迹上沿推。
+      // 「下沿」取标记盒底边内侧 0.5px —— 用户能点到的最低一截必须在按钮里。
+      const measure = (title) => `(() => {
+        const heading = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+          .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(title)}))
+        const btn = heading?.querySelector(':scope > .md-h-fold-btn')
+        const mark = btn?.querySelector('.md-h-mark')
+        if (heading === undefined || heading === null || btn === undefined || btn === null || mark === undefined || mark === null) return null
+        const r = mark.getBoundingClientRect()
+        const cs = getComputedStyle(mark)
+        const probe = document.createElement('span')
+        probe.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline;padding:0;margin:0'
+        mark.insertBefore(probe, mark.firstChild)
+        const baseline = probe.getBoundingClientRect().bottom
+        probe.remove()
+        const canvas = document.createElement('canvas').getContext('2d')
+        canvas.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily
+        const text = canvas.measureText('H')
+        const ascent = text.actualBoundingBoxAscent ?? 0
+        const b = btn.getBoundingClientRect()
+        const x = r.left + r.width / 2
+        const yTop = baseline - ascent + 0.5
+        const yFoot = b.bottom - 0.5
+        const hitOf = (y) => document.elementFromPoint(x, y)
+        return {
+          levelOnly: btn.classList.contains('md-h-level-only'),
+          x,
+          yTop,
+          yFoot,
+          onTop: hitOf(yTop)?.closest('.md-h-fold-btn') === btn,
+          onFoot: hitOf(yFoot)?.closest('.md-h-fold-btn') === btn,
+          topTag: hitOf(yTop)?.tagName ?? null,
+          footTag: hitOf(yFoot)?.tagName ?? null
+        }
+      })()`
+
+      const check = async (title) => {
+        const m = await ctx.cdp.json(measure(title))
+        ok(m !== null, `量到「${title}」前方的 H`)
+        ok(m.levelOnly === false, `「${title}」是有正文可折的标题,不该只有层级标`)
+        ok(m.onTop, `「${title}」:点字形上沿应命中折叠按钮,实际命中 ${m.topTag}`)
+        ok(m.onFoot, `「${title}」:点标记盒底边应命中折叠按钮,实际命中 ${m.footTag}`)
+        return m
+      }
+
+      const first = await check('常用命令')
+      await ctx.cdp.click(first.x, first.yFoot)
+      await ctx.waitForNode(async () => {
+        const state = await ctx.previewFoldState('常用命令')
+        return state.folded === true
+      }, '点第一个标题标记的下沿后折叠')
+      const folded = await ctx.previewText()
+      excludes(folded, '登录部署机', '首节里的子标题被收起')
+      excludes(folded, 'echo hi', '首节里的围栏正文被收起')
+
+      await ctx.cdp.click(first.x, first.yTop)
+      await ctx.waitForNode(async () => {
+        const state = await ctx.previewFoldState('常用命令')
+        return state.folded === false
+      }, '点第一个标题 H 的上沿后展开')
+      includes(await ctx.previewText(), 'echo hi', '展开后首节正文回来')
+
+      // 第二个 ## 同样用字形上、下沿点:证明是整条命中区,不是只给第一个标题打补丁。
+      const second = await check('常用信息')
+      await ctx.cdp.click(second.x, second.yFoot)
+      await ctx.waitForNode(async () => {
+        const state = await ctx.previewFoldState('常用信息')
+        return state.folded === true
+      }, '点第二个标题标记的下沿后折叠')
+      excludes(await ctx.previewText(), '下一段。', '第二节正文被收起')
+      await ctx.cdp.click(second.x, second.yTop)
+      await ctx.waitForNode(async () => {
+        const state = await ctx.previewFoldState('常用信息')
+        return state.folded === false
+      }, '点第二个标题 H 的上沿后展开')
+      includes(await ctx.previewText(), '下一段。', '第二节正文回来')
+    }
+  },
+
+  {
     id: 'preview-outline/fold-in-preview',
     area: 'preview-outline',
     title: '预览标题旁的折叠箭头:收起本节正文与子节,再点恢复;箭头在折叠时保持可见',
@@ -1004,6 +1144,59 @@ export default [
         if (clear) return true
         throw new Error(JSON.stringify(parked))
       }, '靠近末尾时高亮仍对准当前刻度,并且停在没被渐隐盖住的那一段里')
+    }
+  },
+
+  {
+    id: 'preview-outline/fold-after-note-switch',
+    area: 'preview-outline',
+    title:
+      '换过笔记之后,新笔记正文第一行的标题也能折叠:首块的 .md-h 按位置复用,折叠按钮的点击回调不能还留在上一篇笔记的闭包里',
+    tags: ['preview-outline', 'fold'],
+    fixture: FOLD,
+    async run(ctx) {
+      // 先让主笔记在预览里长出折叠按钮(回调闭包指向主笔记)。
+      await ctx.setMode('preview')
+      await ctx.cdp.waitFor(`document.querySelector('.md-h-fold-btn') !== null`, {
+        message: '预览标题前方出现折叠按钮'
+      })
+
+      // 像用户一样从列表里打开另一篇:两篇正文的第一行都是标题,
+      // 渲染器按位置生成的 key(md-0)相同,.md-h 节点与它上面的折叠按钮会被原样复用。
+      await ctx.cdp.eval(
+        `[...document.querySelectorAll('.notes-row-main')].find((el) => el.textContent?.includes('E2E 链接目标'))?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title')?.value === 'E2E 链接目标'`, {
+        message: '打开「E2E 链接目标」'
+      })
+      await ctx.cdp.waitFor(`document.querySelector('.notes-editor-pane .cm-editor') !== null`, {
+        message: '链接笔记编辑器挂载'
+      })
+      await ctx.setMode('preview')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-preview-body > .md-h')?.textContent?.includes('E2E 链接目标') === true`,
+        { message: '预览换成链接笔记的正文' }
+      )
+
+      // 真实鼠标点新笔记第一个标题旁的标记。复用的按钮如果还调上一篇的回调,
+      // 状态会写到上一篇的 noteId 上,当前笔记的 foldedKeys 始终是空的,点了没反应。
+      const point = await ctx.cdp.json(`(() => {
+        const heading = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+          .find((h) => (h.textContent ?? '').trim().startsWith('E2E 链接目标'))
+        const btn = heading?.querySelector(':scope > .md-h-fold-btn')
+        if (btn === undefined || btn === null) return null
+        const r = btn.getBoundingClientRect()
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+      })()`)
+      ok(point !== null, '新笔记第一个标题旁有折叠按钮')
+      await ctx.cdp.click(point.x, point.y)
+      await ctx.waitForNode(async () => {
+        const state = await ctx.previewFoldState('E2E 链接目标')
+        return state !== null && state.folded === true
+      }, '换过笔记后,点新笔记第一个标题仍能折叠')
+      excludes(await ctx.previewText(), '这是被链接的笔记。', '新笔记这节的正文被收起')
+
+      await ctx.ensureMainNote()
     }
   }
 ]

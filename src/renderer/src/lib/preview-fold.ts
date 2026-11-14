@@ -18,6 +18,16 @@ export const FOLD_BUTTON_CLASS = 'md-h-fold-btn'
 export const FOLD_HIDDEN_CLASS = 'md-fold-hidden'
 const FOLDED_BY_ATTR = 'data-md-folded-by'
 
+/**
+ * 每枚按钮当前绑定的 onToggle。
+ *
+ * 按钮会跨笔记复用(渲染器的 key 按位置生成,两篇正文的第一块通常都是 `md-0`),
+ * 所以不能把 onToggle 关在创建时的闭包里 —— 那个回调认的是上一篇的 noteId,
+ * 点下去折叠状态写到上一篇,当前笔记的 foldedKeys 始终为空,看起来就是「点了没反应」。
+ * 每次都从这张表里取,复用按钮时由 applyPreviewFoldDom 刷新。
+ */
+const toggleHandlers = new WeakMap<HTMLButtonElement, (key: string) => void>()
+
 /** `.notes-preview-body` 的直接标题子元素(文档顺序)。 */
 export function directHeadingElements(body: HTMLElement): HTMLElement[] {
   return [...body.children].filter(
@@ -118,14 +128,18 @@ function makeButton(
   icon.className = 'fa-solid fa-chevron-right'
   icon.setAttribute('aria-hidden', 'true')
   button.appendChild(icon)
-  // 读按钮上当前的键,不读创建时那个。正文被整段替换后按钮会复用,
-  // 闭包里的旧键就对不上新标题,点了什么都不变。
+  // 读按钮上当前的键和当前的回调,不读创建时闭包里的:
+  // 正文被整段替换、换到另一篇笔记时,这枚按钮都会原样留下来复用
+  // (渲染器的 key 按位置生成,两篇的第一块都是 md-0),只认创建时的
+  // 键 / 笔记 id 的话,点了会把状态写到上一篇去 —— 当前笔记看起来没反应。
   button.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
     const key = button.dataset.foldKey
-    if (key !== undefined && key !== '') onToggle(key)
+    const toggle = toggleHandlers.get(button)
+    if (key !== undefined && key !== '' && toggle !== undefined) toggle(key)
   })
+  toggleHandlers.set(button, onToggle)
   return button
 }
 
@@ -159,6 +173,9 @@ export function applyPreviewFoldDom(
     const current = el.querySelector(':scope > .md-h-fold-btn')
     if (current instanceof HTMLButtonElement && sameKind(current, heading.foldable)) {
       updateButton(current, heading, isFolded, labels)
+      // 复用的按钮要换成当前笔记的回调(见 toggleHandlers 的说明)。
+      // 只显示层级标的按钮没有监听,不用换。
+      if (heading.foldable) toggleHandlers.set(current, onToggle)
       kept.add(current)
     } else {
       current?.remove()

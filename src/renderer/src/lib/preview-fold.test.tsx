@@ -111,6 +111,21 @@ describe('applyPreviewFoldDom', () => {
     expect(onToggle).toHaveBeenCalledWith('甲')
   })
 
+  it('按钮被复用但回调换了(换笔记):点击调新回调,不再调上一篇的', () => {
+    // 换笔记时渲染器按位置复用的正是这些 .md-h 节点,按钮跟着留下来。
+    const body = setup()
+    const previousNote = vi.fn()
+    apply(body, [], previousNote)
+    const reused = body.querySelector('[data-line="0"] > .md-h-fold-btn') as HTMLButtonElement
+    const currentNote = vi.fn()
+    apply(body, [], currentNote)
+    expect(body.querySelector('[data-line="0"] > .md-h-fold-btn')).toBe(reused)
+    reused.click()
+    expect(currentNote).toHaveBeenCalledTimes(1)
+    expect(currentNote).toHaveBeenCalledWith('甲')
+    expect(previousNote).not.toHaveBeenCalled()
+  })
+
   it('没有正文可折的标题只有层级标,点击不回调', () => {
     // 丙后面紧接同级标题:丙没有可折的正文。正文直接写出来,避免拼接时多出一个空行。
     const source = [
