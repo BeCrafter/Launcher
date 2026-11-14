@@ -1394,6 +1394,27 @@ interface TableReorder {
 }
 
 /**
+ * 编辑框贴着格子。宽度是 CSS 的 100%(列宽已经定了),高度取两样里较大的:
+ * 按这个宽度换行后的全文,以及格子当前的内容区。
+ *
+ * 先把高度收到 0 再读 scrollHeight,软换行才算得进去;行高写在 `<tr>` 上、是下限,
+ * 输入框缩到 0 时格子不会比这个更矮,所以下限要在收起之后量。
+ * 两步都在同一帧里写回,中间态不会画出来。
+ */
+function fitCellInput(el: HTMLTextAreaElement): void {
+  const cell = el.closest('td, th')
+  const style = cell === null ? null : getComputedStyle(cell)
+  const padY =
+    style === null
+      ? 0
+      : (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0)
+  el.style.height = '0px'
+  const content = el.scrollHeight
+  const floor = cell === null ? 0 : Math.max(0, cell.clientHeight - padY)
+  el.style.height = `${Math.max(content, Math.ceil(floor))}px`
+}
+
+/**
  * 预览里的表格。只读时与以前完全一样;调用方给了 `onEditTable` 才多出编辑能力。
  *
  * **双击进编辑**而不是 contentEditable:后者要让 React 与浏览器共管同一棵子树,
@@ -1899,10 +1920,10 @@ function TableView({
       >
         {isEditing ? (
           // 用 textarea 而不是 input:格子里要能按回车换行(写回时变成 <br>)。
-          // 没有边框、背景透明、高度按行数长 —— 看起来就是「直接在格子里改」。
+          // 没有边框、背景透明。宽度跟着列,高度取换行后的全文和格子内容区的较大者
+          // —— 看起来就是「直接在格子里改」,而不是顶上一条被裁掉的输入框。
           <textarea
             className="md-cell-input"
-            rows={Math.max(1, editing.draft.split('\n').length)}
             value={editing.draft}
             /*
              * 不用 autoFocus + onFocus 去放光标:那个组合里 focus 事件的时机不可靠,
@@ -1911,7 +1932,10 @@ function TableView({
              * dataset 标记保证只做一次 —— 否则每敲一个字都会把光标弹回末尾。
              */
             ref={(el) => {
-              if (el === null || el.dataset.caretSeeded === '1') return
+              if (el === null) return
+              // 每次输入都重量:列宽决定换行,行高是下限,删掉字也要能缩回去。
+              fitCellInput(el)
+              if (el.dataset.caretSeeded === '1') return
               el.dataset.caretSeeded = '1'
               /*
                * ⚠ `preventScroll: true` 不能省。
@@ -1921,6 +1945,10 @@ function TableView({
                */
               el.focus({ preventScroll: true })
               el.setSelectionRange(el.value.length, el.value.length)
+              // 首次挂上时表格可能还没排好,量到 0;下一帧再量一次。
+              requestAnimationFrame(() => {
+                if (el.isConnected) fitCellInput(el)
+              })
             }}
             onChange={(e) => setEditing({ r: row, c: col, draft: e.target.value })}
             onBlur={() => done(true)}

@@ -4001,15 +4001,19 @@ video.md-media {
 }
 /* 双击后换成的受控 textarea:没有边框、背景透明、贴着格子的内边距 ——
    看起来就是「直接在这个格子里改」,而不是弹了一个框。
-   高度按行数长(rows 由行数算),所以不出现内部滚动条。 */
+   宽度跟着格子内容区,按这个宽度换行;高度由脚本取「换行后的全文」和「格子内容区」
+   的较大者,所以不出现内部滚动条。表头静态仍是 nowrap,只有进入编辑才换行。 */
 .md-cell-input {
   display: block;
+  box-sizing: border-box;
   width: 100%;
-  min-width: 40px;
+  min-width: 0;
   border: 0;
   outline: none;
   resize: none;
   overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   background: transparent;
   color: var(--text);
   padding: 0;

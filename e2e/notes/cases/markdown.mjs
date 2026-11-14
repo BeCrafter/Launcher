@@ -64,6 +64,15 @@ const TABLE = [
   '  A --> B',
   '```'
 ].join('\n')
+const TABLE_CELL_EDIT = [
+  '# 格子编辑',
+  '',
+  '```table cols=160 width=160 rows=auto,160',
+  '| 说明 |',
+  '| --- |',
+  '| 这一格里写了一段比较长的说明文字用来检查换行之后是不是都能看见 |',
+  '```'
+].join('\n')
 
 /** 嵌入文档滚动条用例:本地网页与多页 PDF 都由用例自己写进隔离的笔记 assets/ */
 const EMBED_DOCS = [
@@ -397,6 +406,59 @@ export default [
         /!\s*\[图\\?\|\d+\]\(assets\/sample\.png\)/.test(body ?? ''),
         `拖动后图片宽度写回源码这一行,实际正文:\n${body}`
       )
+    }
+  },
+
+  {
+    id: 'markdown/table-cell-edit-fits',
+    area: 'markdown',
+    title: '预览里双击表格格子:输入框按列宽换行,并填满这一行的高度,文字不被裁掉',
+    tags: ['render', 'table'],
+    fixture: TABLE_CELL_EDIT,
+    async run(ctx, t) {
+      await ctx.setMode('preview')
+      await ctx.doubleClick('.notes-preview-body .md-table tbody td.md-cell-host')
+      await ctx.cdp.waitFor(
+        `(() => {
+          const input = document.querySelector('.notes-preview-body textarea.md-cell-input')
+          return input !== null && input.getBoundingClientRect().height > 48
+        })()`,
+        { message: '编辑框按格子撑开' }
+      )
+      const box = await ctx.cdp.json(
+        `(() => {
+          const cell = document.querySelector('.notes-preview-body .md-table tbody td.md-cell-host')
+          const input = cell?.querySelector('textarea.md-cell-input')
+          if (cell === null || cell === undefined || input === null || input === undefined) return null
+          const cs = getComputedStyle(cell)
+          const padX = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+          const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+          const ir = input.getBoundingClientRect()
+          return {
+            inputW: ir.width,
+            inputH: ir.height,
+            contentW: cell.clientWidth - padX,
+            contentH: cell.clientHeight - padY,
+            scrollH: input.scrollHeight,
+            clientH: input.clientHeight
+          }
+        })()`
+      )
+      ok(box !== null, '量到编辑框和格子')
+      ok(
+        box.inputW <= box.contentW + 1 && box.inputW >= box.contentW - 2,
+        `编辑框铺满列宽且不溢出(框 ${box.inputW} / 格 ${box.contentW})`
+      )
+      ok(box.inputH >= box.contentH - 2, `编辑框填满这一行(框 ${box.inputH} / 格 ${box.contentH})`)
+      ok(box.inputH > 48, `不是一行字那么矮(实际 ${box.inputH})`)
+      ok(
+        box.scrollH <= box.clientH + 2,
+        `换行后的文字都在框里(scroll ${box.scrollH} / client ${box.clientH})`
+      )
+      await ctx.typeText('补上')
+      await ctx.press('Enter', 4)
+      await ctx.waitForNode(async () => (await ctx.body()).includes('补上'), '⌘↵ 把字写回格子')
+      includes(await ctx.body(), '都能看见补上', '写在原文字后面,没有另起一行')
     }
   },
 
