@@ -226,47 +226,16 @@
   padding: 4px 7px;
   outline: none;
 }
-/* 新建文档:主名 + 独立扩展名。类型不写在名字里,改名字不会改类型 */
+/* 新建文档:一格就是完整文件名,后缀在里面一起改 */
 .notes-create-fields {
   display: flex;
   align-items: stretch;
-  gap: 4px;
   min-width: 0;
 }
 .notes-create-name {
   flex: 1;
   min-width: 0;
   width: auto;
-}
-.notes-create-ext {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  gap: 1px;
-  border: 1px solid var(--accent2);
-  border-radius: 5px;
-  background: var(--surface3);
-  color: var(--dim);
-  font-size: 11.5px;
-  padding: 4px 6px 4px 5px;
-}
-.notes-create-dot {
-  color: var(--muted);
-  user-select: none;
-}
-.notes-create-ext-input {
-  width: 26px;
-  min-width: 16px;
-  max-width: 52px;
-  /* 扩展名长度可变(js / html / markdown),让输入框跟着内容伸缩 */
-  field-sizing: content;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  font-family: inherit;
-  font-size: 11.5px;
-  padding: 0;
-  outline: none;
 }
 
 
@@ -977,32 +946,16 @@
   padding: 0 2px 0 0;
 }
 
-/* 文件改名:整格一个输入框,右侧固定后缀(扩展名由主进程沿用,不可编辑) */
+/* 文件改名:一格就是完整文件名,后缀在里面一起改 */
 .notes-file-rename {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: stretch;
-  border: 1px solid var(--accent2);
-  border-radius: 5px;
-  background: var(--surface3);
-  padding-right: 6px;
 }
 .notes-file-rename .notes-folder-input {
   flex: 1;
   min-width: 0;
   width: auto;
-  border: 0;
-  background: transparent;
-  padding: 4px 2px 4px 7px;
-}
-.notes-file-rename-ext {
-  display: flex;
-  align-items: center;
-  flex: none;
-  color: var(--dim);
-  font-size: 11.5px;
-  user-select: none;
 }
 
 .notes-row-title {

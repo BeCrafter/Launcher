@@ -171,7 +171,7 @@ export interface NotesService {
   saveFile(input: NoteFileSaveInput): Promise<NoteFileSaveOutcome>
   /** 在指定目录新建空文件(非 .md;Markdown 笔记走 create) */
   createFile(input: NoteFileCreateInput): Promise<NoteFileCreateOutcome>
-  /** 重命名文件:只改主名,扩展名固定沿用原文件 */
+  /** 重命名文件:传入的是完整新文件名(含扩展名);改成 .md 会被拒绝 */
   renameFile(input: NoteFileRenameInput): Promise<NoteFileRenameOutcome>
   /** 删除文件(应用内走系统废纸篓) */
   removeFile(rel: string): Promise<NoteFileOutcome>
@@ -1144,22 +1144,16 @@ export function createNotesService(opts: {
         return { ok: false, kind: 'not-found', message: '文件不存在或不在笔记目录内' }
       }
 
-      // 类型 = 扩展名:从旧文件名原样取(保留大小写),调用方只给主名
-      const { ext } = splitFileExt(baseNameOf(oldRel))
-      let base = String(input?.name ?? '').trim()
-      if (ext !== '') {
-        // 主名里自带了同扩展名(用户把 app.js 整个粘进来)→ 去掉,避免 app.js.js
-        const suffix = `.${ext}`
-        if (base.toLowerCase().endsWith(suffix.toLowerCase())) base = base.slice(0, -suffix.length)
+      // 调用方给的是完整新文件名。不再把旧扩展名拼回去,否则界面上改了后缀也落不了盘。
+      const name = String(input?.name ?? '').trim()
+      if (!isSafeNoteSegment(name)) {
+        return { ok: false, kind: 'invalid', message: `文件名不合法:${name}` }
       }
-      if (!isSafeNoteSegment(base)) {
-        return { ok: false, kind: 'invalid', message: `文件名不合法:${base}` }
+      // .md 会被目录扫描收成笔记,打开中的文件视图跟不上。`.markdown` 不会,仍当普通文件。
+      if (splitFileExt(name).ext.toLowerCase() === 'md') {
+        return { ok: false, kind: 'invalid', message: 'Markdown 笔记请使用「新建笔记」' }
       }
-      // 无扩展名的文件不能借改名长出扩展名(那就等于改类型了)
-      if (ext === '' && base.includes('.')) {
-        return { ok: false, kind: 'invalid', message: '无扩展名的文件不能添加扩展名' }
-      }
-      const newRel = joinNoteId(parentOf(oldRel), ext === '' ? base : `${base}.${ext}`)
+      const newRel = joinNoteId(parentOf(oldRel), name)
       if (!isSafeNoteId(newRel)) {
         return { ok: false, kind: 'invalid', message: `路径不合法:${newRel}` }
       }

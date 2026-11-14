@@ -1156,7 +1156,7 @@ export default [
   {
     id: 'files/create-default-md',
     area: 'files',
-    title: '新建:默认「未命名」+ 类型 md,直接打字回车建成 Markdown 笔记',
+    title: '新建:一个输入框,默认「未命名.md」,只选中主名,直接打字回车建成 Markdown 笔记',
     tags: ['files', 'rail', 'create'],
     async run(ctx) {
       await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
@@ -1166,20 +1166,20 @@ export default [
       })
       const initial = await ctx.cdp.json(`(() => {
         const el = document.querySelector('.notes-create-name')
-        const ext = document.querySelector('.notes-create-ext-input')
         return {
           value: el?.value ?? null,
           start: el?.selectionStart ?? -1,
           end: el?.selectionEnd ?? -1,
-          ext: ext?.value ?? null
+          split: document.querySelector('.notes-create-ext-input') !== null
         }
       })()`)
-      eq(initial?.value, '未命名', '默认主名是未命名')
-      eq(initial?.ext, 'md', '类型字段默认 md(类型不在文件名里)')
-      eq(initial?.start, 0, '主名全选起点')
-      eq(initial?.end, 3, '主名全选,直接打字即可替换')
+      // 以前是两格:主名「未命名」加独立的类型字段 md。现在一格就是完整文件名。
+      eq(initial?.value, '未命名.md', '默认值是完整文件名')
+      eq(initial?.split, false, '不再有独立的扩展名输入框')
+      eq(initial?.start, 0, '选区从主名开头')
+      eq(initial?.end, 3, '只选中主名,后缀留在选区外,直接打字即可替换')
 
-      // 直接打字:替换主名,类型字段仍是 md → 建成 Markdown 笔记
+      // 直接打字:替换主名,后缀还在 → 建成 Markdown 笔记
       await ctx.cdp.type('默认新建笔记')
       await ctx.press('Enter')
       await ctx.cdp.waitFor(
@@ -1205,7 +1205,7 @@ export default [
   {
     id: 'files/create-other-type',
     area: 'files',
-    title: '新建:类型字段改成 js 后按文件创建;编辑名字不会改变类型',
+    title: '新建:在同一格里把后缀改成 js 后按文件创建(以前类型是另一格,名字里的后缀不算数)',
     tags: ['files', 'rail', 'create'],
     async run(ctx) {
       await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
@@ -1213,27 +1213,28 @@ export default [
         timeout: 5000,
         message: '根层出现新建名字输入框'
       })
-      // 名字里写 .js 不会改变类型字段:类型只由独立的扩展名输入框决定
-      await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.select()`)
-      await ctx.cdp.type('e2e-fresh.js')
-      eq(
-        await ctx.cdp.eval(`document.querySelector('.notes-create-ext-input')?.value`),
-        'md',
-        '在名字里写后缀不会改变类型字段'
-      )
-
-      // 切到扩展名输入框(焦点在两字段之间移动不应提前提交)
-      await ctx.cdp.eval(
-        `(() => { const el = document.querySelector('.notes-create-ext-input'); el.focus(); el.select() })()`
-      )
+      // 默认只选中主名。把光标移到后缀前面,删掉 md 再打 js:类型就在这一格里。
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-create-name')
+        const dot = el.value.lastIndexOf('.')
+        el.focus()
+        el.setSelectionRange(0, dot)
+      })()`)
+      await ctx.cdp.type('e2e-fresh')
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-create-name')
+        const dot = el.value.lastIndexOf('.')
+        el.setSelectionRange(dot + 1, el.value.length)
+      })()`)
       await ctx.cdp.type('js')
-      await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields') !== null`, {
-        timeout: 2000,
-        message: '切换字段后仍停留在新建输入状态'
-      })
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.value`),
+        'e2e-fresh.js',
+        '同一格里改掉后缀后,文件名就是新类型'
+      )
       await ctx.press('Enter')
 
-      // 名字里的 .js 与类型字段重复时去掉一份
+      // 整段文件名原样落地,不会再拼出一份 .js
       await waitFileRow(ctx, 'e2e-fresh.js')
       ok(!existsSync(absPath(ctx, 'e2e-fresh.js.js')), '不会生成 e2e-fresh.js.js')
       await ctx.cdp.waitFor(
@@ -1283,15 +1284,22 @@ export default [
       })
       const defaults = await ctx.cdp.json(`(() => ({
         name: document.querySelector('.notes-create-name')?.value ?? null,
-        ext: document.querySelector('.notes-create-ext-input')?.value ?? null
+        split: document.querySelector('.notes-create-ext-input') !== null
       }))()`)
-      eq(defaults?.name, '未命名', '目录里的新建默认主名')
-      eq(defaults?.ext, 'md', '目录里的新建默认类型 md')
-      await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.select()`)
+      eq(defaults?.name, '未命名.md', '目录里的新建默认是完整文件名')
+      eq(defaults?.split, false, '目录里的新建也没有独立的扩展名输入框')
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-create-name')
+        const dot = el.value.lastIndexOf('.')
+        el.focus()
+        el.setSelectionRange(0, dot)
+      })()`)
       await ctx.cdp.type('sub')
-      await ctx.cdp.eval(
-        `(() => { const el = document.querySelector('.notes-create-ext-input'); el.focus(); el.select() })()`
-      )
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-create-name')
+        const dot = el.value.lastIndexOf('.')
+        el.setSelectionRange(dot + 1, el.value.length)
+      })()`)
       await ctx.cdp.type('txt')
       await ctx.press('Enter')
 
@@ -1373,7 +1381,7 @@ export default [
     id: 'files/rename-keeps-type',
     area: 'files',
     title:
-      '重命名文件:行内只改主名、扩展名固定;磁盘与打开中的标题一起改名;同名拒绝且不覆盖',
+      '重命名文件:输入框是完整文件名(以前后缀锁在外面),只改主名时后缀还在;磁盘与打开中的标题一起改名;同名拒绝且不覆盖',
     tags: ['files', 'rail', 'rename'],
     async run(ctx) {
       writeFile(ctx, 'rename/old.txt', 'rename me')
@@ -1403,14 +1411,20 @@ export default [
         timeout: 5000,
         message: '出现文件改名输入框'
       })
-      const field = await ctx.cdp.json(`(() => ({
-        value: document.querySelector('.notes-file-rename input')?.value ?? null,
-        suffix: document.querySelector('.notes-file-rename-ext')?.textContent ?? null
-      }))()`)
-      eq(field?.value, 'old', '改名输入框只含主名')
-      eq(field?.suffix, '.txt', '扩展名固定显示在输入框右侧,不可编辑')
+      const field = await ctx.cdp.json(`(() => {
+        const el = document.querySelector('.notes-file-rename input')
+        return {
+          value: el?.value ?? null,
+          start: el?.selectionStart ?? -1,
+          end: el?.selectionEnd ?? -1,
+          locked: document.querySelector('.notes-file-rename-ext') !== null
+        }
+      })()`)
+      eq(field?.value, 'old.txt', '改名输入框是完整文件名')
+      eq(field?.locked, false, '不再有锁在外面的扩展名')
+      eq(field?.start, 0, '选区从主名开头')
+      eq(field?.end, 3, '只选中主名,后缀留在选区外')
 
-      await ctx.cdp.eval(`document.querySelector('.notes-file-rename input')?.select()`)
       await ctx.cdp.type('new')
       await ctx.press('Enter')
 
@@ -1449,7 +1463,11 @@ export default [
         timeout: 5000,
         message: '再次出现改名输入框'
       })
-      await ctx.cdp.eval(`document.querySelector('.notes-file-rename input')?.select()`)
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-file-rename input')
+        const dot = el.value.lastIndexOf('.')
+        el.setSelectionRange(0, dot)
+      })()`)
       await ctx.cdp.type('taken')
       await ctx.press('Enter')
       await ctx.cdp.waitFor(
@@ -1459,6 +1477,92 @@ export default [
       ok(existsSync(absPath(ctx, 'rename/new.txt')), '撞名失败后原文件仍在')
       ok(existsSync(absPath(ctx, 'rename/taken.txt')), '已有的同名文件没有被覆盖')
       eq(readFileSync(absPath(ctx, 'rename/taken.txt'), 'utf8'), 'taken', '同名文件内容不变')
+    }
+  },
+
+  {
+    id: 'files/rename-changes-type',
+    area: 'files',
+    title: '重命名文件:同一格里改后缀,磁盘、左栏与打开中的类型一起变;改成 .md 被拒绝且原文件不动',
+    tags: ['files', 'rail', 'rename'],
+    async run(ctx) {
+      writeFile(ctx, 'retype/old.txt', 'keep me')
+      await openFile(ctx, 'retype/old.txt', { expand: ['retype'] })
+
+      const rowRect = await ctx.elementRect(fileSelector('retype/old.txt'))
+      await ctx.cdp.mouse('mouseMoved', rowRect.x + rowRect.width - 60, rowRect.y + rowRect.height / 2)
+      await ctx.cdp.eval(
+        `document.querySelector(${JSON.stringify(
+          fileSelector('retype/old.txt')
+        )}).querySelector('[data-file-action="rename"]')?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-file-rename input') !== null`, {
+        timeout: 5000,
+        message: '出现文件改名输入框'
+      })
+      // 只换后缀:主名留着,把 .txt 改成 .js
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-file-rename input')
+        const dot = el.value.lastIndexOf('.')
+        el.focus()
+        el.setSelectionRange(dot + 1, el.value.length)
+      })()`)
+      await ctx.cdp.type('js')
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-file-rename input')?.value`),
+        'old.js',
+        '同一格里改掉后缀'
+      )
+      await ctx.press('Enter')
+
+      await ctx.waitForNode(
+        () => existsSync(absPath(ctx, 'retype/old.js')) && !existsSync(absPath(ctx, 'retype/old.txt')),
+        '磁盘上的后缀换成 js'
+      )
+      eq(readFileSync(absPath(ctx, 'retype/old.js'), 'utf8'), 'keep me', '改后缀后正文还在')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === 'old.js'`,
+        { timeout: 10_000, message: '打开中的标题换成新文件名' }
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector('.file-main .file-path .notes-file-icon')?.dataset.kind`
+        ),
+        'code',
+        '打开中的类型图标换成代码'
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector('retype/old.js'))})?.dataset.fileKind === 'code'`,
+        { timeout: 10_000, message: '左栏文件行换成新路径且类型是代码' }
+      )
+
+      // 再改成 .md:会被收成笔记,文件改名不走这条路
+      const jsRow = await ctx.elementRect(fileSelector('retype/old.js'))
+      await ctx.cdp.mouse('mouseMoved', jsRow.x + jsRow.width - 60, jsRow.y + jsRow.height / 2)
+      await ctx.cdp.eval(
+        `document.querySelector(${JSON.stringify(
+          fileSelector('retype/old.js')
+        )}).querySelector('[data-file-action="rename"]')?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-file-rename input') !== null`, {
+        timeout: 5000,
+        message: '再次出现改名输入框'
+      })
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-file-rename input')
+        const dot = el.value.lastIndexOf('.')
+        el.focus()
+        el.setSelectionRange(dot + 1, el.value.length)
+      })()`)
+      await ctx.cdp.type('md')
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(
+        `document.querySelector('#toast.show')?.textContent?.includes('Markdown 笔记请使用') === true`,
+        { timeout: 5000, message: '改成 .md 时给出提示' }
+      )
+      ok(existsSync(absPath(ctx, 'retype/old.js')), '改成 .md 被拒绝后原文件仍在')
+      ok(!existsSync(absPath(ctx, 'retype/old.md')), '没有生成 .md')
+      eq(readFileSync(absPath(ctx, 'retype/old.js'), 'utf8'), 'keep me', '被拒绝后正文不变')
     }
   },
 

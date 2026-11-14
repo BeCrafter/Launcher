@@ -199,7 +199,7 @@ export interface NotesRepository {
   saveFile(input: NoteFileSaveInput): Promise<NoteFileSaveOutcome>
   /** 新建空文件(非 .md;Markdown 笔记走 create) */
   createFile(input: NoteFileCreateInput): Promise<NoteFileCreateOutcome>
-  /** 重命名文件(只改主名,扩展名固定) */
+  /** 重命名文件(完整新文件名,含扩展名) */
   renameFile(input: NoteFileRenameInput): Promise<NoteFileRenameOutcome>
 }
 

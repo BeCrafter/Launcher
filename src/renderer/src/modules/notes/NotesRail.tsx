@@ -343,34 +343,47 @@ interface NameEdit {
   copy?: RailCopy
 }
 
-/** 新建文档时的默认主名与类型;类型是独立字段,编辑名字不会改类型 */
-const NEW_DOC_NAME = '未命名'
-const NEW_DOC_EXT = 'md'
+/** 新建文档时的默认完整文件名。后缀在同一格里,直接改即可。白板另用 .excal。 */
+const NEW_DOC_NAME = '未命名.md'
+const NEW_CANVAS_NAME = '未命名.excal'
+
+/**
+ * 有扩展名时只选中最后一个点之前的主名,后缀留在选区外。
+ * 没有点(或点在开头)则整段选中。只在输入框挂上时做一次。
+ */
+function selectFileStem(el: HTMLInputElement): void {
+  const dot = el.value.lastIndexOf('.')
+  const end = dot > 0 ? dot : el.value.length
+  el.setSelectionRange(0, end)
+}
 
 /**
  * 行内的名字输入(改名 / 新建目录共用)。空名提交视为取消。
+ * 目录与笔记把光标放到末尾;文件改名只选主名,后缀留在同一格里。
  */
 function NameField({
   value,
   placeholder,
   onChange,
   onCommit,
-  onCancel
+  onCancel,
+  select = 'end'
 }: {
   value: string
   placeholder: string
   onChange(value: string): void
   onCommit(): void
   onCancel(): void
+  select?: 'end' | 'stem'
 }): React.JSX.Element {
   const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current
     if (el === null) return
     el.focus()
     // 只在挂载时定位一次:每次重渲染都重选会把用户刚打的字吃掉
-    const end = el.value.length
-    el.setSelectionRange(end, end)
+    if (select === 'stem') selectFileStem(el)
+    else el.setSelectionRange(el.value.length, el.value.length)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   return (
@@ -390,68 +403,44 @@ function NameField({
 }
 
 /**
- * 新建文档(笔记 / 其他文件)的行内输入:主名 + 独立的扩展名字段。
- * 类型不写在名字里,所以改名字不可能改变类型;默认 `未命名` + `md`。
- * 两个字段之间切换焦点不算离开(容器 onBlur 判断 relatedTarget),不会提前提交。
+ * 新建文档(笔记 / 其他文件)的行内输入:一格就是完整文件名。
+ * 挂上时只选中主名,直接打字换名字,后缀还在;要改类型就改同一格里的后缀。
  */
 function CreateDocFields({
   name,
-  ext,
   placeholder,
-  extLabel,
   onName,
-  onExt,
   onCommit,
   onCancel
 }: {
   name: string
-  ext: string
   placeholder: string
-  extLabel: string
   onName(value: string): void
-  onExt(value: string): void
   onCommit(): void
   onCancel(): void
 }): React.JSX.Element {
   const nameRef = useRef<HTMLInputElement>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = nameRef.current
     if (el === null) return
     el.focus()
-    el.select()
+    selectFileStem(el)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const keys = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Enter') onCommit()
-    if (e.key === 'Escape') onCancel()
-  }
   return (
-    <div
-      className="notes-create-fields"
-      onBlur={(e) => {
-        // 在两个字段之间移动焦点不提交;真正离开这一行才提交
-        if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-        onCommit()
-      }}
-    >
+    <div className="notes-create-fields">
       <input
         ref={nameRef}
         className="notes-folder-input notes-create-name"
         value={name}
         placeholder={placeholder}
         onChange={(e) => onName(e.target.value)}
-        onKeyDown={keys}
+        onBlur={onCommit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') onCommit()
+          if (e.key === 'Escape') onCancel()
+        }}
       />
-      <span className="notes-create-ext" title={extLabel}>
-        <span className="notes-create-dot">.</span>
-        <input
-          className="notes-create-ext-input"
-          value={ext}
-          aria-label={extLabel}
-          onChange={(e) => onExt(e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 8).toLowerCase())}
-          onKeyDown={keys}
-        />
-      </span>
     </div>
   )
 }
@@ -516,8 +505,6 @@ export function NotesRail(): React.JSX.Element {
 
   const [edit, setEdit] = useState<NameEdit | null>(null)
   const [draftName, setDraftName] = useState('')
-  /** 新建文档时独立的扩展名字段(默认 md) */
-  const [draftExt, setDraftExt] = useState(NEW_DOC_EXT)
   /**
    * 用户实际点开的那一份副本。置顶笔记在置顶栏和目录树里各有一份,
    * 用 state 而不是 ref:点同一篇笔记的另一份时 store 会提前 return、不重渲染,
@@ -1348,11 +1335,10 @@ export function NotesRail(): React.JSX.Element {
   const loading = !loaded && notes.length === 0
   /** 首次使用:一篇笔记、一个目录都没有 */
   const isEmpty = !loading && notes.length === 0 && folders.length === 0 && files.length === 0
-  const startEdit = (next: NameEdit, initial = '', initialExt = NEW_DOC_EXT): void => {
+  const startEdit = (next: NameEdit, initial = ''): void => {
     committingRef.current = false
     setEdit(next)
     setDraftName(initial)
-    if (next.mode === 'create' && next.kind === 'note') setDraftExt(initialExt)
   }
   const cancelEdit = (): void => {
     committingRef.current = false
@@ -1360,30 +1346,32 @@ export function NotesRail(): React.JSX.Element {
     setDraftName('')
   }
   /**
-   * 新建文档:主名 + 扩展名分开提交。md(或留空)走笔记,其他扩展名按文件创建。
-   * 名字里若已经带了同名后缀(如 `app.js` + js)先去掉,避免 `app.js.js`。
+   * 新建文档:输入框里是完整文件名。
+   * 没有扩展名,或是 md / markdown,走笔记;其余整段交给 createFile。
+   * 末尾的点先去掉,否则 `笔记.` 会被当成没有类型。
    */
-  const createDoc = async (parent: string, rawName: string, rawExt: string): Promise<void> => {
-    const ext = rawExt.trim().toLowerCase() || NEW_DOC_EXT
-    const suffix = `.${ext}`
-    const stripped = rawName.toLowerCase().endsWith(suffix) ? rawName.slice(0, -suffix.length) : rawName
-    const name = stripped.trim()
-    if (name === '') return
-    if (ext === 'md' || ext === 'markdown') {
-      await create(name, parent)
+  const createDoc = async (parent: string, rawName: string): Promise<void> => {
+    const trimmed = rawName.trim().replace(/\.+$/, '')
+    if (trimmed === '') return
+    const { base, ext } = splitFileExt(trimmed)
+    const kind = ext.toLowerCase()
+    if (kind === '' || kind === 'md' || kind === 'markdown') {
+      const title = (kind === '' ? trimmed : base).trim()
+      if (title === '') return
+      await create(title, parent)
       return
     }
-    const path = await createFile(parent, `${name}.${ext}`)
+    const path = await createFile(parent, trimmed)
     if (path !== null) openFileDoc(path)
   }
   /**
-   * 文件改名:先把打开中的缓冲落到旧路径,再让主进程改名,最后让文档跟随新路径。
-   * 类型(扩展名)由主进程沿用旧文件,调用方只给主名。
+   * 文件改名:先把打开中的缓冲落到旧路径,再按整段新名字改名,最后让文档跟随新路径。
+   * 新名字含扩展名。改成 .md 会被主进程拒绝(那会变成笔记,打开中的文件视图跟不上)。
    */
-  const renameFileDoc = async (path: string, base: string): Promise<void> => {
+  const renameFileDoc = async (path: string, name: string): Promise<void> => {
     const fstate = useFilesStore.getState()
     if (fstate.file?.path === path) await fstate.flush()
-    const stat = await renameFile(path, base)
+    const stat = await renameFile(path, name)
     if (stat !== null) useFilesStore.getState().repath(path, stat)
   }
   const commitEdit = (): void => {
@@ -1391,43 +1379,40 @@ export function NotesRail(): React.JSX.Element {
     committingRef.current = true
     const name = draftName.trim()
     const cur = edit
-    const ext = draftExt
     setEdit(null)
     setDraftName('')
     if (cur.mode === 'create') {
       if (cur.kind === 'folder') {
         if (name !== '') void createFolder(cur.parent, name)
-      } else void createDoc(cur.parent, name, ext)
+      } else void createDoc(cur.parent, name)
     } else if (name !== '') {
       if (cur.kind === 'note') void renameNote(cur.path, name)
       else if (cur.kind === 'folder') {
         if (name !== baseNameOf(cur.path)) void renameFolder(cur.path, name)
-      } else if (name !== splitFileExt(baseNameOf(cur.path)).base) {
+      } else if (name !== baseNameOf(cur.path)) {
         void renameFileDoc(cur.path, name)
       }
     }
   }
 
-  /** 目录行内的名字输入(改名 / 新建目录共用) */
-  const nameInput = (placeholder: string): React.JSX.Element => (
+  /** 目录行内的名字输入(改名 / 新建目录共用)。文件改名传 stem,只预选主名。 */
+  const nameInput = (placeholder: string, select?: 'end' | 'stem'): React.JSX.Element => (
     <NameField
       value={draftName}
       placeholder={placeholder}
       onChange={setDraftName}
       onCommit={commitEdit}
       onCancel={cancelEdit}
+      select={select}
     />
   )
 
-  /** 新建文档的两个输入框(主名 + 扩展名) */
+  /** 新建文档的输入框(完整文件名,含后缀) */
   const createDocFields = (): React.JSX.Element => (
     <CreateDocFields
       name={draftName}
-      ext={draftExt}
       placeholder={t('notes.field.fileNamePlaceholder')}
-      extLabel={t('notes.field.extLabel')}
       onName={setDraftName}
-      onExt={setDraftExt}
       onCommit={commitEdit}
       onCancel={cancelEdit}
     />
@@ -1545,7 +1530,6 @@ export function NotesRail(): React.JSX.Element {
     const opening = f.path === openingFilePath
     const kind = fileKind(f.ext, f.name)
     const renaming = edit !== null && edit.mode === 'rename' && edit.kind === 'file' && edit.path === f.path
-    const ext = splitFileExt(f.name).ext
     return (
       <div
         key={`file:${f.path}`}
@@ -1571,8 +1555,7 @@ export function NotesRail(): React.JSX.Element {
         <IndentGuides depth={depth} />
         {renaming ? (
           <span className="notes-file-rename">
-            {nameInput(t('notes.field.fileNamePlaceholder'))}
-            {ext !== '' && <span className="notes-file-rename-ext">.{ext}</span>}
+            {nameInput(t('notes.field.fileNamePlaceholder'), 'stem')}
           </span>
         ) : (
           <div
@@ -1620,10 +1603,7 @@ export function NotesRail(): React.JSX.Element {
             title={t('notes.file.rename')}
             onClick={(e) => {
               e.stopPropagation()
-              startEdit(
-                { mode: 'rename', kind: 'file', parent: '', path: f.path },
-                splitFileExt(f.name).base
-              )
+              startEdit({ mode: 'rename', kind: 'file', parent: '', path: f.path }, f.name)
             }}
           >
             <i className="fa-solid fa-pen" />
@@ -1740,7 +1720,7 @@ export function NotesRail(): React.JSX.Element {
               onClick={() => {
                 setSelectedFolder(f.path)
                 useNotesStore.getState().setExpanded(f.path, true)
-                startEdit({ mode: 'create', kind: 'note', parent: f.path, path: '' }, NEW_DOC_NAME, 'excal')
+                startEdit({ mode: 'create', kind: 'note', parent: f.path, path: '' }, NEW_CANVAS_NAME)
               }}
             >
               <i className="fa-solid fa-chalkboard" />
@@ -2066,7 +2046,7 @@ export function NotesRail(): React.JSX.Element {
               title={t('notes.action.newCanvasTitle')}
               aria-label={t('notes.action.newCanvasTitle')}
               onClick={() =>
-                startEdit({ mode: 'create', kind: 'note', parent: '', path: '' }, NEW_DOC_NAME, 'excal')
+                startEdit({ mode: 'create', kind: 'note', parent: '', path: '' }, NEW_CANVAS_NAME)
               }
             >
               <i className="fa-solid fa-chalkboard" />

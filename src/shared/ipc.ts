@@ -125,7 +125,7 @@ export const IPC = {
   notesSaveFile: 'notes:saveFile',
   /** 在指定目录新建空文件(非 Markdown) */
   notesCreateFile: 'notes:createFile',
-  /** 重命名文件(只改主名,扩展名固定) */
+  /** 重命名文件(完整新文件名,含扩展名) */
   notesRenameFile: 'notes:renameFile',
   // ── 笔记同步 ──
   notesSyncStatus: 'notesSync:status',

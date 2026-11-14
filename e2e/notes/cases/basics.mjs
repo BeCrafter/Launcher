@@ -229,9 +229,8 @@ async function indentCreateNote(ctx, parent, name) {
     timeout: 5000,
     message: '出现新建笔记输入框'
   })
-  await ctx.cdp.eval(
-    `(() => { const el = document.querySelector('.notes-create-name'); el?.focus(); el?.select() })()`
-  )
+  // 挂上时已经只选中主名。再全选会把 .md 一起冲掉,打出来的就不是笔记了。
+  await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.focus()`)
   await ctx.cdp.type(name)
   await ctx.press('Enter')
   const id = `${parent}/${name}`
@@ -1128,10 +1127,14 @@ export default [
         `document.querySelector('.notes-create-fields .notes-create-name') !== null`,
         { timeout: 5000, message: '根层出现新建名字输入框' }
       )
+      // 默认只选中主名。打完主名再把后缀从 md 改成 txt。
       await ctx.cdp.type('选中文件')
-      await ctx.cdp.eval(
-        `(() => { const el = document.querySelector('.notes-create-ext-input'); el?.focus(); el?.select() })()`
-      )
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-create-name')
+        const dot = el.value.lastIndexOf('.')
+        el.focus()
+        el.setSelectionRange(dot + 1, el.value.length)
+      })()`)
       await ctx.cdp.type('txt')
       await ctx.press('Enter')
       await ctx.cdp.waitFor(

@@ -256,7 +256,6 @@ export const zhCN: Record<string, string> = {
   "notes.time.day": "{N} 天前",
   "notes.field.titlePlaceholder": "标题",
   "notes.field.fileNamePlaceholder": "名称",
-  "notes.field.extLabel": "文件类型",
   "notes.field.bodyPlaceholder": "用 Markdown 记点什么…（可粘贴或拖入图片）",
   "notes.field.tagsPlaceholder": "回车加标签",
   "notes.mode.split": "分栏",

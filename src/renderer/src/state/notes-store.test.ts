@@ -390,9 +390,9 @@ describe('notes-store:renameFile(重命名文件)', () => {
       error: null
     })
 
-    const out = await useNotesStore.getState().renameFile('docs/old.js', 'new')
+    const out = await useNotesStore.getState().renameFile('docs/old.js', 'new.js')
     expect(out).toEqual(renamed)
-    expect(mocks.renameFile).toHaveBeenCalledWith({ path: 'docs/old.js', name: 'new' })
+    expect(mocks.renameFile).toHaveBeenCalledWith({ path: 'docs/old.js', name: 'new.js' })
     expect(useNotesStore.getState().files.map((f) => f.path)).toContain('docs/new.js')
     expect(mocks.toast).toHaveBeenCalled()
   })
@@ -400,7 +400,7 @@ describe('notes-store:renameFile(重命名文件)', () => {
   it('同名 / 失败返回 null 并提示', async () => {
     seed([])
     mocks.renameFile.mockResolvedValue({ ok: false, kind: 'exists', message: '同名文件已存在' })
-    expect(await useNotesStore.getState().renameFile('a.js', 'b')).toBeNull()
+    expect(await useNotesStore.getState().renameFile('a.js', 'b.js')).toBeNull()
     expect(mocks.toast).toHaveBeenCalled()
     expect(mocks.list).not.toHaveBeenCalled()
   })

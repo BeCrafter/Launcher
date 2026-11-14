@@ -691,13 +691,13 @@ export type NoteFileCreateOutcome =
   | { ok: false; kind: 'invalid' | 'exists' | 'io'; message: string }
 
 /**
- * 重命名文件:只改主名,扩展名沿用原文件。
- * 类型由扩展名决定,所以改名不可能改变「它是什么文件」。
+ * 重命名文件:传入的是新的单段文件名,含扩展名。
+ * 改成 `.md` 会被拒绝 — 那会被目录扫描收成笔记,不是改个后缀。
  */
 export interface NoteFileRenameInput {
   /** 旧相对路径 */
   path: string
-  /** 新主名(不含扩展名) */
+  /** 新的单段文件名,含扩展名,如 `app.js` */
   name: string
 }
 
@@ -906,7 +906,7 @@ export function baseNameOf(id: string): string {
 /**
  * 文件名 → 主名 + 扩展名(不含点)。`a.tar.gz` → `{ base:'a.tar', ext:'gz' }`。
  * 无扩展名或点开头(`.env`)时 ext 为空,base 原样返回。
- * 建文件与重命名共用这一份拆分,两边的预填/重建才不会对不上。
+ * 新建与改名输入框共用这一份拆分:挂上时只选中主名,提交时按最后一段决定是笔记还是文件。
  */
 export function splitFileExt(name: string): { base: string; ext: string } {
   const dot = name.lastIndexOf('.')

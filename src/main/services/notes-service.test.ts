@@ -1697,13 +1697,14 @@ describe('createFile(新建任意类型的空文件)', () => {
   })
 })
 
-describe('renameFile(重命名文件,扩展名固定)', () => {
-  it('只改主名:目录保留、扩展名不变、内容不动', async () => {
+describe('renameFile(重命名文件,完整新文件名)', () => {
+  it('传入完整新文件名:目录保留、内容不动', async () => {
     const svc = makeService()
     mkdirSync(join(svc.dir(), 'docs'), { recursive: true })
     writeFileSync(join(svc.dir(), 'docs', 'old.txt'), 'hello')
 
-    const out = await svc.renameFile({ path: 'docs/old.txt', name: 'new' })
+    // 以前只传主名,主进程会把旧后缀拼回去。现在 `new` 就是新文件名,不再长出 .txt。
+    const out = await svc.renameFile({ path: 'docs/old.txt', name: 'new.txt' })
     expect(out.ok).toBe(true)
     if (!out.ok) throw new Error('expected renamed')
     expect(out.file.path).toBe('docs/new.txt')
@@ -1717,14 +1718,15 @@ describe('renameFile(重命名文件,扩展名固定)', () => {
     expect(list.files.map((f) => f.path)).toContain('docs/new.txt')
   })
 
-  it('主名自带同扩展名时去重;扩展名大小写原样保留', async () => {
+  it('后缀按传入的新名字走,不再沿用旧文件的大小写', async () => {
     const svc = makeService()
     writeFileSync(join(svc.dir(), 'ic.PNG'), 'x')
 
+    // 以前会把自带的 .png 剔掉,再拼回旧的 .PNG。现在新名字原样落地。
     const out = await svc.renameFile({ path: 'ic.PNG', name: 'image.png' })
     expect(out.ok).toBe(true)
     if (!out.ok) throw new Error('expected renamed')
-    expect(out.file.path).toBe('image.PNG')
+    expect(out.file.path).toBe('image.png')
     expect(out.file.ext).toBe('png')
     expect(out.file.kind).toBe('image')
   })
@@ -1734,28 +1736,28 @@ describe('renameFile(重命名文件,扩展名固定)', () => {
     writeFileSync(join(svc.dir(), 'a.txt'), 'A')
     writeFileSync(join(svc.dir(), 'b.txt'), 'B')
 
-    const exists = await svc.renameFile({ path: 'a.txt', name: 'b' })
+    const exists = await svc.renameFile({ path: 'a.txt', name: 'b.txt' })
     expect(exists).toMatchObject({ ok: false, kind: 'exists' })
     expect(read(svc.dir(), 'a.txt')).toBe('A')
     expect(read(svc.dir(), 'b.txt')).toBe('B')
 
-    expect(await svc.renameFile({ path: 'missing.txt', name: 'x' })).toMatchObject({
+    expect(await svc.renameFile({ path: 'missing.txt', name: 'x.txt' })).toMatchObject({
       ok: false,
       kind: 'not-found'
     })
-    expect(await svc.renameFile({ path: '../a.txt', name: 'x' })).toMatchObject({
+    expect(await svc.renameFile({ path: '../a.txt', name: 'x.txt' })).toMatchObject({
       ok: false,
       kind: 'not-found'
     })
     mkdirSync(join(svc.dir(), 'assets'), { recursive: true })
     writeFileSync(join(svc.dir(), 'assets', 'x.png'), 'x')
-    expect(await svc.renameFile({ path: 'assets/x.png', name: 'y' })).toMatchObject({
+    expect(await svc.renameFile({ path: 'assets/x.png', name: 'y.png' })).toMatchObject({
       ok: false,
       kind: 'not-found'
     })
   })
 
-  it('非法主名被拒;无扩展名的文件不能借改名长出扩展名', async () => {
+  it('非法文件名与改成 .md 被拒;无扩展名的文件可以加上扩展名', async () => {
     const svc = makeService()
     writeFileSync(join(svc.dir(), 'a.txt'), 'A')
 
@@ -1763,21 +1765,33 @@ describe('renameFile(重命名文件,扩展名固定)', () => {
     expect(await svc.renameFile({ path: 'a.txt', name: '   ' })).toMatchObject({ ok: false, kind: 'invalid' })
     expect(await svc.renameFile({ path: 'a.txt', name: '.hidden' })).toMatchObject({ ok: false, kind: 'invalid' })
     expect(await svc.renameFile({ path: 'a.txt', name: 'a/b' })).toMatchObject({ ok: false, kind: 'invalid' })
+    // .md 会被扫描收成笔记,文件改名不走这条路
+    expect(await svc.renameFile({ path: 'a.txt', name: 'a.md' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(await svc.renameFile({ path: 'a.txt', name: 'a.MD' })).toMatchObject({ ok: false, kind: 'invalid' })
+    expect(existsSync(join(svc.dir(), 'a.txt'))).toBe(true)
 
-    // 无扩展名文件名:允许改主名,但不允许加扩展名
+    const changed = await svc.renameFile({ path: 'a.txt', name: 'b.js' })
+    expect(changed.ok).toBe(true)
+    if (!changed.ok) throw new Error('expected renamed')
+    expect(changed.file.path).toBe('b.js')
+    expect(changed.file.kind).toBe('code')
+    expect(read(svc.dir(), 'b.js')).toBe('A')
+
+    // 无扩展名文件名:只改主名,也可以加上扩展名
     writeFileSync(join(svc.dir(), 'Makefile'), 'x')
-    const keepExt = await svc.renameFile({ path: 'Makefile', name: 'Buildfile' })
-    expect(keepExt.ok && keepExt.file.path).toBe('Buildfile')
-    expect(await svc.renameFile({ path: 'Buildfile', name: 'Buildfile.sh' })).toMatchObject({
-      ok: false,
-      kind: 'invalid'
-    })
+    const keep = await svc.renameFile({ path: 'Makefile', name: 'Buildfile' })
+    expect(keep.ok && keep.file.path).toBe('Buildfile')
+    const gained = await svc.renameFile({ path: 'Buildfile', name: 'Buildfile.sh' })
+    expect(gained.ok).toBe(true)
+    if (!gained.ok) throw new Error('expected renamed')
+    expect(gained.file.path).toBe('Buildfile.sh')
+    expect(gained.file.ext).toBe('sh')
   })
 
-  it('主名没变时直接返回当前元信息', async () => {
+  it('文件名没变时直接返回当前元信息', async () => {
     const svc = makeService()
     writeFileSync(join(svc.dir(), 'a.txt'), 'A')
-    const out = await svc.renameFile({ path: 'a.txt', name: 'a' })
+    const out = await svc.renameFile({ path: 'a.txt', name: 'a.txt' })
     expect(out.ok && out.file.path).toBe('a.txt')
     expect(read(svc.dir(), 'a.txt')).toBe('A')
   })

@@ -80,9 +80,20 @@ async function createCanvas(ctx, name) {
     timeout: 5000,
     message: '出现新建白板的名字输入框'
   })
-  const ext = await ctx.cdp.eval(`document.querySelector('.notes-create-ext-input')?.value`)
-  eq(ext, 'excal', '白板入口把类型预填成 excal')
-  await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.select()`)
+  // 以前类型是另一格,预填 excal。现在一格就是完整文件名,只选中主名。
+  const field = await ctx.cdp.json(`(() => {
+    const el = document.querySelector('.notes-create-name')
+    return {
+      value: el?.value ?? null,
+      start: el?.selectionStart ?? -1,
+      end: el?.selectionEnd ?? -1,
+      split: document.querySelector('.notes-create-ext-input') !== null
+    }
+  })()`)
+  eq(field?.value, '未命名.excal', '白板入口预填完整文件名')
+  eq(field?.split, false, '白板新建也没有独立的扩展名输入框')
+  eq(field?.end, 3, '只选中主名,后缀留在选区外')
+  await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.focus()`)
   await ctx.cdp.type(name)
   await ctx.press('Enter')
   await ctx.cdp.waitFor(

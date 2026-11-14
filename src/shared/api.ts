@@ -276,7 +276,7 @@ export interface LauncherApi {
     saveFile: (input: NoteFileSaveInput) => Promise<NoteFileSaveOutcome>
     /** 在指定目录新建空文件(非 .md;Markdown 笔记走 create) */
     createFile: (input: NoteFileCreateInput) => Promise<NoteFileCreateOutcome>
-    /** 重命名文件(只改主名,扩展名固定) */
+    /** 重命名文件(完整新文件名,含扩展名) */
     renameFile: (input: NoteFileRenameInput) => Promise<NoteFileRenameOutcome>
   }
   /** 笔记目录同步。秘密明文只在设置页点眼睛时取一次 */

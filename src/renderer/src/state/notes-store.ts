@@ -180,7 +180,7 @@ interface NotesState {
   /** 新建空文件(非 Markdown);成功返回文件相对路径,失败返回 null */
   createFile(parent: string, name: string): Promise<string | null>
   /**
-   * 重命名文件(只改主名,扩展名由主进程沿用原文件)。
+   * 重命名文件。`name` 是完整新文件名(含扩展名)。
    * 成功返回服务端的权威元信息(路径已变),失败返回 null。
    */
   renameFile(path: string, name: string): Promise<NoteFileStat | null>

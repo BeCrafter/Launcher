@@ -256,7 +256,6 @@ export const enUS: Record<string, string> = {
   "notes.time.day": "{N} d ago",
   "notes.field.titlePlaceholder": "Title",
   "notes.field.fileNamePlaceholder": "Name",
-  "notes.field.extLabel": "File type",
   "notes.field.bodyPlaceholder": "Write something in Markdown… (paste or drop images)",
   "notes.field.tagsPlaceholder": "Enter to add a tag",
   "notes.mode.split": "Split",
