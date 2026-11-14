@@ -243,6 +243,13 @@ In split view the two panes **scroll together** — scroll either one and the ot
 source line is this block", not off height ratios (the two panes are almost never the same height, and ratios drift
 further apart the longer the note). The 🔗 button on the metadata row turns it off.
 
+A column of small ticks sits in the top-right corner of the preview, one per heading, with the current section
+highlighted. Hover it (or tab to it) and the outline opens 1px to the left of the ticks, with child headings indented by level; the current
+entry carries a marker in the same color as the highlighted tick, so the two are easy to match. The outline is for
+locating only: click a heading to scroll straight to it; when the outline is long it scrolls inside the card, and the
+current section is kept in view. Nothing sits in front of a heading until you hover it: then an italic `H` and its level number appear. Move onto that mark and only the caret remains, which collapses / expands that section's body. A section that is already folded keeps its caret.
+Folding only affects reading — **the source is untouched** — and resets when you open another note.
+
 Saving happens about a second after you stop typing — there is no save button. **Renaming the title renames the
 file too**: when you leave the title field the file follows the title (if the name is taken the app asks whether to
 cancel or keep both).

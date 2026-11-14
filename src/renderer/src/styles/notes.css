@@ -1436,6 +1436,11 @@
   min-height: 0;
   overflow: hidden;
 }
+/* 预览栏的定位基准:滚动容器是里面的 .notes-preview,右缘刻度浮层挂在这一层,
+   不会跟着正文滚走。 */
+.notes-preview-pane {
+  position: relative;
+}
 .notes-divider {
   width: 7px;
   flex-shrink: 0;
@@ -2442,18 +2447,24 @@ body.cm-block-dragging {
   color: var(--muted);
 }
 
-/* ⚠ 必须覆盖 .notes-pane 的 display:flex —— 两者是同一个元素,而 flex item 会收缩到内容宽度,
-   正文区因此不会撑满,代码块看起来只有一小条。预览是滚动容器,本来就该是块级。 */
+/* ⚠ 预览滚动容器现在是 .notes-preview-pane 里的 flex 项:
+   flex 尺寸挂在外面,这里只负责撑满与滚动。
+   display 仍要覆盖 .notes-pane 的 flex —— 预览是块级滚动容器,不是等宽分栏。 */
 .notes-preview {
+  flex: 1 1 0;
   display: block;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   /*
    * 横向也要能滚:被显式放大的图片会超出栏宽(见 .md-media-box.sized)。
-   * 不写这条的话,`.notes-pane` 上的 `overflow: hidden` 会把超出的部分直接裁掉 ——
+   * 不写这条的话,外层 `.notes-pane` 上的 `overflow: hidden` 会把超出的部分直接裁掉 ——
    * 用户拖到 473 却只能看到 353,右边那截凭空消失。
    */
   overflow-x: auto;
-  padding: 20px 26px 56px;
+  /* 左侧 40px 留给标题前方那个大号斜体 H(右缘在标题外 4px,本身约 30px)。
+     再窄它就会探出内边距,而这里 overflow-x 是 auto,会凭空多出一条水平滚动条。 */
+  padding: 20px 26px 56px 40px;
   background: var(--surface);
 }
 
@@ -2493,6 +2504,231 @@ body.cm-block-dragging {
 .notes-preview::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* ── 预览右上角的标题刻度 + 悬停浮层目录 ──
+   默认只有一排不抢眼的短刻度;悬停 / 键盘聚焦才展开卡片。
+   刻度条和浮层共用同一套 right:可见面板出现在刻度条左缘左侧 1px,
+   这 1px 仍是卡片的点击区,指针移过去不会把浮层关掉。
+   整层 pointer-events:none,只有刻度和卡片接指针 —— 不挡正文、图片与嵌入。 */
+.preview-outline {
+  --outline-rail-right: 4px;
+  --outline-rail-width: 18px;
+  --outline-gap: 1px;
+  /* 浮层盖在正文上,最宽收到 200:12px 字号下顶层大约还能看清 13 个汉字。 */
+  --outline-card-width: 200px;
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+.preview-outline-handle {
+  position: absolute;
+  top: 12px;
+  right: var(--outline-rail-right);
+  width: var(--outline-rail-width);
+  /* 固定像素:绝对定位父级没有明确高度,百分比 max-height 会解成 none,栏就被内容撑开。 */
+  max-height: 160px;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0.4;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: opacity 140ms ease;
+}
+/* 滚动槽裁切多出来的刻度。按内容长高,封顶后才出现可滚余量。
+   不用原生滚动条:上下靠指针贴边自动滚。 */
+.preview-outline-strip {
+  /* 块级,不要 flex:列方向的 flex 容器会被内容撑开,max-height 夹不住,贴边也就没有可滚的余量。
+     间距用刻度自己的 margin,不用 gap。relative 让高亮拇指跟着内容走。
+     不要加 scroll-behavior:跟随是逐帧算的,再补一段平滑滚动会和它打架。 */
+  position: relative;
+  max-height: 160px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.preview-outline-strip::-webkit-scrollbar {
+  display: none;
+}
+.preview-outline-strip > .preview-outline-tick:first-child {
+  margin-top: 0;
+}
+/* 哪一侧还有被裁掉的刻度,哪一侧渐隐。到头不加,免得假装还有。 */
+.preview-outline-strip.fade-top {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 22px, #000 100%);
+}
+.preview-outline-strip.fade-bottom {
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 22px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 22px), transparent 100%);
+}
+.preview-outline-strip.fade-top.fade-bottom {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 22px,
+    #000 calc(100% - 22px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 22px,
+    #000 calc(100% - 22px),
+    transparent 100%
+  );
+}
+.preview-outline:hover .preview-outline-handle,
+.preview-outline:focus-within .preview-outline-handle,
+.preview-outline.is-open .preview-outline-handle {
+  opacity: 1;
+}
+.preview-outline-tick {
+  display: block;
+  width: 6px;
+  height: 2px;
+  margin: 4px auto 0;
+  border-radius: 1px;
+  background: var(--dim);
+  transition: width 120ms ease, background-color 120ms ease;
+}
+.preview-outline-tick[data-level='1'] {
+  width: 9px;
+}
+.preview-outline-tick[data-level='3'],
+.preview-outline-tick[data-level='4'],
+.preview-outline-tick[data-level='5'],
+.preview-outline-tick[data-level='6'],
+.preview-outline-tick[data-level='7'],
+.preview-outline-tick[data-level='8'],
+.preview-outline-tick[data-level='9'],
+.preview-outline-tick[data-level='10'] {
+  width: 4px;
+}
+/* 当前节只靠 .is-active 认,颜色画在拇指上。两处都上色会看到两根高亮。 */
+.preview-outline-thumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  width: 12px;
+  height: 2px;
+  margin: 0 auto;
+  border-radius: 1px;
+  background: var(--accent2);
+  box-shadow: 0 0 0 2px var(--wash-accent);
+  pointer-events: none;
+  transform: translateY(0);
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.preview-outline-card {
+  position: absolute;
+  top: 12px;
+  /* 外框右缘贴住刻度条左缘(点击区相接);padding-right 把画出来的面板
+     再往左推 1px。别用 left 定位 —— 白底在 inner 上,横排 flex 会把它缩在槽的左边,
+     中间那截空白就是「浮层离刻度条很远」。 */
+  right: calc(var(--outline-rail-right) + var(--outline-rail-width));
+  padding-right: var(--outline-gap);
+  max-height: calc(100% - 24px);
+  width: min(var(--outline-card-width), calc(100% - var(--outline-rail-right) - var(--outline-rail-width) - 12px));
+  display: flex;
+  flex-direction: column;
+  /* stretch 而不是 flex-start:内容超高时 inner 被夹在卡片高度内,
+     目录列表的 overflow-y 才会真正滚动。 */
+  align-items: stretch;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(4px);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 0s linear 120ms;
+}
+/* 展开只认 React 的 is-open:悬停进入/离开、聚焦/失焦都由它驱动。
+   不用 :hover 打开卡片 —— 否则指针停在刻度上时按 Escape 关不掉。 */
+.preview-outline.is-open .preview-outline-card {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: none;
+  transition-delay: 0s;
+}
+.preview-outline-card-inner {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px;
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--menu-bg);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 32%);
+  color: var(--text);
+}
+.preview-outline-hd {
+  flex-shrink: 0;
+  padding: 5px 8px 7px;
+  color: var(--dim);
+  font-size: 10.5px;
+}
+.preview-outline-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.preview-outline-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 5px;
+}
+.preview-outline-row:hover {
+  background: var(--hover);
+}
+.preview-outline-row.is-active {
+  background: var(--wash-accent);
+}
+/* 当前项在浮层里的标识:与刻度条的 .is-active 同色,两处一眼对得上。
+   槽位一直占位,切换当前项时标题列宽不跳。 */
+.preview-outline-row.is-active .preview-outline-jump {
+  color: var(--accent2);
+}
+.preview-outline-mark-slot {
+  flex: 0 0 3px;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+}
+.preview-outline-mark {
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--accent2);
+}
+.preview-outline-jump {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.preview-outline-jump:focus-visible {
+  outline: 1px solid var(--accent2);
+}
+
 .notes-preview-empty {
   padding: 20px;
   color: var(--dim);
@@ -2516,21 +2752,217 @@ body.cm-block-dragging {
   padding: 11px 14px;
 }
 
-/* 预览里的扩展元素(基础 .md-* 在 app-chrome.css) */
-.notes-preview-body .md-h5 {
+/* 预览标题的层级。基础 .md-h1–.md-h4 在 app-chrome.css,聊天消息也用,
+   所以这里只覆盖正文层的直接标题;引用和表格里的标题保持原样。
+   相邻两级至少有一项不同(字号、字重或颜色)。 */
+.notes-preview-body > .md-h {
+  position: relative;
+  line-height: 1.35;
+}
+.notes-preview-body > .md-h1 {
+  margin: 2px 0 10px;
+  font-size: 22px;
+  font-weight: 700;
+}
+.notes-preview-body > .md-h1::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* 落在下边距里,不压到字上,也不伸进左侧放标签的留白。 */
+  bottom: -6px;
+  height: 1px;
+  background: var(--border);
+}
+.notes-preview-body > .md-h2 {
+  margin: 20px 0 8px;
+  font-size: 18px;
+  font-weight: 700;
+}
+.notes-preview-body > .md-h3 {
+  margin: 16px 0 6px;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+.notes-preview-body > .md-h4 {
+  margin: 14px 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.notes-preview-body > .md-h5 {
+  margin: 12px 0 4px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.notes-preview-body > .md-h6 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.notes-preview-body > .md-h7 {
+  margin: 10px 0 2px;
   font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
 }
-.notes-preview-body .md-h6 {
+.notes-preview-body > .md-h8 {
+  margin: 10px 0 2px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--dim);
+}
+.notes-preview-body > .md-h9 {
+  margin: 10px 0 2px;
   font-size: 12px;
-  color: var(--muted);
+  font-weight: 600;
+  color: var(--dim);
 }
-/* H7–H10 是本项目扩展(CommonMark 到 6):再降半档,并与其他小标题一样转灰 */
-.notes-preview-body .md-h7,
-.notes-preview-body .md-h8,
-.notes-preview-body .md-h9,
-.notes-preview-body .md-h10 {
-  font-size: 11.5px;
-  color: var(--muted);
+.notes-preview-body > .md-h10 {
+  margin: 10px 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dim);
+}
+
+/* 目录跳到这一节:浅底淡出。滚不到顶时正文里也看得出点中了哪一行。 */
+.notes-preview-body > .md-h.is-located {
+  border-radius: 4px;
+  animation: md-h-located 1s ease-out;
+}
+@keyframes md-h-located {
+  from {
+    background-color: var(--wash-accent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+/* ── 预览标题前方的层级标 / 折叠箭头 ──
+   平时是一个细高的斜体 H 加级数,没有底;鼠标停在这个 H 上(或本节已折叠)才换成箭头,
+   停在标题文字上不换。两层叠在同一处交叉淡入,不用 display 切换 —— 那样没有过渡。
+   右缘离标题 4px,整段落在预览的左内边距里,不压到字上。 */
+.md-h-fold-btn {
+  position: absolute;
+  /* 标题盒子跟正文同宽,right 会把 H 推到行尾。从左缘往左放,translateX(-100%)
+     让内容右缘停在左缘外 4px,宽窄(H1 与 H10)都一样。
+     bottom 按字号抬一点:H 的基线比标题字的下沿略低,各级都收在 1px 以内。 */
+  left: -4px;
+  bottom: calc(0.21em - 1.1px);
+  transform: translateX(-100%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* 按钮有自己的默认字号,不继承的话里面的 em 每级都一样大。 */
+  font-size: inherit;
+  /* 把与标题之间的 4px 算进点击区:从文字移到前面时不会穿过一条空缝,
+     画出来的字仍离标题 4px。 */
+  padding-right: 4px;
+  /* 宽高只保证点击区,不画出来。 */
+  min-width: 18px;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent2);
+  cursor: pointer;
+}
+/* 平时不显示。停在标题文字上才出 H,再移到标题前面换成箭头。 */
+.md-h-level {
+  display: inline-flex;
+  align-items: flex-end;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 160ms ease-out;
+}
+/* 停在标题文字上才出 H。:hover 在停到按钮上时也成立,所以要排除掉,
+   否则这条和下面「按钮悬停时藏起 H」同样具体,谁生效就看样式表顺序。 */
+.md-h:hover > .md-h-fold-btn:not(:hover) .md-h-level {
+  opacity: 1;
+}
+.md-h-mark {
+  font-family: 'Iowan Old Style', Palatino, Georgia, serif;
+  font-style: italic;
+  font-weight: 700;
+  /* 跟这一级标题走:H1 约 25px,H4 约 16px,不用每级都一样大。 */
+  font-size: 1.15em;
+  line-height: 0.8;
+  letter-spacing: -0.04em;
+  /* 深灰而不是强调色:退到标题旁边,像一层背景。斜体已经有倾斜,不再另扭。 */
+  color: var(--dim);
+}
+.md-h-num {
+  /* 级数要能直接读出来,不能缩成右下角一个点。 */
+  font-size: 0.68em;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  margin-left: 1px;
+  color: var(--dim);
+}
+/* 箭头叠在 H 上,平时透明。只淡入淡出,朝向不过渡 —— 连点时不重播旋转。 */
+.md-h-fold-btn i {
+  position: absolute;
+  /* 透明时也要接住点击:否则指针落在图标上,按钮收不到悬停和点击。 */
+  pointer-events: auto;
+  font-size: 9px;
+  opacity: 0;
+  /* 展开 = 朝下;折叠 = 朝右 */
+  transform: rotate(90deg);
+  transition: opacity 160ms ease-out;
+}
+.md-h-fold-btn:hover .md-h-level,
+.md-h-fold-btn:focus-visible .md-h-level,
+.md-h[data-folded='true'] > .md-h-fold-btn .md-h-level {
+  opacity: 0;
+}
+.md-h-fold-btn:hover i,
+.md-h-fold-btn:focus-visible i,
+.md-h[data-folded='true'] > .md-h-fold-btn i {
+  opacity: 1;
+}
+.md-h[data-folded='true'] > .md-h-fold-btn i {
+  transform: none;
+}
+/* 没有正文可折:停在标题前面仍是 H,不出箭头。 */
+.md-h-level-only:hover .md-h-level,
+.md-h-level-only:focus-visible .md-h-level {
+  opacity: 1;
+}
+.md-h-level-only {
+  cursor: default;
+}
+/* 不能只靠 hidden 属性:作者样式里的 display:flex/block 会盖过 UA 的 [hidden] */
+.notes-preview-body .md-fold-hidden {
+  display: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-outline-handle,
+  .preview-outline-tick,
+  .preview-outline-thumb,
+  .preview-outline-card,
+  .md-h-fold-btn,
+  .md-h-level,
+  .md-h-fold-btn i {
+    transition: none;
+  }
+  .notes-preview-body > .md-h.is-located {
+    animation: none;
+    background: var(--wash-accent);
+  }
+}
+
+@media (max-width: 900px) {
+  /* 刻度条和浮层都跟这个变量,不要再单独写死 right / width——
+     那样窄窗口的浮层会比宽窗口还宽。 */
+  .preview-outline {
+    --outline-rail-right: 2px;
+  }
+  .notes-preview {
+    padding-right: 22px;
+  }
 }
 /* 折叠块:与提示块同一套「卡片」观感,只是标题可点 */
 .notes-preview-body .md-details {

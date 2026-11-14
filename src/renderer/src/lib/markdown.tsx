@@ -1184,6 +1184,17 @@ function renderInlineExt(parts: InlineExt[], keyBase: string, ctx: ExtCtx): Reac
  */
 const FENCE_EXT_RE = /^\s*(`{3,}|~{3,})(.*)$/
 const HEAD_EXT_RE = /^(#{1,10})\s+(.*)$/
+
+/**
+ * 与渲染器完全同一口径的标题识别。
+ *
+ * 块模型(markdown-blocks)的标题正则更宽松(允许前导空格、裸 `#`),
+ * 预览大纲必须只收录**真的会被画成 `.md-h`** 的行,所以统一走这里。
+ */
+export function parseHeadingLine(line: string): { level: number; title: string } | null {
+  const match = HEAD_EXT_RE.exec(line)
+  return match === null ? null : { level: match[1].length, title: match[2] }
+}
 const HR_EXT_RE = /^\s*(-{3,}|\*{3,}|_{3,})\s*$/
 // 与块模型对齐:引用最多 3 个前导空格(4 个空格是代码块)。
 const QUOTE_EXT_RE = /^ {0,3}>\s?/

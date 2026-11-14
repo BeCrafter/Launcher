@@ -3,7 +3,16 @@
 // 自动保存的生命周期在这里收口:切模块/失焦/关窗都要 flush。去抖计时器本身在 store 里
 // (放组件里会在卸载时把待保存的改动一起带走)。
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode
+} from 'react'
 import { parentOf, baseNameOf } from '@shared/notes'
 import { buildWikiIndex, resolveWikiTarget, type WikiLink, type WikiResolution } from '@shared/wikilinks'
 import { useT } from '../../hooks/useT'
@@ -47,6 +56,9 @@ import { NoteBlockMenu, NoteInsertMenu, type InsertMenuMode } from './NoteBlockM
 import { NoteMovePicker } from './NoteMovePicker'
 import { NoteFindBar } from './NoteFindBar'
 import { parseMarkdownBlocks, type MarkdownBlock } from '../../lib/markdown-blocks'
+import { buildPreviewOutline } from '../../lib/preview-outline'
+import { applyPreviewFoldDom } from '../../lib/preview-fold'
+import { PreviewOutlineRail } from './PreviewOutlineRail'
 import { locatorOf, type BlockLocator } from '../../lib/block-move'
 import { NoteRefChips } from './NoteRefChips'
 import { NoteRefPicker } from './NoteRefPicker'
@@ -57,6 +69,8 @@ import { useActiveDocKind } from './doc-actions'
 
 /** 渲染器引用必须是稳定的:预览的 memo 依赖它,每次新建函数会让整篇重解析 */
 const HIGHLIGHT = highlightCodeNodes
+/** 没有折叠时复用同一个空集合,避免下游 effect 因新建 Set 而重跑 */
+const EMPTY_FOLDED: ReadonlySet<string> = new Set()
 
 export function NotesView(): React.JSX.Element {
   const t = useT()
@@ -118,6 +132,31 @@ export function NotesView(): React.JSX.Element {
     replacement: '',
     options: { ...DEFAULT_FIND_OPTIONS }
   })
+
+  // ── 预览大纲与折叠 ──
+  // 折叠只属于阅读视图、不写源文。状态跟着笔记走:换笔记直接归零。
+  // 渲染期修正而不是 effect 里清,避免新笔记先套上一篇的折叠闪一下。
+  const noteKey = draft?.id ?? null
+  const [foldState, setFoldState] = useState<{ noteId: string | null; keys: ReadonlySet<string> }>({
+    noteId: noteKey,
+    keys: EMPTY_FOLDED
+  })
+  if (foldState.noteId !== noteKey) setFoldState({ noteId: noteKey, keys: EMPTY_FOLDED })
+  const foldedKeys = foldState.noteId === noteKey ? foldState.keys : EMPTY_FOLDED
+
+  const toggleHeadingFold = useCallback(
+    (key: string): void => {
+      setFoldState((prev) => {
+        const keys = new Set(prev.noteId === noteKey ? prev.keys : EMPTY_FOLDED)
+        if (keys.has(key)) keys.delete(key)
+        else keys.add(key)
+        return { noteId: noteKey, keys }
+      })
+    },
+    [noteKey]
+  )
+
+  const previewOutline = useMemo(() => buildPreviewOutline(draft?.body ?? ''), [draft?.body])
 
   const closeFind = useCallback(() => {
     setFindOpen(false)
@@ -322,6 +361,22 @@ export function NotesView(): React.JSX.Element {
     },
     []
   )
+
+  // 预览重渲染会冲掉注入的折叠箭头与隐藏类 —— 每次提交后、绘制前按当前状态重放。
+  // 放 layout effect 里是为了不闪:用户改一个字,预览不会先整段展开再收起。
+  useLayoutEffect(() => {
+    const pv = previewRef.current
+    if (pv === null || viewMode === 'edit') return
+    const body = pv.querySelector<HTMLElement>('.notes-preview-body')
+    if (body === null) return
+    applyPreviewFoldDom(
+      body,
+      previewOutline.headings,
+      foldedKeys,
+      { fold: t('notes.outline.fold'), unfold: t('notes.outline.unfold') },
+      toggleHeadingFold
+    )
+  }, [draft?.id, draft?.body, viewMode, foldedKeys, previewOutline, toggleHeadingFold, t])
 
   const renderDiagram = useCallback(
     (b: DiagramBlock): ReactNode => (
@@ -932,27 +987,33 @@ export function NotesView(): React.JSX.Element {
           )}
           {viewMode !== 'edit' && (
             <div
-              className="notes-pane notes-preview"
-              ref={previewRef}
-              onScroll={onPreviewScroll}
+              className="notes-pane notes-preview-pane"
               style={{ flex: viewMode === 'split' ? `${1 - splitRatio} 1 0` : '1 1 0' }}
             >
-              <NotePreview
-                body={draft.body}
-                resolveImage={resolvePreviewSrc}
-                onToggleTask={onToggleTask}
-                renderDiagram={renderDiagram}
-                calloutLabel={calloutLabel}
-                resolveEmbed={resolvePreviewSrc}
-                onResizeMedia={onResizeMedia}
-                onResizeEmbed={onResizeEmbed}
-                copyCodeLabel={t('common.copy')}
-                onEditTable={onEditTable}
-                tableLabels={tableLabels}
-                tableVars={tableVars}
-                resolveWiki={resolveWiki}
-                onWikiClick={onWikiClick}
-                wikiLabels={wikiLabels}
+              <div className="notes-preview" ref={previewRef} onScroll={onPreviewScroll}>
+                <NotePreview
+                  body={draft.body}
+                  resolveImage={resolvePreviewSrc}
+                  onToggleTask={onToggleTask}
+                  renderDiagram={renderDiagram}
+                  calloutLabel={calloutLabel}
+                  resolveEmbed={resolvePreviewSrc}
+                  onResizeMedia={onResizeMedia}
+                  onResizeEmbed={onResizeEmbed}
+                  copyCodeLabel={t('common.copy')}
+                  onEditTable={onEditTable}
+                  tableLabels={tableLabels}
+                  tableVars={tableVars}
+                  resolveWiki={resolveWiki}
+                  onWikiClick={onWikiClick}
+                  wikiLabels={wikiLabels}
+                />
+              </div>
+              <PreviewOutlineRail
+                key={draft.id}
+                previewRef={previewRef}
+                headings={previewOutline.headings}
+                foldedKeys={foldedKeys}
               />
             </div>
           )}

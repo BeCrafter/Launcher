@@ -131,16 +131,43 @@ export default [
   {
     id: 'markdown/headings-h1-h10',
     area: 'markdown',
-    title: '标题:H1–H10 在预览中渲染为对应层级,7 级以上在编辑器里也有着色',
+    title: '标题:H1–H10 在预览中逐级变小变淡、各级前面有层级标,7 级以上在编辑器里也有着色',
     tags: ['render'],
     fixture: HEADINGS,
     async run(ctx, t) {
+      // 期望改过:预览标题以前接近正文、H7–H10 完全一样。现在逐级拉开,并在前方标出 Hn。
+      const sizes = [22, 18, 15.5, 14, 13.5, 13, 12.5, 12.5, 12, 12]
+      const names = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
       for (let level = 1; level <= 10; level += 1) {
-        ok(
-          await ctx.cdp.eval(`document.querySelector('.notes-preview-body .md-h${level}') !== null`),
-          `预览存在 md-h${level}`
-        )
+        const style = await ctx.cdp.json(`(() => {
+          const el = document.querySelector('.notes-preview-body > .md-h${level}')
+          if (el === null) return null
+          const cs = getComputedStyle(el)
+          const rule = getComputedStyle(el, '::after')
+          return {
+            size: Number.parseFloat(cs.fontSize),
+            weight: cs.fontWeight,
+            color: cs.color,
+            rule: Number.parseFloat(rule.height) || 0,
+            level: el.querySelector(':scope > .md-h-fold-btn .md-h-level')?.textContent ?? null
+          }
+        })()`)
+        ok(style !== null, `预览存在 md-h${level}`)
+        eq(style.size, sizes[level - 1], `H${level} 字号应为 ${sizes[level - 1]}px`)
+        eq(style.level, `H${level}`, `「${names[level - 1]}级标题」前面是 H${level}`)
       }
+      const weights = await ctx.cdp.json(`(() => {
+        const of = (n) => getComputedStyle(document.querySelector('.notes-preview-body > .md-h' + n)).fontWeight
+        const color = (n) => getComputedStyle(document.querySelector('.notes-preview-body > .md-h' + n)).color
+        return { h1: of(1), h10: of(10), h4: color(4), h6: color(6) }
+      })()`)
+      eq(weights.h1, '700', 'H1 字重 700')
+      eq(weights.h10, '500', 'H10 字重 500')
+      ok(weights.h4 !== weights.h6, 'H6 颜色与 H4 不同')
+      const rule = await ctx.cdp.json(
+        `Number.parseFloat(getComputedStyle(document.querySelector('.notes-preview-body > .md-h1'), '::after').height) || 0`
+      )
+      eq(rule, 1, 'H1 底部有 1px 分割线')
       includes(await ctx.previewText(), '十级标题', '十级标题文本渲染')
       ok(
         (await ctx.cdp.eval(`document.querySelectorAll('.notes-editor-pane .tk-h4').length`)) >= 4,

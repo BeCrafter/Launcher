@@ -14,6 +14,7 @@ import railMove from './cases/rail-move.mjs'
 import pin from './cases/pin.mjs'
 import canvas from './cases/canvas.mjs'
 import resize from './cases/resize.mjs'
+import previewOutline from './cases/preview-outline.mjs'
 
 /**
  * 编辑器端到端用例的唯一清单。
@@ -37,7 +38,8 @@ export const CASES = [
   ...railMove,
   ...pin,
   ...canvas,
-  ...resize
+  ...resize,
+  ...previewOutline
 ]
 
 export const AREA_TITLES = {
@@ -56,5 +58,6 @@ export const AREA_TITLES = {
   'rail-move': '左侧目录树拖动移动文件夹、文件和笔记',
   pin: '置顶:置顶区与目录树双份呈现、交互与移动',
   canvas: '白板:Excalidraw 场景文件,文字、画笔、缩放、删除与嵌入',
-  resize: '可缩放区块的角柄与描边:图片、音视频、网页、PDF、表格、图表'
+  resize: '可缩放区块的角柄与描边:图片、音视频、网页、PDF、表格、图表',
+  'preview-outline': '预览标题大纲:右缘刻度、悬停目录、滚动跟随、跳转与双向折叠'
 }

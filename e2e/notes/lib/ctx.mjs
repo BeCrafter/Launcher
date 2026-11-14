@@ -145,6 +145,40 @@ export class NoteE2EContext {
       return true
     })()`)
     await this.waitForNode(async () => (await this.body()) === text, '正文重置成功')
+    // 预览折叠状态只随「换笔记」归零,整篇替换正文不会清:上一条用例折起的节会带进来,
+    // 下一条再点同一个箭头就变成「展开」而不是「折叠」。
+    // 先等预览重渲染完这一篇 —— 否则点击会落在旧正文的按钮上,等新按钮出现时
+    // 那次点击的状态更新才到,把新正文的第一节又折起来。
+    // 源文第一行带着 # ,预览里渲染掉了,要比渲染后的文字。
+    const firstLine = (text
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line !== '') ?? '')
+      .replace(/^#{1,10}\s+/, '')
+    await this.cdp.waitFor(
+      `document.querySelector('.notes-preview-body')?.textContent?.includes(${JSON.stringify(
+        firstLine
+      )}) === true`,
+      { message: '预览已换成重置后的正文' }
+    )
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const remaining = await this.cdp.eval(`(() => {
+        const folded = [...document.querySelectorAll('.notes-preview-body > .md-h[data-folded="true"]')]
+        for (const el of folded) el.querySelector(':scope > .md-h-fold-btn')?.click()
+        return folded.length
+      })()`)
+      if (remaining === 0) break
+      await sleep(120)
+    }
+    // 预览滚动容器跨用例存在:不归零的话上一条用例滚到哪儿,这一条就从哪儿开始,
+    // 大纲的「当前节」和解出来的滚动位置都会跟着串味。
+    await this.cdp.eval(`(() => {
+      const pv = document.querySelector('.notes-preview')
+      if (pv === null) return false
+      pv.scrollTop = 0
+      pv.dispatchEvent(new Event('scroll'))
+      return true
+    })()`)
     // 等这次重置落盘再开跑:否则上一条用例的保存 / 文件监听回调会闯进下一条用例的拖拽,
     // 偶发地把刚提交的移动又刷回旧正文。
     await this.waitSaved()
@@ -786,5 +820,305 @@ export class NoteE2EContext {
   async previewVisible() {
     return this.cdp.eval(`(() => { const el = document.querySelector('.notes-preview');
       return el !== null && getComputedStyle(el).display !== 'none' })()`)
+  }
+
+  // ── 预览大纲 / 折叠 ──
+
+  async previewOutlineExists() {
+    return this.cdp.eval(`(() => {
+      const el = document.querySelector('.preview-outline-handle')
+      if (el === null) return false
+      const r = el.getBoundingClientRect()
+      return r.width > 0 && r.height > 0
+    })()`)
+  }
+
+  async previewOutlineTicks() {
+    return this.cdp.json(
+      `[...document.querySelectorAll('.preview-outline-tick')].map((el) => ({
+        level: Number(el.dataset.level), active: el.classList.contains('is-active')
+      }))`
+    )
+  }
+
+  async previewOutlineRows() {
+    return this.cdp.json(`[...document.querySelectorAll('.preview-outline-row')].map((el) => ({
+      text: el.querySelector('.preview-outline-jump')?.textContent?.trim() ?? '',
+      level: Number(el.dataset.level),
+      depth: Number(el.dataset.depth),
+      active: el.classList.contains('is-active'),
+      marker: el.querySelector('.preview-outline-mark') !== null,
+      current: el.querySelector('.preview-outline-jump')?.getAttribute('aria-current') ?? null,
+      indent: Number.parseFloat(el.style.paddingLeft) || 0
+    }))`)
+  }
+
+  /**
+   * 目录条的定位:刻度条应在预览右上角,画出来的白底面板应在其左侧 1px、顶边对齐。
+   * 量的是 .preview-outline-card-inner(有背景的那一层),不是透明外框 ——
+   * 外框贴住刻度条时,白底仍可能缩在槽的左边。
+   * 不用 elementRect —— 它会 scrollIntoView,把预览滚走。
+   */
+  async previewOutlineGeometry() {
+    return this.cdp.json(`(() => {
+      const pane = document.querySelector('.notes-preview')
+      const handle = document.querySelector('.preview-outline-handle')
+      const card = document.querySelector('.preview-outline-card')
+      const inner = document.querySelector('.preview-outline-card-inner')
+      if (pane === null || handle === null || card === null || inner === null) return null
+      const p = pane.getBoundingClientRect()
+      const h = handle.getBoundingClientRect()
+      const c = card.getBoundingClientRect()
+      const i = inner.getBoundingClientRect()
+      return {
+        paneHeight: p.height,
+        // 卡片外框的 CSS 宽度(最宽 200px; 窄栏会被 min() 再压一截)
+        cardWidth: c.width,
+        handleTop: h.top - p.top,
+        handleRight: p.right - h.right,
+        handleLeft: h.left,
+        cardTop: i.top - p.top,
+        cardLeft: i.left - p.left,
+        cardHeight: i.height,
+        // 白底面板右缘与刻度条左缘之间的水平间隙(目标 1px)
+        gap: h.left - i.right,
+        // 外框右缘超出白底面板的宽度;面板没铺满槽时这里会是几十像素
+        slotSlack: c.right - i.right
+      }
+    })()`)
+  }
+
+  /** 当前行的标识与当前刻度:颜色应一致,标识要落在卡片里。 */
+  async previewOutlineMarker() {
+    return this.cdp.json(`(() => {
+      const row = document.querySelector('.preview-outline-row.is-active')
+      const mark = row?.querySelector('.preview-outline-mark')
+      const tick = document.querySelector('.preview-outline-tick.is-active')
+      const inner = document.querySelector('.preview-outline-card-inner')
+      if (!mark || !tick || !inner) return null
+      const m = mark.getBoundingClientRect()
+      const c = inner.getBoundingClientRect()
+      return {
+        inCard: m.left >= c.left - 1 && m.right <= c.right + 1 &&
+          m.top >= c.top - 1 && m.bottom <= c.bottom + 1,
+        width: m.width,
+        height: m.height,
+        markColor: getComputedStyle(mark).backgroundColor,
+        tickColor: getComputedStyle(document.querySelector('.preview-outline-thumb') ?? tick).backgroundColor
+      }
+    })()`)
+  }
+
+  async previewOutlineActive() {
+    return this.cdp.eval(
+      `document.querySelector('.preview-outline-row.is-active .preview-outline-jump')?.textContent?.trim() ?? null`
+    )
+  }
+
+  async previewOutlineCardOpacity() {
+    return this.cdp.eval(
+      `(() => { const el = document.querySelector('.preview-outline-card'); return el === null ? null : getComputedStyle(el).opacity })()`
+    )
+  }
+
+  async hoverPreviewOutline() {
+    const point = await this.cdp.json(`(() => {
+      const el = document.querySelector('.preview-outline-handle')
+      if (el === null) return null
+      const r = el.getBoundingClientRect()
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+    })()`)
+    if (point === null) throw new Error('找不到预览大纲刻度')
+    await this.cdp.mouse('mouseMoved', point.x, point.y)
+    await this.cdp.waitFor(
+      `(() => { const el = document.querySelector('.preview-outline-card');
+        return el !== null && getComputedStyle(el).opacity === '1' })()`,
+      { message: '预览大纲卡片展开' }
+    )
+    return point
+  }
+
+  async leavePreviewOutline() {
+    const point = await this.cdp.json(`(() => {
+      const el = document.querySelector('.notes-preview')
+      const r = el.getBoundingClientRect()
+      return { x: r.x + Math.min(80, r.width / 2), y: r.y + 40 }
+    })()`)
+    await this.cdp.mouse('mouseMoved', point.x, point.y)
+    await this.cdp.waitFor(
+      `(() => { const el = document.querySelector('.preview-outline-card');
+        return el === null || getComputedStyle(el).opacity === '0' })()`,
+      { message: '预览大纲卡片收起' }
+    )
+  }
+
+  async clickPreviewOutline(text) {
+    await this.hoverPreviewOutline()
+    const clicked = await this.cdp.eval(`(() => {
+      const row = [...document.querySelectorAll('.preview-outline-row')]
+        .find((el) => (el.querySelector('.preview-outline-jump')?.textContent ?? '').trim() === ${JSON.stringify(text)})
+      if (row === undefined) return false
+      row.querySelector('.preview-outline-jump')?.click()
+      return true
+    })()`)
+    if (clicked !== true) throw new Error(`预览目录里找不到:${text}`)
+    await sleep(200)
+  }
+
+  /** 当前行是否落在浮层列表的可见矩形内，以及列表本身是否真的溢出可滚。 */
+  async previewOutlineActiveInView() {
+    return this.cdp.json(`(() => {
+      const list = document.querySelector('.preview-outline-list')
+      const row = document.querySelector('.preview-outline-row.is-active')
+      if (list === null || row === null) return null
+      const l = list.getBoundingClientRect()
+      const r = row.getBoundingClientRect()
+      return {
+        visible: r.top >= l.top - 1 && r.bottom <= l.bottom + 1,
+        scrollable: list.scrollHeight > list.clientHeight + 1,
+        rowTop: r.top,
+        rowBottom: r.bottom,
+        listTop: l.top,
+        listBottom: l.bottom
+      }
+    })()`)
+  }
+
+  async previewScrollTop() {
+    return this.cdp.eval(`document.querySelector('.notes-preview')?.scrollTop ?? -1`)
+  }
+
+  async previewScrollTo(value) {
+    await this.cdp.eval(`(() => { const el = document.querySelector('.notes-preview');
+      if (el === null) return false; el.scrollTop = ${Number(value)};
+      el.dispatchEvent(new Event('scroll')); return true })()`)
+    await sleep(150)
+  }
+
+  /** 标题相对滚动内容顶部的偏移(= 跳到它需要设置的 scrollTop)。 */
+  async previewHeadingOffset(text) {
+    return this.cdp.json(`(() => {
+      const el = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+        .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(text)}))
+      const pv = document.querySelector('.notes-preview')
+      if (el === undefined || pv === null) return null
+      return el.getBoundingClientRect().top - pv.getBoundingClientRect().top + pv.scrollTop
+    })()`)
+  }
+
+  /** 标题顶边相对预览容器顶部的可视位置。 */
+  async previewHeadingTop(text) {
+    return this.cdp.json(`(() => {
+      const el = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+        .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(text)}))
+      const pv = document.querySelector('.notes-preview')
+      if (el === undefined || pv === null) return null
+      return el.getBoundingClientRect().top - pv.getBoundingClientRect().top
+    })()`)
+  }
+
+  async previewFoldState(text) {
+    return this.cdp.json(`(() => {
+      const el = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+        .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(text)}))
+      if (el === undefined) return null
+      const btn = el.querySelector(':scope > .md-h-fold-btn')
+      const icon = btn?.querySelector('i') ?? null
+      const level = btn?.querySelector('.md-h-level') ?? null
+      // 两层叠在一起交叉淡入,display 一直是可见的,只能看透明度。
+      return {
+        folded: el.dataset.folded === 'true',
+        expanded: btn?.getAttribute('aria-expanded') ?? null,
+        button: btn !== null && btn !== undefined,
+        opacity: btn === null || btn === undefined ? null : getComputedStyle(btn).opacity,
+        level: level?.textContent ?? null,
+        levelShown: level === null ? null : Number.parseFloat(getComputedStyle(level).opacity) > 0.5,
+        caretShown: icon === null ? false : Number.parseFloat(getComputedStyle(icon).opacity) > 0.5
+      }
+    })()`)
+  }
+
+  /** 标题前方那枚标签与标题之间的间隙,以及预览有没有被撑出水平滚动。 */
+  async previewHeadingBadge(text) {
+    return this.cdp.json(`(() => {
+      const el = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+        .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(text)}))
+      const pv = document.querySelector('.notes-preview')
+      const btn = el?.querySelector(':scope > .md-h-fold-btn')
+      if (el === undefined || btn === null || btn === undefined || pv === null) return null
+      const h = el.getBoundingClientRect()
+      const b = btn.getBoundingClientRect()
+      // 比的是字的下沿,不是盒子底边:盒子底边对齐时 H 的脚仍会低出一截。
+      const text = [...el.childNodes].find((n) => n.nodeType === 3 && n.textContent.trim() !== '')
+      const probe = document.createElement('span')
+      probe.style.cssText = 'display:inline-block;width:1px;height:0;vertical-align:baseline;padding:0;margin:0'
+      el.insertBefore(probe, btn)
+      const canvas = document.createElement('canvas').getContext('2d')
+      const cs = getComputedStyle(el)
+      canvas.font = cs.fontStyle + ' ' + cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily
+      const descent = canvas.measureText(text?.textContent?.trim()?.[0] ?? '用').actualBoundingBoxDescent || 0
+      const charBottom = probe.getBoundingClientRect().bottom + descent
+      probe.remove()
+      const hprobe = document.createElement('span')
+      hprobe.style.cssText = 'display:inline-block;width:1px;height:0;vertical-align:baseline;padding:0;margin:0'
+      const mark = btn.querySelector('.md-h-mark')
+      mark?.appendChild(hprobe)
+      const hBottom = hprobe.getBoundingClientRect().bottom
+      hprobe.remove()
+      return {
+        gap: h.left - b.right,
+        badgeLeft: b.left,
+        paneLeft: pv.getBoundingClientRect().left,
+        // H 的基线与标题字下沿的差。正值表示 H 更低。
+        bottomGap: hBottom - charBottom,
+        scrollSlack: pv.scrollWidth - pv.clientWidth
+      }
+    })()`)
+  }
+
+  /** 把鼠标移到标题文字上(左缘再往右 offset 像素)。 */
+  async hoverHeadingText(text, offset = 8) {
+    const point = await this.cdp.json(`(() => {
+      const el = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+        .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(text)}))
+      if (el === undefined) return null
+      const r = el.getBoundingClientRect()
+      return { x: r.left + ${Number(offset)}, y: r.top + r.height / 2 }
+    })()`)
+    if (point === null) throw new Error(`找不到标题:${text}`)
+    await this.cdp.mouse('mouseMoved', point.x, point.y)
+  }
+
+  /** 把鼠标移到标题前方那枚 H 的中心。H 在标题盒子外面,不能按标题左缘估算。 */
+  async hoverHeadingBadge(text) {
+    const point = await this.cdp.json(`(() => {
+      const el = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+        .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(text)}))
+      const badge = el?.querySelector(':scope > .md-h-fold-btn')
+      if (badge === null || badge === undefined) return null
+      const r = badge.getBoundingClientRect()
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+    })()`)
+    if (point === null) throw new Error(`找不到标题前方的层级标:${text}`)
+    await this.cdp.mouse('mouseMoved', point.x, point.y)
+  }
+
+  async previewFoldButtonCount() {
+    return this.cdp.eval(`document.querySelectorAll('.md-h-fold-btn').length`)
+  }
+
+  async clickPreviewFold(text) {
+    // 按标题找按钮再派发,不按屏幕坐标点。页面滚动后,上一次鼠标停着的位置
+    // 已经不是这个标题的箭头了。
+    const clicked = await this.cdp.eval(`(() => {
+      const el = [...document.querySelectorAll('.notes-preview-body > .md-h')]
+        .find((h) => (h.textContent ?? '').trim().startsWith(${JSON.stringify(text)}))
+      const btn = el?.querySelector(':scope > .md-h-fold-btn')
+      if (btn === null || btn === undefined) return false
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      return true
+    })()`)
+    if (clicked !== true) throw new Error(`标题旁没有折叠箭头:${text}`)
+    await sleep(200)
   }
 }
