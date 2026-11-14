@@ -1757,7 +1757,7 @@ describe('renameFile(重命名文件,完整新文件名)', () => {
     })
   })
 
-  it('非法文件名与改成 .md 被拒;无扩展名的文件可以加上扩展名', async () => {
+  it('非法文件名被拒;无扩展名的文件可以加上扩展名', async () => {
     const svc = makeService()
     writeFileSync(join(svc.dir(), 'a.txt'), 'A')
 
@@ -1765,9 +1765,6 @@ describe('renameFile(重命名文件,完整新文件名)', () => {
     expect(await svc.renameFile({ path: 'a.txt', name: '   ' })).toMatchObject({ ok: false, kind: 'invalid' })
     expect(await svc.renameFile({ path: 'a.txt', name: '.hidden' })).toMatchObject({ ok: false, kind: 'invalid' })
     expect(await svc.renameFile({ path: 'a.txt', name: 'a/b' })).toMatchObject({ ok: false, kind: 'invalid' })
-    // .md 会被扫描收成笔记,文件改名不走这条路
-    expect(await svc.renameFile({ path: 'a.txt', name: 'a.md' })).toMatchObject({ ok: false, kind: 'invalid' })
-    expect(await svc.renameFile({ path: 'a.txt', name: 'a.MD' })).toMatchObject({ ok: false, kind: 'invalid' })
     expect(existsSync(join(svc.dir(), 'a.txt'))).toBe(true)
 
     const changed = await svc.renameFile({ path: 'a.txt', name: 'b.js' })
@@ -1786,6 +1783,48 @@ describe('renameFile(重命名文件,完整新文件名)', () => {
     if (!gained.ok) throw new Error('expected renamed')
     expect(gained.file.path).toBe('Buildfile.sh')
     expect(gained.file.ext).toBe('sh')
+  })
+
+  it('普通文件改成 .md 后变成笔记,字节原样保留;大小写后缀写成 .md', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), 'a.txt'), 'keep me')
+
+    const out = await svc.renameFile({ path: 'a.txt', name: 'a.MD' })
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error('expected renamed')
+    expect(out.file.path).toBe('a.md')
+    expect(out.file.ext).toBe('md')
+    expect(existsSync(join(svc.dir(), 'a.txt'))).toBe(false)
+    expect(read(svc.dir(), 'a.md')).toBe('keep me')
+
+    const list = await svc.list()
+    expect(list.notes.map((n) => n.id)).toContain('a')
+    expect(list.notes.find((n) => n.id === 'a')?.title).toBe('a')
+    expect(list.files.map((f) => f.path)).not.toContain('a.md')
+
+    // 已有同名笔记时不覆盖
+    writeFileSync(join(svc.dir(), 'b.txt'), 'other')
+    expect(await svc.renameFile({ path: 'b.txt', name: 'a.md' })).toMatchObject({ ok: false, kind: 'exists' })
+    expect(read(svc.dir(), 'a.md')).toBe('keep me')
+    expect(existsSync(join(svc.dir(), 'b.txt'))).toBe(true)
+  })
+
+  it('笔记文件改成非 md 后不再是笔记,字节原样保留', async () => {
+    const svc = makeService()
+    const note = await svc.create({ title: '改后缀', body: '正文' })
+    const before = readFileSync(join(svc.dir(), `${note.id}.md`))
+
+    const out = await svc.renameFile({ path: `${note.id}.md`, name: '改后缀.txt' })
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error('expected renamed')
+    expect(out.file.path).toBe('改后缀.txt')
+    expect(out.file.kind).toBe('text')
+
+    expect(existsSync(join(svc.dir(), `${note.id}.md`))).toBe(false)
+    expect(readFileSync(join(svc.dir(), '改后缀.txt'))).toEqual(before)
+    const list = await svc.list()
+    expect(list.notes.map((n) => n.id)).not.toContain(note.id)
+    expect(list.files.map((f) => f.path)).toContain('改后缀.txt')
   })
 
   it('文件名没变时直接返回当前元信息', async () => {

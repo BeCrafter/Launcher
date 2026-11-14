@@ -212,6 +212,12 @@ interface NotesState {
   /** 就地改名(列表里直接改,不必先打开) */
   renameNote(id: string, title: string): Promise<void>
   /**
+   * 把一篇笔记改成非 .md 文件。先落盘,再按 `${id}.md` 整段改名。
+   * 成功返回新文件;失败返回 null(原笔记还在)。
+   * 这篇正在打开时清掉 dirty,避免随后的 leave 按旧 id 把 .md 写回来。
+   */
+  convertNoteToFile(id: string, name: string): Promise<NoteFileStat | null>
+  /**
    * 标题改了就把文件名跟着改(用户要求:改标题即改文件名,不需要再点一次)。
    * 只在**离开标题输入框**与**切换笔记**时调用 —— 边打字边改会让文件被反复重命名。
    */
@@ -930,6 +936,19 @@ export const useNotesStore = create<NotesState>((set, get) => {
       } catch (err) {
         showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
       }
+    },
+
+    async convertNoteToFile(id, name) {
+      if (get().draft?.id === id) {
+        await get().flush()
+        const pending = get()
+        // 还没落盘(冲突或保存失败)就搬,会把没写下去的正文丢下
+        if (pending.draft?.id === id && (pending.dirty || pending.conflict !== null)) return null
+      }
+      const stat = await get().renameFile(`${id}.md`, name)
+      if (stat === null) return null
+      if (get().draft?.id === id) set({ dirty: false })
+      return stat
     },
 
     async setPinned(id, pinned) {

@@ -692,7 +692,7 @@ export type NoteFileCreateOutcome =
 
 /**
  * 重命名文件:传入的是新的单段文件名,含扩展名。
- * 改成 `.md` 会被拒绝 — 那会被目录扫描收成笔记,不是改个后缀。
+ * 改成 `.md`(大小写不论)会写成 `.md`,目录扫描把它收成笔记。`.markdown` 仍是普通文件。
  */
 export interface NoteFileRenameInput {
   /** 旧相对路径 */

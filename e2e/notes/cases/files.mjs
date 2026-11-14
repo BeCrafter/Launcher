@@ -4,6 +4,7 @@
 // 代码高亮编辑与自动保存、HTML 源码/预览/分栏(沙箱脚本、兄弟资源、fetch)、
 // CSV 表格、图片缩放、PSD/TIFF 解码、PDF、音频、Office、压缩包(含嵌套与 HTML 条目)、
 // 3D 模型、无法预览时的占位与「用默认应用打开」,以及新建入口(默认 .md / 其他类型)。
+// 笔记改名也是完整文件名:只改主名仍是笔记,改成非 .md 后缀则变成文件且正文不动。
 //
 // 夹具全部在运行期生成:文本直接写,docx/xlsx/zip 用 JSZip / exceljs,
 // PSD / TIFF 用 ag-psd / utif 编码,PDF / TAR.GZ / WAV 手工拼字节。
@@ -1483,7 +1484,8 @@ export default [
   {
     id: 'files/rename-changes-type',
     area: 'files',
-    title: '重命名文件:同一格里改后缀,磁盘、左栏与打开中的类型一起变;改成 .md 被拒绝且原文件不动',
+    title:
+      '重命名文件:同一格里改后缀,磁盘、左栏与打开中的类型一起变;改成 .md 则变成笔记且正文不动(以前会被拒绝,因为打开中的文件视图跟不上)',
     tags: ['files', 'rail', 'rename'],
     async run(ctx) {
       writeFile(ctx, 'retype/old.txt', 'keep me')
@@ -1536,7 +1538,7 @@ export default [
         { timeout: 10_000, message: '左栏文件行换成新路径且类型是代码' }
       )
 
-      // 再改成 .md:会被收成笔记,文件改名不走这条路
+      // 再改成 .md:目录把它收成笔记。正文原样留下,打开中的视图换成笔记编辑器。
       const jsRow = await ctx.elementRect(fileSelector('retype/old.js'))
       await ctx.cdp.mouse('mouseMoved', jsRow.x + jsRow.width - 60, jsRow.y + jsRow.height / 2)
       await ctx.cdp.eval(
@@ -1555,14 +1557,215 @@ export default [
         el.setSelectionRange(dot + 1, el.value.length)
       })()`)
       await ctx.cdp.type('md')
-      await ctx.press('Enter')
-      await ctx.cdp.waitFor(
-        `document.querySelector('#toast.show')?.textContent?.includes('Markdown 笔记请使用') === true`,
-        { timeout: 5000, message: '改成 .md 时给出提示' }
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-file-rename input')?.value`),
+        'old.md',
+        '同一格里把后缀改成 md'
       )
-      ok(existsSync(absPath(ctx, 'retype/old.js')), '改成 .md 被拒绝后原文件仍在')
-      ok(!existsSync(absPath(ctx, 'retype/old.md')), '没有生成 .md')
-      eq(readFileSync(absPath(ctx, 'retype/old.js'), 'utf8'), 'keep me', '被拒绝后正文不变')
+      await ctx.press('Enter')
+
+      await ctx.waitForNode(
+        () => existsSync(absPath(ctx, 'retype/old.md')) && !existsSync(absPath(ctx, 'retype/old.js')),
+        '磁盘上换成 .md,旧文件没了'
+      )
+      eq(readFileSync(absPath(ctx, 'retype/old.md'), 'utf8'), 'keep me', '改成笔记后字节不变')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value === 'old' && document.querySelector('.file-main') === null`,
+        { timeout: 10_000, message: '打开中的视图换成笔记编辑器' }
+      )
+      includes(
+        await ctx.cdp.eval(
+          `[...document.querySelectorAll('.notes-editor-pane .cm-line')].map((el) => el.textContent).join('\\n')`
+        ),
+        'keep me',
+        '笔记正文还是原来的内容'
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-row[data-note-id="retype/old"][data-rail-copy="tree"] .notes-row-title')?.textContent === 'old.md'`,
+        { timeout: 10_000, message: '左栏换成笔记行' }
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector(${JSON.stringify(fileSelector('retype/old.js'))}) === null`),
+        true,
+        '旧文件行不在了'
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector(${JSON.stringify(fileSelector('retype/old.md'))}) === null`),
+        true,
+        '.md 不是文件行'
+      )
+    }
+  },
+
+  {
+    id: 'files/rename-note-extension',
+    area: 'files',
+    title:
+      '笔记改名:输入框是完整文件名(以前不显示后缀);只改主名仍是笔记,改成非 .md 后缀则变成文件且正文还在',
+    tags: ['files', 'rail', 'rename'],
+    async run(ctx) {
+      const first = '笔记改后缀'
+      const renamed = '改过的笔记'
+      const body = '留下的正文'
+      await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
+        timeout: 5000,
+        message: '根层出现新建名字输入框'
+      })
+      await ctx.cdp.type(first)
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title')?.value === ${JSON.stringify(first)}`, {
+        timeout: 10_000,
+        message: '新笔记在编辑器里打开'
+      })
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-row.active[data-note-id][data-rail-copy="tree"]')?.dataset.noteId === ${JSON.stringify(first)}`,
+        { timeout: 10_000, message: '左栏选中新建的笔记' }
+      )
+      const id = await ctx.cdp.eval(
+        `document.querySelector('.notes-row.active[data-note-id][data-rail-copy="tree"]')?.dataset.noteId ?? null`
+      )
+      eq(id, first, '新笔记的 id 就是标题')
+
+      await ctx.cdp.waitFor(`document.querySelector('.notes-editor-pane .cm-content') !== null`, {
+        timeout: 10_000,
+        message: '编辑器正文出现'
+      })
+      ok(
+        await ctx.cdp.eval(`(() => {
+          const v = document.querySelector('.notes-editor-pane .cm-content')?.cmTile?.root?.view
+          if (v == null) return false
+          v.dispatch({ selection: { anchor: v.state.doc.length } })
+          v.focus()
+          return true
+        })()`),
+        '光标移到正文末尾'
+      )
+      await ctx.cdp.type(body)
+      await ctx.waitSaved()
+      ok(readFileSync(absPath(ctx, `${id}.md`), 'utf8').includes(body), '正文已经落盘')
+
+      const treeRow = (noteId) =>
+        `.notes-row[data-note-id=${JSON.stringify(noteId)}][data-rail-copy="tree"]`
+
+      const openRename = async (noteId) => {
+        const sel = treeRow(noteId)
+        await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(sel)}) !== null`, {
+          timeout: 10_000,
+          message: `笔记行 ${noteId}`
+        })
+        const rect = await ctx.elementRect(sel)
+        await ctx.cdp.mouse('mouseMoved', rect.x + rect.width - 40, rect.y + rect.height / 2)
+        await ctx.cdp.waitFor(
+          `(() => {
+            const acts = document.querySelector(${JSON.stringify(sel)})?.querySelector('.notes-row-acts')
+            return acts !== null && getComputedStyle(acts).display !== 'none'
+          })()`,
+          { timeout: 3000, message: '悬停后笔记行动作出现' }
+        )
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(sel)})?.querySelectorAll('.notes-row-acts button')[0]?.click()`
+        )
+        await ctx.cdp.waitFor(`document.querySelector('.notes-row-rename input') !== null`, {
+          timeout: 5000,
+          message: '出现笔记改名输入框'
+        })
+      }
+
+      await openRename(id)
+      const field = await ctx.cdp.json(`(() => {
+        const el = document.querySelector('.notes-row-rename input')
+        return {
+          value: el?.value ?? null,
+          start: el?.selectionStart ?? -1,
+          end: el?.selectionEnd ?? -1,
+          locked: document.querySelector('.notes-file-rename-ext') !== null
+        }
+      })()`)
+      eq(field?.value, `${first}.md`, '笔记改名输入框是完整文件名')
+      eq(field?.locked, false, '不再有锁在外面的扩展名')
+      eq(field?.start, 0, '选区从主名开头')
+      eq(field?.end, first.length, '只选中主名,后缀留在选区外')
+
+      await ctx.cdp.type(renamed)
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-row-rename input')?.value`),
+        `${renamed}.md`,
+        '只换主名时后缀还在'
+      )
+      await ctx.press('Enter')
+
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title')?.value === ${JSON.stringify(renamed)}`, {
+        timeout: 10_000,
+        message: '编辑器标题跟上新主名'
+      })
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-row.active[data-note-id][data-rail-copy="tree"]')?.dataset.noteId === ${JSON.stringify(renamed)}`,
+        { timeout: 10_000, message: '左栏选中改名后的笔记' }
+      )
+      const id2 = await ctx.cdp.eval(
+        `document.querySelector('.notes-row.active[data-note-id][data-rail-copy="tree"]')?.dataset.noteId ?? null`
+      )
+      eq(id2, renamed, '只改主名后仍是笔记')
+      await ctx.waitForNode(
+        () => existsSync(absPath(ctx, `${id2}.md`)) && !existsSync(absPath(ctx, `${id}.md`)),
+        '磁盘上换成新的 .md,旧文件没了'
+      )
+      ok(readFileSync(absPath(ctx, `${id2}.md`), 'utf8').includes(body), '改主名后正文还在')
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(treeRow(id2))})?.querySelector('.notes-row-title')?.textContent`
+        ),
+        `${renamed}.md`,
+        '左栏仍是带 .md 的笔记行'
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector(${JSON.stringify(fileSelector(`${renamed}.txt`))}) === null`),
+        true,
+        '只改主名不会变成文件行'
+      )
+
+      await openRename(id2)
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-row-rename input')
+        const dot = el.value.lastIndexOf('.')
+        el.focus()
+        el.setSelectionRange(dot + 1, el.value.length)
+      })()`)
+      await ctx.cdp.type('txt')
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-row-rename input')?.value`),
+        `${renamed}.txt`,
+        '同一格里把后缀改成 txt'
+      )
+      await ctx.press('Enter')
+
+      const txt = `${renamed}.txt`
+      await ctx.waitForNode(
+        () => existsSync(absPath(ctx, txt)) && !existsSync(absPath(ctx, `${id2}.md`)),
+        '旧 .md 没了,新文件在原目录'
+      )
+      ok(readFileSync(absPath(ctx, txt), 'utf8').includes(body), '改成文件后正文还在')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === ${JSON.stringify(txt)}`,
+        { timeout: 10_000, message: '打开中的视图跟上新文件' }
+      )
+      await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(fileSelector(txt))}) !== null`, {
+        timeout: 10_000,
+        message: '左栏换成文件行'
+      })
+      eq(
+        await ctx.cdp.eval(`document.querySelector(${JSON.stringify(treeRow(id2))}) === null`),
+        true,
+        '原笔记行不在了'
+      )
+      includes(
+        await ctx.cdp.eval(
+          `[...document.querySelectorAll('.file-main .file-editor .cm-line')].map((el) => el.textContent).join('\\n')`
+        ),
+        body,
+        '打开中的文件视图里还看得到正文'
+      )
     }
   },
 

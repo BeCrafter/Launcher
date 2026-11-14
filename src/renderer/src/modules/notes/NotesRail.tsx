@@ -347,6 +347,11 @@ interface NameEdit {
 const NEW_DOC_NAME = '未命名.md'
 const NEW_CANVAS_NAME = '未命名.excal'
 
+/** 目录行上看到的笔记文件名。标题自己已经以 .md 结尾时不再补一份。 */
+function noteRowFileName(title: string): string {
+  return /\.md$/i.test(title) ? title : `${title}.md`
+}
+
 /**
  * 有扩展名时只选中最后一个点之前的主名,后缀留在选区外。
  * 没有点(或点在开头)则整段选中。只在输入框挂上时做一次。
@@ -359,7 +364,7 @@ function selectFileStem(el: HTMLInputElement): void {
 
 /**
  * 行内的名字输入(改名 / 新建目录共用)。空名提交视为取消。
- * 目录与笔记把光标放到末尾;文件改名只选主名,后缀留在同一格里。
+ * 目录把光标放到末尾;笔记与文件改名只选主名,后缀留在同一格里。
  */
 function NameField({
   value,
@@ -501,6 +506,7 @@ export function NotesRail(): React.JSX.Element {
   const removeFile = useNotesStore((s) => s.removeFile)
   const setPinned = useNotesStore((s) => s.setPinned)
   const renameNote = useNotesStore((s) => s.renameNote)
+  const convertNoteToFile = useNotesStore((s) => s.convertNoteToFile)
   const remove = useNotesStore((s) => s.remove)
 
   const [edit, setEdit] = useState<NameEdit | null>(null)
@@ -1365,14 +1371,30 @@ export function NotesRail(): React.JSX.Element {
     if (path !== null) openFileDoc(path)
   }
   /**
-   * 文件改名:先把打开中的缓冲落到旧路径,再按整段新名字改名,最后让文档跟随新路径。
-   * 新名字含扩展名。改成 .md 会被主进程拒绝(那会变成笔记,打开中的文件视图跟不上)。
+   * 文件改名:先把打开中的缓冲落到旧路径,再按整段新名字改名。
+   * 仍是普通文件时,打开中的文档跟着换路径。
+   * 改成 .md 则变成笔记。这篇正打开时先清掉 dirty 再打开笔记,
+   * 否则 leave 会按旧路径把文件写回来。
    */
   const renameFileDoc = async (path: string, name: string): Promise<void> => {
     const fstate = useFilesStore.getState()
-    if (fstate.file?.path === path) await fstate.flush()
+    const wasOpen = fstate.file?.path === path || fstate.openingPath === path
+    if (fstate.file?.path === path) {
+      await fstate.flush()
+      const pending = useFilesStore.getState()
+      // 还没落盘(冲突或保存失败)就改名,会把没写下去的正文丢下
+      if (pending.file?.path === path && (pending.dirty || pending.conflict !== null)) return
+    }
     const stat = await renameFile(path, name)
-    if (stat !== null) useFilesStore.getState().repath(path, stat)
+    if (stat === null) return
+    if (stat.ext === 'md') {
+      if (wasOpen) {
+        useFilesStore.setState({ dirty: false })
+        openNoteDoc(stat.path.slice(0, -3))
+      }
+      return
+    }
+    useFilesStore.getState().repath(path, stat)
   }
   const commitEdit = (): void => {
     if (edit === null || committingRef.current) return
@@ -1386,7 +1408,25 @@ export function NotesRail(): React.JSX.Element {
         if (name !== '') void createFolder(cur.parent, name)
       } else void createDoc(cur.parent, name)
     } else if (name !== '') {
-      if (cur.kind === 'note') void renameNote(cur.path, name)
+      if (cur.kind === 'note') {
+        const note = notes.find((n) => n.id === cur.path)
+        const shown = note === undefined ? name : noteRowFileName(note.title)
+        if (name !== shown) {
+          const { base, ext } = splitFileExt(name)
+          const kind = ext.toLowerCase()
+          // 去掉后缀或仍是 .md:还是改标题。全选后打一个新标题(没有点)也走这里。
+          if (kind === '' || kind === 'md') {
+            const title = (kind === '' ? name : base).trim()
+            if (title !== '' && title !== note?.title) void renameNote(cur.path, title)
+          } else {
+            const wasOpen = currentId === cur.path
+            void (async () => {
+              const stat = await convertNoteToFile(cur.path, name)
+              if (stat !== null && wasOpen) openFileDoc(stat.path)
+            })()
+          }
+        }
+      }
       else if (cur.kind === 'folder') {
         if (name !== baseNameOf(cur.path)) void renameFolder(cur.path, name)
       } else if (name !== baseNameOf(cur.path)) {
@@ -1427,8 +1467,7 @@ export function NotesRail(): React.JSX.Element {
       edit.path === n.id &&
       (edit.copy === undefined || edit.copy === lane)
     const opening = n.id === openingId
-    // 与文件行统一:目录里显示完整文件名。笔记都是 .md,标题里已经写了就不重复
-    const fileName = /\.md$/i.test(n.title) ? n.title : `${n.title}.md`
+    const fileName = noteRowFileName(n.title)
     return (
     <div
       key={`${lane}:${n.id}`}
@@ -1455,7 +1494,7 @@ export function NotesRail(): React.JSX.Element {
     >
       <IndentGuides depth={depth} />
       {renaming ? (
-        <span className="notes-row-rename">{nameInput(t('notes.field.titlePlaceholder'))}</span>
+        <span className="notes-row-rename">{nameInput(t('notes.field.fileNamePlaceholder'), 'stem')}</span>
       ) : (
         <button
           type="button"
@@ -1488,7 +1527,7 @@ export function NotesRail(): React.JSX.Element {
           title={t('notes.row.rename')}
           onClick={(e) => {
             e.stopPropagation()
-            startEdit({ mode: 'rename', kind: 'note', parent: '', path: n.id, copy: lane }, n.title)
+            startEdit({ mode: 'rename', kind: 'note', parent: '', path: n.id, copy: lane }, fileName)
           }}
         >
           <i className="fa-solid fa-pen" />

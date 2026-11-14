@@ -171,7 +171,7 @@ export interface NotesService {
   saveFile(input: NoteFileSaveInput): Promise<NoteFileSaveOutcome>
   /** 在指定目录新建空文件(非 .md;Markdown 笔记走 create) */
   createFile(input: NoteFileCreateInput): Promise<NoteFileCreateOutcome>
-  /** 重命名文件:传入的是完整新文件名(含扩展名);改成 .md 会被拒绝 */
+  /** 重命名文件:传入的是完整新文件名(含扩展名)。改成 .md 会变成笔记,后缀大小写收成 .md。 */
   renameFile(input: NoteFileRenameInput): Promise<NoteFileRenameOutcome>
   /** 删除文件(应用内走系统废纸篓) */
   removeFile(rel: string): Promise<NoteFileOutcome>
@@ -1145,14 +1145,14 @@ export function createNotesService(opts: {
       }
 
       // 调用方给的是完整新文件名。不再把旧扩展名拼回去,否则界面上改了后缀也落不了盘。
-      const name = String(input?.name ?? '').trim()
-      if (!isSafeNoteSegment(name)) {
-        return { ok: false, kind: 'invalid', message: `文件名不合法:${name}` }
+      const rawName = String(input?.name ?? '').trim()
+      if (!isSafeNoteSegment(rawName)) {
+        return { ok: false, kind: 'invalid', message: `文件名不合法:${rawName}` }
       }
-      // .md 会被目录扫描收成笔记,打开中的文件视图跟不上。`.markdown` 不会,仍当普通文件。
-      if (splitFileExt(name).ext.toLowerCase() === 'md') {
-        return { ok: false, kind: 'invalid', message: 'Markdown 笔记请使用「新建笔记」' }
-      }
+      // `.md` 会被目录扫描收成笔记,而且只认小写后缀。`.MD` 写成 `.md`,改完才真的是笔记。
+      // `.markdown` 扫不进去,仍是普通文件。
+      const split = splitFileExt(rawName)
+      const name = split.ext.toLowerCase() === 'md' ? `${split.base}.md` : rawName
       const newRel = joinNoteId(parentOf(oldRel), name)
       if (!isSafeNoteId(newRel)) {
         return { ok: false, kind: 'invalid', message: `路径不合法:${newRel}` }
