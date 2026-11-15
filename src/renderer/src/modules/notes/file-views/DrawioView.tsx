@@ -95,7 +95,6 @@ export function DrawioView({
                 switchOnline()
                 void requestOffline()
               }}
-              disabled={!status.installed}
             >
               {status.installed ? t('notes.drawio.useOffline') : t('notes.drawio.installOffline')}
             </button>
