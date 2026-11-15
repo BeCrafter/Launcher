@@ -49,6 +49,11 @@ const ASSET_PATH = new URL('excalidraw-assets/', window.location.href).toString(
 window.EXCALIDRAW_ASSET_PATH = ASSET_PATH
 
 const UI_OPTIONS = {
+  // 右侧栏展开时 Excalidraw 会把 UI 层收窄 --right-sidebar-width(302px),靠右对齐的帮助
+  // 按钮就离开白板右缘、跑到画布中间;而小地图开关锚在白板上不动,两个按钮会分开。
+  // 把「画布放得下侧栏」的阈值顶到最大:侧栏一律浮在画布上方(窄画布本来就是这样),
+  // 右下角两个按钮始终贴右缘。
+  dockedSidebarBreakpoint: Number.MAX_SAFE_INTEGER,
   canvasActions: {
     loadScene: false,
     saveToActiveFile: false,
@@ -151,10 +156,10 @@ function migrateCanvasElement(element: ExcalidrawElement): ExcalidrawElement {
   return { ...element, link, customData }
 }
 
-export function CanvasView({ text }: { text: string }): React.JSX.Element {
+export function CanvasView({ text, path }: { text: string; path?: string }): React.JSX.Element {
   const parsed = useMemo(() => parseCanvas(text), [text])
   if (!parsed.ok) return <CanvasError />
-  return <CanvasBoard text={text} blank={parsed.blank} />
+  return <CanvasBoard text={text} blank={parsed.blank} boardPath={path ?? null} />
 }
 
 function CanvasError(): React.JSX.Element {
@@ -174,7 +179,15 @@ function CanvasError(): React.JSX.Element {
   )
 }
 
-function CanvasBoard({ text, blank }: { text: string; blank: boolean }): React.JSX.Element {
+function CanvasBoard({
+  text,
+  blank,
+  boardPath
+}: {
+  text: string
+  blank: boolean
+  boardPath: string | null
+}): React.JSX.Element {
   const theme = useEffectiveTheme()
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null)
   const boardRef = useRef<HTMLDivElement | null>(null)
@@ -290,7 +303,12 @@ function CanvasBoard({ text, blank }: { text: string; blank: boolean }): React.J
         UIOptions={UI_OPTIONS}
         validateEmbeddable={canvasEmbedAllowed}
         renderEmbeddable={(element, appState) => (
-          <CanvasEmbed element={element} appState={appState} />
+          <CanvasEmbed
+            element={element}
+            appState={appState}
+            boardPath={boardPath}
+            depth={0}
+          />
         )}
         onLinkOpen={(element, event) => {
           const ref = canvasEmbedRef(element.customData, element.link ?? null)
@@ -307,7 +325,7 @@ function CanvasBoard({ text, blank }: { text: string; blank: boolean }): React.J
           <CanvasEmbedMenu board={boardRef.current} onPick={insertEmbed} onWeb={beginWebEmbed} />
           <CanvasLibraryLoad api={api} board={boardRef.current} />
           <CanvasDropGuard api={api} board={boardRef.current} onEmbed={insertEmbed} />
-          <CanvasMinimap api={api} />
+          <CanvasMinimap api={api} board={boardRef.current} />
         </>
       )}
     </div>

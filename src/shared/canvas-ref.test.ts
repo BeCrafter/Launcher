@@ -6,6 +6,7 @@ import {
   canvasInternalData,
   canvasRefBadge,
   canvasRefFromLink,
+  isCanvasPath,
   readCanvasInternal,
   retargetCanvasText,
   type CanvasEmbedRef
@@ -134,12 +135,22 @@ describe('展示路径与角标', () => {
   const cases: Array<[CanvasEmbedRef, string | null, string]> = [
     [{ kind: 'note', id: '资料/记录' }, '资料/记录.md', 'note'],
     [{ kind: 'file', path: '附件/说明.pdf' }, '附件/说明.pdf', 'vault'],
+    [{ kind: 'file', path: '画/子白板.excal' }, '画/子白板.excal', 'canvas'],
     [{ kind: 'external', ...EXTERNAL }, '/tmp/说明.pdf', 'external'],
     [{ kind: 'web', url: 'https://example.com' }, null, 'web']
   ]
   it.each(cases)('%j', (ref, path, badge) => {
     expect(canvasDisplayPath(ref)).toBe(path)
     expect(canvasRefBadge(ref)).toBe(badge)
+  })
+
+  it('白板的两种后缀、大小写都算白板;不是白板仍是库内', () => {
+    expect(canvasRefBadge({ kind: 'file', path: '旧板.excalidraw' })).toBe('canvas')
+    expect(canvasRefBadge({ kind: 'file', path: '大写.EXCALIDRAW' })).toBe('canvas')
+    expect(canvasRefBadge({ kind: 'file', path: '画.excal.txt' })).toBe('vault')
+    expect(canvasRefBadge({ kind: 'file', path: '没有后缀' })).toBe('vault')
+    expect(isCanvasPath('a/b/板.excal')).toBe(true)
+    expect(isCanvasPath('板.其他')).toBe(false)
   })
 
   it('库外优先源文件,没有源文件时用打包副本', () => {

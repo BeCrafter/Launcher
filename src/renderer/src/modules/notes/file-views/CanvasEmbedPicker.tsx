@@ -73,6 +73,13 @@ export function CanvasEmbedPicker({
             <span className="canvas-embed-picker-name">{t('notes.canvas.embed.library')}</span>
             <i className="fa-solid fa-chevron-right canvas-embed-picker-chevron" />
           </button>
+          {/* 两个不限类型的来源放最前:库内、本机。中间按类型排,网页收在最后。 */}
+          <KindRow
+            id="computer"
+            icon="fa-folder-open"
+            label={t('notes.canvas.embed.kind.computer')}
+            onClick={() => onOpenFiles(canvasPreviewExtensions())}
+          />
           {CANVAS_EMBED_KINDS.map((kind) => (
             <KindRow
               key={kind.id}
@@ -82,12 +89,6 @@ export function CanvasEmbedPicker({
               onClick={() => onOpenFiles(kind.extensions)}
             />
           ))}
-          <KindRow
-            id="computer"
-            icon="fa-folder-open"
-            label={t('notes.canvas.embed.kind.computer')}
-            onClick={() => onOpenFiles(canvasPreviewExtensions())}
-          />
           <button type="button" className="canvas-embed-picker-row" data-embed-web="" onClick={onWeb}>
             <i className="fa-solid fa-globe" />
             <span className="canvas-embed-picker-name">{t('notes.canvas.embed.web')}</span>

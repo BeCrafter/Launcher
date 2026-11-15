@@ -11,7 +11,7 @@
 // 旧协议 URL 只解析一次百分号编码;可读路径**不解码**,`50%20off.png` 才能原样保留。
 
 import { readCanvasExternal, type CanvasExternalEmbed } from './canvas-external'
-import { isSafeNoteId } from './notes'
+import { isSafeNoteId, noteFileKind } from './notes'
 
 /** customData 里放内部引用的键 */
 export const CANVAS_REF_KEY = 'launcher'
@@ -29,8 +29,8 @@ export type CanvasEmbedRef =
   | ({ kind: 'external' } & CanvasExternalEmbed)
   | { kind: 'web'; url: string }
 
-/** 卡片角标:笔记 / 库内 / 库外 / 网页 */
-export type CanvasEmbedBadge = 'note' | 'vault' | 'external' | 'web'
+/** 卡片角标:笔记 / 库内 / 库外 / 网页 / 白板 */
+export type CanvasEmbedBadge = 'note' | 'vault' | 'external' | 'web' | 'canvas'
 
 /**
  * 一次改名/移动。from/to 是相对笔记目录的路径身份:
@@ -144,9 +144,17 @@ export function canvasDisplayPath(ref: CanvasEmbedRef): string | null {
   return null
 }
 
+/** 库内路径是不是一块白板。`.excal` / `.excalidraw` 都按白板打开。 */
+export function isCanvasPath(path: string): boolean {
+  const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  const name = path.slice(slash + 1)
+  const dot = name.lastIndexOf('.')
+  return noteFileKind(dot < 0 ? '' : name.slice(dot + 1), name) === 'canvas'
+}
+
 export function canvasRefBadge(ref: CanvasEmbedRef): CanvasEmbedBadge {
   if (ref.kind === 'note') return 'note'
-  if (ref.kind === 'file') return 'vault'
+  if (ref.kind === 'file') return isCanvasPath(ref.path) ? 'canvas' : 'vault'
   return ref.kind
 }
 

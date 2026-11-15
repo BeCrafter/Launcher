@@ -42,6 +42,7 @@ import { openExternal } from '../../../lib/utils'
 import { MermaidBlock } from '../MermaidBlock'
 import { ArchiveView } from './ArchiveView'
 import { BytesLoader } from './BytesLoader'
+import { CanvasBoardEmbed } from './CanvasBoardEmbed'
 import { CsvView } from './CsvView'
 import { DecodedImageViewer } from './DecodedImageViewer'
 import { FilePlaceholder } from './FilePlaceholder'
@@ -55,10 +56,16 @@ import { DrawioFrame } from './DrawioFrame'
 
 export function CanvasEmbed({
   element,
-  appState
+  appState,
+  boardPath,
+  depth = 0
 }: {
   element: ExcalidrawEmbeddableElement
   appState: AppState
+  /** 当前打开的白板路径。卡片指向它自己时显示「不能嵌入自己」。 */
+  boardPath?: string | null
+  /** 嵌套层数。0 = 这块白板自己,1 = 卡片里那块只读白板里的卡片。 */
+  depth?: number
 }): React.JSX.Element {
   const t = useT()
   const ref = canvasEmbedRef(element.customData, element.link ?? null)
@@ -74,7 +81,7 @@ export function CanvasEmbed({
   const path = ref === null ? null : canvasDisplayPath(ref)
   const kind: CanvasEmbedBadge | 'none' = ref === null ? 'none' : canvasRefBadge(ref)
   const badge =
-    kind === 'note' || kind === 'vault' || kind === 'external'
+    kind === 'note' || kind === 'vault' || kind === 'external' || kind === 'canvas'
       ? t(`notes.canvas.embed.badge.${kind}`)
       : null
   // 角标要长在 Excalidraw 的链接气泡上,可那个气泡是它自己渲染的,没有插槽。
@@ -94,6 +101,7 @@ export function CanvasEmbed({
       data-embed-active={active ? 'true' : 'false'}
       data-embed-selected={selected ? 'true' : 'false'}
       data-embed-kind={kind}
+      data-embed-depth={depth}
       data-embed-label={label}
       data-embed-path={path ?? ''}
     >
@@ -108,7 +116,7 @@ export function CanvasEmbed({
       ) : target.kind === 'note' ? (
         <CanvasNoteEmbed id={target.id} />
       ) : (
-        <CanvasFileEmbed path={target.path} />
+        <CanvasFileEmbed path={target.path} boardPath={boardPath} depth={depth} />
       )}
     </div>
   )
@@ -283,7 +291,17 @@ function CanvasNoteEmbed({ id }: { id: string }): React.JSX.Element {
   )
 }
 
-function CanvasFileEmbed({ path, url: externalUrl }: { path: string; url?: string }): React.JSX.Element {
+function CanvasFileEmbed({
+  path,
+  url: externalUrl,
+  boardPath,
+  depth = 0
+}: {
+  path: string
+  url?: string
+  boardPath?: string | null
+  depth?: number
+}): React.JSX.Element {
   const t = useT()
   const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   const name = slash < 0 ? path : path.slice(slash + 1)
@@ -341,6 +359,8 @@ function CanvasFileEmbed({ path, url: externalUrl }: { path: string; url?: strin
           render={(text) => <CanvasDrawioScroll text={text} title={name} />}
         />
       )
+    case 'canvas':
+      return <CanvasBoardEmbed path={path} boardPath={boardPath} depth={depth} />
     case 'csv':
       return (
         <CanvasTextPreview

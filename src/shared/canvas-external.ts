@@ -69,7 +69,7 @@ export interface CanvasEmbedKind {
   extensions: readonly string[]
 }
 
-/** 工具栏嵌入面板里的类型按钮。压缩包、网页和代码不单列,走「从这台电脑选择」。 */
+/** 工具栏嵌入面板里的类型按钮。压缩包、网页和代码不单列,走「从电脑选择」。 */
 export const CANVAS_EMBED_KINDS: readonly CanvasEmbedKind[] = [
   { id: 'video', extensions: ['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mkv', 'avi'] },
   { id: 'slides', extensions: ['pptx', 'pptm'] },
@@ -85,7 +85,7 @@ export const CANVAS_EMBED_KINDS: readonly CanvasEmbedKind[] = [
   }
 ]
 
-/** 全部可预览扩展名。不分类型的「从这台电脑选择」用这份。 */
+/** 全部可预览扩展名。不分类型的「从电脑选择」用这份。 */
 export function canvasPreviewExtensions(): string[] {
   const seen = new Set<string>()
   const out: string[] = []

@@ -5047,8 +5047,23 @@ video.md-media {
   position: relative;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
   background: var(--editor-bg);
+}
+/* 白板根节点**永远**不滚动。库自己写的是 overflow:hidden:滚轮和滚动条被挡住了,
+   但挡不住「把获得焦点的元素滚进可视区」—— 白板里的网页嵌入 iframe 一旦拿到焦点,
+   目录树收起 / 导航折叠 / 窗口拉伸这类布局变化就会让浏览器去滚 .excalidraw,
+   把画布连同工具栏、帮助按钮一起横向推走,右侧露出一条白板底色,
+   看起来就是「内容越过了右缘、布局错乱」。clip 不产生滚动容器,连程序滚动都不行。
+   卡片里的只读画布在 .canvas-board 里,同一条规则一起兜住。 */
+.canvas-board .excalidraw {
+  overflow: clip;
+}
+/* 底部帮助按钮贴的是 Excalidraw UI 层的右缘。UI 层一旦比白板窄,按钮就离开右缘,
+   而小地图锚在白板上 —— 两个按钮会分开。宽度钉死;侧栏 z-index 更高,仍浮在上面。
+   (JS 侧同时把 dockedSidebarBreakpoint 顶到最大,这里防库换版本后又有别的路径写内联宽度。) */
+.canvas-board .layer-ui__wrapper {
+  width: 100% !important;
 }
 .canvas-error {
   flex: 1;
@@ -5196,8 +5211,9 @@ video.md-media {
   to { transform: translateX(300%); }
 }
 
-/* 开关在右下角帮助按钮左边,中间留 8px,不粘成一条。地图右缘跟帮助按钮对齐。
-   外层不接指针,只有图和开关可点。浅色看 body.light-theme。 */
+/* 右下角这一簇是自己排的:左小地图开关、右帮助按钮,中间 8px,地图右缘跟它们对齐。
+   两个按钮都锚在白板上;不再用 Excalidraw 那个在 UI 层里的帮助按钮(见下面的
+   .help-icon 规则)。外层不接指针,只有图和两个按钮可点。浅色看 body.light-theme。 */
 .canvas-minimap {
   position: absolute;
   z-index: 5;
@@ -5209,6 +5225,10 @@ video.md-media {
   gap: 6px;
   pointer-events: none;
 }
+/* 素材库 / 搜索侧栏浮在画布上时会盖住右下角,这时整簇收起,关掉侧栏再回来。 */
+.canvas-board:has(.excalidraw .sidebar) .canvas-minimap {
+  display: none;
+}
 .canvas-minimap-map {
   width: 180px;
   height: 120px;
@@ -5219,10 +5239,15 @@ video.md-media {
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
   cursor: pointer;
 }
-.canvas-minimap-toggle {
+.canvas-minimap-buttons {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.canvas-minimap-toggle,
+.canvas-help-toggle {
   width: 2.25rem;
   height: 2.25rem;
-  margin-inline-end: calc(2.25rem + 8px);
   padding: 0;
   pointer-events: auto;
   display: inline-flex;
@@ -5235,19 +5260,23 @@ video.md-media {
   box-shadow: 0 0 0 1px hsl(0, 0%, 7%);
   cursor: pointer;
 }
-.canvas-minimap-toggle svg {
+.canvas-minimap-toggle svg,
+.canvas-help-toggle svg {
   width: 1rem;
   height: 1rem;
 }
-body.light-theme .canvas-minimap-toggle {
+body.light-theme .canvas-minimap-toggle,
+body.light-theme .canvas-help-toggle {
   background: #ececf4;
   color: #1b1b1f;
   box-shadow: 0 0 0 1px #fff;
 }
-.canvas-minimap-toggle:hover {
+.canvas-minimap-toggle:hover,
+.canvas-help-toggle:hover {
   background: hsl(245, 10%, 21%);
 }
-body.light-theme .canvas-minimap-toggle:hover {
+body.light-theme .canvas-minimap-toggle:hover,
+body.light-theme .canvas-help-toggle:hover {
   background: #f1f0ff;
 }
 .canvas-minimap-toggle[aria-pressed='true'] {
@@ -5262,13 +5291,19 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
 .canvas-minimap-toggle[aria-pressed='true']:hover {
   background: #403e6a;
 }
+/* 帮助按钮搬进了上面那一簇,Excalidraw 自己那个藏起来(动作仍在,点了才转调)。
+   它跟着 UI 层右缘走,侧栏停靠时会被挤到画布中间。 */
+.canvas-board .layer-ui__wrapper .help-icon {
+  display: none;
+}
 @media screen and (min-device-width: 1921px) {
-  .canvas-minimap-toggle {
+  .canvas-minimap-toggle,
+  .canvas-help-toggle {
     width: 2.5rem;
     height: 2.5rem;
-    margin-inline-end: calc(2.5rem + 8px);
   }
-  .canvas-minimap-toggle svg {
+  .canvas-minimap-toggle svg,
+  .canvas-help-toggle svg {
     width: 1.25rem;
     height: 1.25rem;
   }
@@ -5285,6 +5320,7 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
   background: var(--surface);
   color: var(--text);
   pointer-events: none;
@@ -5410,6 +5446,79 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
   border: 0;
   background: transparent;
   cursor: pointer;
+}
+
+/* 嵌套白板:第一层挂只读 Excalidraw(嵌进去的图片/网页/PDF 是真的),
+   更深一层退回导出的场景 SVG。两种都铺满卡片;还没好时把宿主藏掉,
+   让状态提示占满整张卡。 */
+.canvas-embed-board {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+.canvas-embed-board:not([data-board-preview='ready']) {
+  display: none;
+}
+.canvas-embed-board > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+/* 只读画布的壳。里面那层 UI 在卡片里只是噪点,整层藏掉:
+   宽卡片是桌面版(footer + 缩放条),窄卡片被库切成 mobile 版(顶栏、底部竖排和提示镜头)。 */
+.canvas-embed-board-live {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+.canvas-embed-board-live > .excalidraw {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  cursor: default;
+}
+/* 库自己的规则是同权重的 `.excalidraw .App-toolbar` / `.App-bottom-bar`,
+   它的样式表可能后加载,这里用 !important 钉死。 */
+/* 预览里的图片缩放工具条点不着(整层不接指针),不要摆出来挡内容。 */
+.canvas-embed-board-live .file-image-tools,
+.canvas-embed-board-live .layer-ui__wrapper,
+.canvas-embed-board-live .App-toolbar,
+.canvas-embed-board-live .App-bottom-bar,
+.canvas-embed-board-live .mobile-misc-tools-container,
+.canvas-embed-board-live .scroll-back-to-content,
+.canvas-embed-board-live .HintViewer {
+  display: none !important;
+}
+/* 预览永远不接指针 —— 即使外层卡片被双击激活。选中、拖动、滚轮都留给外层画布,
+   不然两层画布会抢同一串事件。要看细节就点右上角「打开」。
+   放在 [data-embed-active] 的放行之后,同权重靠后者生效。 */
+.canvas-embed .canvas-embed-board-live,
+.canvas-embed .canvas-embed-board-live * {
+  pointer-events: none;
+}
+/* 打开按钮浮在右上角。复用 .md-embed-open 的指针豁免:卡片没激活时也点得着。 */
+.canvas-embed .canvas-embed-board-open {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+.canvas-embed .canvas-embed-board-open:hover {
+  color: var(--accent2);
 }
 
 /* 选择器贴着「更多工具」,窄窗口时收回画布里。列表是唯一滚动的一块。 */

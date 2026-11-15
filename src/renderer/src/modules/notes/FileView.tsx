@@ -370,7 +370,7 @@ export function FileView(): React.JSX.Element {
             onText={setText}
           />
         ) : file.kind === 'canvas' ? (
-          <CanvasView key={docSession} text={file.text} />
+          <CanvasView key={docSession} text={file.text} path={file.path} />
         ) : file.kind === 'drawio' ? (
           <DrawioView
             key={docSession}

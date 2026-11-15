@@ -1,4 +1,7 @@
-// 白板右下角的小地图。开关在帮助按钮左边,中间留空,地图右缘跟帮助按钮对齐。
+// 白板右下角的一簇:左边小地图开关,右边帮助按钮,中间留 8px。
+// 两个按钮都是我们自己的,锚在 `.canvas-board` 上 —— Excalidraw 的帮助按钮在它的
+// UI 层里,右侧栏停靠时 UI 层会变窄,帮助按钮就跟着离开右缘,和地图开关分开。
+// 帮助对话框还是 Excalidraw 的:点这个按钮转调它自己的动作。
 // 点空白把视口中心移过去,拖框平移,滚轮缩放并让光标下的点留住。
 // 默认收起,点开关才展开;开/关都记在浏览器里,所有白板共用,不写进 .excal。
 // 视口变化也不进撤销。
@@ -30,9 +33,12 @@ const STORAGE_KEY = 'launcher.notes.canvas.minimap'
 const VIEW_STROKE = '#6965db'
 
 export function CanvasMinimap({
-  api
+  api,
+  board
 }: {
   api: ExcalidrawImperativeAPI
+  /** 白板容器。帮助按钮借它找到 Excalidraw 自己的帮助入口。 */
+  board: HTMLElement | null
 }): React.JSX.Element {
   const t = useT()
   const [open, setOpen] = useState(readOpen)
@@ -124,15 +130,26 @@ export function CanvasMinimap({
           onPointerDown={onPointerDown}
         />
       )}
-      <button
-        type="button"
-        className="canvas-minimap-toggle"
-        aria-pressed={open}
-        title={t('notes.canvas.minimap')}
-        onClick={toggle}
-      >
-        <MinimapIcon />
-      </button>
+      <div className="canvas-minimap-buttons">
+        <button
+          type="button"
+          className="canvas-minimap-toggle"
+          aria-pressed={open}
+          title={t('notes.canvas.minimap')}
+          onClick={toggle}
+        >
+          <MinimapIcon />
+        </button>
+        <button
+          type="button"
+          className="canvas-help-toggle"
+          title={t('notes.canvas.help')}
+          aria-label={t('notes.canvas.help')}
+          onClick={() => openHelp(board)}
+        >
+          <HelpIcon />
+        </button>
+      </div>
     </div>
   )
 }
@@ -205,6 +222,32 @@ function MinimapIcon(): React.JSX.Element {
       <path d="M9 4.8v12.2M15 6.6v12.2" />
     </svg>
   )
+}
+
+function HelpIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9.6 9.4a2.5 2.5 0 1 1 4.4 1.5c-.9 1-1.9 1.3-1.9 2.8" />
+      <path d="M12 17.1h.01" />
+    </svg>
+  )
+}
+
+/**
+ * 打开 Excalidraw 自己的帮助对话框。原生按钮还留在 DOM 里(只是被 CSS 藏起来),
+ * 直接点它最稳 —— 库换版本后也还是同一个动作。只看白板自己的那一层:
+ * 卡片里的只读画布也可能有同名按钮,点它会开在卡片里面。
+ * 找不到才退回给白板根节点派发 `?`。
+ */
+function openHelp(board: HTMLElement | null): void {
+  const root = board === null ? null : board.querySelector<HTMLElement>(':scope > .excalidraw')
+  const native = root?.querySelector<HTMLElement>('.layer-ui__wrapper .help-icon') ?? null
+  if (native !== null) {
+    native.click()
+    return
+  }
+  root?.dispatchEvent(new KeyboardEvent('keydown', { key: '?', bubbles: true }))
 }
 
 function readOpen(): boolean {

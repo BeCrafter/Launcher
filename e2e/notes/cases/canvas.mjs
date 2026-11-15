@@ -15,10 +15,15 @@
 // 与角标(笔记 / 库内 / 库外):笔记补 .md、库内文件用相对路径、库外文件用绝对路径,
 // 中文原样显示;Excalidraw 自带的链接气泡也读同一条可读路径,旧白板里的编码地址打开时升成可读。
 // 笔记 / 文件 / 所在目录改名后,白板里的引用跟着改,重开卡片仍照常渲染。
+// 库内白板也能嵌进另一块白板:卡片里是导出好的静态预览(SVG),右上角「打开」进入子白板;
+// 空场景 / 坏文件 / 白板嵌自己 / 引用丢失各有状态,预览永远不改子白板的字节。
 // 缩放看 `.reset-zoom-button` 里的百分比。小地图开关在帮助按钮左边,中间留空;
 // 小地图默认收起,点开一次就记住,换白板、重启后仍按上次的开/关来。
+// 这两个按钮都贴白板右缘:拉宽窗口、侧栏停靠、开合侧栏的每一帧都不许离开右缘。
+// 网页卡片里的页面抢到焦点时,折叠导航 / 收起目录树也不许把白板根节点滚走。
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import JSZip from 'jszip'
@@ -176,7 +181,8 @@ async function pointerClick(ctx, selector) {
     const x = r.left + r.width / 2
     const y = r.top + r.height / 2
     const top = document.elementFromPoint(x, y)
-    const label = el.labels ? el.labels[0] : null
+    // labels 在没关联 <label> 时是空集合而不是 null,取 [0] 会得到 undefined。
+    const label = el.labels && el.labels.length > 0 ? el.labels[0] : null
     const hit = top !== null && (top === el || el.contains(top) || top.contains(el) || (label !== null && (top === label || label.contains(top))))
     const by = top === null ? null : ((top.getAttribute('class') || top.tagName) + (label === null ? ' no-label' : ' label'))
     return { x, y, hit, by }
@@ -194,7 +200,7 @@ async function clearSpot(ctx) {
     if (board === null || canvas === null) return null
     const box = board.getBoundingClientRect()
     const blocked = [...document.querySelectorAll(
-      '.App-toolbar, .zoom-actions, .Stack, .excalidraw-wysiwyg, .help-icon, .canvas-minimap-map, .canvas-minimap-toggle'
+      '.App-toolbar, .zoom-actions, .Stack, .excalidraw-wysiwyg, .canvas-minimap-map, .canvas-minimap-toggle, .canvas-help-toggle'
     )].map((el) => el.getBoundingClientRect())
     const clear = (x, y) => x > box.left + 24 && x < box.right - 24 && y > box.top + 24 && y < box.bottom - 24
       && blocked.every((rect) => rect.width === 0 || x < rect.left || x > rect.right || y < rect.top || y > rect.bottom)
@@ -394,6 +400,172 @@ function liveElements(scene) {
   return (scene.elements ?? []).filter((element) => element.isDeleted !== true)
 }
 
+/**
+ * 右下角两个按钮的落点。两个都是我们自己的按钮:帮助按钮是地图开关的右邻,
+ * 两个都贴白板右缘:帮助按钮右缘 = 白板右缘 - 1rem,开关右缘 = 帮助按钮左缘 - 8px,
+ * 底边对齐。`frames` > 0 时逐帧采样,返回违例帧(空数组才算过),打开瞬间的抖动也能抓到。
+ */
+async function sampleFooterAnchor(ctx, frames = 1) {
+  // 页面里先 JSON.stringify 再让 eval 等这个 Promise:cdp.json 会把表达式直接 stringify,
+  // 套在 Promise 上只会得到 {}。
+  const raw = await ctx.cdp.eval(`(async () => {
+    const bad = []
+    const check = (when) => {
+      const board = document.querySelector('.canvas-board')
+      const help = document.querySelector('.canvas-help-toggle')
+      const toggle = document.querySelector('.canvas-minimap-toggle')
+      if (board === null || help === null || toggle === null) {
+        bad.push(when + ':右下角按钮不在')
+        return
+      }
+      const b = board.getBoundingClientRect()
+      const h = help.getBoundingClientRect()
+      const t = toggle.getBoundingClientRect()
+      const inset = b.right - h.right
+      const gap = h.left - t.right
+      if (Math.abs(inset - 16) > 2) {
+        bad.push(when + ':帮助按钮右缘离白板右缘 ' + inset.toFixed(1) + 'px(应为 16)')
+        return
+      }
+      if (gap < 4 || gap > 16) {
+        bad.push(when + ':开关与帮助按钮间距 ' + gap.toFixed(1) + 'px(应为 8)')
+        return
+      }
+      if (Math.abs(t.bottom - h.bottom) > 2) {
+        bad.push(when + ':开关与帮助按钮底边差 ' + (t.bottom - h.bottom).toFixed(1) + 'px')
+        return
+      }
+      if (h.left < b.left || h.right > b.right || t.left < b.left) {
+        bad.push(when + ':按钮跑出白板')
+      }
+    }
+    check('当前')
+    for (let i = 0; i < ${frames}; i += 1) {
+      await new Promise((resolve) => requestAnimationFrame(resolve))
+      check('第 ' + i + ' 帧')
+      if (bad.length > 0) break
+    }
+    return JSON.stringify(bad)
+  })()`)
+  return JSON.parse(raw)
+}
+
+/**
+ * 白板根节点和画布的几何关系。白板布局变化(目录树收起、导航折叠、窗口改尺寸)之后,
+ * `.excalidraw` 必须还在原点、画布必须和白板同宽同高、工具栏居中。
+ * 改前这里会横向滚走:聚焦的网页嵌入 iframe 被「滚进可视区」,整块画布跟着左移,
+ * 右边露出一条白板底色 —— 用户看到的就是「内容越过右缘、布局错乱」。
+ */
+async function boardGeometry(ctx) {
+  return ctx.cdp.json(`(() => {
+    const board = document.querySelector('.canvas-board')
+    const root = document.querySelector('.canvas-board > .excalidraw')
+    const canvas = document.querySelector(
+      '.canvas-board > .excalidraw > canvas.excalidraw__canvas.interactive'
+    )
+    const bar = document.querySelector('.canvas-board .App-toolbar')
+    if (board === null || root === null || canvas === null || bar === null) return null
+    const b = board.getBoundingClientRect()
+    const c = canvas.getBoundingClientRect()
+    const t = bar.getBoundingClientRect()
+    return {
+      innerWidth: window.innerWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      boardLeft: b.left,
+      boardRight: b.right,
+      boardWidth: b.width,
+      boardHeight: b.height,
+      canvasLeft: c.left,
+      canvasRight: c.right,
+      canvasWidth: c.width,
+      canvasHeight: c.height,
+      toolbarCenter: t.left + t.width / 2,
+      boardCenter: b.left + b.width / 2,
+      rootScroll: [root.scrollLeft, root.scrollTop]
+    }
+  })()`)
+}
+
+/** 轮询到画布跟上白板尺寸,返回最后一次量到的几何(超时也返回,交给断言描述差在哪)。 */
+async function waitCanvasTracksBoard(ctx, timeout = 3000) {
+  const deadline = Date.now() + timeout
+  let last = null
+  while (Date.now() < deadline) {
+    last = await boardGeometry(ctx)
+    if (last !== null && Math.abs(last.canvasWidth - last.boardWidth) <= 1) return last
+    await sleep(80)
+  }
+  return last
+}
+
+/**
+ * 布局变化(导航折叠 / 目录树收起 / 窗口拉伸)之后量几何。不能画布一追上就量:
+ * 白板变宽会让 Excalidraw 补挂原本在视口外的网页卡片,卡片里的页面加载完还会抢一次焦点,
+ * 浏览器若要把那张 iframe 滚进可视区,就发生在这一两百毫秒里。
+ * 所以等「白板宽度和根节点滚动位置连着几次采样都没变」再返回;至少待满 `minimum`,
+ * 给挂载 + 页面脚本留出时间。
+ */
+async function settleBoardAfterLayout(ctx, { minimum = 1200, timeout = 3500 } = {}) {
+  const start = Date.now()
+  const deadline = start + timeout
+  let previous = null
+  let stable = 0
+  let last = null
+  while (Date.now() < deadline) {
+    const geometry = await boardGeometry(ctx)
+    if (geometry !== null) {
+      last = geometry
+      const key = [
+        Math.round(geometry.boardLeft),
+        Math.round(geometry.boardWidth),
+        ...geometry.rootScroll
+      ].join('/')
+      stable = key === previous ? stable + 1 : 0
+      previous = key
+      if (stable >= 3 && Date.now() - start >= minimum) return geometry
+    }
+    await sleep(100)
+  }
+  return last
+}
+
+/**
+ * 布局变化之后:根节点没被滚走、画布填满白板、工具栏没有跟着整体左移、整页不横向溢出。
+ * 工具栏本来就不正对白板中心(右侧还留着素材库那一档,偏移量随白板宽度在几十像素内浮动),
+ * 但根节点一旦被滚走就是整块左移近三百像素 —— 用宽容差就能把这两种情况分开。
+ */
+function assertBoardGeometry(geometry, when) {
+  ok(geometry !== null, `${when}:白板、画布和工具栏都还在`)
+  eq(geometry.rootScroll, [0, 0], `${when}:白板根节点没有被滚走(scrollLeft/scrollTop)`)
+  ok(
+    Math.abs(geometry.canvasLeft - geometry.boardLeft) <= 1 &&
+      Math.abs(geometry.canvasWidth - geometry.boardWidth) <= 1,
+    `${when}:画布填满白板(画布 ${Math.round(geometry.canvasLeft)}..${Math.round(
+      geometry.canvasRight
+    )} / 白板 ${Math.round(geometry.boardLeft)}..${Math.round(geometry.boardRight)})`
+  )
+  ok(
+    Math.abs(geometry.canvasHeight - geometry.boardHeight) <= 1,
+    `${when}:画布高度等于白板高度(画布 ${Math.round(geometry.canvasHeight)} / 白板 ${Math.round(
+      geometry.boardHeight
+    )})`
+  )
+  const toolbarOffset = geometry.toolbarCenter - geometry.boardCenter
+  ok(
+    Math.abs(toolbarOffset) <= 120,
+    `${when}:工具栏没有跟着根节点整体左移(工具栏中心 ${Math.round(
+      geometry.toolbarCenter
+    )} / 白板中心 ${Math.round(geometry.boardCenter)},偏移 ${toolbarOffset.toFixed(1)}px)`
+  )
+  eq(geometry.scrollWidth, geometry.innerWidth, `${when}:整页没有横向溢出`)
+  ok(
+    Math.abs(geometry.boardRight - geometry.innerWidth) <= 1,
+    `${when}:白板右缘仍是窗口右缘(白板 ${Math.round(
+      geometry.boardRight
+    )}px / 窗口 ${geometry.innerWidth}px)`
+  )
+}
+
 /** 等到落盘场景满足条件。拖放的写入是异步的,不能在松手后立刻读。 */
 async function waitForScene(ctx, rel, ready) {
   const deadline = Date.now() + 8000
@@ -511,6 +683,240 @@ function externalScene(fileName, embed) {
       }
     ],
     appState: {},
+    files: {}
+  })
+}
+
+/** 一份能导出的子白板:一块矩形 + 一行字。restore 会补齐缺的字段。 */
+function childBoardScene(text) {
+  return JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'e2e',
+    elements: [
+      {
+        type: 'rectangle',
+        id: 'child-rect',
+        x: 0,
+        y: 0,
+        width: 220,
+        height: 130,
+        angle: 0,
+        strokeColor: '#1e1e1e',
+        backgroundColor: '#a5d8ff',
+        fillStyle: 'solid',
+        strokeWidth: 2,
+        strokeStyle: 'solid',
+        roughness: 1,
+        opacity: 100,
+        groupIds: [],
+        frameId: null,
+        roundness: null,
+        seed: 1,
+        version: 1,
+        versionNonce: 1,
+        isDeleted: false,
+        boundElements: [],
+        updated: 1,
+        link: null,
+        locked: false
+      },
+      {
+        type: 'text',
+        id: 'child-text',
+        x: 40,
+        y: 160,
+        width: 140,
+        height: 25,
+        angle: 0,
+        strokeColor: '#1e1e1e',
+        backgroundColor: 'transparent',
+        fillStyle: 'solid',
+        strokeWidth: 2,
+        strokeStyle: 'solid',
+        roughness: 1,
+        opacity: 100,
+        groupIds: [],
+        frameId: null,
+        roundness: null,
+        seed: 2,
+        version: 1,
+        versionNonce: 2,
+        isDeleted: false,
+        boundElements: [],
+        updated: 1,
+        link: null,
+        locked: false,
+        text,
+        originalText: text,
+        fontSize: 20,
+        fontFamily: 1,
+        textAlign: 'left',
+        verticalAlign: 'top',
+        containerId: null,
+        lineHeight: 1.25
+      }
+    ],
+    appState: { viewBackgroundColor: '#ffffff' },
+    files: {}
+  })
+}
+
+/**
+ * 带嵌入的子白板:矩形和一行字之外,再放一张库内图片卡片和一块更深的白板卡片。
+ * 外层卡片里要看到图片的真实内容;更深那块退回静态 SVG,不再挂第二个画布。
+ */
+function richChildBoardScene(text, imagePath, grandPath) {
+  const scene = JSON.parse(childBoardScene(text))
+  scene.elements.push(
+    {
+      type: 'embeddable',
+      id: 'child-image',
+      x: 40,
+      y: 220,
+      width: 240,
+      height: 160,
+      link: imagePath,
+      strokeColor: 'transparent',
+      backgroundColor: 'transparent',
+      isDeleted: false,
+      customData: { launcher: { kind: 'file', path: imagePath } }
+    },
+    {
+      type: 'embeddable',
+      id: 'child-board',
+      x: 340,
+      y: 0,
+      width: 360,
+      height: 240,
+      link: grandPath,
+      strokeColor: 'transparent',
+      backgroundColor: 'transparent',
+      isDeleted: false,
+      customData: { launcher: { kind: 'file', path: grandPath } }
+    }
+  )
+  return JSON.stringify(scene)
+}
+
+/** 直接写一份「嵌着某块白板」的场景,状态用例不用每次走选择器。 */
+function boardEmbedScene(link) {
+  return JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'e2e',
+    elements: [
+      {
+        type: 'embeddable',
+        id: 'embed-board-1',
+        x: 80,
+        y: 80,
+        width: 360,
+        height: 240,
+        link,
+        strokeColor: 'transparent',
+        backgroundColor: 'transparent',
+        isDeleted: false,
+        customData: { launcher: { kind: 'file', path: link } }
+      }
+    ],
+    appState: {},
+    files: {}
+  })
+}
+
+/**
+ * 一大块越过白板右缘的网页嵌入。用来排除「内容比白板宽导致布局被挤」这个猜想:
+ * 卡片可以跑到白板外(白板自己 overflow:hidden),但整页不该横向溢出,
+ * 白板右缘和 UI 层宽度也不该跟着变。左边压在白板里,Excalidraw 才会挂这块嵌入。
+ */
+function wideWebBoardScene() {
+  const url = 'https://example.invalid/'
+  return JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'e2e',
+    elements: [
+      {
+        type: 'embeddable',
+        id: 'wide-web-1',
+        x: 300,
+        y: 120,
+        width: 900,
+        height: 520,
+        link: url,
+        strokeColor: 'transparent',
+        backgroundColor: 'transparent',
+        isDeleted: false,
+        customData: { launcher: { kind: 'web', url } }
+      }
+    ],
+    appState: {},
+    files: {}
+  })
+}
+
+/**
+ * 一个「自己抢焦点」的网页:加载完把光标放进输入框,真实站点里很常见(搜索框)。
+ * 用例不能依赖外网,所以本地起一个小服务器按需提供它。
+ * 故意晚 300ms 再 focus:卡片是在白板变宽的布局变化里挂上的,
+ * 焦点落在刚挂上、位置还没摆好的 iframe 上,浏览器就会去滚它最近的滚动祖先。
+ */
+async function startFocusStealingSite() {
+  const server = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(
+      '<!doctype html><meta charset="utf-8"><body><input id="focus-target"><p>e2e</p>' +
+        '<script>setTimeout(() => document.getElementById("focus-target").focus(), 300)</script>' +
+        '</body>'
+    )
+  })
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  return {
+    url: `http://127.0.0.1:${server.address().port}`,
+    close: () =>
+      new Promise((resolve) => {
+        server.closeAllConnections?.()
+        server.close(resolve)
+      })
+  }
+}
+
+/**
+ * 用户那块「布局错乱」白板的复刻:几张网页卡片横跨白板右缘,根节点因此有横向溢出。
+ * 一折叠导航 / 收起目录树,白板变宽,原本在视口外的那张卡片会被挂上并抢焦点 ——
+ * 改前浏览器为了把它的 iframe 滚进可视区,会把 `.excalidraw` 横向滚走,
+ * 画布、工具栏一起左移,右缘露出白板底色。坐标来自用户那块白板。
+ */
+function focusStealingBoardScene(siteUrl) {
+  const card = (id, x, y, width, height) => ({
+    type: 'embeddable',
+    id,
+    x,
+    y,
+    width,
+    height,
+    link: siteUrl,
+    strokeColor: 'transparent',
+    backgroundColor: 'transparent',
+    isDeleted: false,
+    customData: { launcher: { kind: 'web', url: siteUrl } }
+  })
+  return JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'e2e',
+    elements: [
+      card('web-a', 270.43, 199.86, 360, 240),
+      card('web-b', 458.58, -137.99, 671.08, 428.87),
+      card('web-c', 396.9, 351.78, 360, 240),
+      card('web-d', 272.94, -79.84, 555.57, 375.42),
+      card('web-e', 845.18, 341.28, 320.14, 278.44)
+    ],
+    appState: { viewBackgroundColor: '#ffffff' },
     files: {}
   })
 }
@@ -1204,7 +1610,7 @@ export default [
   {
     id: 'canvas/embed-external',
     area: 'canvas',
-    title: '工具栏按类型选库外 PDF,卡片跟着原文件,删掉后显示找不到',
+    title: '工具栏按类型选库外 PDF,卡片跟着原文件,删掉后显示找不到;「从电脑选择」紧跟「笔记和文件」不在类型中间',
     tags: ['canvas', 'embed', 'external'],
     async run(ctx) {
       const outside = mkdtempSync(join(tmpdir(), 'launcher-canvas-pdf-'))
@@ -1213,6 +1619,33 @@ export default [
       try {
         await createCanvas(ctx, '外部嵌入')
         await openEmbedPicker(ctx)
+        // 两个不限类型的来源(库内 / 本机)在最前,类型在中间,网页收尾。
+        // 「从电脑选择」以前夹在图片和网页之间,把按类型排的一列截断了。
+        const order = await ctx.cdp.json(`(() => {
+          const list = document.querySelector('.canvas-embed-picker > .canvas-embed-picker-list')
+          if (list === null) return []
+          return [...list.children].map((row) =>
+            row.dataset.embedPage ?? row.dataset.embedKind
+              ?? (row.dataset.embedWeb !== undefined ? 'web' : ''))
+        })()`)
+        eq(
+          order,
+          [
+            'library',
+            'computer',
+            'video',
+            'slides',
+            'document',
+            'spreadsheet',
+            'pdf',
+            'drawio',
+            'model',
+            'audio',
+            'image',
+            'web'
+          ],
+          '第一级顺序:笔记和文件、从电脑选择、各类型、网页'
+        )
         for (const kind of ['video', 'slides', 'document', 'spreadsheet', 'pdf', 'model', 'audio', 'image']) {
           ok(
             await ctx.cdp.eval(
@@ -2119,7 +2552,7 @@ export default [
       ok(zoomButtons, '三个缩放按钮还在')
       ok(
         await ctx.cdp.eval(`(() => {
-          const help = document.querySelector('.help-icon')
+          const help = document.querySelector('.canvas-help-toggle')
           if (help === null) return false
           const box = help.getBoundingClientRect()
           const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
@@ -2128,9 +2561,16 @@ export default [
         '小地图打开时,右下角的帮助按钮仍然可以点到'
       )
       ok(
+        await ctx.cdp.eval(
+          `(() => { const native = document.querySelector('.canvas-board .layer-ui__wrapper .help-icon')
+             return native !== null && getComputedStyle(native).display === 'none' })()`
+        ),
+        'Excalidraw 自己的帮助按钮留着(转调它的对话框),但不显示第二个「?」'
+      )
+      ok(
         await ctx.cdp.eval(`(() => {
           const toggle = document.querySelector('.canvas-minimap-toggle')
-          const help = document.querySelector('.help-icon')
+          const help = document.querySelector('.canvas-help-toggle')
           const map = document.querySelector('.canvas-minimap-map')
           if (toggle === null || help === null || map === null) return false
           const a = toggle.getBoundingClientRect()
@@ -2200,6 +2640,262 @@ export default [
         `document.querySelector('.canvas-minimap-map') === null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'false'`,
         { timeout: 10_000, message: '关掉的小地图在另一块白板上仍然关着' }
       )
+    }
+  },
+
+  {
+    id: 'canvas/footer-anchor',
+    area: 'canvas',
+    title:
+      '右下角的帮助按钮和小地图开关是我们自己的一簇,始终贴白板右缘;帮助对话框照常打开;侧栏浮上来时整簇收起;内容越过右缘也不挤布局',
+    tags: ['canvas', 'minimap', 'layout'],
+    async run(ctx) {
+      const wide = '宽内容白板.excal'
+      writeCanvas(ctx, wide, wideWebBoardScene())
+      await createCanvas(ctx, '右缘')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-help-toggle') !== null && document.querySelector('.canvas-minimap-toggle') !== null`,
+        { timeout: 15_000, message: '右下角出现帮助按钮和地图开关' }
+      )
+      eq(await sampleFooterAnchor(ctx, 40), [], '打开白板时每一帧都贴右缘')
+
+      // 帮助按钮是我们自己的,但对话框还是 Excalidraw 的:点开、关掉都要能走完。
+      await pointerClick(ctx, '.canvas-help-toggle')
+      await ctx.cdp.waitFor(`document.querySelector('.HelpDialog') !== null`, {
+        timeout: 5000,
+        message: '点帮助按钮打开 Excalidraw 的帮助对话框'
+      })
+      // 对话框打开时这一簇还在原位,不会被弹层推到一边。
+      eq(await sampleFooterAnchor(ctx, 3), [], '帮助对话框开着时两个按钮仍贴右缘')
+      // 帮助对话框没有关闭按钮(不是全屏态时库不渲染),Escape 是它的关闭方式。
+      await ctx.press('Escape')
+      await ctx.cdp.waitFor(`document.querySelector('.HelpDialog') === null`, {
+        timeout: 5000,
+        message: 'Escape 收起帮助对话框'
+      })
+
+      // 把渲染视口拉宽到真的放得下右侧栏(白板 > 1229),再强制打开搜索侧栏。
+      // 改前库会把 UI 层收窄 302px:帮助按钮跟着往画布中间跑,而地图开关锚在白板上不动。
+      await ctx.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width: 1900,
+        height: 1100,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      try {
+        await sleep(300)
+        ok(
+          await ctx.cdp.eval(
+            `document.querySelector('.canvas-board')?.getBoundingClientRect().width > 1229`
+          ),
+          '白板已经宽到能放下右侧栏'
+        )
+        eq(await sampleFooterAnchor(ctx, 10), [], '视口拉宽后仍贴右缘')
+
+        const spot = await clearSpot(ctx)
+        await ctx.cdp.click(spot.x, spot.y)
+        await ctx.pressLetter('f', 4)
+        await ctx.cdp.waitFor(`document.querySelector('.excalidraw .sidebar') !== null`, {
+          timeout: 5000,
+          message: 'Cmd/Ctrl+F 打开搜索侧栏'
+        })
+        const widths = await ctx.cdp.json(`(() => {
+          const board = document.querySelector('.canvas-board')
+          const layer = document.querySelector('.canvas-board .layer-ui__wrapper')
+          if (board === null || layer === null) return null
+          return {
+            board: Math.round(board.getBoundingClientRect().width),
+            layer: Math.round(layer.getBoundingClientRect().width)
+          }
+        })()`)
+        ok(widths !== null, '白板和 UI 层都还在')
+        ok(
+          Math.abs(widths.layer - widths.board) <= 1,
+          `侧栏停靠时 UI 层不跟着收窄(UI 层 ${widths.layer}px / 白板 ${widths.board}px)`
+        )
+        // 侧栏浮在右下角,这一簇先收起来,免得被盖住一半。
+        await ctx.cdp.waitFor(
+          `(() => { const el = document.querySelector('.canvas-minimap')
+             return el !== null && getComputedStyle(el).display === 'none' })()`,
+          { timeout: 5000, message: '侧栏打开时右下角按钮簇收起' }
+        )
+
+        await pointerClick(ctx, '[data-testid="sidebar-close"]')
+        await ctx.cdp.waitFor(`document.querySelector('.excalidraw .sidebar') === null`, {
+          timeout: 5000,
+          message: '侧栏头部的关闭按钮收起搜索侧栏'
+        })
+        await ctx.cdp.waitFor(
+          `(() => { const el = document.querySelector('.canvas-minimap')
+             return el !== null && getComputedStyle(el).display !== 'none' })()`,
+          { timeout: 5000, message: '关掉侧栏后右下角按钮簇回来' }
+        )
+        eq(await sampleFooterAnchor(ctx, 10), [], '关掉侧栏后仍贴右缘')
+      } finally {
+        await ctx.cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => {})
+      }
+      await sleep(200)
+      eq(await sampleFooterAnchor(ctx, 10), [], '视口复原后仍贴右缘')
+
+      // 内容比白板宽时,卡片可以跑到白板外(白板自己 overflow:hidden),
+      // 但整页不该横向溢出,白板右缘、UI 层宽度也不该被内容推走。
+      await openCanvasFile(ctx, wide)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed[data-embed-kind="web"]') !== null`,
+        { timeout: 15_000, message: '宽内容白板打开,网页卡片挂上' }
+      )
+      const wideLayout = await ctx.cdp.json(`(() => {
+        const board = document.querySelector('.canvas-board')
+        const layer = document.querySelector('.canvas-board .layer-ui__wrapper')
+        const card = document.querySelector('.canvas-embed[data-embed-kind="web"]')
+        if (board === null || layer === null || card === null) return null
+        const b = board.getBoundingClientRect()
+        return {
+          innerWidth: window.innerWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+          boardRight: b.right,
+          boardWidth: Math.round(b.width),
+          layerWidth: Math.round(layer.getBoundingClientRect().width),
+          cardRight: card.getBoundingClientRect().right
+        }
+      })()`)
+      ok(wideLayout !== null, '宽内容白板上白板、UI 层和卡片都在')
+      ok(
+        wideLayout.cardRight > wideLayout.boardRight,
+        `卡片确实越过了白板右缘(卡片右缘 ${Math.round(wideLayout.cardRight)}px / 白板右缘 ${Math.round(wideLayout.boardRight)}px)`
+      )
+      eq(
+        wideLayout.scrollWidth,
+        wideLayout.innerWidth,
+        '内容越过右缘也不让整页横向溢出'
+      )
+      ok(
+        Math.abs(wideLayout.boardRight - wideLayout.innerWidth) <= 1,
+        `白板右缘仍是窗口右缘(白板 ${Math.round(wideLayout.boardRight)}px / 窗口 ${wideLayout.innerWidth}px)`
+      )
+      eq(
+        wideLayout.layerWidth,
+        wideLayout.boardWidth,
+        '宽内容也不收窄 UI 层'
+      )
+      // 点一下卡片进入交互(iframe 是真实的),布局仍不跟着动。
+      // 库只在卡片中心一带的单击才激活,所以取「卡片和白板相交区域」的中心。
+      const cardSpot = await ctx.cdp.json(`(() => {
+        const card = document.querySelector('.canvas-embed[data-embed-kind="web"]')
+        const board = document.querySelector('.canvas-board')
+        if (card === null || board === null) return null
+        const c = card.getBoundingClientRect()
+        const b = board.getBoundingClientRect()
+        const left = Math.max(c.left, b.left)
+        const right = Math.min(c.right, b.right)
+        const top = Math.max(c.top, b.top)
+        const bottom = Math.min(c.bottom, b.bottom)
+        if (right - left < 40 || bottom - top < 40) return null
+        return { x: (left + right) / 2, y: (top + bottom) / 2 }
+      })()`)
+      ok(cardSpot !== null, '宽卡片有一块落在白板里')
+      // 双击进入交互(卡片带 link,第一下是选中 + 链接气泡,双击才是「交互」)。
+      await ctx.cdp.mouse('mousePressed', cardSpot.x, cardSpot.y, { buttons: 1, clickCount: 1 })
+      await ctx.cdp.mouse('mouseReleased', cardSpot.x, cardSpot.y, { buttons: 0, clickCount: 1 })
+      await ctx.cdp.mouse('mousePressed', cardSpot.x, cardSpot.y, { buttons: 1, clickCount: 2 })
+      await ctx.cdp.mouse('mouseReleased', cardSpot.x, cardSpot.y, { buttons: 0, clickCount: 2 })
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed[data-embed-kind="web"]')?.dataset.embedActive === 'true'`,
+        { timeout: 5000, message: '双击宽卡片进入交互' }
+      )
+      const afterActive = await ctx.cdp.json(`(() => {
+        const board = document.querySelector('.canvas-board')
+        const layer = document.querySelector('.canvas-board .layer-ui__wrapper')
+        return {
+          scrollWidth: document.documentElement.scrollWidth,
+          innerWidth: window.innerWidth,
+          boardWidth: Math.round(board.getBoundingClientRect().width),
+          layerWidth: Math.round(layer.getBoundingClientRect().width)
+        }
+      })()`)
+      eq(afterActive.scrollWidth, afterActive.innerWidth, '卡片进入交互后仍无横向溢出')
+      eq(afterActive.layerWidth, afterActive.boardWidth, '卡片进入交互后 UI 层仍与白板等宽')
+      eq(await sampleFooterAnchor(ctx, 3), [], '宽内容白板上两个按钮仍贴右缘')
+    }
+  },
+
+  {
+    id: 'canvas/root-scroll',
+    area: 'canvas',
+    title:
+      '网页卡片里的页面抢到焦点后,折叠导航 / 收起目录树 / 改窗口尺寸都不许把白板滚走:画布始终填满白板,右侧不露白板底色',
+    tags: ['canvas', 'layout', 'embed'],
+    async run(ctx) {
+      const site = await startFocusStealingSite()
+      try {
+        const rel = '右缘网页.excal'
+        writeCanvas(ctx, rel, focusStealingBoardScene(site.url))
+        await openCanvasFile(ctx, rel)
+        await ctx.cdp.waitFor(
+          `document.querySelector('.canvas-board .canvas-embed[data-embed-kind="web"] iframe') !== null`,
+          { timeout: 20_000, message: '网页卡片挂上' }
+        )
+        // 网页卡片里的页面加载完自己把焦点放进输入框 —— 用户那块白板就是这样。
+        await ctx.cdp.waitFor(
+          `(() => {
+            const frames = [...document.querySelectorAll('.canvas-board iframe')]
+            return frames.length > 0 && frames.includes(document.activeElement)
+          })()`,
+          { timeout: 15_000, message: '网页卡片里的页面抢到焦点' }
+        )
+        assertBoardGeometry(await waitCanvasTracksBoard(ctx), '刚打开白板')
+
+        // 折叠左侧导航:白板变宽右移,Excalidraw 会把原本在视口外的那张网页卡片挂上,
+        // 它的页面再抢一次焦点。改前浏览器为了把这个 iframe 滚进可视区,会把
+        // `.excalidraw` 横向滚走(实测 125px),画布、工具栏跟着左移,右缘露出白板底色
+        // (`--editor-bg` 的 #e6eaf4),看起来就是「内容越过右缘、布局错乱」。
+        await pointerClick(ctx, '#sidebar .sidebar-header')
+        await ctx.cdp.waitFor(`document.querySelector('#sidebar.sidebar.collapsed') !== null`, {
+          timeout: 5000,
+          message: '左侧导航折叠'
+        })
+        assertBoardGeometry(await settleBoardAfterLayout(ctx), '折叠左侧导航后')
+        eq(await sampleFooterAnchor(ctx, 3), [], '折叠左侧导航后两个按钮仍贴右缘')
+
+        await pointerClick(ctx, '#sidebar .sidebar-header')
+        await ctx.cdp.waitFor(`document.querySelector('#sidebar.sidebar.collapsed') === null`, {
+          timeout: 5000,
+          message: '左侧导航展开'
+        })
+        assertBoardGeometry(await settleBoardAfterLayout(ctx), '展开左侧导航后')
+
+        // 窗口改尺寸也是同一条路径:白板变宽、视口外又冒出网页卡片。
+        await ctx.cdp.send('Emulation.setDeviceMetricsOverride', {
+          width: 1400,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: false
+        })
+        try {
+          assertBoardGeometry(await settleBoardAfterLayout(ctx), '窗口拉宽后')
+        } finally {
+          await ctx.cdp.send('Emulation.clearDeviceMetricsOverride').catch(() => {})
+        }
+        assertBoardGeometry(await settleBoardAfterLayout(ctx), '窗口复原后')
+
+        // 目录树收起 / 展开是另一种布局变化:它把白板加宽、左移。根节点同样不许滚,
+        // 哪怕这一下焦点先被目录树按钮拿走。
+        await pointerClick(ctx, '.file-hd .notes-rail-toggle')
+        await ctx.cdp.waitFor(`document.querySelector('.notes-rail') === null`, {
+          timeout: 5000,
+          message: '目录树收起'
+        })
+        assertBoardGeometry(await settleBoardAfterLayout(ctx), '收起目录树后')
+        await pointerClick(ctx, '.file-hd .notes-rail-toggle')
+        await ctx.cdp.waitFor(`document.querySelector('.notes-rail') !== null`, {
+          timeout: 5000,
+          message: '目录树展开'
+        })
+        assertBoardGeometry(await settleBoardAfterLayout(ctx), '展开目录树后')
+        eq(await sampleFooterAnchor(ctx, 3), [], '目录树开关一轮后两个按钮仍贴右缘')
+      } finally {
+        await site.close()
+      }
     }
   },
 
@@ -2362,6 +3058,227 @@ export default [
       const embed = liveElements(scene).find((element) => element.type === 'embeddable')
       ok(embed !== undefined, '嵌入元素写进场景')
       eq(embed.link, rel, '卡片 link 是库内文件的可读路径')
+    }
+  },
+
+  {
+    id: 'canvas/embed-board',
+    area: 'canvas',
+    title:
+      '白板嵌入库内白板:卡片里挂只读画布,子白板嵌的图片是真内容,更深一层退回静态 SVG;卡片不接指针,右上角「打开」进入子白板;空白/坏文件/自嵌/引用丢失各有状态',
+    tags: ['canvas', 'embed', 'board'],
+    async run(ctx) {
+      const child = '子白板.excal'
+      const grand = '孙白板.excal'
+      const image = '子板图.png'
+      const empty = '空白白板.excal'
+      const broken = '坏白板.excal'
+      writeVaultFile(ctx, image, PNG_1PX)
+      writeCanvas(ctx, grand, childBoardScene('孙板里的字'))
+      writeCanvas(ctx, child, richChildBoardScene('子板里的字', image, grand))
+      writeCanvas(ctx, empty, '')
+      writeCanvas(ctx, broken, '{ 这不是 json')
+      // 状态用例直接写场景:一张卡片指着谁,决定卡片显示什么。
+      writeCanvas(ctx, '空白状态板.excal', boardEmbedScene(empty))
+      writeCanvas(ctx, '坏板状态板.excal', boardEmbedScene(broken))
+      writeCanvas(ctx, '自嵌板.excal', boardEmbedScene('自嵌板.excal'))
+      writeCanvas(ctx, '丢失引用板.excal', boardEmbedScene('没有的白板.excal'))
+      for (const rel of [child, empty, broken]) {
+        await ctx.cdp.waitFor(
+          `document.querySelector(${JSON.stringify(fileSelector(rel))}) !== null`,
+          { timeout: 10_000, message: `左栏出现 ${rel}` }
+        )
+      }
+
+      await createCanvas(ctx, '外层板')
+      await openEmbedPicker(ctx)
+      await pointerClick(ctx, '[data-embed-page="library"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(
+          `.canvas-embed-picker-row[data-embed-path="${child}"]`
+        )}) !== null`,
+        { timeout: 5000, message: '笔记和文件里有这块白板' }
+      )
+      await pointerClick(ctx, `.canvas-embed-picker-row[data-embed-path="${child}"]`)
+
+      await ctx.cdp.waitFor(
+        `(() => {
+          const card = document.querySelector('.canvas-embed[data-embed-kind="canvas"]')
+          const host = card?.querySelector('.canvas-embed-board')
+          const live = host?.querySelector('.canvas-embed-board-live .excalidraw')
+          return card !== null && host?.dataset.boardPreview === 'ready' && live !== null
+        })()`,
+        { timeout: 20_000, message: '子白板在卡片里挂上只读画布' }
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.canvas-embed[data-embed-kind="canvas"]')?.dataset.embedPath`),
+        child,
+        '卡片记下子白板路径'
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed-board-live .excalidraw')?.classList.contains('excalidraw--view-mode') === true`
+        ),
+        '卡片里的画布是只读的'
+      )
+      // 宽卡片走桌面版(layer-ui__wrapper),窄卡片被库切成 mobile 版(App-toolbar / App-bottom-bar)。
+      eq(
+        await ctx.cdp.json(
+          `(() => {
+             const root = document.querySelector('.canvas-embed-board-live .excalidraw')
+             if (root === null) return ['没有只读画布']
+             return [...root.querySelectorAll(
+               '.layer-ui__wrapper, .App-toolbar, .App-bottom-bar, .mobile-misc-tools-container, .file-image-tools'
+             )]
+               .filter((el) => getComputedStyle(el).display !== 'none')
+               .map((el) => el.getAttribute('class') + ' → ' + getComputedStyle(el).display)
+           })()`
+        ),
+        [],
+        '只读画布自己的工具条 / 缩放条不显示(桌面版和 mobile 版都藏掉)'
+      )
+      // 改前子白板里嵌的图片只有一串路径;现在是真的图片查看器,图解码完才有尺寸。
+      await ctx.cdp.waitFor(
+        `(() => {
+          const img = document.querySelector(
+            '.canvas-embed-board-live .canvas-embed[data-embed-path="${image}"] img'
+          )
+          return img !== null && img.complete === true && img.naturalWidth > 0
+        })()`,
+        { timeout: 15_000, message: '卡片里能看见子白板嵌的图片本身' }
+      )
+      // 深度兜底:更里面那块白板不再挂第二个画布,退回静态 SVG。
+      await ctx.cdp.waitFor(
+        `document.querySelector(
+          '.canvas-embed-board-live .canvas-embed[data-embed-kind="canvas"] .canvas-embed-board > svg'
+        ) !== null`,
+        { timeout: 20_000, message: '再深一层退回静态 SVG' }
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelectorAll('.canvas-embed-board-live .excalidraw').length`),
+        1,
+        '只挂这一个只读画布,不会一层层往下套'
+      )
+      const innerHit = await ctx.cdp.eval(`(() => {
+        const canvas = document.querySelector('.canvas-embed-board-live canvas.excalidraw__canvas')
+        if (canvas === null) return 'NO_CANVAS'
+        const box = canvas.getBoundingClientRect()
+        if (box.width === 0 || box.height === 0) return 'NO_BOX'
+        const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2)
+        if (top === null) return 'NO_TARGET'
+        return top.closest('.canvas-embed-board-live') === null ? 'OUTER' : 'INNER'
+      })()`)
+      eq(innerHit, 'OUTER', '内层画布完全不接指针,点击落在外层画布上')
+
+      await waitCanvasSaved(ctx)
+      const saved = await waitForScene(
+        ctx,
+        '外层板.excal',
+        (scene) => liveElements(scene).filter((element) => element.type === 'embeddable').length === 1
+      )
+      const embed = liveElements(saved).find((element) => element.type === 'embeddable')
+      eq(embed.link, child, '卡片 link 是子白板的相对路径')
+      eq(embed.customData?.launcher?.kind, 'file', '真实引用种类是库内文件')
+      eq(embed.customData?.launcher?.path, child, 'launcher 记下子白板路径')
+
+      // 卡片还没点开也能点右上角的「打开」:按钮要绕过卡片整体的 pointer-events:none。
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed[data-embed-kind="canvas"]')?.dataset.embedActive`
+        ),
+        'false',
+        '点打开之前卡片没有进入交互'
+      )
+      // 只认外层卡片自己的按钮:卡片里那块嵌套白板也有同名按钮(它不接指针)。
+      await pointerClick(ctx, '.canvas-embed[data-embed-depth="0"] > .canvas-embed-board-open')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === ${JSON.stringify(child)}`,
+        { timeout: 15_000, message: '点打开按钮进入子白板' }
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.canvas-board .excalidraw') !== null`, {
+        timeout: 15_000,
+        message: '子白板在自己的编辑器里打开'
+      })
+      // 回到外层板:卡片重新挂载,只读画布还在,子白板里的图片也还看得见。
+      await openCanvasFile(ctx, '外层板.excal')
+      await ctx.cdp.waitFor(
+        `(() => {
+          const host = document.querySelector('.canvas-embed-board')
+          return host?.dataset.boardPreview === 'ready'
+            && host.querySelector('.canvas-embed-board-live .excalidraw') !== null
+        })()`,
+        { timeout: 20_000, message: '回到外层板后只读画布仍挂着' }
+      )
+      await ctx.cdp.waitFor(
+        `(() => {
+          const img = document.querySelector(
+            '.canvas-embed-board-live .canvas-embed[data-embed-path="${image}"] img'
+          )
+          return img !== null && img.complete === true && img.naturalWidth > 0
+        })()`,
+        { timeout: 15_000, message: '回到外层板后子白板里的图片仍显示' }
+      )
+
+      // 选中卡片:气泡里的路径和「白板」角标都对着子白板。
+      await activateByPath(ctx, child, '白板')
+
+      // 空白白板:没有可导出的元素,给出状态说明而不是空白卡片。
+      await openCanvasFile(ctx, '空白状态板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed-board')?.dataset.boardPreview === 'blank'`,
+        { timeout: 15_000, message: '空场景显示「空白白板」' }
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed-board > svg') === null &&
+           document.querySelector('.canvas-embed-state span')?.textContent === '空白白板'`
+        ),
+        '空白白板没有预览图,状态文案说明是空的'
+      )
+
+      // 坏文件:预览解析失败,但绝不改子白板字节。
+      const brokenBytes = readFileSync(absPath(ctx, broken), 'utf8')
+      await openCanvasFile(ctx, '坏板状态板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed-board')?.dataset.boardPreview === 'invalid'`,
+        { timeout: 15_000, message: '坏白板显示解析失败' }
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed-board > svg') === null &&
+           document.querySelector('.canvas-embed-state span')?.textContent === '白板内容无法解析'`
+        ),
+        '坏白板卡片说明内容无法解析'
+      )
+      eq(readFileSync(absPath(ctx, broken), 'utf8'), brokenBytes, '预览不写坏白板的字节')
+
+      // 白板嵌自己:不导出,也不给「打开」按钮。
+      await openCanvasFile(ctx, '自嵌板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed-board')?.dataset.boardPreview === 'self'`,
+        { timeout: 15_000, message: '自嵌显示「这块白板嵌入了自己」' }
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed-state span')?.textContent === '这块白板嵌入了自己' &&
+           document.querySelector('[data-board-open]') === null`
+        ),
+        '自嵌不给预览也不给打开按钮'
+      )
+
+      // 引用的白板不在库里:找不到文件,也就没有可打开的路径。
+      await openCanvasFile(ctx, '丢失引用板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed-board')?.dataset.boardPreview === 'missing'`,
+        { timeout: 15_000, message: '引用丢失显示「找不到这个文件」' }
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed-state span')?.textContent === '找不到这个文件' &&
+           document.querySelector('[data-board-open]') === null`
+        ),
+        '引用丢失不给打开按钮'
+      )
     }
   }
 ]
