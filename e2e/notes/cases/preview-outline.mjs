@@ -1,4 +1,5 @@
 import { eq, excludes, includes, ok } from '../lib/assert.mjs'
+import { sleep } from '../lib/cdp.mjs'
 import {
   BASIC,
   FOLD,
@@ -430,7 +431,7 @@ export default [
     id: 'preview-outline/level-then-caret',
     area: 'preview-outline',
     title:
-      '标题前方平时不显示;鼠标停在标题上才出现随层级缩放的 H,再移到前面只剩折叠箭头,连点不闪回',
+      '标题前方平时不显示;鼠标停在标题上才出现随层级缩放的 H,再移到前面只剩折叠箭头,已折叠时停在标题上换成 H、箭头让位,连点不闪回',
     tags: ['preview-outline', 'fold', 'level'],
     fixture: FOLD,
     async run(ctx, t) {
@@ -511,6 +512,18 @@ export default [
       state = await ctx.previewFoldState('可折叠节')
       eq(state.folded, true, '奇数次点击后本节收起')
       excludes(await ctx.previewText(), '折叠节正文。', '本节正文被收起')
+      // 箭头和层级标叠在同一处。折叠后停在标题文字上:显示 H,箭头让位;
+      // 移到标题前面(按钮上)再换回箭头。等 160ms 交叉淡入跑完再读,否则读到的是过渡开始那一帧。
+      await ctx.hoverHeadingText('可折叠节')
+      await sleep(320)
+      state = await ctx.previewFoldState('可折叠节')
+      eq(state.levelShown, true, '已折叠的节停在标题文字上显示层级标')
+      eq(state.caretShown, false, '已折叠的节停在标题文字上箭头让位,不和层级标叠在一起')
+      await ctx.hoverHeadingBadge('可折叠节')
+      await sleep(320)
+      state = await ctx.previewFoldState('可折叠节')
+      eq(state.levelShown, false, '已折叠的节停在标题前面时层级标收起')
+      eq(state.caretShown, true, '已折叠的节停在标题前面时显示箭头,再点即展开')
       await ctx.cdp.mouse('mouseMoved', 20, 400)
       state = await ctx.previewFoldState('可折叠节')
       eq(state.caretShown, true, '已折叠的节移开鼠标后箭头仍在')

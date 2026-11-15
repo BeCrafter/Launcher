@@ -2885,7 +2885,8 @@ body.cm-block-dragging {
   transition: opacity 160ms ease-out;
 }
 /* 停在标题文字上才出 H。:hover 在停到按钮上时也成立,所以要排除掉,
-   否则这条和下面「按钮悬停时藏起 H」同样具体,谁生效就看样式表顺序。 */
+   否则这条和下面「按钮悬停时藏起 H」同样具体,谁生效就看样式表顺序。
+   折叠的节也一样:停在标题文字上看 H,箭头让位(见下面的规则)。 */
 .md-h:hover > .md-h-fold-btn:not(:hover) .md-h-level {
   opacity: 1;
 }
@@ -2932,6 +2933,11 @@ body.cm-block-dragging {
 }
 .md-h[data-folded='true'] > .md-h-fold-btn i {
   transform: none;
+}
+/* 已折叠的节箭头常驻。停在标题文字上时箭头让位给 H —— 两层叠在同一处,
+   同时亮起来就重叠了;移到标题前面(按钮上)再换回箭头。 */
+.md-h[data-folded='true']:hover > .md-h-fold-btn:not(:hover):not(:focus-visible) i {
+  opacity: 0;
 }
 /* 没有正文可折:停在标题前面仍是 H,不出箭头。 */
 .md-h-level-only:hover .md-h-level,
