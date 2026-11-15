@@ -2018,6 +2018,64 @@ export default [
   },
 
   {
+    id: 'files/drawio-invalid-fallback',
+    area: 'files',
+    title:
+      '图表内容不是 draw.io XML:先给错误页且原文件不动;点「用空白图表替换」后进编辑器,空白图写回磁盘',
+    tags: ['files', 'drawio', 'invalid'],
+    async run(ctx) {
+      const rel = 'e2e-坏图表.drawio'
+      const bad = '# 这不是图表\n只是普通文本。\n'
+      writeFile(ctx, rel, bad)
+      await waitFileRow(ctx, rel)
+
+      await openFile(ctx, rel)
+      await ctx.cdp.waitFor(`document.querySelector('.file-main .drawio-error') !== null`, {
+        timeout: 10_000,
+        message: '不是图表内容时给错误页'
+      })
+      ok(
+        await ctx.cdp.eval(`document.querySelector('.file-main .drawio-frame') === null`),
+        '错误页不挂 iframe,不去请求 draw.io'
+      )
+      eq(readFileSync(absPath(ctx, rel), 'utf8'), bad, '只看不点的时候原文件一个字节都不改')
+
+      // 「用空白图表替换」把合法空白图交给 files-store,再由它写回磁盘
+      eq(
+        await ctx.cdp.eval(`(() => {
+          const btn = document.querySelector('.file-main .drawio-error .d-btn.accent')
+          if (btn === null) return false
+          btn.click()
+          return true
+        })()`),
+        true,
+        '错误页里有替换按钮'
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.file-main .drawio-frame') !== null`, {
+        timeout: 15_000,
+        message: '替换后进入 draw.io 编辑器'
+      })
+      await waitFileSaved(ctx)
+      await ctx.waitForNode(() => {
+        const text = readFileSync(absPath(ctx, rel), 'utf8')
+        return text.startsWith('<mxfile') && text.includes('<mxGraphModel')
+      }, '空白图表写回磁盘(原内容被覆盖)')
+
+      const frame = await frameHandle(
+        ctx,
+        'launcher-drawio://',
+        `window.__drawioStub?.loaded === true && window.__drawioStub.mode === 'editor'`,
+        '空白图交给 draw.io'
+      )
+      eq(
+        await ctx.cdp.evalIn(frame.sessionId, `document.querySelector('.cell')?.textContent ?? null`),
+        '空图表',
+        '编辑器里是空白图(没有方块可画)'
+      )
+    }
+  },
+
+  {
     id: 'files/drawio-theme-chrome',
     area: 'files',
     title:

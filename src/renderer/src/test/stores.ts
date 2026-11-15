@@ -20,6 +20,7 @@ import { useAiStore } from '../state/ai-store'
 import { useCardMenuStore } from '../state/card-menu-store'
 import { useCronStore } from '../state/cron-store'
 import { useDrawerStore } from '../state/drawer-store'
+import { resetDrawioStoreForTests, useDrawioStore } from '../state/drawio-store'
 import { useLightboxStore } from '../state/lightbox-store'
 import { useNoteRefPickerStore } from '../state/note-ref-picker-store'
 import { useNotesStore } from '../state/notes-store'
@@ -52,6 +53,7 @@ export function resetRendererStores(): void {
   resetStore(useUpdateStore)
   resetStore(useUnsavedStore)
   resetStore(useDrawerStore)
+  resetStore(useDrawioStore)
   resetStore(useSvcConfigStore)
   resetStore(useCardMenuStore)
   resetStore(useNoteRefPickerStore)
@@ -69,6 +71,10 @@ export function resetRendererStores(): void {
 
   localStorage.clear()
   sessionStorage.clear()
+
+  // drawio-store 还有模块级的状态缓存/订阅(只拉一次 IPC、只挂一次事件),
+  // 换 profile 或换用例时必须一起清掉,否则后一个用例看到的还是前一个的桩。
+  resetDrawioStoreForTests()
 }
 
 /** 让设置立即生效(语言/主题/DOM),但不经过 IPC;英文用例用它 */
