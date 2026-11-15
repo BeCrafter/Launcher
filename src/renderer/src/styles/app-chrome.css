@@ -1362,6 +1362,11 @@ body.rail-resizing .ai-rail *,
   flex-shrink: 0;
 }
 
+/* 发现新版本(还没下载)是「信息」而不是「就绪」:图标用蓝色区分 */
+.update-ready-banner[data-phase='available'] .update-ready-icon {
+  color: var(--blue);
+}
+
 .update-ready-copy {
   display: flex;
   flex-direction: column;

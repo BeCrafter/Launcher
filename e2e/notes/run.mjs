@@ -9,10 +9,11 @@
 // 前置:先 `npm run build`（`npm run test:e2e:notes` 会自动跑构建）。
 // 为什么不开 electron-vite dev:见 lib/app.mjs 顶部注释。
 
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { launchApp, seedNotes } from './lib/app.mjs'
+import { createUpdateStub } from './lib/update-stub.mjs'
 import { NoteE2EContext } from './lib/ctx.mjs'
 import { CaseFailure } from './lib/assert.mjs'
 import { CASES, AREA_TITLES } from './manifest.mjs'
@@ -119,13 +120,27 @@ async function main() {
   seedNotes(profileDir, [MAIN_NOTE, LINK_NOTE])
 
   console.log(`启动隔离实例…（profile: ${profileDir}）`)
-  const app = await launchApp({ root, profileDir })
+  // 更新检查指向本地桩:默认最新版 = 当前构建版本,其余用例永远 upToDate。
+  // 自动检查间隔缩到 1.5s,update 用例才能在几秒内观察到「发现新版本」。
+  const version = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
+  const updateStub = createUpdateStub({ version })
+  const app = await launchApp({
+    root,
+    profileDir,
+    env: {
+      LAUNCHER_R2_BASE: await updateStub.url(),
+      LAUNCHER_E2E_UPDATE_MODE: 'self',
+      LAUNCHER_UPDATE_CHECK_FIRST_MS: '500',
+      LAUNCHER_UPDATE_CHECK_INTERVAL_MS: '1500'
+    }
+  })
   const ctx = new NoteE2EContext({
     cdp: app.cdp,
     profileDir,
     noteFile: MAIN_NOTE.file,
     noteTitle: MAIN_NOTE.title,
-    logs: app.logs
+    logs: app.logs,
+    updateStub
   })
 
   let stopped = false
@@ -133,6 +148,7 @@ async function main() {
     if (stopped) return
     stopped = true
     await app.stop()
+    await updateStub.close()
   }
   const onInterrupt = async () => {
     console.log('\n收到中断,关闭实例…')

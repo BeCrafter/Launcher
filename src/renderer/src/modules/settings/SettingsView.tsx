@@ -545,6 +545,21 @@ export function SettingsView(): React.JSX.Element {
                     </button>
                   }
                 />
+                <SettingsRow
+                  title={t('settings.about.autoCheck.rowTitle')}
+                  descKey="settings.about.autoCheck.rowDesc"
+                  control={
+                    <span data-setting="autoUpdateCheck">
+                      <Toggle
+                        checked={settings.autoUpdateCheck}
+                        onChange={(v) => {
+                          set({ autoUpdateCheck: v })
+                          savedToast()
+                        }}
+                      />
+                    </span>
+                  }
+                />
                 <UpdatePanel />
                 <SettingsRow
                   title={t('settings.about.installChannel.rowTitle')}

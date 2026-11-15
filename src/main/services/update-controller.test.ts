@@ -363,3 +363,64 @@ describe('UpdateController(自动下载 → ready)', () => {
     controller.dispose()
   })
 })
+
+describe('UpdateController(自动检查 auto 模式)', () => {
+  it('auto 停在 available,不自动下载', async () => {
+    const { controller, fetchCalls } = makeDeps()
+    const s = await controller.check({ auto: true })
+
+    expect(s.phase).toBe('available')
+    expect(s.mode).toBe('self')
+    expect(s.targetVersion).toBe(VERSION)
+    // 只读了 versions.txt:清单与安装包都留给用户点「下载」
+    expect(fetchCalls).toEqual(['https://cdn.test/versions.txt'])
+    controller.dispose()
+  })
+
+  it('auto 失败不落 error,恢复检查前的状态且不广播 checking', async () => {
+    let offline = false
+    const broadcasts: string[] = []
+    const { controller } = makeDeps({
+      fetchImpl: (async () => {
+        if (offline) throw new Error('offline')
+        return new Response('0.2.0\n')
+      }) as unknown as typeof fetch,
+      broadcast: (s) => {
+        broadcasts.push(s.phase)
+      }
+    })
+
+    const first = await controller.check()
+    expect(first.phase).toBe('upToDate')
+    const mark = broadcasts.length
+
+    offline = true
+    const s = await controller.check({ auto: true })
+
+    expect(s.phase).toBe('upToDate')
+    expect(s.error).toBeNull()
+    // 后台检查不闪 checking,失败也不广播 error
+    expect(broadcasts.slice(mark)).toEqual(['upToDate'])
+    controller.dispose()
+  })
+
+  it('手动检查仍自动下载(auto 与手动的唯一差别)', async () => {
+    const { controller } = makeDeps()
+    await controller.check()
+    const s = await waitFor(controller, 'ready')
+    expect(s.phase).toBe('ready')
+    controller.dispose()
+  })
+
+  it('resolveMode 注入:e2e 用的固定 self 探测', async () => {
+    const { controller } = makeDeps({
+      bundlePath: null,
+      resolveMode: async () => ({ mode: 'self', brewPath: null, caskAppPath: null, reason: null })
+    })
+    const s = await controller.check({ auto: true })
+    expect(s.phase).toBe('available')
+    expect(s.mode).toBe('self')
+    expect(s.error).toBeNull()
+    controller.dispose()
+  })
+})

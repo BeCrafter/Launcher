@@ -18,6 +18,7 @@ import { createElevationExecutor } from './services/elevation'
 import { toServicesPayload } from './services/process-discovery'
 import { detectInstallChannel } from './services/install-channel'
 import { createUpdateController } from './services/update-controller'
+import { createUpdateScheduler } from './services/update-scheduler'
 import { createUpdateBootReady, type UpdateBootReadyGate } from './services/update-boot-ready'
 import { appBundleFromExecutable } from './services/update-target'
 import { createBootGate, type BootGate } from './services/boot-gate'
@@ -479,9 +480,30 @@ async function startApp(): Promise<void> {
       net.fetch(input as never, init as never)) as typeof fetch,
     broadcast: (state) => broadcast(IPC_EVENTS.appUpdateChanged, state),
     quit: () => app.quit(),
+    // E2E 测试缝:e2e 跑的是未打包的 out/,bundlePath 为 null → 真实探测永远是 none,
+    // 横幅不会出现。只在隔离 profile 下生效,生产环境不受影响。
+    resolveMode:
+      e2eUserData !== undefined && process.env['LAUNCHER_E2E_UPDATE_MODE'] === 'self'
+        ? async () => ({ mode: 'self', brewPath: null, caskAppPath: null, reason: null })
+        : undefined,
     log: (m) => console.log(`[update] ${m}`)
   })
   app.once('before-quit', () => updater.dispose())
+
+  // 自动检查:启动后先查一次,之后每小时。e2e 会用更短的间隔(见 LAUNCHER_UPDATE_CHECK_*)。
+  const envMs = (name: string, fallback: number): number => {
+    const n = Number(process.env[name])
+    return Number.isFinite(n) && n >= 200 ? Math.trunc(n) : fallback
+  }
+  const updateScheduler = createUpdateScheduler({
+    check: (opts) => updater.check(opts),
+    getPhase: () => updater.getState().phase,
+    getAutoEnabled: () => store.get().autoUpdateCheck,
+    firstDelayMs: envMs('LAUNCHER_UPDATE_CHECK_FIRST_MS', 15_000),
+    intervalMs: envMs('LAUNCHER_UPDATE_CHECK_INTERVAL_MS', 60 * 60 * 1000),
+    log: (m) => console.log(`[update-check] ${m}`)
+  })
+  app.once('before-quit', () => updateScheduler.stop())
   // ready 标记必须等「启动序完成 + 渲染层正常应用树」两个信号都到齐;两个信号谁先来都行。
   updateBootReady = createUpdateBootReady(() => updater.markReady())
 
@@ -636,6 +658,8 @@ async function startApp(): Promise<void> {
   })
   agentLogRotation.start()
   app.once('before-quit', () => agentLogRotation.stop())
+  // 建窗之后再启动:首次检查避开启动序,且此时设置文件已加载完
+  updateScheduler.start()
 
   // 首次运行:目录完全为空时放一篇「随心手记示例」进去(见 domains/note-sample.ts)。
   // 不 await —— 它只是个引导,失败了也不该拖住启动。

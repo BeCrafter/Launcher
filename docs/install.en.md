@@ -199,6 +199,11 @@ in-app update check won't offer them either.
 
 ## Upgrading
 
+The app checks for updates automatically — once at launch, then hourly. When a new version is found, a
+bottom-right banner shows the version: click **Download** to start (nothing is downloaded silently), or
+**Later** to mute that version for this session. You can turn automatic checking off in
+Settings → About → "Check for updates automatically".
+
 The in-app "Settings → About → Check for updates" gives you the command matching the **detected install source**
 (Homebrew / npx / curl), so you don't have to remember how you installed it.
 

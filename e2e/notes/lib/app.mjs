@@ -89,9 +89,9 @@ export function readNoteBody(profileDir, file) {
 
 /**
  * 启动应用并返回可操作的句柄。
- * @param {{root: string, profileDir: string}} options
+ * @param {{root: string, profileDir: string, env?: Record<string, string>}} options
  */
-export async function launchApp({ root, profileDir }) {
+export async function launchApp({ root, profileDir, env: extraEnv = {} }) {
   const binary = join(root, ELECTRON_BINARY)
   if (!existsSync(binary)) throw new Error(`找不到 Electron:${binary}`)
   if (!existsSync(join(root, 'out/main/index.js'))) {
@@ -118,7 +118,10 @@ export async function launchApp({ root, profileDir }) {
         LAUNCHER_E2E_STUB_OPEN: '1',
         // draw.io 不下载 50MB 真实包、也绝不请求 embed.diagrams.net:
         // launcher-drawio://stub 提供实现同一套 embed 协议的测试页
-        LAUNCHER_E2E_DRAWIO_STUB: '1'
+        LAUNCHER_E2E_DRAWIO_STUB: '1',
+        // 更新检查永远指向本地桩(见 lib/update-stub.mjs):绝不请求真实 CDN,
+        // 且默认版本 = 当前构建版本,其余用例不会弹更新横幅
+        ...extraEnv
       },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe']

@@ -81,6 +81,12 @@ export interface LauncherSettings {
   trayVisible: boolean
   dockVisible: boolean
   menubarBadge: boolean
+  // ── 更新 ──
+  /**
+   * 启动后自动检查新版本,之后每小时一次。
+   * 只做提示、不自动下载 —— 一次静默下载几百 MB 属于替用户做决定。
+   */
+  autoUpdateCheck: boolean
   // ── launchd 引擎 ──
   fseventsActive: boolean
   cmdTimeout: number
@@ -194,6 +200,7 @@ export const DEFAULT_SETTINGS: LauncherSettings = {
   dockVisible: true,
   // 默认关:菜单栏图标本身已经占位,计数角标属于附加信息 —— 想要就在设置里打开
   menubarBadge: false,
+  autoUpdateCheck: true,
   fseventsActive: true,
   cmdTimeout: 5000,
   cronLogRetainDays: 3,
@@ -409,6 +416,8 @@ export function normalizeSettings(raw: unknown): LauncherSettings {
     trayVisible: boolOr(r.trayVisible, d.trayVisible),
     dockVisible: boolOr(r.dockVisible, d.dockVisible),
     menubarBadge: boolOr(r.menubarBadge, d.menubarBadge),
+    // 更新
+    autoUpdateCheck: boolOr(r.autoUpdateCheck, d.autoUpdateCheck),
     // launchd 引擎
     fseventsActive: boolOr(r.fseventsActive, d.fseventsActive),
     cmdTimeout: enumNumberOr(r.cmdTimeout, CMD_TIMEOUT_VALUES, d.cmdTimeout),

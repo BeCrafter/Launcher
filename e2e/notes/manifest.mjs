@@ -15,6 +15,7 @@ import pin from './cases/pin.mjs'
 import canvas from './cases/canvas.mjs'
 import resize from './cases/resize.mjs'
 import previewOutline from './cases/preview-outline.mjs'
+import update from './cases/update.mjs'
 
 /**
  * 编辑器端到端用例的唯一清单。
@@ -39,7 +40,9 @@ export const CASES = [
   ...pin,
   ...canvas,
   ...resize,
-  ...previewOutline
+  ...previewOutline,
+  // 放最后:更新用例会把状态机推到 error/available 再恢复,失败时也不该影响笔记用例
+  ...update
 ]
 
 export const AREA_TITLES = {
@@ -59,5 +62,6 @@ export const AREA_TITLES = {
   pin: '置顶:置顶区与目录树双份呈现、交互与移动',
   canvas: '白板:Excalidraw 场景文件,文字、画笔、缩放、删除与嵌入',
   resize: '可缩放区块的角柄与描边:图片、音视频、网页、PDF、表格、图表',
-  'preview-outline': '预览标题大纲:右缘刻度、悬停目录、滚动跟随、跳转与双向折叠'
+  'preview-outline': '预览标题大纲:右缘刻度、悬停目录、滚动跟随、跳转与双向折叠',
+  update: '自动检查更新:启动与每小时检查、应用内横幅、稍后与设置开关、下载走既有机制'
 }

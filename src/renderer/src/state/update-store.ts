@@ -32,12 +32,17 @@ interface UpdateStore {
   postponed: boolean
   /** 倒计时因笔记/输入框未保存内容而暂停 */
   dirtyBlocked: boolean
+  /** 用户点了「稍后」的自动检查提示:该版本本次运行内不再弹横幅 */
+  dismissedVersion: string | null
   init: () => void
   check: () => Promise<void>
+  download: () => Promise<void>
   retryDownload: () => Promise<void>
   apply: () => Promise<void>
   cancel: () => Promise<void>
   postpone: () => void
+  /** 自动检查提示点了「稍后」:只静音当前这个目标版本 */
+  dismissAvailable: () => void
   revealLog: () => Promise<void>
   dismissResult: () => void
 }
@@ -156,6 +161,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => {
     countdown: null,
     postponed: false,
     dirtyBlocked: false,
+    dismissedVersion: null,
 
     init: () => {
       if (initialized) return
@@ -204,8 +210,16 @@ export const useUpdateStore = create<UpdateStore>((set, get) => {
 
     check: async () => {
       stopCountdown()
-      set({ postponed: false })
+      // 用户主动查:之前的「稍后」不再适用
+      set({ postponed: false, dismissedVersion: null })
       await invoke(() => window.launcher.updates.check(), 'toast.update.error')
+    },
+
+    download: async () => {
+      // 横幅点完就消失(available 不再是当前相位),给一声「开始下载了」,
+      // 否则用户会以为按钮没反应;进度仍在设置 › 关于里看
+      showToast(t()('toast.update.downloadStarted'), '#60a5fa', 'fa-circle-down')
+      await invoke(() => window.launcher.updates.download(), 'toast.update.error')
     },
 
     retryDownload: async () => {
@@ -238,11 +252,22 @@ export const useUpdateStore = create<UpdateStore>((set, get) => {
     cancel: async () => {
       stopCountdown()
       await invoke(() => window.launcher.updates.cancel(), 'toast.update.error')
+      // 从 ready 取消会回到 available:这是用户主动放弃本轮下载,
+      // 不要让横幅下一帧又弹出来问一遍
+      const s = get().state
+      if (s?.phase === 'available' && s.targetVersion !== null) {
+        set({ dismissedVersion: s.targetVersion })
+      }
     },
 
     postpone: () => {
       stopCountdown()
       set({ postponed: true, dirtyBlocked: false })
+    },
+
+    dismissAvailable: () => {
+      const target = get().state?.targetVersion
+      if (target !== null && target !== undefined) set({ dismissedVersion: target })
     },
 
     revealLog: async () => {

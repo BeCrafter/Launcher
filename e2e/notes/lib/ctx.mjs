@@ -17,13 +17,15 @@ const EDITOR_LINE = (text) =>
 const MODES = ['split', 'edit', 'preview']
 
 export class NoteE2EContext {
-  constructor({ cdp, profileDir, noteFile, noteTitle, logs }) {
+  constructor({ cdp, profileDir, noteFile, noteTitle, logs, updateStub }) {
     this.cdp = cdp
     this.profileDir = profileDir
     this.noteFile = noteFile
     this.noteTitle = noteTitle
     /** 应用进程日志(main 的 console.log 会进这里);用于断言打开文件的 IPC 落点 */
     this.logs = logs ?? []
+    /** 更新检查的本地桩(见 lib/update-stub.mjs);update 用例用它切换「最新版」 */
+    this.updateStub = updateStub ?? null
   }
 
   // ── 启动 / 导航 ──

@@ -37,7 +37,7 @@ import {
   type HelperScriptOptions
 } from './update-helper'
 import { artifactUrl, fetchUpdateManifest, type UpdateArch, type UpdateManifest } from './update-manifest'
-import { resolveUpdateMode, type ResolvedUpdateMode } from './update-mode'
+import { resolveUpdateMode, type ResolvedUpdateMode, type ResolveUpdateModeDeps } from './update-mode'
 import type { ShellRunner } from './shell-runner'
 import { checkForUpdate, compareVersions, isSafeVersion } from './update-check'
 import { canReplaceBundle, validateAppBundle } from './update-target'
@@ -64,11 +64,17 @@ export interface UpdateControllerDeps {
   versionsUrlOverride?: string
   /** 下载看门狗(长时间零字节时中止);默认 10 分钟 */
   stallTimeoutMs?: number
+  /**
+   * 测试/端到端注入:替换升级方式探测。
+   * e2e 跑的是未打包的 out/,bundlePath 为 null → 真实探测永远是 none,
+   * 横幅不会出现;固定成 self 只影响下载路径(只写 userData,不碰应用包)。
+   */
+  resolveMode?: (deps: ResolveUpdateModeDeps) => Promise<ResolvedUpdateMode>
 }
 
 export interface UpdateController {
   getState(): UpdateState
-  check(): Promise<UpdateState>
+  check(options?: { auto?: boolean }): Promise<UpdateState>
   download(): Promise<UpdateState>
   apply(): Promise<UpdateState>
   cancel(): Promise<UpdateState>
@@ -165,7 +171,43 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
   }
 
   // ── 检查 ──
-  async function check(): Promise<UpdateState> {
+  async function check(options?: { auto?: boolean }): Promise<UpdateState> {
+    const auto = options?.auto === true
+    // 自动检查是后台活:失败不落 error,成功也不自动下载。
+    // check 会先清空所有字段,所以失败时必须能整体还原 —— 不能只跳过 emit。
+    const previous = {
+      phase,
+      channel,
+      targetVersion,
+      mode,
+      progress: progress ? { ...progress } : null,
+      message,
+      error,
+      checkedAt,
+      downloadSize,
+      manifest,
+      resolved
+    }
+    const failCheck = (code: UpdateErrorCode, reason: string): UpdateState => {
+      if (!auto) return fail(code, reason)
+      // 每小时一次的后台检查不该因为一次网络抖动把设置页打成错误态,
+      // 更不该冲掉已有的 upToDate;记一行日志,界面状态原样保留。
+      log(`自动检查失败(${code}):${reason}`)
+      phase = previous.phase
+      channel = previous.channel
+      targetVersion = previous.targetVersion
+      mode = previous.mode
+      progress = previous.progress
+      message = previous.message
+      error = previous.error
+      checkedAt = previous.checkedAt
+      downloadSize = previous.downloadSize
+      manifest = previous.manifest
+      resolved = previous.resolved
+      emit()
+      return snapshot()
+    }
+
     // ready 也返回:此时已有下好的新版本,重新检查会把 targetVersion/manifest 清空,
     // 白白丢掉已完成的下载。要重查请先 cancel 回到 available。
     if (
@@ -188,7 +230,8 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     manifest = null
     resolved = null
     checkedAt = null
-    emit()
+    // 自动检查不发 checking:后台活,不让设置页每小时闪一下
+    if (!auto) emit()
 
     try {
       const detected = await deps.getChannel()
@@ -200,7 +243,7 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
       })
 
       if (r.status === 'error') {
-        return fail('network', r.errorMessage ?? '检查更新失败')
+        return failCheck('network', r.errorMessage ?? '检查更新失败')
       }
       checkedAt = now()
 
@@ -230,14 +273,14 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
       // 纵深防御:parseManifest 已经过滤过,但 targetVersion 是后续所有文件路径的
       // 来源,进入状态机前再断言一次(清单版本也走同一个字符串)。
       if (!isSafeVersion(target)) {
-        return fail('manifest', `版本号不合法,拒绝升级: ${target}`)
+        return failCheck('manifest', `版本号不合法,拒绝升级: ${target}`)
       }
 
       targetVersion = target
       message = '正在确认升级方式…'
       emit()
 
-      resolved = await resolveUpdateMode({
+      resolved = await (deps.resolveMode ?? resolveUpdateMode)({
         channel: detected,
         bundlePath: deps.bundlePath,
         runner: deps.runner
@@ -255,13 +298,14 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
           : null
       emit()
 
-      if (mode !== 'none') {
-        // 不 await:下载可能持续数分钟,IPC 调用应立即返回,进度走事件
+      if (!auto && mode !== 'none') {
+        // 不 await:下载可能持续数分钟,IPC 调用应立即返回,进度走事件。
+        // 自动检查不下载:等用户点横幅里的「下载」再走同一条路。
         void download()
       }
       return snapshot()
     } catch (err) {
-      return fail('unknown', err instanceof Error ? err.message : String(err))
+      return failCheck('unknown', err instanceof Error ? err.message : String(err))
     }
   }
 

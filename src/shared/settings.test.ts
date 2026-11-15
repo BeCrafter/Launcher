@@ -42,6 +42,12 @@ describe('normalizeSettings', () => {
     expect(normalizeSettings({ menubarOnly: 0 }).menubarOnly).toBe(true)
   })
 
+  it('自动检查更新:默认开,显式关闭保留,非法值回默认', () => {
+    expect(normalizeSettings({}).autoUpdateCheck).toBe(true)
+    expect(normalizeSettings({ autoUpdateCheck: false }).autoUpdateCheck).toBe(false)
+    expect(normalizeSettings({ autoUpdateCheck: 'no' }).autoUpdateCheck).toBe(true)
+  })
+
   it('空 labelPrefix 回默认(新建任务前缀不可为空)', () => {
     expect(normalizeSettings({ labelPrefix: '' }).labelPrefix).toBe(DEFAULT_SETTINGS.labelPrefix)
     expect(normalizeSettings({ labelPrefix: 'com.corp.' }).labelPrefix).toBe('com.corp.')
