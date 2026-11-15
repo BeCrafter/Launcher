@@ -11,8 +11,12 @@
 // 可预览的文件嵌进去,平时跟原文件,不拷进笔记目录;图片仍可以放上去。
 // 原文件不在时读项目副本;原文件还在就读它,不管记的是哪台电脑。
 // 各类文件嵌进卡片后,点一下要能进入交互:图片放大、表格换表、压缩包点条目、
-// 视频有控件且不自己播放。没点之前卡片不接指针。
-// 缩放看 `.reset-zoom-button` 里的百分比。小地图开关在帮助按钮左边,中间留空。
+// 视频有控件且不自己播放。没点之前卡片不接指针。进入交互或选中卡片后卡片顶部显示引入路径
+// 与角标(笔记 / 库内 / 库外):笔记补 .md、库内文件用相对路径、库外文件用绝对路径,
+// 中文原样显示;Excalidraw 自带的链接气泡也读同一条可读路径,旧白板里的编码地址打开时升成可读。
+// 笔记 / 文件 / 所在目录改名后,白板里的引用跟着改,重开卡片仍照常渲染。
+// 缩放看 `.reset-zoom-button` 里的百分比。小地图开关在帮助按钮左边,中间留空;
+// 小地图默认收起,点开一次就记住,换白板、重启后仍按上次的开/关来。
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -537,8 +541,12 @@ async function embedLocalFile(ctx, name, abs) {
   )
 }
 
-/** 把指定文件的那张卡片滚到视口中间,返回它的中心。多块卡片叠着时靠文件名区分。 */
-async function cardCenter(ctx, name) {
+/**
+ * 把指定文件的那张卡片滚到视口中间,返回它的中心。多块卡片叠着时靠文件名区分。
+ * atTop:点卡片顶边而不是中心——后放的卡片会向下错开 48px 盖住前一张的中间,
+ * 顶边那一窄条只有自己,点下去不会选到上面那张。
+ */
+async function cardCenter(ctx, name, atTop = false) {
   const sel = `[data-embed-label=${JSON.stringify(name)}]`
   const spot = await ctx.cdp.json(`(() => {
     const card = document.querySelector(${JSON.stringify(sel)})
@@ -547,7 +555,7 @@ async function cardCenter(ctx, name) {
     const box = card.getBoundingClientRect()
     return {
       x: box.left + box.width / 2,
-      y: box.top + box.height / 2,
+      y: ${atTop ? 'box.top + 16' : 'box.top + box.height / 2'},
       active: card.dataset.embedActive === 'true',
       events: getComputedStyle(card).pointerEvents
     }
@@ -580,23 +588,95 @@ async function activateCard(ctx, name) {
   )
 }
 
-/** 链接里的路径是逐段编码的。比较时解回原路径。 */
-function embedPath(link) {
-  const body = link.startsWith('note:')
-    ? link.slice('note:'.length)
-    : link.startsWith('launcher-note://file/')
-      ? link.slice('launcher-note://file/'.length).split(/[?#]/, 1)[0]
-      : ''
-  return body
-    .split('/')
-    .map((segment) => {
-      try {
-        return decodeURIComponent(segment)
-      } catch {
-        return segment
-      }
-    })
-    .join('/')
+/** 气泡里的角标是伪元素,textContent 读不到,读它计算后的 content。没有气泡时给 NOPOPUP。 */
+async function popupBadge(ctx) {
+  return ctx.cdp.eval(`(() => {
+    const link = document.querySelector('.excalidraw-hyperlinkContainer-link')
+    if (link === null) return 'NOPOPUP'
+    return getComputedStyle(link, '::before').content
+  })()`)
+}
+
+/**
+ * 点卡片选中它。上一张卡片还在交互态时,第一下只退出交互,选中要再点一次。
+ * 点完确认 data-embed-selected,避免下一句在旧选中上瞎等。
+ */
+async function clickCard(ctx, name) {
+  const sel = `[data-embed-label=${JSON.stringify(name)}]`
+  await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(sel)}) !== null`, {
+    timeout: 10_000,
+    message: `卡片挂上:${name}`
+  })
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const spot = await cardCenter(ctx, name)
+    await ctx.cdp.click(spot.x, spot.y)
+    const selected = await ctx.cdp.eval(
+      `document.querySelector(${JSON.stringify(sel)})?.dataset.embedSelected === 'true'`
+    )
+    if (selected === true) return
+    await sleep(150)
+  }
+  ok(false, `点了三次都没选中卡片:${name}`)
+}
+
+/** 等气泡里的角标变成期望值。'NOPOPUP' 表示连气泡都不该出现。 */
+async function waitPopupBadge(ctx, content, message) {
+  await ctx.cdp.waitFor(
+    `(() => {
+      const link = document.querySelector('.excalidraw-hyperlinkContainer-link')
+      if (link === null) return ${JSON.stringify(content)} === 'NOPOPUP'
+      return getComputedStyle(link, '::before').content === ${JSON.stringify(content)}
+    })()`,
+    { timeout: 5000, message }
+  )
+}
+
+/**
+ * 按卡片上的 data-embed-path 找到它,点一下进入交互。
+ * 路径和「笔记 / 库内 / 库外」角标都长在 Excalidraw 的链接气泡里,卡片上不再另放。
+ */
+async function activateByPath(ctx, path, badge) {
+  const sel = `[data-embed-path=${JSON.stringify(path)}]`
+  const spot = await ctx.cdp.json(`(() => {
+    const card = document.querySelector(${JSON.stringify(sel)})
+    if (card === null) return null
+    card.scrollIntoView({ block: 'center', inline: 'center' })
+    const box = card.getBoundingClientRect()
+    return {
+      x: box.left + box.width / 2,
+      y: box.top + box.height / 2,
+      active: card.dataset.embedActive === 'true',
+      stored: card.dataset.embedPath
+    }
+  })()`)
+  ok(spot !== null, `找到卡片:${path}`)
+  eq(spot.stored, path, `${path} 卡片记下路径`)
+  ok(spot.active === false, `${path} 没点之前还不能交互`)
+  eq(await popupBadge(ctx), 'NOPOPUP', `${path} 没点之前没有链接气泡`)
+  await ctx.cdp.click(spot.x, spot.y)
+  await ctx.cdp.waitFor(
+    `document.querySelector(${JSON.stringify(sel)})?.dataset.embedActive === 'true'`,
+    { timeout: 5000, message: `${path} 点一下后可以交互` }
+  )
+  await ctx.cdp.waitFor(
+    `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === ${JSON.stringify(path)}`,
+    { timeout: 5000, message: `${path} 链接气泡里显示这条路径` }
+  )
+  await ctx.cdp.waitFor(
+    `(() => {
+      const link = document.querySelector('.excalidraw-hyperlinkContainer-link')
+      return link !== null
+        && getComputedStyle(link, '::before').content === ${JSON.stringify(`"${badge}"`)}
+    })()`,
+    { timeout: 5000, message: `${path} 气泡里路径前写着「${badge}」` }
+  )
+  // 卡片里不再单独占一行路径(角标也只长在气泡上)。
+  ok(
+    await ctx.cdp.eval(
+      `document.querySelector(${JSON.stringify(sel)})?.querySelector('.md-embed-url') === null`
+    ),
+    `${path} 卡片里不另占一行路径`
+  )
 }
 
 export default [
@@ -872,16 +952,24 @@ export default [
       const embeds = liveElements(saved).filter((element) => element.type === 'embeddable')
       eq(embeds.length, 2, '两块嵌入都写进场景')
       ok(
-        embeds.some((element) => element.link.startsWith('note:') && embedPath(element.link) === '嵌入的笔记'),
-        '笔记嵌成 note: 链接'
+        embeds.some(
+          (element) =>
+            element.link === '嵌入的笔记.md' &&
+            element.customData?.launcher?.kind === 'note' &&
+            element.customData?.launcher?.id === '嵌入的笔记'
+        ),
+        '笔记的链接是可读路径,真实引用在 launcher 里'
       )
       ok(
         embeds.some(
           (element) =>
-            element.link.startsWith('launcher-note://file/') && embedPath(element.link) === '嵌入的图.png'
+            element.link === '嵌入的图.png' &&
+            element.customData?.launcher?.kind === 'file' &&
+            element.customData?.launcher?.path === '嵌入的图.png'
         ),
-        '图片嵌成库内文件链接'
+        '库内文件的链接是相对路径,真实引用在 launcher 里'
       )
+      ok(!JSON.stringify(embeds).includes('launcher-note://'), '场景里不再写编码过的协议地址')
 
       await ctx.cdp.eval(`document.querySelector('.notes-row[data-note-id]')?.click()`)
       await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
@@ -1062,7 +1150,8 @@ export default [
       eq(embeds.length, 1, '库外文本嵌成一块,不替换白板')
       eq(embeds[0].customData?.embed?.source, note, '场景记下源绝对路径')
       eq(embeds[0].customData?.embed?.project, '', '还没打包,项目路径为空')
-      ok(!String(embeds[0].link ?? '').includes(note), '绝对路径不写进 link')
+      eq(embeds[0].link, note, '链接就是源文件的绝对路径,弹层里看得到原文')
+      eq(embeds[0].customData?.launcher, undefined, '库外文件不写内部引用')
       ok(existsSync(note) && !existsSync(absPath(ctx, '外来说明.txt')), '文本不拷进笔记目录')
       eq(
         liveElements(embedded).filter((element) => element.type === 'text')[0]?.text,
@@ -1158,7 +1247,8 @@ export default [
         const embed = embeds[0]
         eq(embed.customData?.embed?.source, pdf, '记下 PDF 的源路径')
         eq(embed.customData?.embed?.project, '', '嵌入时不写项目路径')
-        ok(!String(embed.link ?? '').includes(pdf), 'link 不是绝对路径')
+        eq(embed.link, pdf, '链接就是绝对路径,链接气泡里看得到它是哪一份')
+        eq(embed.customData?.launcher, undefined, '库外文件不写内部引用')
         ok(!existsSync(absPath(ctx, '说明.pdf')), '笔记目录里还没有这份拷贝')
         await ctx.cdp.waitFor(
           `(() => {
@@ -1213,10 +1303,30 @@ export default [
           'none',
           '没点开始交互前不显示 PDF 工具条'
         )
+        eq(await popupBadge(ctx), 'NOPOPUP', '没进入交互前没有链接气泡')
         await ctx.cdp.click(center.x, center.y)
         await ctx.cdp.waitFor(
           `document.querySelector('.canvas-embed')?.dataset.embedActive === 'true'`,
           { message: '点一下卡片后可以交互' }
+        )
+        eq(
+          await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedPath`),
+          pdf,
+          '卡片记下库外文件的绝对路径'
+        )
+        eq(
+          await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedKind`),
+          'external',
+          '库外文件的角标种类是 external'
+        )
+        eq(await popupBadge(ctx), '"库外"', '链接气泡里路径前写着「库外」')
+        ok(
+          await ctx.cdp.eval(`document.querySelector('.canvas-embed .md-embed-url') === null`),
+          '卡片里不再单独占一行路径'
+        )
+        await ctx.cdp.waitFor(
+          `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === ${JSON.stringify(pdf)}`,
+          { timeout: 5000, message: '链接气泡里就是这份文件的绝对路径' }
         )
         await ctx.cdp.waitFor(
           `(() => {
@@ -1413,15 +1523,557 @@ export default [
   },
 
   {
+    id: 'canvas/embed-path',
+    area: 'canvas',
+    title: '引入的笔记和文件点选后,链接气泡里路径前写着「笔记 / 库内」,卡片上不再另放角标',
+    tags: ['canvas', 'embed', 'path'],
+    async run(ctx) {
+      writeVaultFile(
+        ctx,
+        '嵌入路径笔记.md',
+        '---\ntitle: 嵌入路径笔记\n---\n\n# 路径笔记\n\n路径笔记正文。\n'
+      )
+      writeVaultFile(ctx, '嵌入路径文件.txt', '路径文件正文。\n')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify('[data-note-id="嵌入路径笔记"]')}) !== null`,
+        { timeout: 10_000, message: '笔记出现在目录里' }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector('嵌入路径文件.txt'))}) !== null`,
+        { timeout: 10_000, message: '文件出现在目录里' }
+      )
+
+      await createCanvas(ctx, '路径笔记板')
+      await openEmbedPicker(ctx)
+      await pointerClick(ctx, '[data-embed-page="library"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify('.canvas-embed-picker-row[data-embed-path="嵌入路径笔记"]')}) !== null`,
+        { timeout: 5000, message: '笔记出现在选择器里' }
+      )
+      await pointerClick(ctx, '.canvas-embed-picker-row[data-embed-path="嵌入路径笔记"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .md-h')?.textContent?.includes('路径笔记') === true`,
+        { timeout: 10_000, message: '笔记嵌进画布' }
+      )
+      await activateByPath(ctx, '嵌入路径笔记.md', '笔记')
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedKind`),
+        'note',
+        '笔记卡片的角标种类是 note'
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedSelected`),
+        'true',
+        '进入交互时这张卡片是选中的'
+      )
+
+      await createCanvas(ctx, '路径文件板')
+      await openEmbedPicker(ctx)
+      await pointerClick(ctx, '[data-embed-page="library"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify('.canvas-embed-picker-row[data-embed-path="嵌入路径文件.txt"]')}) !== null`,
+        { timeout: 5000, message: '文件出现在选择器里' }
+      )
+      await pointerClick(ctx, '.canvas-embed-picker-row[data-embed-path="嵌入路径文件.txt"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed')?.dataset.embedPath === '嵌入路径文件.txt'`,
+        { timeout: 10_000, message: '文件卡片出现在画布上' }
+      )
+      await activateByPath(ctx, '嵌入路径文件.txt', '库内')
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedKind`),
+        'vault',
+        '库内文件的角标种类是 vault'
+      )
+    }
+  },
+
+  {
+    id: 'canvas/embed-badge-scope',
+    area: 'canvas',
+    title: '链接气泡的角标跟着选中的卡片走:换卡片会换、网页卡片不带、取消选中与离开白板后都不残留',
+    tags: ['canvas', 'embed', 'badge'],
+    async run(ctx) {
+      await writeVaultFile(
+        ctx,
+        '切换笔记.md',
+        '---\ntitle: 切换笔记\n---\n\n# 切换正文\n\n角标切换用的笔记。\n'
+      )
+      await writeVaultFile(ctx, '切换文件.txt', '切换文件正文。\n')
+      const web = 'https://example.com/切换'
+      // 三块摆成两行,全部落在视口里;横着排第三块会被视口裁掉,Excalidraw 就不挂它了。
+      const board = (id, x, y, link, customData) => ({
+        type: 'embeddable',
+        id,
+        x,
+        y,
+        width: 240,
+        height: 160,
+        link,
+        strokeColor: 'transparent',
+        backgroundColor: 'transparent',
+        isDeleted: false,
+        ...(customData === undefined ? {} : { customData })
+      })
+      writeCanvas(
+        ctx,
+        '角标板.excal',
+        JSON.stringify({
+          type: 'excalidraw',
+          version: 2,
+          elements: [
+            board('badge-note', 0, 0, '切换笔记.md', {
+              launcher: { kind: 'note', id: '切换笔记' }
+            }),
+            board('badge-file', 300, 0, '切换文件.txt', {
+              launcher: { kind: 'file', path: '切换文件.txt' }
+            }),
+            board('badge-web', 0, 200, web)
+          ],
+          appState: {},
+          files: {}
+        })
+      )
+      await openCanvasFile(ctx, '角标板.excal')
+      for (const spot of ['.md-h', '.canvas-embed-code', '.canvas-embed-web']) {
+        await ctx.cdp.waitFor(
+          `document.querySelector('.canvas-embed ${spot}') !== null`,
+          { timeout: 15_000, message: `三张卡片都挂上了:${spot}` }
+        )
+      }
+
+      // 笔记卡片 → 气泡里标「笔记」。
+      await clickCard(ctx, '切换笔记.md')
+      await waitPopupBadge(ctx, '"笔记"', '选笔记卡片时气泡标「笔记」')
+
+      // 卡片底下的画布点也会命中嵌入元素,不能当空白用。扫一个离所有卡片都远的画布点。
+      const empty = await ctx.cdp.json(`(() => {
+        const board = document.querySelector('.canvas-board')
+        const canvas = document.querySelector('.canvas-board canvas.excalidraw__canvas.interactive')
+        if (board === null || canvas === null) return null
+        const box = board.getBoundingClientRect()
+        const cards = [...document.querySelectorAll('.canvas-embed')]
+          .map((el) => el.getBoundingClientRect())
+        const away = (x, y) => cards.every(
+          (r) => x < r.left - 16 || x > r.right + 16 || y < r.top - 16 || y > r.bottom + 16
+        )
+        for (let y = box.top + 260; y < box.bottom - 100; y += 24) {
+          for (let x = box.left + 40; x < box.right - 40; x += 32) {
+            if (away(x, y) && document.elementFromPoint(x, y) === canvas) return { x, y }
+          }
+        }
+        return null
+      })()`)
+      ok(empty !== null, '画布上有离卡片远的空白处')
+      await ctx.cdp.click(empty.x, empty.y)
+      await sleep(300)
+      await ctx.cdp.click(empty.x, empty.y)
+      await waitPopupBadge(ctx, 'NOPOPUP', '点空白处取消选中后气泡收起')
+
+      // 换到库内文件卡片 → 角标跟着换,不残留「笔记」。
+      await clickCard(ctx, '切换文件.txt')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === '切换文件.txt'`,
+        { timeout: 5000, message: '气泡换成库内文件的路径' }
+      )
+      await waitPopupBadge(ctx, '"库内"', '选库内文件卡片时角标换成「库内」')
+
+      // 网页卡片也是嵌入元素,但它不是笔记/库内/库外,气泡里不能带角标。
+      await clickCard(ctx, web)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === ${JSON.stringify(web)}`,
+        { timeout: 5000, message: '气泡换成网页地址' }
+      )
+      await waitPopupBadge(ctx, 'none', '网页卡片的气泡里没有角标')
+
+      // 选中笔记卡片后直接离开白板:卡片卸载时要把角标撤掉,不能留给下一块白板。
+      await clickCard(ctx, '切换笔记.md')
+      await waitPopupBadge(ctx, '"笔记"', '再看一次笔记卡片仍是「笔记」')
+      await ctx.cdp.eval(`document.querySelector('.notes-row[data-note-id]')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+        timeout: 10_000,
+        message: '离开白板'
+      })
+      eq(
+        await ctx.cdp.eval(
+          `getComputedStyle(document.documentElement).getPropertyValue('--canvas-embed-badge').trim()`
+        ),
+        '',
+        '离开白板后组件卸载,角标变量已经撤掉'
+      )
+      await openCanvasFile(ctx, '角标板.excal')
+      await ctx.cdp.waitFor(`document.querySelectorAll('.canvas-embed').length === 3`, {
+        timeout: 15_000,
+        message: '重开后三张卡片都挂上'
+      })
+      await clickCard(ctx, '切换文件.txt')
+      await waitPopupBadge(ctx, '"库内"', '重开白板后选库内文件卡片标「库内」')
+    }
+  },
+
+  {
+    id: 'canvas/embed-ref-popup',
+    area: 'canvas',
+    title: '旧白板的编码引用打开后,链接气泡显示可读中文路径,并在前面标出笔记、库内、库外',
+    tags: ['canvas', 'embed', 'path', 'legacy'],
+    async run(ctx) {
+      await writeVaultFile(
+        ctx,
+        '资料/我的 笔记.md',
+        '---\ntitle: 我的 笔记\n---\n\n# 旧格式笔记\n\n正文。\n'
+      )
+      await writeVaultFile(ctx, '中文 文件名.txt', '库内文件正文。\n')
+      const outside = mkdtempSync(join(tmpdir(), 'launcher-canvas-legacy-'))
+      const external = join(outside, '外部 说明.txt')
+      writeFileSync(external, '库外文件正文。\n')
+      try {
+        // 旧格式:引用逐段编码在协议地址里,没有 launcher。打开时就地升成可读路径。
+        writeCanvas(
+          ctx,
+          '旧笔记板.excal',
+          JSON.stringify({
+            type: 'excalidraw',
+            version: 2,
+            elements: [
+              {
+                type: 'embeddable',
+                id: 'legacy-note',
+                x: 0,
+                y: 0,
+                width: 720,
+                height: 480,
+                link: 'note:%E8%B5%84%E6%96%99/%E6%88%91%E7%9A%84%20%E7%AC%94%E8%AE%B0',
+                strokeColor: 'transparent',
+                backgroundColor: 'transparent',
+                isDeleted: false
+              }
+            ],
+            appState: {},
+            files: {}
+          })
+        )
+        await openCanvasFile(ctx, '旧笔记板.excal')
+        await ctx.cdp.waitFor(
+          `document.querySelector('.canvas-embed .md-h')?.textContent?.includes('旧格式笔记') === true`,
+          { timeout: 10_000, message: '旧笔记引用仍能渲染' }
+        )
+        eq(
+          await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedPath`),
+          '资料/我的 笔记.md',
+          '卡片记下的是可读路径'
+        )
+        const noteCenter = await cardCenter(ctx, '资料/我的 笔记.md')
+        await ctx.cdp.click(noteCenter.x, noteCenter.y)
+        await ctx.cdp.waitFor(
+          `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === '资料/我的 笔记.md'`,
+          { timeout: 5000, message: '链接气泡里是中文可读路径' }
+        )
+        const notePopup = await ctx.cdp.eval(
+          `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent ?? ''`
+        )
+        ok(!notePopup.includes('%'), '气泡里没有百分号编码')
+        ok(!notePopup.includes('note:'), '气泡里没有协议前缀')
+        eq(
+          await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedKind`),
+          'note',
+          '笔记卡片角标种类是 note'
+        )
+        eq(await popupBadge(ctx), '"笔记"', '气泡里路径前写着「笔记」')
+
+        writeCanvas(
+          ctx,
+          '旧文件板.excal',
+          JSON.stringify({
+            type: 'excalidraw',
+            version: 2,
+            elements: [
+              {
+                type: 'embeddable',
+                id: 'legacy-file',
+                x: 0,
+                y: 0,
+                width: 720,
+                height: 480,
+                link: `launcher-note://file/${encodeURIComponent('中文 文件名.txt')}`,
+                strokeColor: 'transparent',
+                backgroundColor: 'transparent',
+                isDeleted: false
+              }
+            ],
+            appState: {},
+            files: {}
+          })
+        )
+        await openCanvasFile(ctx, '旧文件板.excal')
+        await ctx.cdp.waitFor(
+          `document.querySelector('.canvas-embed .canvas-embed-code')?.textContent?.includes('库内文件正文。') === true`,
+          { timeout: 10_000, message: '旧库内文件引用仍能渲染' }
+        )
+        const fileCenter = await cardCenter(ctx, '中文 文件名.txt')
+        await ctx.cdp.click(fileCenter.x, fileCenter.y)
+        await ctx.cdp.waitFor(
+          `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === '中文 文件名.txt'`,
+          { timeout: 5000, message: '库内文件的气泡显示相对路径原文' }
+        )
+        eq(await popupBadge(ctx), '"库内"', '库内文件的气泡里路径前写着「库内」')
+
+        writeCanvas(
+          ctx,
+          '旧库外板.excal',
+          externalScene('外部 说明.txt', {
+            source: external,
+            project: '',
+            host: '这台电脑'
+          })
+        )
+        await openCanvasFile(ctx, '旧库外板.excal')
+        await ctx.cdp.waitFor(
+          `document.querySelector('.canvas-embed .canvas-embed-code')?.textContent?.includes('库外文件正文。') === true`,
+          { timeout: 10_000, message: '库外文件仍从绝对路径读出内容' }
+        )
+        const externalCenter = await cardCenter(ctx, '外部 说明.txt')
+        await ctx.cdp.click(externalCenter.x, externalCenter.y)
+        await ctx.cdp.waitFor(
+          `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === ${JSON.stringify(external)}`,
+          { timeout: 5000, message: '库外文件的气泡显示绝对路径原文' }
+        )
+        eq(
+          await ctx.cdp.eval(`document.querySelector('.canvas-embed')?.dataset.embedKind`),
+          'external',
+          '库外卡片角标种类是 external'
+        )
+        eq(await popupBadge(ctx), '"库外"', '库外文件的气泡里路径前写着「库外」')
+      } finally {
+        rmSync(outside, { recursive: true, force: true })
+      }
+    }
+  },
+
+  {
+    id: 'canvas/embed-ref-rename',
+    area: 'canvas',
+    title: '改名笔记 / 文件 / 所在目录后,白板里的引用跟着改,卡片换名字仍能照常渲染',
+    tags: ['canvas', 'embed', 'rename'],
+    async run(ctx) {
+      await writeVaultFile(
+        ctx,
+        '引用笔记.md',
+        '---\ntitle: 引用笔记\n---\n\n# 引用正文\n\n被白板引用的笔记。\n'
+      )
+      await writeVaultFile(ctx, '引用图.png', PNG_1PX)
+      await writeVaultFile(ctx, '旧图集/详情.txt', '图集里的字。\n')
+      for (const row of ['[data-note-id="引用笔记"]', fileSelector('引用图.png')]) {
+        await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(row)}) !== null`, {
+          timeout: 10_000,
+          message: `目录里出现 ${row}`
+        })
+      }
+      // 目录收着的时候文件行不渲染。先展开再确认它进了列表。
+      const folder = '.notes-folder-row[data-folder-path="旧图集"]'
+      await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(folder)}) !== null`, {
+        timeout: 10_000,
+        message: '目录出现在左栏'
+      })
+      await ctx.cdp.eval(
+        `(() => {
+          if (document.querySelector(${JSON.stringify(fileSelector('旧图集/详情.txt'))}) !== null) return
+          document.querySelector(${JSON.stringify(`${folder} .notes-folder-name`)})?.click()
+        })()`
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector('旧图集/详情.txt'))}) !== null`,
+        { timeout: 10_000, message: '展开目录后出现里面的文件' }
+      )
+
+      await createCanvas(ctx, '跟随板')
+      await openEmbedPicker(ctx)
+      await pointerClick(ctx, '[data-embed-page="library"]')
+      await pointerClick(ctx, '.canvas-embed-picker-row[data-embed-path="引用笔记"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .md-h')?.textContent?.includes('引用正文') === true`,
+        { timeout: 10_000, message: '笔记嵌进白板' }
+      )
+      await openEmbedPicker(ctx)
+      await pointerClick(ctx, '[data-embed-page="library"]')
+      await pointerClick(ctx, '.canvas-embed-picker-row[data-embed-path="引用图.png"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .file-image')?.complete === true`,
+        { timeout: 10_000, message: '图片嵌进白板' }
+      )
+      await waitCanvasSaved(ctx)
+      let saved = JSON.parse(readFileSync(absPath(ctx, '跟随板.excal'), 'utf8'))
+      ok(
+        liveElements(saved).some((element) => element.link === '引用笔记.md'),
+        '保存的链接是笔记的可读路径'
+      )
+      ok(
+        liveElements(saved).some((element) => element.link === '引用图.png'),
+        '保存的链接是图片的相对路径'
+      )
+
+      // 离开白板,再在左栏改名。改名时白板没开着,引用由主进程改写。
+      await ctx.cdp.eval(`document.querySelector('.notes-row[data-note-id]')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+        timeout: 10_000,
+        message: '切到一篇笔记'
+      })
+
+      const noteRow = '.notes-row[data-note-id="引用笔记"][data-rail-copy="tree"]'
+      const noteRect = await ctx.elementRect(noteRow)
+      await ctx.cdp.mouse('mouseMoved', noteRect.x + noteRect.width - 40, noteRect.y + noteRect.height / 2)
+      await ctx.cdp.eval(
+        `document.querySelector(${JSON.stringify(noteRow)})?.querySelectorAll('.notes-row-acts button')[0]?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-row-rename input') !== null`, {
+        timeout: 5000,
+        message: '出现笔记改名输入框'
+      })
+      await ctx.cdp.type('改名后的笔记')
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-row[data-note-id="改名后的笔记"][data-rail-copy="tree"]') !== null`,
+        { timeout: 10_000, message: '笔记在左栏改了名' }
+      )
+
+      const fileRow = fileSelector('引用图.png')
+      const fileRect = await ctx.elementRect(fileRow)
+      await ctx.cdp.mouse('mouseMoved', fileRect.x + fileRect.width - 60, fileRect.y + fileRect.height / 2)
+      await ctx.cdp.eval(
+        `document.querySelector(${JSON.stringify(fileRow)})?.querySelector('[data-file-action="rename"]')?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-file-rename input') !== null`, {
+        timeout: 5000,
+        message: '出现文件改名输入框'
+      })
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-file-rename input')
+        el.focus()
+        el.setSelectionRange(0, el.value.lastIndexOf('.'))
+      })()`)
+      await ctx.cdp.type('改名后的图')
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector('改名后的图.png'))}) !== null`,
+        { timeout: 10_000, message: '文件在左栏改了名' }
+      )
+
+      await openCanvasFile(ctx, '跟随板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .md-h')?.textContent?.includes('引用正文') === true`,
+        { timeout: 10_000, message: '改名后笔记卡片仍渲染' }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .file-image')?.complete === true`,
+        { timeout: 10_000, message: '改名后图片卡片仍渲染' }
+      )
+      saved = JSON.parse(readFileSync(absPath(ctx, '跟随板.excal'), 'utf8'))
+      ok(
+        liveElements(saved).some(
+          (element) =>
+            element.link === '改名后的笔记.md' &&
+            element.customData?.launcher?.id === '改名后的笔记'
+        ),
+        '白板里笔记的链接和 launcher 都换了新名字'
+      )
+      ok(
+        liveElements(saved).some(
+          (element) =>
+            element.link === '改名后的图.png' &&
+            element.customData?.launcher?.path === '改名后的图.png'
+        ),
+        '白板里文件的链接和 launcher 都换了新名字'
+      )
+      ok(
+        !liveElements(saved).some(
+          (element) =>
+            element.link === '引用笔记.md' || element.link === '引用图.png'
+        ),
+        '旧路径不残留'
+      )
+      // 两块卡片都放视口中间、只错开 48px,点笔记卡片露出来的顶边。
+      const noteCenter = await cardCenter(ctx, '改名后的笔记.md', true)
+      await ctx.cdp.click(noteCenter.x, noteCenter.y)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.excalidraw-hyperlinkContainer-link')?.textContent === '改名后的笔记.md'`,
+        { timeout: 5000, message: '气泡显示的是改名后的路径' }
+      )
+      // 改名只换路径,角标还认得出这是笔记。
+      eq(await popupBadge(ctx), '"笔记"', '改名后气泡里仍标着「笔记」')
+
+      // 目录改名:嵌在目录里的文件,前缀一起换。
+      await createCanvas(ctx, '图集板')
+      await openEmbedPicker(ctx)
+      await pointerClick(ctx, '[data-embed-page="library"]')
+      await pointerClick(ctx, '.canvas-embed-picker-row[data-embed-path="旧图集/详情.txt"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .canvas-embed-code')?.textContent?.includes('图集里的字。') === true`,
+        { timeout: 10_000, message: '目录里的文件嵌进白板' }
+      )
+      await waitCanvasSaved(ctx)
+      await ctx.cdp.eval(`document.querySelector('.notes-row[data-note-id]')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+        timeout: 10_000,
+        message: '离开图集白板'
+      })
+
+      const folderRow = '.notes-folder-row[data-folder-path="旧图集"]'
+      const folderRect = await ctx.elementRect(folderRow)
+      await ctx.cdp.mouse(
+        'mouseMoved',
+        folderRect.x + folderRect.width - 30,
+        folderRect.y + folderRect.height / 2
+      )
+      await ctx.cdp.eval(
+        `document.querySelector(${JSON.stringify(folderRow)})?.querySelector('[data-folder-act="rename"]')?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-folder-rename input') !== null`, {
+        timeout: 5000,
+        message: '出现目录改名输入框'
+      })
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-folder-rename input')
+        el.focus()
+        el.select()
+      })()`)
+      await ctx.cdp.type('新图集')
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-folder-row[data-folder-path="新图集"]') !== null`,
+        { timeout: 10_000, message: '目录在左栏改了名' }
+      )
+
+      await openCanvasFile(ctx, '图集板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .canvas-embed-code')?.textContent?.includes('图集里的字。') === true`,
+        { timeout: 10_000, message: '目录改名后卡片仍渲染' }
+      )
+      saved = JSON.parse(readFileSync(absPath(ctx, '图集板.excal'), 'utf8'))
+      ok(
+        liveElements(saved).some(
+          (element) =>
+            element.link === '新图集/详情.txt' &&
+            element.customData?.launcher?.path === '新图集/详情.txt'
+        ),
+        '目录改名后白板里的前缀跟着换'
+      )
+    }
+  },
+
+  {
     id: 'canvas/minimap',
     area: 'canvas',
-    title: '小地图默认打开,点击和滚轮都带动视口,关掉后滚轮不再带动白板',
+    title: '小地图默认收起,手动打开后记住;点击和滚轮都带动视口,关掉后滚轮不再带动白板',
     tags: ['canvas', 'minimap'],
     async run(ctx) {
       await createCanvas(ctx, '小地图')
       await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'false' && document.querySelector('.canvas-minimap-map') === null`,
+        { timeout: 10_000, message: '小地图默认收起' }
+      )
+      await pointerClick(ctx, '.canvas-minimap-toggle')
+      await ctx.cdp.waitFor(
         `document.querySelector('.canvas-minimap-map') !== null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'true'`,
-        { timeout: 10_000, message: '小地图默认打开' }
+        { timeout: 5000, message: '点开开关后小地图才出现' }
       )
       await drawRectangle(ctx)
       await waitCanvasSaved(ctx)
@@ -1506,6 +2158,13 @@ export default [
       eq(JSON.stringify(placed(sceneAfter)), JSON.stringify(placed(sceneBefore)), '视口变化不改元素')
       eq(sceneAfter.appState.scrollX, undefined, '滚动位置不写进文件')
 
+      // 手动打开过的状态记在本机:换一块白板仍然打开。
+      await createCanvas(ctx, '另一块')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-map') !== null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'true'`,
+        { timeout: 10_000, message: '开过的小地图在另一块白板上仍然打开' }
+      )
+
       await pointerClick(ctx, '.canvas-minimap-toggle')
       await ctx.cdp.waitFor(`document.querySelector('.canvas-minimap-map') === null`, {
         timeout: 5000,
@@ -1516,7 +2175,8 @@ export default [
       await sleep(300)
       eq(await zoomPercent(ctx), hiddenPercent, '关掉之后,原来的位置滚轮不再改缩放')
 
-      await createCanvas(ctx, '另一块')
+      // 关掉的状态也记在本机:再换一块白板仍然关着。
+      await createCanvas(ctx, '第三块')
       await ctx.cdp.waitFor(
         `document.querySelector('.canvas-minimap-map') === null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'false'`,
         { timeout: 10_000, message: '关掉的小地图在另一块白板上仍然关着' }

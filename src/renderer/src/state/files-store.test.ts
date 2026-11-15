@@ -286,3 +286,44 @@ describe('files-store', () => {
     })
   })
 })
+
+describe('reloadIfRetargeted(改名改写后的白板重读)', () => {
+  beforeEach(() => {
+    mocks.statFile.mockReset()
+    mocks.readFile.mockReset()
+    mocks.saveFile.mockReset()
+    reset()
+  })
+
+  function canvasDoc(text: string, revision: string): NoteFileTextDoc {
+    return { ...textDocOf('板.excal', text, revision), kind: 'canvas' }
+  }
+
+  it('路径在改写列表里才重读,重读后刷新正文并重挂画布', async () => {
+    mocks.statFile.mockResolvedValue(statOf('板.excal', 'canvas'))
+    mocks.readFile.mockResolvedValueOnce({ ok: true, doc: canvasDoc('旧场景', 'r1') })
+    await useFilesStore.getState().open('板.excal')
+
+    mocks.readFile.mockResolvedValueOnce({ ok: true, doc: canvasDoc('新场景', 'r2') })
+    await useFilesStore.getState().reloadIfRetargeted('板.excal', ['别的.excal', '板.excal'])
+
+    const s = useFilesStore.getState()
+    expect(s.file?.text).toBe('新场景')
+    expect(s.file?.revision).toBe('r2')
+    expect(s.dirty).toBe(false)
+    expect(s.docSession).toBe(2)
+  })
+
+  it('不在列表里、或当前不是白板时都不重读', async () => {
+    mocks.statFile.mockResolvedValue(statOf('a.txt'))
+    mocks.readFile.mockResolvedValueOnce({ ok: true, doc: textDocOf('a.txt', 'one', 'r1') })
+    await useFilesStore.getState().open('a.txt')
+
+    await useFilesStore.getState().reloadIfRetargeted('a.txt', ['板.excal'])
+    await useFilesStore.getState().reloadIfRetargeted('板.excal', ['板.excal'])
+
+    expect(mocks.readFile).toHaveBeenCalledTimes(1)
+    expect(useFilesStore.getState().file?.text).toBe('one')
+    expect(useFilesStore.getState().docSession).toBe(1)
+  })
+})

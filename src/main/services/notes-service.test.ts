@@ -1835,3 +1835,158 @@ describe('renameFile(重命名文件,完整新文件名)', () => {
     expect(read(svc.dir(), 'a.txt')).toBe('A')
   })
 })
+
+describe('白板引用跟随改名 / 移动', () => {
+  function board(elements: unknown[]): string {
+    return JSON.stringify({
+      type: 'excalidraw',
+      version: 2,
+      source: 'https://excalidraw.com',
+      elements: [
+        { type: 'text', id: 't', text: '不动的字', originalText: '不动的字', isDeleted: false },
+        ...elements
+      ],
+      appState: {},
+      files: {}
+    })
+  }
+
+  function embed(id: string, link: string, launcher?: unknown): Record<string, unknown> {
+    return {
+      type: 'embeddable',
+      id,
+      x: 0,
+      y: 0,
+      width: 360,
+      height: 240,
+      link,
+      isDeleted: false,
+      ...(launcher === undefined ? {} : { customData: launcher })
+    }
+  }
+
+  function readBoard(dir: string, name: string): { elements: Array<Record<string, unknown>> } {
+    return JSON.parse(readFileSync(join(dir, name), 'utf8'))
+  }
+
+  it('笔记改名:白板里的 link 与 launcher 一起换,网页和普通元素不动', async () => {
+    const svc = makeService()
+    const note = await svc.create({ title: '旧笔记', body: '正文' })
+    writeFileSync(
+      join(svc.dir(), '板.excal'),
+      board([
+        embed('a', `${note.id}.md`, { launcher: { kind: 'note', id: note.id } }),
+        embed('b', 'https://example.com/a'),
+        embed('c', '说明.pdf', { embed: { source: '/tmp/说明.pdf', project: '', host: 'h' } })
+      ])
+    )
+
+    const out = await svc.rename({ id: note.id, title: '新笔记', expectedRevision: note.revision })
+    if (!out.ok || !('note' in out)) throw new Error('expected renamed note')
+    expect(out.retargeted).toEqual(['板.excal'])
+
+    const saved = readBoard(svc.dir(), '板.excal')
+    expect(saved.elements[0]).toEqual({
+      type: 'text', id: 't', text: '不动的字', originalText: '不动的字', isDeleted: false
+    })
+    expect(saved.elements[1].link).toBe('新笔记.md')
+    expect(saved.elements[1].customData).toEqual({ launcher: { kind: 'note', id: '新笔记' } })
+    expect(saved.elements[2].link).toBe('https://example.com/a')
+    expect(saved.elements[3].link).toBe('说明.pdf')
+    expect(saved.elements[3].customData).toEqual({
+      embed: { source: '/tmp/说明.pdf', project: '', host: 'h' }
+    })
+  })
+
+  it('文件移动:精确改路径;没有引用的改名不带 retargeted 且不动白板', async () => {
+    const svc = makeService()
+    await svc.createFolder({ parent: '', name: '资料' })
+    const created = await svc.createFile({ parent: '', name: '图.png' })
+    if (!created.ok) throw new Error('expected file')
+    writeFileSync(
+      join(svc.dir(), '板.excal'),
+      board([embed('a', '图.png', { launcher: { kind: 'file', path: '图.png' } })])
+    )
+
+    const moved = await svc.move({ id: '图.png', kind: 'file', parent: '资料' })
+    if (!moved.ok) throw new Error('expected moved')
+    const afterMove = readFileSync(join(svc.dir(), '板.excal'), 'utf8')
+    expect(moved.retargeted).toEqual(['板.excal'])
+    const saved = readBoard(svc.dir(), '板.excal')
+    expect(saved.elements[1].link).toBe('资料/图.png')
+    expect(saved.elements[1].customData).toEqual({
+      launcher: { kind: 'file', path: '资料/图.png' }
+    })
+
+    // 改一篇没人引用的笔记:白板一个字节都不变
+    const other = await svc.create({ title: '没人引用', body: '' })
+    const out = await svc.rename({ id: other.id, title: '改了名', expectedRevision: other.revision })
+    expect(out.ok).toBe(true)
+    if (out.ok && 'note' in out) expect(out.retargeted).toBeUndefined()
+    expect(readFileSync(join(svc.dir(), '板.excal'), 'utf8')).toBe(afterMove)
+  })
+
+  it('目录改名:前缀一起换,同名前缀的根层对象不受影响', async () => {
+    const svc = makeService()
+    await svc.createFolder({ parent: '', name: '工作' })
+    const inside = await svc.create({ title: '记录', body: '' })
+    await svc.move({ id: inside.id, kind: 'note', parent: '工作' })
+    const root = await svc.create({ title: '工作', body: '' })
+    const file = await svc.createFile({ parent: '工作', name: '图.png' })
+    if (!file.ok) throw new Error('expected file')
+
+    writeFileSync(
+      join(svc.dir(), '板.excal'),
+      board([
+        embed('a', '工作/记录.md', { launcher: { kind: 'note', id: '工作/记录' } }),
+        embed('b', '工作/图.png', { launcher: { kind: 'file', path: '工作/图.png' } }),
+        embed('c', '工作.md', { launcher: { kind: 'note', id: root.id } }),
+        embed('d', '附件/图.png', { embed: { source: '', project: '工作/图.png', host: 'h' } })
+      ])
+    )
+
+    const out = await svc.renameFolder({ id: '工作', name: '项目' })
+    expect(out.id).toBe('项目')
+    expect(out.retargeted).toEqual(['板.excal'])
+
+    const saved = readBoard(svc.dir(), '板.excal')
+    expect(saved.elements[1].link).toBe('项目/记录.md')
+    expect(saved.elements[1].customData).toEqual({ launcher: { kind: 'note', id: '项目/记录' } })
+    expect(saved.elements[2].link).toBe('项目/图.png')
+    expect(saved.elements[2].customData).toEqual({
+      launcher: { kind: 'file', path: '项目/图.png' }
+    })
+    expect(saved.elements[3].link).toBe('工作.md')
+    expect(saved.elements[3].customData).toEqual({ launcher: { kind: 'note', id: '工作' } })
+    expect(saved.elements[4].customData).toEqual({
+      embed: {
+        source: '',
+        project: '项目/图.png',
+        host: 'h'
+      }
+    })
+  })
+
+  it('文件改名:笔记 ↔ 普通文件互相转换时角标种类跟着换', async () => {
+    const svc = makeService()
+    const note = await svc.create({ title: '文档', body: '正文' })
+    writeFileSync(
+      join(svc.dir(), '板.excal'),
+      board([embed('a', '文档.md', { launcher: { kind: 'note', id: '文档' } })])
+    )
+    const toFile = await svc.renameFile({ path: '文档.md', name: '文档.txt' })
+    if (!toFile.ok) throw new Error('expected renamed')
+    expect(toFile.retargeted).toEqual(['板.excal'])
+    let saved = readBoard(svc.dir(), '板.excal')
+    expect(saved.elements[1].link).toBe('文档.txt')
+    expect(saved.elements[1].customData).toEqual({
+      launcher: { kind: 'file', path: '文档.txt' }
+    })
+
+    const back = await svc.renameFile({ path: '文档.txt', name: '文档.md' })
+    if (!back.ok) throw new Error('expected renamed back')
+    saved = readBoard(svc.dir(), '板.excal')
+    expect(saved.elements[1].link).toBe('文档.md')
+    expect(saved.elements[1].customData).toEqual({ launcher: { kind: 'note', id: '文档' } })
+  })
+})

@@ -89,6 +89,8 @@ import {
 } from '../domains/frontmatter'
 import { slugifyFolderName, slugifyNoteTitle, titleFromBody, uniqueNoteId } from '../domains/note-id'
 import { compactStamp, localIso } from '../domains/note-time'
+import type { CanvasRetarget } from '../../shared/canvas-ref'
+import { retargetCanvasFiles } from './canvas-refs'
 import { createDebouncedDirWatcher, type DebouncedDirWatcher } from './dir-watcher'
 
 export interface NotesService {
@@ -132,13 +134,14 @@ export interface NotesService {
   /** 删除目录(连同其中的笔记)到废纸篓 */
   removeFolder(input: { id: string }): Promise<NoteSaveOutcome>
   /** 目录改名(整体搬迁,目录内的笔记 id 前缀随之变化) */
-  renameFolder(input: { id: string; name: string }): Promise<{ id: string }>
+  renameFolder(input: { id: string; name: string }): Promise<{ id: string; retargeted?: string[] }>
   /**
    * 移动到另一个目录。parent 为空串 = 根层。
    * kind 由调用方指明,服务端用 stat 核对:目录必须是目录,笔记必须是 `${id}.md`,文件必须是该路径上的普通文件。
    * 不符就失败,不按「路径在不在」猜种类 —— 无扩展名文件 `readme` 和笔记 `readme` 会撞车。
    * 目标已有同名项时**不覆盖**,自动加序号;文件撞名保留扩展名(`pic.png` → `pic-2.png`)。
    * 文件移动成功时带上新的 `file`,渲染层不自己拼元信息。
+   * 白板里指向它的引用会一起改写,改过的白板路径放在 `retargeted`。
    */
   move(input: { id: string; parent: string; kind: 'note' | 'folder' | 'file' }): Promise<
     | {
@@ -146,6 +149,7 @@ export interface NotesService {
         id: string
         renamed?: { from: string; to: string }
         file?: NoteFileStat
+        retargeted?: string[]
       }
     | { ok: false; message: string }
   >
@@ -384,6 +388,20 @@ export function createNotesService(opts: {
   /** 目标路径是否已被占用(目录或同名 .md 都算) */
   function pathTaken(dir: string, id: string): boolean {
     return existsSync(join(dir, id)) || existsSync(join(dir, `${id}.md`))
+  }
+
+  /**
+   * 改名 / 移动之后,把白板里指向旧路径的引用一起改掉。
+   * 主操作已经成功,改写失败(坏 JSON、权限)只记日志,不往回滚。
+   */
+  function retargetBoards(changes: CanvasRetarget[]): string[] {
+    if (changes.length === 0) return []
+    try {
+      return retargetCanvasFiles({ dir: opts.getDir(), changes, log }).paths
+    } catch (err) {
+      log(`retarget 白板失败: ${String(err)}`)
+      return []
+    }
   }
 
   /** 标题是否是「早期版本的路径兜底」残留(含 `/` 且尾段就是本文件名) */
@@ -891,8 +909,13 @@ export function createNotesService(opts: {
         index.delete(id)
         lastKnownRevision.delete(id)
         const parsed = readFresh(finalId)!
+        const retargeted = retargetBoards([{ from: `${id}.md`, to: `${finalId}.md` }])
         log(`renamed ${id}.md → ${finalId}.md${bumped ? '(撞名,已加序号)' : ''}`)
-        return { ok: true, note: toNote(parsed) }
+        return {
+          ok: true,
+          note: toNote(parsed),
+          ...(retargeted.length > 0 ? { retargeted } : {})
+        }
       }
 
       const parsed = readFresh(id)!
@@ -955,8 +978,9 @@ export function createNotesService(opts: {
       renameSync(abs, join(dir, next))
 
       reprefixIndex(id, next)
+      const retargeted = retargetBoards([{ from: id, to: next, prefix: true }])
       log(`renamed folder ${id}/ → ${next}/`)
-      return { id: next }
+      return { id: next, ...(retargeted.length > 0 ? { retargeted } : {}) }
     },
 
     async move(input) {
@@ -1049,10 +1073,24 @@ export function createNotesService(opts: {
       }
 
       log(`moved ${kind} ${id} → ${next}${renamed ? '(撞名,已加序号)' : ''}`)
+      const retarget =
+        kind === 'note'
+          ? [{ from: `${id}.md`, to: `${next}.md` }]
+          : kind === 'file'
+            ? [{ from: id, to: next }]
+            : [{ from: id, to: next, prefix: true }]
+      const retargeted = retargetBoards(retarget)
+      const retargetField = retargeted.length > 0 ? { retargeted } : {}
       const renamedField = renamed ? { renamed: { from: base, to: baseNameOf(next) } } : {}
-      if (kind !== 'file') return { ok: true, id: next, ...renamedField }
+      if (kind !== 'file') return { ok: true, id: next, ...renamedField, ...retargetField }
       try {
-        return { ok: true, id: next, ...renamedField, file: fileStatOf(next, statSync(dest)) }
+        return {
+          ok: true,
+          id: next,
+          ...renamedField,
+          ...retargetField,
+          file: fileStatOf(next, statSync(dest))
+        }
       } catch (err) {
         return { ok: false, message: `读取文件信息失败:${String(err)}` }
       }
@@ -1184,8 +1222,13 @@ export function createNotesService(opts: {
         return { ok: false, kind: 'io', message: `重命名失败:${String(err)}` }
       }
       log(`renamed file ${oldRel} -> ${newRel}`)
+      const retargeted = retargetBoards([{ from: oldRel, to: newRel }])
       try {
-        return { ok: true, file: fileStatOf(newRel, statSync(absNew)) }
+        return {
+          ok: true,
+          file: fileStatOf(newRel, statSync(absNew)),
+          ...(retargeted.length > 0 ? { retargeted } : {})
+        }
       } catch (err) {
         return { ok: false, kind: 'io', message: `读取文件信息失败:${String(err)}` }
       }

@@ -8,6 +8,7 @@ import {
   dragView,
   minimapBlocks,
   minimapFrame,
+  minimapOpenFrom,
   pointInView,
   zoomAtMapPoint,
   type SceneViewport
@@ -30,6 +31,16 @@ function scenePointOf(viewport: SceneViewport, clientX: number, clientY: number)
     y: clientY / viewport.zoom - viewport.scrollY
   }
 }
+
+describe('minimapOpenFrom', () => {
+  it('默认收起,只有手动打开过(记成 true)才展开', () => {
+    expect(minimapOpenFrom(null)).toBe(false)
+    expect(minimapOpenFrom('false')).toBe(false)
+    expect(minimapOpenFrom('')).toBe(false)
+    expect(minimapOpenFrom('随便什么')).toBe(false)
+    expect(minimapOpenFrom('true')).toBe(true)
+  })
+})
 
 describe('minimapBlocks', () => {
   it('只留还在的元素,透明填充改用描边色', () => {

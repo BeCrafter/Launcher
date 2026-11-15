@@ -11,6 +11,11 @@ export const CANVAS_ZOOM_STEP = 0.1
 export const CANVAS_MIN_ZOOM = 0.1
 export const CANVAS_MAX_ZOOM = 30
 
+/** 小地图默认收起;只有手动打开过(本地记成 'true')才展开。 */
+export function minimapOpenFrom(stored: string | null): boolean {
+  return stored === 'true'
+}
+
 export interface SceneBox {
   x: number
   y: number

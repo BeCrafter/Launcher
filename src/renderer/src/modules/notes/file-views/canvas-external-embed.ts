@@ -4,9 +4,8 @@
 // 库外的记下绝对路径,平时跟原文件,打包时才拷进项目。
 // 拿不到路径、扩展名不对的,都不嵌。
 
-import { isCanvasPreviewName, type CanvasExternalEmbed } from '@shared/canvas-external'
+import { isCanvasPreviewName } from '@shared/canvas-external'
 import { dataSource } from '../../../data'
-import { noteFileUrl } from '../../../lib/note-file-url'
 import type { CanvasEmbedPick } from './CanvasEmbedPicker'
 
 export async function picksFromLocalFiles(files: readonly File[]): Promise<CanvasEmbedPick[]> {
@@ -18,13 +17,16 @@ export async function picksFromLocalFiles(files: readonly File[]): Promise<Canva
     if (root === '') root = await dataSource().notes.dir()
     const relative = relativeToNotes(root, source)
     if (relative !== null) {
-      out.push({ link: noteFileUrl(relative), label: file.name })
+      out.push({ link: relative, label: file.name, ref: { kind: 'file', path: relative } })
       continue
     }
-    const external: CanvasExternalEmbed = { source, project: '', host: '' }
-    // 链接必须是 Excalidraw 认得的地址,悬停才会出现「点击以开始交互」。
-    // 绝对路径只留在 customData,不写进 link。
-    out.push({ link: noteFileUrl(file.name), label: file.name, external })
+    // 链接直接放绝对路径:链接气泡里看得到引用的是哪一份文件。
+    // 真实引用仍以 customData.embed 为准(链接会被 Excalidraw 归一化)。
+    out.push({
+      link: source,
+      label: file.name,
+      external: { source, project: '', host: '' }
+    })
   }
   return out
 }

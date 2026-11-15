@@ -5130,6 +5130,25 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
 .excalidraw .excalidraw__embeddable-container .excalidraw__embeddable-hint {
   z-index: 3;
 }
+/* 进入交互或选中卡片后顶部显示引入文件的路径。平时不渲染,免得压掉内容。
+   外观跟笔记里的网页嵌入条一致:小字号、等宽、超长省略,title 看全路径。 */
+/* 笔记 / 库内 / 库外:角标长在 Excalidraw 的链接气泡里,紧挨着路径。
+   气泡没有插槽,选中卡片时组件把文案写进根上的 --canvas-embed-badge,
+   这里用伪元素读出来;没选中时变量不在,content 退回 none,不生成伪元素。 */
+.excalidraw .excalidraw-hyperlinkContainer-link::before {
+  content: var(--canvas-embed-badge, none);
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 16px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
 .canvas-embed-note {
   flex: 1;
   min-height: 0;

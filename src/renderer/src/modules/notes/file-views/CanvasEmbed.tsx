@@ -17,11 +17,16 @@ import {
   type NoteFileKind
 } from '@shared/notes'
 import {
-  readCanvasExternal,
   resolveCanvasExternalRead,
   type CanvasExternalEmbed,
   type CanvasExternalRead
 } from '@shared/canvas-external'
+import {
+  canvasDisplayPath,
+  canvasEmbedRef,
+  canvasRefBadge,
+  type CanvasEmbedBadge
+} from '@shared/canvas-ref'
 import { decodeTextBytes } from '@shared/text-file'
 import { dataSource } from '../../../data'
 import { useT } from '../../../hooks/useT'
@@ -32,7 +37,6 @@ import { noteFileIcon } from '../../../lib/note-file'
 import { noteExternalUrl, noteFileUrl } from '../../../lib/note-file-url'
 import { openExternal } from '../../../lib/utils'
 import { MermaidBlock } from '../MermaidBlock'
-import { canvasEmbedTarget } from './canvas-embed'
 import { ArchiveView } from './ArchiveView'
 import { BytesLoader } from './BytesLoader'
 import { CsvView } from './CsvView'
@@ -52,23 +56,55 @@ export function CanvasEmbed({
   element: ExcalidrawEmbeddableElement
   appState: AppState
 }): React.JSX.Element {
-  const external = readCanvasExternal(element.customData)
-  const target = canvasEmbedTarget(element.link)
+  const t = useT()
+  const ref = canvasEmbedRef(element.customData, element.link ?? null)
+  const external = ref !== null && ref.kind === 'external' ? ref : null
+  const target = ref !== null && ref.kind !== 'external' && ref.kind !== 'web' ? ref : null
+  const web = ref !== null && ref.kind === 'web' ? ref : null
   const activeEmbed = appState.activeEmbeddable
   const active = activeEmbed?.element.id === element.id && activeEmbed.state === 'active'
+  const selected =
+    appState.selectedElementIds?.[element.id] === true ||
+    element.groupIds?.some((id) => appState.selectedElementIds?.[id] === true) === true
   const label = external !== null ? fileNameOf(external.source || external.project) : element.link ?? ''
+  const path = ref === null ? null : canvasDisplayPath(ref)
+  const kind: CanvasEmbedBadge | 'none' = ref === null ? 'none' : canvasRefBadge(ref)
+  const badge =
+    kind === 'note' || kind === 'vault' || kind === 'external'
+      ? t(`notes.canvas.embed.badge.${kind}`)
+      : null
+  // 角标要长在 Excalidraw 的链接气泡上,可那个气泡是它自己渲染的,没有插槽。
+  // 选中这张卡片时把文案写到根上的自定义属性,气泡链接前的伪元素读它;
+  // 取消选中(或换成别的元素)就撤掉,别的元素的链接不会带上角标。
+  useEffect(() => {
+    if (!selected || badge === null) return
+    const root = document.documentElement
+    root.style.setProperty('--canvas-embed-badge', JSON.stringify(badge))
+    return () => {
+      root.style.removeProperty('--canvas-embed-badge')
+    }
+  }, [selected, badge])
   return (
-    <div className="canvas-embed" data-embed-active={active ? 'true' : 'false'} data-embed-label={label}>
+    <div
+      className="canvas-embed"
+      data-embed-active={active ? 'true' : 'false'}
+      data-embed-selected={selected ? 'true' : 'false'}
+      data-embed-kind={kind}
+      data-embed-label={label}
+      data-embed-path={path ?? ''}
+    >
       {external !== null ? (
         <CanvasExternalCard embed={external} />
       ) : target === null ? (
-        <CanvasEmbedMissing />
+        web !== null ? (
+          <CanvasWebEmbed url={web.url} />
+        ) : (
+          <CanvasEmbedMissing />
+        )
       ) : target.kind === 'note' ? (
         <CanvasNoteEmbed id={target.id} />
-      ) : target.kind === 'file' ? (
-        <CanvasFileEmbed path={target.path} />
       ) : (
-        <CanvasWebEmbed url={target.url} />
+        <CanvasFileEmbed path={target.path} />
       )}
     </div>
   )
@@ -78,7 +114,7 @@ export function CanvasEmbed({
 function CanvasExternalCard({ embed }: { embed: CanvasExternalEmbed }): React.JSX.Element {
   const t = useT()
   const [read, setRead] = useState<CanvasExternalRead | null>(null)
-  // readCanvasExternal 每次渲染都给一个新对象。Excalidraw 在光标移动时也会重渲染,
+  // canvasEmbedRef 每次渲染都给一个新对象。Excalidraw 在光标移动时也会重渲染,
   // 依赖整个对象会把卡片打回「正在加载」,视频和 PDF 就一直闪。只跟这三串字走。
   const source = embed.source
   const project = embed.project

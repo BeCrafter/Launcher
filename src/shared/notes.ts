@@ -702,7 +702,12 @@ export interface NoteFileRenameInput {
 }
 
 export type NoteFileRenameOutcome =
-  | { ok: true; file: NoteFileStat }
+  | {
+      ok: true
+      file: NoteFileStat
+      /** 因改名而跟着改写的白板(相对笔记目录的路径);没有改写时不带这个字段 */
+      retargeted?: string[]
+    }
   | { ok: false; kind: 'invalid' | 'not-found' | 'exists' | 'io'; message: string }
 
 export interface NotesListPayload {
@@ -838,7 +843,12 @@ export type NoteSaveFailureKind =
   | 'not-found'
 
 export type NoteSaveOutcome =
-  | { ok: true; note: Note }
+  | {
+      ok: true
+      note: Note
+      /** 因改名而跟着改写的白板(相对笔记目录的路径);没有改写时不带这个字段 */
+      retargeted?: string[]
+    }
   /** 删除成功没有可回写的文档;调用方必须刷新列表并关掉编辑区,而不是解引用空 note */
   | { ok: true; removed: true }
   | { ok: false; kind: 'conflict'; latest: Note }

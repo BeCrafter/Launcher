@@ -175,10 +175,16 @@ export interface NotesRepository {
   /** 删除目录(连同其中的笔记) */
   removeFolder(id: string): Promise<NoteSaveOutcome>
   /** 目录改名 */
-  renameFolder(input: { id: string; name: string }): Promise<{ id: string }>
+  renameFolder(input: { id: string; name: string }): Promise<{ id: string; retargeted?: string[] }>
   /** 移动到另一个目录。kind 必须与磁盘相符;文件成功时带回新的 file 元信息 */
   move(input: { id: string; parent: string; kind: 'note' | 'folder' | 'file' }): Promise<
-    | { ok: true; id: string; renamed?: { from: string; to: string }; file?: NoteFileStat }
+    | {
+        ok: true
+        id: string
+        renamed?: { from: string; to: string }
+        file?: NoteFileStat
+        retargeted?: string[]
+      }
     | { ok: false; message: string }
   >
   /** 把 OS 文件/文件夹原样复制进目标目录 */

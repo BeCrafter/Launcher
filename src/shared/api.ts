@@ -240,10 +240,14 @@ export interface LauncherApi {
     /** 删除目录(连同其中的笔记进废纸篓) */
     removeFolder: (id: string) => Promise<NoteSaveOutcome>
     /** 目录改名 */
-    renameFolder: (input: { id: string; name: string }) => Promise<{ id: string }>
+    renameFolder: (input: {
+      id: string
+      name: string
+    }) => Promise<{ id: string; retargeted?: string[] }>
     /**
      * 移动到另一个目录。kind 必须与磁盘相符:note / folder / file。
      * parent 为空串 = 根层。文件成功时带回新的 file 元信息。
+     * 白板里指向它的引用会一起改写,改过的路径放在 retargeted。
      */
     move: (input: {
       id: string
@@ -255,6 +259,7 @@ export interface LauncherApi {
           id: string
           renamed?: { from: string; to: string }
           file?: NoteFileStat
+          retargeted?: string[]
         }
       | { ok: false; message: string }
     >

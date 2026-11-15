@@ -1,6 +1,7 @@
 // 白板右下角的小地图。开关在帮助按钮左边,中间留空,地图右缘跟帮助按钮对齐。
 // 点空白把视口中心移过去,拖框平移,滚轮缩放并让光标下的点留住。
-// 开关记在浏览器里,所有白板共用,不写进 .excal。视口变化也不进撤销。
+// 默认收起,点开关才展开;开/关都记在浏览器里,所有白板共用,不写进 .excal。
+// 视口变化也不进撤销。
 
 import { useEffect, useRef, useState } from 'react'
 import { CaptureUpdateAction } from '@excalidraw/excalidraw'
@@ -17,6 +18,7 @@ import {
   dragView,
   minimapBlocks,
   minimapFrame,
+  minimapOpenFrom,
   pointInView,
   zoomAtMapPoint,
   type MinimapScene,
@@ -207,9 +209,10 @@ function MinimapIcon(): React.JSX.Element {
 
 function readOpen(): boolean {
   try {
-    return localStorage.getItem(STORAGE_KEY) !== 'false'
+    return minimapOpenFrom(localStorage.getItem(STORAGE_KEY))
   } catch {
-    return true
+    // 读不到就按默认:收起。想用时再点开关。
+    return false
   }
 }
 

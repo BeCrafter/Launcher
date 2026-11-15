@@ -96,6 +96,8 @@ interface FilesState {
   flush(): Promise<void>
   leave(): Promise<void>
   reload(): Promise<void>
+  /** 主进程改写过这块白板时重读;路径不在列表里、不是白板都不动。 */
+  reloadIfRetargeted(path: string, paths: readonly string[]): Promise<void>
   resolveConflict(choice: 'disk' | 'mine'): Promise<void>
   setViewMode(kind: 'html' | 'csv', mode: FileViewMode): void
 }
@@ -356,6 +358,13 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     } catch (err) {
       showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
     }
+  },
+
+  async reloadIfRetargeted(path, paths) {
+    const f = get().file
+    if (f === null || f.path !== path || f.kind !== 'canvas') return
+    if (!paths.includes(path)) return
+    await get().reload()
   },
 
   async resolveConflict(choice) {

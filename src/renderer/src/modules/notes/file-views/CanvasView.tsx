@@ -24,13 +24,18 @@ import type { ImportedDataState } from '@excalidraw/excalidraw/data/types'
 import '@excalidraw/excalidraw/index.css'
 import { parseCanvas } from '@shared/canvas'
 import { canvasExternalData } from '@shared/canvas-external'
+import {
+  canvasDisplayPath,
+  canvasEmbedAllowed,
+  canvasEmbedRef,
+  canvasInternalData
+} from '@shared/canvas-ref'
 import { useEffectiveTheme } from '../../../hooks/useEffectiveTheme'
 import { useT } from '../../../hooks/useT'
 import { getCurrentLang } from '../../../i18n'
 import { useFilesStore } from '../../../state/files-store'
 import { openExternal } from '../../../lib/utils'
 import { openFileDoc, openNoteDoc } from '../doc-actions'
-import { canvasEmbedAllowed, canvasEmbedTarget } from './canvas-embed'
 import { CanvasEmbed } from './CanvasEmbed'
 // 模块一加载就改掉白板容器上的滚轮监听,必须赶在 Excalidraw 挂监听之前。
 import './canvas-wheel'
@@ -94,7 +99,7 @@ function takeUnlinkedWebEmbed(
     watch.current = null
     return null
   }
-  if (canvasEmbedTarget(element.link ?? null)?.kind === 'web') {
+  if (canvasEmbedRef(element.customData, element.link ?? null)?.kind === 'web') {
     watch.current = null
     return null
   }
@@ -108,7 +113,7 @@ function discardUnlinkedEmbed(api: ExcalidrawImperativeAPI, id: string): void {
   const elements = api.getSceneElementsIncludingDeleted()
   const target = elements.find((element) => element.id === id)
   if (target === undefined || target.isDeleted) return
-  if (canvasEmbedTarget(target.link ?? null)?.kind === 'web') return
+  if (canvasEmbedRef(target.customData, target.link ?? null)?.kind === 'web') return
   api.updateScene({
     elements: elements.map((element) =>
       element.id === id ? newElementWith(element, { isDeleted: true }) : element
@@ -125,6 +130,25 @@ declare global {
 
 function blankScene(): string {
   return serializeAsJSON([], {} as AppState, {} as BinaryFiles, 'local')
+}
+
+/**
+ * 打开白板时把旧格式的引用就地升成可读路径:
+ * 链接气泡直接显示 link,旧协议地址里全是 `%E4%B8%AD`,看不出引用了什么。
+ *
+ * 只改内存里的元素,**不**因此标脏、不主动写盘 —— 打开文件不该改文件。
+ * 下次真正编辑时才跟着场景一起落盘;磁盘上的改名改写会同时认旧链接。
+ */
+function migrateCanvasElement(element: ExcalidrawElement): ExcalidrawElement {
+  if (element.type !== 'embeddable') return element
+  const ref = canvasEmbedRef(element.customData, element.link ?? null)
+  if (ref === null || ref.kind === 'web') return element
+  const link = canvasDisplayPath(ref)
+  if (link === null) return element
+  const customData =
+    ref.kind === 'external' ? element.customData : canvasInternalData(ref, element.customData)
+  if (link === element.link && customData === element.customData) return element
+  return { ...element, link, customData }
 }
 
 export function CanvasView({ text }: { text: string }): React.JSX.Element {
@@ -164,7 +188,7 @@ function CanvasBoard({ text, blank }: { text: string; blank: boolean }): React.J
     if (!parsed.ok || parsed.blank) return null
     const restored = restore(parsed.data as ImportedDataState, null, null)
     return {
-      elements: restored.elements,
+      elements: restored.elements.map(migrateCanvasElement),
       appState: { ...restored.appState, collaborators: new Map() },
       files: restored.files
     }
@@ -238,9 +262,16 @@ function CanvasBoard({ text, blank }: { text: string; blank: boolean }): React.J
       null
     )
     if (element === undefined) return
-    // restoreElements 不保证留住 customData。外部文件的两条路径写在它后面。
-    if (pick.external !== undefined) {
-      Object.assign(element, { customData: canvasExternalData(pick.external) })
+    // restoreElements 不保证留住 customData。真实引用写在它后面:
+    // 内部引用进 launcher,库外文件进 embed。链接只是给人看的路径。
+    const customData =
+      pick.external !== undefined
+        ? canvasExternalData(pick.external)
+        : pick.ref !== undefined
+          ? canvasInternalData(pick.ref)
+          : null
+    if (customData !== null) {
+      Object.assign(element, { customData })
     }
     api.updateScene({
       elements: [...api.getSceneElementsIncludingDeleted(), element],
@@ -262,12 +293,13 @@ function CanvasBoard({ text, blank }: { text: string; blank: boolean }): React.J
           <CanvasEmbed element={element} appState={appState} />
         )}
         onLinkOpen={(element, event) => {
-          const target = canvasEmbedTarget(element.link)
-          if (target === null) return
+          const ref = canvasEmbedRef(element.customData, element.link ?? null)
+          if (ref === null) return
           event.preventDefault()
-          if (target.kind === 'note') openNoteDoc(target.id)
-          else if (target.kind === 'file') openFileDoc(target.path)
-          else openExternal(target.url)
+          if (ref.kind === 'note') openNoteDoc(ref.id)
+          else if (ref.kind === 'file') openFileDoc(ref.path)
+          else if (ref.kind === 'web') openExternal(ref.url)
+          // 库外文件没有通用的安全打开方式;卡片自己已经能预览
         }}
       />
       {api !== null && boardRef.current !== null && (

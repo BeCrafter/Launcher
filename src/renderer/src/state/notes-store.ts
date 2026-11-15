@@ -89,6 +89,28 @@ function clearTimer(): void {
 }
 
 /**
+ * 改名 / 移动会改写磁盘上的白板引用。
+ * 先把打开中的白板缓冲落盘:不落的话,改名回来后那次 900ms 的自动保存
+ * 会拿旧链接盖掉刚改好的文件。返回 false 表示没落成(冲突或保存失败),调用方放弃这次操作。
+ */
+async function flushOpenCanvas(): Promise<boolean> {
+  const before = useFilesStore.getState()
+  if (before.file === null || before.file.kind !== 'canvas') return true
+  if (before.dirty || before.saving) await useFilesStore.getState().flush()
+  const after = useFilesStore.getState()
+  if (after.file?.kind !== 'canvas') return true
+  return !after.dirty && after.conflict === null
+}
+
+/** 主进程改写过打开中的白板 → 重读场景。其他的白板不重挂,视口不丢。 */
+async function reloadRetargeted(paths: readonly string[] | undefined): Promise<void> {
+  if (paths === undefined || paths.length === 0) return
+  const file = useFilesStore.getState().file
+  if (file === null) return
+  await useFilesStore.getState().reloadIfRetargeted(file.path, paths)
+}
+
+/**
  * localStorage 兜底:渲染层里它总是可用,但测试环境(node,无 jsdom)没有 ——
  * 模块求值期直接取会让整块 store 起不来。顺带也挡住隐私模式/配额满这类异常:
  * 记不住「上次用哪种视图」不是错误,不该影响笔记本身。
@@ -552,6 +574,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
 
     async renameFile(path, name) {
       try {
+        if (!(await flushOpenCanvas())) return null
         const outcome = await dataSource().notes.renameFile({ path, name })
         if (!outcome.ok) {
           showToast(
@@ -562,6 +585,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
           return null
         }
         await reload()
+        // 这块文件被别人引用的白板若还开着,主进程已经改好了磁盘,得重读一遍场景
+        await reloadRetargeted(outcome.retargeted)
         showToast(t()('toast.fileRenamed'), '#4ade80', 'fa-circle-check')
         return outcome.file
       } catch (err) {
@@ -672,7 +697,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
 
     async renameFolder(id, name) {
       try {
-        const { id: next } = await dataSource().notes.renameFolder({ id, name })
+        if (!(await flushOpenCanvas())) return
+        const { id: next, retargeted } = await dataSource().notes.renameFolder({ id, name })
         const cur = get().currentId
         // 打开中的笔记在改名后的目录里 → 它的 id 前缀也变了,得跟着换(否则下一次保存会 not-found)
         if (cur !== null && cur.startsWith(`${id}/`)) {
@@ -680,8 +706,16 @@ export const useNotesStore = create<NotesState>((set, get) => {
           const d = get().draft
           if (d) set({ currentId: moved, draft: { ...d, id: moved } })
         }
+        // 打开中的文件也跟着换路径(白板、代码都在这里)
+        const fileNow = useFilesStore.getState().file
+        if (fileNow !== null && fileNow.path.startsWith(`${id}/`)) {
+          const nextPath = `${next}${fileNow.path.slice(id.length)}`
+          const stat = await dataSource().notes.statFile(nextPath)
+          if (stat !== null) useFilesStore.getState().repath(fileNow.path, stat)
+        }
         if (get().selectedFolder === id) set({ selectedFolder: next })
         await reload()
+        await reloadRetargeted(retargeted)
         showToast(t()('toast.folderRenamed'), '#4ade80', 'fa-check')
       } catch (err) {
         showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
@@ -754,6 +788,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
         if (!d || d.title.trim() === '') return
         // 标题算出来的文件名与当前文件名一致 → 什么都不用做(省掉一次无谓的写盘与 mtime 变动)
         if (slugifyNoteTitle(d.title) === baseNameOf(d.id)) return
+        if (!(await flushOpenCanvas())) return
         try {
           let out = await dataSource().notes.rename({
             id: d.id,
@@ -780,6 +815,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
           if (get().draft?.id !== d.id) {
             // 文件已经改名,但用户已经切到别的笔记:草稿一个字都不能动,只让列表跟上新 id
             await reload()
+            await reloadRetargeted(out.retargeted)
             return
           }
           set({
@@ -790,6 +826,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
             externalChanged: false
           })
           await reload()
+          await reloadRetargeted(out.retargeted)
           if (out.note.title !== d.title.trim()) {
             showToast(
               t()('toast.noteMovedRenamed').replace('{NAME}', out.note.title),
@@ -822,6 +859,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
         const movesFile = openFile !== null && (openFile.path === id || openFile.path.startsWith(`${id}/`))
         if (movesNote) await get().flush()
         if (movesFile) await useFilesStore.getState().flush()
+        // 被移的是别的条目时,打开中的白板仍可能引用它 → 也要先把白板缓冲落盘
+        if (!(await flushOpenCanvas())) return
 
         const out = await dataSource().notes.move({ id, parent, kind })
         if (!out.ok) {
@@ -854,6 +893,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
               : await dataSource().notes.statFile(nextPath)
           if (stat !== null) useFilesStore.getState().repath(fileNow.path, stat)
         }
+        // 白板里的引用被主进程改写过了 → 这块还开着就重读场景
+        await reloadRetargeted(out.retargeted)
         // 展开状态和选中目录按前缀一起换。
         // 再展开目标所在的每一层(不含被移项自己),折叠着的目标移完也看得见。
         const expanded = new Set<string>()
@@ -895,6 +936,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
 
     async renameNote(id, title) {
       try {
+        if (!(await flushOpenCanvas())) return
         const note = await dataSource().notes.read(id)
         if (!note) {
           await reload()
@@ -923,6 +965,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
           set({ currentId: next.id, draft: { ...draftOf(next), unclosed: d.unclosed }, dirty: false })
         }
         await reload()
+        // 白板里指向这篇笔记的引用已经改好了,打开着的白板要重读场景
+        await reloadRetargeted(out.retargeted)
         // 目标名已被占用时服务端会加序号,并把标题一起改成带序号的名字 —— 必须说出来
         if (next.title !== title.trim()) {
           showToast(

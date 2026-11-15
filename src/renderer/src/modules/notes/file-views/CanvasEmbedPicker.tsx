@@ -5,16 +5,18 @@
 
 import { useMemo, useState } from 'react'
 import { CANVAS_EMBED_KINDS, canvasPreviewExtensions, type CanvasExternalEmbed } from '@shared/canvas-external'
+import type { CanvasInternalRef } from '@shared/canvas-ref'
 import { useT } from '../../../hooks/useT'
 import { noteFileIcon } from '../../../lib/note-file'
 import { useNotesStore } from '../../../state/notes-store'
-import { canvasNoteLink } from './canvas-embed'
-import { noteFileUrl } from '../../../lib/note-file-url'
 
 export interface CanvasEmbedPick {
+  /** 直接显示给人的路径:笔记 `${id}.md`,库内文件相对路径,库外文件绝对路径 */
   link: string
   /** 元素左上角显示的名字 */
   label: string
+  /** 内部引用。写进 customData.launcher,链接改了也不影响它 */
+  ref?: CanvasInternalRef
   /** 库外文件。平时跟 source,打包后才填 project。 */
   external?: CanvasExternalEmbed
 }
@@ -164,7 +166,13 @@ function CanvasEmbedLibrary({
                 icon="fa-file-lines"
                 name={note.title}
                 path={note.id}
-                onClick={() => onPick({ link: canvasNoteLink(note.id), label: note.title })}
+                onClick={() =>
+                  onPick({
+                    link: `${note.id}.md`,
+                    label: note.title,
+                    ref: { kind: 'note', id: note.id }
+                  })
+                }
               />
             ))}
           </PickerGroup>
@@ -177,7 +185,13 @@ function CanvasEmbedLibrary({
                 icon={noteFileIcon(file.ext, file.name)}
                 name={file.name}
                 path={file.path}
-                onClick={() => onPick({ link: noteFileUrl(file.path), label: file.name })}
+                onClick={() =>
+                  onPick({
+                    link: file.path,
+                    label: file.name,
+                    ref: { kind: 'file', path: file.path }
+                  })
+                }
               />
             ))}
           </PickerGroup>
