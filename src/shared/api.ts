@@ -29,6 +29,7 @@ import type {
   AiSendInput,
   AiTestResult
 } from './ipc'
+import type { DrawioStatus, DrawioStatusEvent } from './drawio'
 import type {
   Agent,
   AgentDocument,
@@ -292,6 +293,16 @@ export interface LauncherApi {
     setSecret: (provider: Exclude<NotesSyncProvider, 'smb'>, secret: string) => Promise<NotesSyncStatus>
     revealSecret: (provider: Exclude<NotesSyncProvider, 'smb'>) => Promise<string>
     test: () => Promise<NotesSyncTestResult>
+  }
+  /** draw.io 离线编辑器资源包(首次切换离线时按需下载) */
+  drawio: {
+    status: () => Promise<DrawioStatus>
+    /** 下载 + 校验 + 解压;过程经 onStatus 推送 */
+    download: () => Promise<{ ok: boolean; status: DrawioStatus; message?: string }>
+    cancel: () => Promise<void>
+    /** 导入本地 draw.war(先经 pickFile({ mode: 'war' }) 选路径) */
+    importWar: (warPath: string) => Promise<{ ok: boolean; status: DrawioStatus; message?: string }>
+    onStatus: (cb: (event: DrawioStatusEvent) => void) => () => void
   }
   /**
    * 从拖入的 File 取本地绝对路径(Electron 44 已移除 File.path)。

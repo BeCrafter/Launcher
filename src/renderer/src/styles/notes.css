@@ -317,26 +317,21 @@
 .notes-tag-pill.active .notes-tag-count { color: inherit; }
 
 
-/* 树末尾的根层新建入口:一对等宽小按钮。
-   它们只负责**根层** —— 子笔记/子目录从目录行 hover 出来的按钮建。 */
+/* 树末尾的根层新建入口:一颗「新增」,类型在二级菜单里。
+   它只负责**根层** —— 子笔记/子目录从目录行 hover 出来的「新增」建。 */
 /* 与上方目录树之间一条分隔线 —— 用与置顶区下方那条**完全相同**的样式
    (1px solid var(--border)),两条分隔线在同一个列表里才是一套语言。
    它不参与 hover:悬停只该点亮当前那颗按钮,不该动这条线。 */
 .notes-new-row {
-  display: flex;
-  /* 栏被拖得很窄时两颗按钮**换行**排,而不是让文字互相压住(用户报过重合) */
-  flex-wrap: wrap;
-  gap: 6px;
+  display: block;
   margin: 10px 6px 0;
   padding-top: 9px;
   border-top: 1px solid var(--border);
 }
 /* 有内容时:压到几乎看不见 —— 它是低频入口,不该跟笔记抢注意力。
    虚线边框 + 整块降透明度:轮廓还在(找得到),但不会跟实心的笔记行抢眼。 */
-.notes-new-folder {
-  /* 基准宽度只要容下「+」和三个字:栏被拖到窄模式(<160px)也不能把「文件」「文件夹」裁成同一个「新建」。
-     三颗放不下就换行,不要靠省略号区分。 */
-  flex: 1 1 64px;
+.notes-new-btn {
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -351,20 +346,22 @@
   font-size: 11.5px;
   cursor: pointer;
   white-space: nowrap;
-  /* 换行后按钮可能仍比文字窄:裁掉溢出,别让标签跑到相邻按钮上 */
-  overflow: hidden;
-  text-overflow: ellipsis;
   opacity: 0.75;
 }
-.notes-new-folder span {
+.notes-new-btn span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.notes-new-folder i {
+.notes-new-btn i {
   font-size: 10px;
 }
-.notes-new-folder:hover {
+.notes-new-btn .notes-new-caret {
+  font-size: 8px;
+  opacity: 0.7;
+}
+.notes-new-btn:hover,
+.notes-new-btn[aria-expanded='true'] {
   border-style: solid;
   border-color: var(--border2);
   background: var(--hover);
@@ -373,23 +370,81 @@
 }
 
 /* 一篇都没有时反过来:它是此刻唯一的下一步,给足分量(实线 + 实底,不降透明度) */
-/* 空目录时这对按钮是欢迎引导的一部分,上面再来一条线会把引导切成两半 —— 去掉 */
+/* 空目录时这颗按钮是欢迎引导的一部分,上面再来一条线会把引导切成两半 —— 去掉 */
 .notes-new-row.prominent {
   border-top: 0;
   padding-top: 0;
   margin-top: 6px;
 }
-.notes-new-row.prominent .notes-new-folder {
+.notes-new-row.prominent .notes-new-btn {
   border-style: solid;
   border-color: var(--border);
   background: var(--surface2);
   color: var(--muted);
   opacity: 1;
 }
-.notes-new-row.prominent .notes-new-folder:hover {
+.notes-new-row.prominent .notes-new-btn:hover {
   border-color: var(--accent2);
   background: var(--wash-accent);
   color: var(--accent2);
+}
+
+/* 新增二级菜单:portal 到 body、fixed 定位(目录列表自己滚动,挂在里面会被裁) */
+.notes-new-menu {
+  position: fixed;
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  background: var(--surface3);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 28%);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.notes-new-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.notes-new-menu-item i {
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+.notes-new-menu-item:hover,
+.notes-new-menu-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.notes-new-menu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-new-menu-hint {
+  color: var(--dim);
+  font-size: 10.5px;
+}
+.notes-new-menu-sep {
+  height: 1px;
+  margin: 3px 4px;
+  background: var(--border);
 }
 
 
@@ -4972,6 +5027,7 @@ video.md-media {
 .notes-file-icon[data-kind='archive-unsupported'] { color: var(--yellow); }
 .notes-file-icon[data-kind='model'] { color: var(--purple, var(--accent2)); }
 .notes-file-icon[data-kind='canvas'] { color: var(--accent); }
+.notes-file-icon[data-kind='drawio'] { color: var(--orange); }
 
 .notes-row.active .notes-file-icon { color: var(--accent2); }
 
@@ -5004,6 +5060,141 @@ video.md-media {
   color: var(--muted);
 }
 .canvas-error-title { color: var(--text); }
+
+/* ── draw.io 图表 ── */
+.drawio-frame-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--editor-bg);
+}
+.drawio-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--editor-bg);
+}
+.drawio-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+.drawio-loading.standalone {
+  position: static;
+  flex: 1;
+}
+.drawio-loading-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.drawio-loading-hint {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.drawio-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+.drawio-error > i {
+  font-size: 22px;
+  color: var(--yellow, var(--orange));
+}
+.drawio-error-title {
+  color: var(--text);
+  font-size: 13px;
+}
+.drawio-error-hint {
+  max-width: 420px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+.drawio-error-actions {
+  display: flex;
+  gap: 6px;
+}
+.drawio-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+  font-size: 11px;
+}
+.drawio-notice span {
+  flex: 1;
+  min-width: 0;
+}
+/* 头部模式按钮:图标 + 在线/离线两字,不用 title 才能一眼看出当前模式 */
+.notes-act.drawio-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.notes-act.drawio-mode span {
+  font-size: 10.5px;
+}
+.notes-banner.drawio-pack {
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--muted);
+}
+.drawio-pack-text {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.drawio-pack-text > span:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.drawio-pack-pct {
+  color: var(--accent2);
+  font-variant-numeric: tabular-nums;
+}
+.drawio-pack-bar {
+  flex-basis: 100%;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface4);
+}
+.drawio-pack-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent2);
+  transition: width 0.15s linear;
+}
+.drawio-pack-bar > span.indeterminate {
+  width: 35%;
+  animation: drawio-indeterminate 1.1s ease-in-out infinite;
+}
+@keyframes drawio-indeterminate {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
 
 /* 开关在右下角帮助按钮左边,中间留 8px,不粘成一条。地图右缘跟帮助按钮对齐。
    外层不接指针,只有图和开关可点。浅色看 body.light-theme。 */

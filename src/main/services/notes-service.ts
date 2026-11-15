@@ -37,6 +37,7 @@ import {
   NOTES_TRASH_DIR,
   isNoteImageExt,
   isNoteFileEditable,
+  isTextBackedKind,
   baseNameOf,
   isSafeNoteId,
   isSafeNoteSegment,
@@ -264,7 +265,7 @@ export function createNotesService(opts: {
     const kind = noteFileKind(ext, name)
     const editable = isNoteFileEditable(kind)
     // 文本(含未知扩展名的「先按文本试读」)按 64 MiB,二进制按整读硬上限
-    const textLike = editable || kind === 'unsupported' || kind === 'canvas'
+    const textLike = isTextBackedKind(kind)
     const tooLarge = st.size > (textLike ? MAX_TEXT_FILE_BYTES : MAX_FILE_BYTES_READ)
     return { path: rel, name, ext, kind, size: st.size, mtimeMs: st.mtimeMs, editable, tooLarge, mime: noteFileMime(ext) }
   }
@@ -1249,8 +1250,8 @@ export function createNotesService(opts: {
         }
         const stat = fileStatOf(relS, st)
         // 已知的二进制类型不读正文:调用方应走 readFileBytes / 预览协议。
-        // canvas 是 Excalidraw 场景的文本文件,只是不用 CodeMirror 打开,所以跟 unsupported 一样读进来。
-        if (!stat.editable && stat.kind !== 'unsupported' && stat.kind !== 'canvas') {
+        // 白板与 draw.io 图表是文本文件,只是不用 CodeMirror 打开,所以跟 unsupported 一样读进来。
+        if (!isTextBackedKind(stat.kind)) {
           return { ok: true, doc: binaryDoc(stat, 'unsupported') }
         }
         if (st.size > MAX_TEXT_FILE_BYTES) {

@@ -30,6 +30,7 @@ const KIND_ICONS: Record<NoteFileKind, string> = {
   model: 'fa-cube',
   'legacy-office': 'fa-file',
   canvas: 'fa-chalkboard',
+  drawio: 'fa-diagram-project',
   unsupported: 'fa-file'
 }
 

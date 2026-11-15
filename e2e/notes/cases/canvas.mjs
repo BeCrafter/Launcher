@@ -79,7 +79,7 @@ function fileSelector(rel) {
 }
 
 async function createCanvas(ctx, name) {
-  await ctx.cdp.eval(`document.querySelector('[data-new="canvas"]')?.click()`)
+  await ctx.newDoc('canvas')
   await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
     timeout: 5000,
     message: '出现新建白板的名字输入框'
@@ -516,7 +516,7 @@ function externalScene(fileName, embed) {
 }
 
 /** 从「更多工具 → 嵌入」选一份库外文件。选择框被换成直接填路径。 */
-async function embedLocalFile(ctx, name, abs) {
+async function embedLocalFile(ctx, name, abs, kind = 'computer') {
   await openEmbedPicker(ctx)
   await ctx.cdp.eval(`(() => {
     const proto = HTMLInputElement.prototype
@@ -528,7 +528,7 @@ async function embedLocalFile(ctx, name, abs) {
     }
     proto.__embedClick = true
   })()`)
-  await pointerClick(ctx, '[data-embed-kind="computer"]')
+  await pointerClick(ctx, `[data-embed-kind="${kind}"]`)
   const inputId = await ctx.cdp.evalHandle(
     `document.querySelector('.canvas-embed-picker-file')`
   )
@@ -677,6 +677,25 @@ async function activateByPath(ctx, path, badge) {
     ),
     `${path} 卡片里不另占一行路径`
   )
+}
+
+/** 在 draw.io 的 iframe 里等一个条件成立,返回那个子目标。 */
+async function waitDrawioFrame(ctx, predicate, message, timeout = 15_000) {
+  const started = Date.now()
+  while (Date.now() - started < timeout) {
+    const handles = await ctx.cdp
+      .attachFrame('launcher-drawio://', { timeout: 2000 })
+      .catch(() => [])
+    for (const frame of handles) {
+      try {
+        if ((await ctx.cdp.evalIn(frame.sessionId, predicate)) === true) return frame
+      } catch {
+        // 目标可能正在导航;继续试
+      }
+    }
+    await sleep(120)
+  }
+  throw new Error(message)
 }
 
 export default [
@@ -2181,6 +2200,168 @@ export default [
         `document.querySelector('.canvas-minimap-map') === null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'false'`,
         { timeout: 10_000, message: '关掉的小地图在另一块白板上仍然关着' }
       )
+    }
+  },
+
+  {
+    id: 'canvas/embed-drawio-file',
+    area: 'canvas',
+    title: '白板嵌入图表:类型列表有「图表」,库外 .drawio 卡片点一下可交互,重开白板卡片仍在',
+    tags: ['canvas', 'embed', 'drawio'],
+    async run(ctx) {
+      const XML =
+        '<mxfile host="e2e"><diagram id="d1" name="Page-1"><mxGraphModel><root>' +
+        '<mxCell id="0"/><mxCell id="1" parent="0"/>' +
+        '<mxCell id="2" value="方块" vertex="1" parent="1"/>' +
+        '</root></mxGraphModel></diagram></mxfile>'
+      const outside = mkdtempSync(join(tmpdir(), 'launcher-canvas-drawio-'))
+      const source = join(outside, '图表.drawio')
+      writeFileSync(source, XML)
+      try {
+        await createCanvas(ctx, '图表板')
+
+        // 嵌入的第一级类型里有图表这一行
+        await openEmbedPicker(ctx)
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-embed-kind="drawio"]') !== null`,
+          { timeout: 5000, message: '嵌入类型里有图表' }
+        )
+        ok(
+          await ctx.cdp.eval(
+            `document.querySelector('[data-embed-kind="drawio"] .canvas-embed-picker-name')?.textContent === '图表'`
+          ),
+          '图表这一行叫「图表」'
+        )
+        await ctx.press('Escape')
+        await ctx.cdp.waitFor(`document.querySelector('.canvas-embed-picker') === null`, {
+          timeout: 5000,
+          message: '关掉选择器'
+        })
+
+        await embedLocalFile(ctx, '图表.drawio', source, 'drawio')
+        const card = await cardCenter(ctx, '图表.drawio')
+        ok(card.active === false, '卡片出现后先不接指针')
+        eq(card.events, 'none', '未激活的图表卡片不接指针')
+
+        // draw.io lightbox 在卡片里渲染同一份 XML
+        const frame = await waitDrawioFrame(
+          ctx,
+          `window.__drawioStub?.loaded === true && window.__drawioStub.mode === 'lightbox'`,
+          '卡片里的 draw.io 以 lightbox 模式载入'
+        )
+        ok(
+          await ctx.cdp.evalIn(
+            frame.sessionId,
+            `window.__drawioStub?.configured === true && typeof window.__drawioStub.config?.customCss === 'string'`
+          ),
+          'lightbox 也走 configure,拿到父页主题配置'
+        )
+        eq(
+          await ctx.cdp.evalIn(frame.sessionId, `document.querySelector('.cell')?.textContent ?? null`),
+          '方块',
+          '卡片里显示图表内容'
+        )
+
+        await activateCard(ctx, '图表.drawio')
+        await ctx.cdp.evalIn(
+          frame.sessionId,
+          `document.querySelector('[data-stub-action="zoom"]')?.click()`
+        )
+        eq(
+          await ctx.cdp.evalIn(
+            frame.sessionId,
+            `document.querySelector('[data-stub-action="zoom"]')?.textContent ?? null`
+          ),
+          '已放大',
+          '激活后卡片内可操作'
+        )
+
+        await assertSingleEmbed(ctx, '图表板.excal', '图表.drawio')
+        await waitCanvasSaved(ctx)
+        ok(
+          await ctx.cdp.eval(
+            `document.querySelector('.canvas-embed .canvas-embed-state') === null`
+          ),
+          '图表卡片没有退回占位'
+        )
+
+        // 重新打开白板:卡片和图都还在
+        await ctx.cdp.eval(
+          `[...document.querySelectorAll('.notes-row-main')].find((el) => el.textContent?.includes(${JSON.stringify(
+            ctx.noteTitle
+          )}))?.click()`
+        )
+        await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+          timeout: 10_000,
+          message: '切回笔记'
+        })
+        await openCanvasFile(ctx, '图表板.excal')
+        await waitDrawioFrame(
+          ctx,
+          `window.__drawioStub?.loaded === true && String(window.__drawioStub.xml).includes('方块')`,
+          '重开白板后卡片仍渲染图表'
+        )
+      } finally {
+        rmSync(outside, { recursive: true, force: true })
+      }
+    }
+  },
+
+  {
+    id: 'canvas/embed-drawio-library',
+    area: 'canvas',
+    title: '白板嵌入库内图表:笔记和文件第二级能选 .drawio,卡片 link 是库内文件地址',
+    tags: ['canvas', 'embed', 'drawio', 'library'],
+    async run(ctx) {
+      const rel = '嵌入的图表.drawio'
+      writeVaultFile(
+        ctx,
+        rel,
+        '<mxfile host="e2e"><diagram id="d2" name="Page-1"><mxGraphModel><root>' +
+          '<mxCell id="0"/><mxCell id="1" parent="0"/>' +
+          '<mxCell id="2" value="库内方块" vertex="1" parent="1"/>' +
+          '</root></mxGraphModel></diagram></mxfile>'
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector(rel))}) !== null`,
+        { timeout: 10_000, message: '库内图表出现在左栏' }
+      )
+
+      await createCanvas(ctx, '库图表板')
+      await openEmbedPicker(ctx)
+      await pointerClick(ctx, '[data-embed-page="library"]')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(
+          `.canvas-embed-picker-row[data-embed-path="${rel}"]`
+        )}) !== null`,
+        { timeout: 5000, message: '笔记和文件里有这份图表' }
+      )
+      await pointerClick(ctx, `.canvas-embed-picker-row[data-embed-path="${rel}"]`)
+      // 库内卡片没有 external,data-embed-label 退回 link;按 iframe 本身等
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed .drawio-frame') !== null`,
+        { timeout: 15_000, message: '库内图表卡片出现' }
+      )
+
+      const frame = await waitDrawioFrame(
+        ctx,
+        `window.__drawioStub?.loaded === true && window.__drawioStub.mode === 'lightbox' &&
+         String(window.__drawioStub.xml).includes('库内方块')`,
+        '库内图表以 lightbox 模式渲染'
+      )
+      ok(
+        await ctx.cdp.evalIn(
+          frame.sessionId,
+          `window.__drawioStub?.configured === true && typeof window.__drawioStub.config?.customCss === 'string'`
+        ),
+        '库内图表的 lightbox 也拿到主题配置'
+      )
+
+      await waitCanvasSaved(ctx)
+      const scene = JSON.parse(readFileSync(absPath(ctx, '库图表板.excal'), 'utf8'))
+      const embed = liveElements(scene).find((element) => element.type === 'embeddable')
+      ok(embed !== undefined, '嵌入元素写进场景')
+      eq(embed.link, rel, '卡片 link 是库内文件的可读路径')
     }
   }
 ]

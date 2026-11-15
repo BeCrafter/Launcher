@@ -22,7 +22,10 @@ import { createUpdateBootReady, type UpdateBootReadyGate } from './services/upda
 import { appBundleFromExecutable } from './services/update-target'
 import { createBootGate, type BootGate } from './services/boot-gate'
 import { createCoreServices } from './core-services'
-import { handleNotesProtocol, registerNotesScheme } from './services/notes-protocol'
+import { handleNotesProtocol } from './services/notes-protocol'
+import { handleDrawioProtocol } from './services/drawio-protocol'
+import { registerPrivilegedSchemes } from './services/schemes'
+import { createDrawioPack } from './services/drawio-pack'
 import { connectSync } from './services/vault-sync/connect'
 import { createSyncSecrets } from './services/vault-sync/secrets'
 import { createVaultSync } from './services/vault-sync/service'
@@ -82,9 +85,10 @@ if (e2eUserData) {
   }
 }
 
-// 附件协议必须在 app ready **之前**登记特权(scheme 的 privileges 只能在那时设)。
+// 本地协议(笔记附件 + draw.io 资源)必须在 app ready **之前**登记特权,
+// 且只能合并成一次调用:registerSchemesAsPrivileged 第二次会覆盖上一次的清单。
 // 放在模块求值期是刻意的:它必须在 whenReady 之前跑完。
-registerNotesScheme()
+registerPrivilegedSchemes()
 
 /*
  * 预览和白板里嵌进来的 PDF、本地网页、外部网页都是跨源帧,父页面的 CSS 进不去。
@@ -446,6 +450,16 @@ async function startApp(): Promise<void> {
   // 建窗前只需要主题先落位:窗口底色与过渡页配色都读 nativeTheme.themeSource(见 appearance.ts)
   applyThemeSource(store.get())
 
+  // draw.io 离线资源:默认在线,首次切换离线时下载到 userData/drawio/v<版本>/
+  // E2E 不碰 50MB 真实包:协议层直接提供实现同一套 embed 协议的 stub 页面。
+  const drawioStub = process.env['LAUNCHER_E2E_DRAWIO_STUB'] === '1'
+  const drawio = createDrawioPack({
+    userDataDir: app.getPath('userData'),
+    stub: drawioStub,
+    fetchImpl: (input, init) => net.fetch(input, init),
+    log: (m) => console.log(`[drawio] ${m}`)
+  })
+
   // 安装来源探测的记忆化入口(IPC 与更新控制器共用;首个消费者来问时才 spawn)
   const getInstallChannel = (): Promise<InstallChannel> =>
     (channelProbe ??= detectInstallChannel({ runner }))
@@ -553,6 +567,7 @@ async function startApp(): Promise<void> {
     getInstallChannel,
     ai,
     notes,
+    drawio,
     updater,
     sync: { engine: vaultSync, secrets: notesSyncSecrets, test: syncTest }
   })
@@ -589,6 +604,12 @@ async function startApp(): Promise<void> {
       }),
     (m) => console.log(`[notes] ${m}`)
   )
+  // draw.io 离线资源:只服务 userData 下的固定版本目录(路径穿越闸在这一层)
+  handleDrawioProtocol({
+    userDataDir: app.getPath('userData'),
+    stub: drawioStub,
+    log: (m) => console.log(`[drawio] ${m}`)
+  })
   notes.start() // 笔记目录 fs.watch(仅上报外部改动;正确性不依赖它 —— list() 每次都 stat)
 
   // 目录变动(应用自己的保存、以及访达里的改动)都进同步。去抖在引擎里。

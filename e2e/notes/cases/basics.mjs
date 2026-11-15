@@ -179,23 +179,8 @@ async function stopRailSelectionProbe(ctx) {
   })()`)
 }
 
-/** 点目录行的悬停动作。序号是改版前的位置:0 新建笔记 / 1 新建子目录 / 2 改名 / 3 删除。 */
-const FOLDER_ACTS = ['new-note', 'new-folder', 'rename', 'delete']
-
-async function indentFolderAct(ctx, path, index) {
-  const act = FOLDER_ACTS[index]
-  const clicked = await ctx.cdp.eval(`(() => {
-    const row = [...document.querySelectorAll('.notes-folder-row')]
-      .find((el) => el.dataset.folderPath === ${JSON.stringify(path)})
-    if (row === undefined) return false
-    row.querySelector(${JSON.stringify(`[data-folder-act="${act}"]`)})?.click()
-    return true
-  })()`)
-  ok(clicked, `找到目录行:${path}`)
-}
-
 async function indentCreateRootFolder(ctx, name) {
-  await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[1]?.click()`)
+  await ctx.newDoc('folder')
   await ctx.cdp.waitFor(`document.querySelector('.notes-folder-edit .notes-folder-input') !== null`, {
     timeout: 5000,
     message: '出现新建目录输入框'
@@ -209,7 +194,8 @@ async function indentCreateRootFolder(ctx, name) {
 }
 
 async function indentCreateSubFolder(ctx, parent, name) {
-  await indentFolderAct(ctx, parent, 1)
+  await ctx.openFolderNewMenu(parent)
+  await ctx.pickNew('folder')
   await ctx.cdp.waitFor(`document.querySelector('.notes-folder-edit .notes-folder-input') !== null`, {
     timeout: 5000,
     message: '出现子目录输入框'
@@ -224,7 +210,8 @@ async function indentCreateSubFolder(ctx, parent, name) {
 }
 
 async function indentCreateNote(ctx, parent, name) {
-  await indentFolderAct(ctx, parent, 0)
+  await ctx.openFolderNewMenu(parent)
+  await ctx.pickNew('note')
   await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
     timeout: 5000,
     message: '出现新建笔记输入框'
@@ -1122,7 +1109,7 @@ export default [
       await indentCreateRootFolder(ctx, FOLDER)
 
       // 建一个非 Markdown 文件:创建后会自动在应用内打开。
-      await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
+      await ctx.newDoc('note')
       await ctx.cdp.waitFor(
         `document.querySelector('.notes-create-fields .notes-create-name') !== null`,
         { timeout: 5000, message: '根层出现新建名字输入框' }
@@ -1340,60 +1327,237 @@ export default [
   },
 
   {
-    id: 'basics/rail-new-labels',
+    id: 'basics/rail-new-menu',
     area: 'basics',
-    title: '左侧目录根层新建入口用短标签,窄栏也能分清文件和文件夹',
-    tags: ['rail'],
+    title:
+      '左侧目录只有一颗「新增」:二级菜单列出笔记/白板/图表/文件夹,portal 定位、键盘与关闭都对',
+    tags: ['rail', 'menu'],
     fixture: BASIC,
     async run(ctx) {
-      // 文案本来是「新建」「新建文件夹」。窄栏强制不换行后省略号把两者都裁成「新建」,
-      // 所以可见文字改成「文件」「文件夹」,完整动作留在 title 里。
-      const labels = await ctx.cdp.json(`(() => {
+      // 1) 根层只剩一颗整行按钮
+      const root = await ctx.cdp.json(`(() => {
         const row = document.querySelector('.notes-new-row')
         if (!row) return null
-        return [...row.querySelectorAll('.notes-new-folder')].map((el) => ({
-          text: el.querySelector('span')?.textContent ?? '',
-          title: el.getAttribute('title') ?? '',
-          canvas: el.dataset.new === 'canvas'
-        }))
+        const buttons = [...row.querySelectorAll('.notes-new-btn')]
+        const el = buttons[0]
+        return {
+          count: buttons.length,
+          folders: row.querySelectorAll('.notes-new-folder').length,
+          text: el?.textContent?.trim() ?? '',
+          haspopup: el?.getAttribute('aria-haspopup') ?? '',
+          expanded: el?.getAttribute('aria-expanded') ?? ''
+        }
       })()`)
-      ok(labels !== null && labels.length === 3, `根层新建行应有三颗按钮(实际 ${labels?.length ?? 0})`)
-      eq(labels[0].text, '文件', '第一颗可见文字是文件')
-      eq(labels[0].title, '新建文件', '悬停仍说明是新建文件')
-      eq(labels[1].text, '文件夹', '第二颗可见文字是文件夹')
-      eq(labels[1].title, '新建文件夹', '悬停仍说明是新建文件夹')
-      eq(labels[2].text, '白板', '第三颗仍是白板')
-      eq(labels[2].canvas, true, '白板按钮仍带 data-new=canvas')
-      ok(labels[0].text !== labels[1].text, '文件与文件夹的可见文字不相同')
+      ok(root !== null, '根层新增行存在')
+      eq(root.count, 1, '根层只有一颗「新增」')
+      eq(root.folders, 0, '旧的并排按钮已移除')
+      eq(root.text, '新增', '按钮文字是「新增」')
+      eq(root.haspopup, 'menu', '按钮声明了弹出菜单')
+      eq(root.expanded, 'false', '未打开时 aria-expanded=false')
 
+      // 窄栏下这颗按钮仍完整可见(以前并排 3 颗放不下)
       const fit = await ctx.cdp.json(`(() => {
         const rail = document.querySelector('.notes-rail')
-        if (!rail) return null
+        const el = document.querySelector('[data-new-menu="root"]')
+        if (!rail || !el) return null
         const prev = rail.style.width
         rail.style.width = '150px'
         rail.classList.add('rail-narrow')
-        const buttons = [...document.querySelectorAll('.notes-new-row .notes-new-folder')]
-        const rows = buttons.map((el) => {
-          const span = el.querySelector('span')
-          const er = el.getBoundingClientRect()
-          const sr = span?.getBoundingClientRect()
-          // clientWidth 不含按钮的左右 padding,scrollWidth 含文字全宽,两者不能直接比
-          const visible = span === null ? 0 : Math.min(span.scrollWidth, sr.width)
-          return {
-            text: span?.textContent ?? '',
-            full: span !== null && visible >= span.scrollWidth - 1,
-            inside: sr !== undefined && sr.right <= er.right + 1 && sr.left >= er.left - 1
-          }
-        })
+        const er = el.getBoundingClientRect()
+        const span = el.querySelector('span')
+        const sr = span?.getBoundingClientRect()
+        const out = {
+          full: span !== null && Math.min(span.scrollWidth, sr.width) >= span.scrollWidth - 1,
+          inside: sr !== undefined && sr.right <= er.right + 1 && sr.left >= er.left - 1,
+          width: er.width
+        }
         rail.style.width = prev
         rail.classList.remove('rail-narrow')
-        return rows
+        return out
       })()`)
-      ok(fit !== null && fit.length === 3, '窄栏下仍能量到三颗按钮')
-      for (const row of fit) {
-        ok(row.full, `窄栏下「${row.text}」没有被省略号裁掉`)
-        ok(row.inside, `窄栏下「${row.text}」没有溢出按钮`)
-      }
+      ok(fit !== null, '窄栏下能量到新增按钮')
+      ok(fit.full, '窄栏下「新增」没有被省略号裁掉')
+      ok(fit.inside, '窄栏下「新增」没有溢出按钮')
+
+      // 2) 打开菜单:4 项、顺序与文案、分隔线、portal 与几何
+      const anchor = await ctx.cdp.json(`(() => {
+        const r = document.querySelector('[data-new-menu="root"]').getBoundingClientRect()
+        return { left: r.left, top: r.top, bottom: r.bottom, width: r.width }
+      })()`)
+      await ctx.openNewMenu()
+
+      const menu = await ctx.cdp.json(`(() => {
+        const el = document.querySelector('.notes-new-menu')
+        if (!el) return null
+        const r = el.getBoundingClientRect()
+        const items = [...el.querySelectorAll('[data-new-item]')].map((b) => ({
+          kind: b.dataset.newItem,
+          label: b.querySelector('.notes-new-menu-label')?.textContent ?? '',
+          hint: b.querySelector('.notes-new-menu-hint')?.textContent ?? '',
+          role: b.getAttribute('role'),
+          top: b.getBoundingClientRect().top
+        }))
+        const sep = el.querySelector('[role="separator"]')
+        return {
+          inRow: document.querySelector('.notes-new-row')?.contains(el) ?? false,
+          inBody: el.parentElement === document.body,
+          width: r.width,
+          left: r.left,
+          top: r.top,
+          viewport: { w: innerWidth, h: innerHeight },
+          items,
+          sepBetween: sep !== null && sep.getBoundingClientRect().top > items[2]?.top
+            && sep.getBoundingClientRect().top < items[3]?.top,
+          role: el.getAttribute('role'),
+          focus: document.activeElement?.dataset?.newItem ?? null,
+          expanded: document.querySelector('[data-new-menu="root"]')?.getAttribute('aria-expanded')
+        }
+      })()`)
+      ok(menu !== null, '菜单已渲染')
+      eq(menu.role, 'menu', '浮层 role=menu')
+      eq(menu.items.length, 4, '菜单有 4 项')
+      eq(menu.items.map((i) => i.kind).join(','), 'note,canvas,drawio,folder', '顺序固定')
+      eq(menu.items[0].label, '笔记', '第一项是笔记')
+      eq(menu.items[0].hint, 'Markdown', '笔记提示后缀')
+      eq(menu.items[1].label, '白板', '第二项是白板')
+      eq(menu.items[1].hint, 'Excalidraw', '白板提示')
+      eq(menu.items[2].label, '图表', '第三项是图表')
+      eq(menu.items[2].hint, 'draw.io', '图表提示')
+      eq(menu.items[3].label, '文件夹', '第四项是文件夹')
+      for (const item of menu.items) eq(item.role, 'menuitem', `${item.kind} role=menuitem`)
+      ok(menu.sepBetween, '分隔线在图表与文件夹之间')
+      ok(!menu.inRow, '浮层没有挂在列表行里')
+      ok(menu.inBody, '浮层 portal 到 body')
+      eq(Math.round(menu.width), 190, '菜单宽度 190')
+      ok(Math.abs(menu.left - anchor.left) <= 1, `菜单左缘贴按钮(菜单 ${menu.left} / 按钮 ${anchor.left})`)
+      ok(menu.top >= anchor.bottom, '默认向下弹出')
+      ok(
+        menu.left >= 0 && menu.left + menu.width <= menu.viewport.w,
+        '菜单在视口内'
+      )
+      eq(menu.expanded, 'true', '打开时 aria-expanded=true')
+      eq(menu.focus, 'note', '打开后焦点在第一项')
+
+      // 3) Escape 关闭,焦点回到触发按钮
+      await ctx.cdp.key('Escape', 'Escape', 27)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-new-menu') === null`, {
+        timeout: 3000,
+        message: 'Escape 关闭菜单'
+      })
+      const focused = await ctx.cdp.json(`document.activeElement?.dataset?.newMenu ?? null`)
+      eq(focused, 'root', 'Escape 后焦点回到「新增」按钮')
+
+      // 4) 点外部关闭
+      await ctx.openNewMenu()
+      await ctx.cdp.eval(`document.body.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, clientX: 2, clientY: 2, button: 0 }))`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-new-menu') === null`, {
+        timeout: 3000,
+        message: '点外部关闭菜单'
+      })
+
+      // 5) 目录滚动时关闭(fixed 浮层不能跟着列表漂)
+      await ctx.openNewMenu()
+      await ctx.cdp.eval(
+        `document.querySelector('.notes-rail-list')?.dispatchEvent(new Event('scroll'))`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-new-menu') === null`, {
+        timeout: 3000,
+        message: '目录滚动时菜单收起'
+      })
+
+      // 6) 键盘:↓ 移动,Enter 选中,落到预填完整文件名的输入框
+      await ctx.openNewMenu()
+      await ctx.cdp.key('ArrowDown', 'ArrowDown', 40)
+      const second = await ctx.cdp.json(`document.activeElement?.dataset?.newItem ?? null`)
+      eq(second, 'canvas', '↓ 移到白板')
+      await ctx.cdp.key('Enter', 'Enter', 13)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
+        timeout: 5000,
+        message: 'Enter 选中后出现文件名输入框'
+      })
+      const draft = await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.value ?? null`)
+      eq(draft, '未命名.excal', '白板预填 .excal')
+      // 关掉输入框,不留文件
+      await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.focus()`)
+      await ctx.cdp.key('Escape', 'Escape', 27)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields') === null`, {
+        timeout: 3000,
+        message: '取消新建输入框'
+      })
+    }
+  },
+
+  {
+    id: 'basics/rail-new-targets',
+    area: 'basics',
+    title: '「新增」的落点:根层建四种类型都给对应默认名,目录行只剩 3 个动作且建在目录内',
+    tags: ['rail', 'menu'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 1) 根层选「图表」→ 未命名.drawio;取消掉,不留文件
+      await ctx.newDoc('drawio')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
+        timeout: 5000,
+        message: '根层出现文件名输入框'
+      })
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.value ?? null`),
+        '未命名.drawio',
+        '图表预填 .drawio'
+      )
+      await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.focus()`)
+      await ctx.cdp.key('Escape', 'Escape', 27)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields') === null`, {
+        timeout: 3000,
+        message: '取消新建'
+      })
+
+      // 2) 根层选「文件夹」→ 目录输入框(没有后缀)
+      const FOLDER = '二级菜单目录'
+      await ctx.newDoc('folder')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-folder-edit .notes-folder-input') !== null`, {
+        timeout: 5000,
+        message: '根层出现目录输入框'
+      })
+      await ctx.cdp.type(FOLDER)
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-folder-row[data-folder-path=${JSON.stringify(FOLDER)}]') !== null`,
+        { timeout: 10_000, message: `目录「${FOLDER}」出现` }
+      )
+
+      // 3) 目录行只剩 新增 / 改名 / 删除
+      const acts = await ctx.cdp.json(`(() => {
+        const row = document.querySelector('.notes-folder-row[data-folder-path=${JSON.stringify(FOLDER)}]')
+        return [...row.querySelectorAll('[data-folder-act]')].map((el) => el.dataset.folderAct)
+      })()`)
+      eq(acts.join(','), 'new,rename,delete', '目录行动作收成 3 个')
+
+      // 4) 目录行的「新增」→ 笔记,建在目录内并自动展开
+      const NOTE = '目录内笔记'
+      await ctx.openFolderNewMenu(FOLDER)
+      const menuKinds = await ctx.cdp.json(
+        `[...document.querySelectorAll('.notes-new-menu [data-new-item]')].map((el) => el.dataset.newItem)`
+      )
+      eq(menuKinds.join(','), 'note,canvas,drawio,folder', '目录行与根层共用同一份菜单')
+      await ctx.pickNew('note')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-folder-edit .notes-create-name') !== null`, {
+        timeout: 5000,
+        message: '目录内出现新建输入框'
+      })
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-create-name')?.value ?? null`),
+        '未命名.md',
+        '笔记预填 .md'
+      )
+      await ctx.cdp.type(NOTE)
+      await ctx.press('Enter')
+      const id = `${FOLDER}/${NOTE}`
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-row[data-note-id=${JSON.stringify(id)}]') !== null`,
+        { timeout: 10_000, message: `笔记「${id}」建在目录内` }
+      )
     }
   }
 ]

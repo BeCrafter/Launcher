@@ -22,9 +22,9 @@ function notesDir(ctx) {
   return join(ctx.profileDir, 'notes')
 }
 
-/** 通过 rail 底部的「新建目录」建一个根层目录，等它出现在列表里。 */
+/** 通过 rail 的「新增」菜单建一个根层目录，等它出现在列表里。 */
 async function createFolder(ctx, name) {
-  await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[1]?.click()`)
+  await ctx.newDoc('folder')
   await ctx.cdp.waitFor(`document.querySelector('.notes-folder-input') !== null`, {
     message: '目录名输入框出现'
   })

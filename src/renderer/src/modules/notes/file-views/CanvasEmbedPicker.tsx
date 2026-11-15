@@ -29,6 +29,7 @@ const KIND_ICONS: Record<string, string> = {
   document: 'fa-file-word',
   spreadsheet: 'fa-file-excel',
   pdf: 'fa-file-pdf',
+  drawio: 'fa-diagram-project',
   model: 'fa-cube',
   audio: 'fa-file-audio',
   image: 'fa-file-image'

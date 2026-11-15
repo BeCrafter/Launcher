@@ -127,6 +127,11 @@ export const IPC = {
   notesCreateFile: 'notes:createFile',
   /** 重命名文件(完整新文件名,含扩展名) */
   notesRenameFile: 'notes:renameFile',
+  // ── draw.io 离线资源 ──
+  drawioStatus: 'drawio:status',
+  drawioDownload: 'drawio:download',
+  drawioCancel: 'drawio:cancel',
+  drawioImportWar: 'drawio:importWar',
   // ── 笔记同步 ──
   notesSyncStatus: 'notesSync:status',
   notesSyncNow: 'notesSync:syncNow',
@@ -152,7 +157,9 @@ export const IPC_EVENTS = {
   /** 应用更新状态快照(阶段变化 + 下载进度,节流后推送) */
   appUpdateChanged: 'app:updateChanged',
   /** 笔记同步状态变化(跑完一轮、冲突、失败) */
-  notesSyncChanged: 'notesSync:changed'
+  notesSyncChanged: 'notesSync:changed',
+  /** draw.io 离线包状态/下载进度 */
+  drawioChanged: 'drawio:changed'
 } as const
 
 export type IpcEventChannel = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS]
@@ -296,7 +303,7 @@ export interface UpdateResultInfo {
 
 // ── 原生对话框负载(渲染层只传意图,路径选择由系统对话框完成) ──
 
-export type PickFileMode = 'executable' | 'plist'
+export type PickFileMode = 'executable' | 'plist' | 'war'
 
 export interface PickedFile {
   path: string

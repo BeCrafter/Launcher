@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { APP_NAME } from '../shared/constants'
 import { IPC, IPC_EVENTS, type IpcEventChannel } from '../shared/ipc'
 import { normalizeSettings } from '../shared/settings'
+import type { DrawioStatusEvent } from '../shared/drawio'
 import type { LauncherApi } from '../shared/api'
 
 // main 经 additionalArguments 注入的首帧设置(--launcher-initial-settings=<json>)
@@ -25,7 +26,8 @@ const EVENT_CHANNELS: readonly IpcEventChannel[] = [
   IPC_EVENTS.aiRunEvent,
   IPC_EVENTS.notesChanged,
   IPC_EVENTS.appUpdateChanged,
-  IPC_EVENTS.notesSyncChanged
+  IPC_EVENTS.notesSyncChanged,
+  IPC_EVENTS.drawioChanged
 ]
 
 const api: LauncherApi = {
@@ -158,6 +160,19 @@ const api: LauncherApi = {
     setSecret: (provider, secret) => ipcRenderer.invoke(IPC.notesSyncSetSecret, provider, secret),
     revealSecret: (provider) => ipcRenderer.invoke(IPC.notesSyncRevealSecret, provider),
     test: () => ipcRenderer.invoke(IPC.notesSyncTest)
+  },
+  drawio: {
+    status: () => ipcRenderer.invoke(IPC.drawioStatus),
+    download: () => ipcRenderer.invoke(IPC.drawioDownload),
+    cancel: () => ipcRenderer.invoke(IPC.drawioCancel),
+    importWar: (warPath) => ipcRenderer.invoke(IPC.drawioImportWar, warPath),
+    onStatus: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, payload: unknown): void => {
+        cb(payload as DrawioStatusEvent)
+      }
+      ipcRenderer.on(IPC_EVENTS.drawioChanged, listener)
+      return () => ipcRenderer.removeListener(IPC_EVENTS.drawioChanged, listener)
+    }
   }
 }
 

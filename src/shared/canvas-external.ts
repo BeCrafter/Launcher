@@ -35,7 +35,8 @@ const PREVIEWABLE: ReadonlySet<NoteFileKind> = new Set([
   'csv',
   'markdown',
   'text',
-  'code'
+  'code',
+  'drawio'
 ])
 
 export interface CanvasExternalEmbed {
@@ -75,6 +76,7 @@ export const CANVAS_EMBED_KINDS: readonly CanvasEmbedKind[] = [
   { id: 'document', extensions: ['docx', 'docm'] },
   { id: 'spreadsheet', extensions: ['xlsx', 'xlsm'] },
   { id: 'pdf', extensions: ['pdf'] },
+  { id: 'drawio', extensions: ['drawio', 'dio'] },
   { id: 'model', extensions: ['glb', 'gltf', 'obj', 'stl'] },
   { id: 'audio', extensions: ['mp3', 'm4a', 'wav', 'ogg', 'oga', 'flac', 'aac', 'opus'] },
   {

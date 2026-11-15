@@ -13,7 +13,7 @@
 // 视频/音频还多一件事:**Range 请求**。没有它进度条拖不动、只能从头播 ——
 // Chromium 对 `<video>` 总是发 Range,回 200 整份会让它以为不支持 seek。
 
-import { protocol } from 'electron'
+import { protocol, type CustomScheme } from 'electron'
 import { lstatSync, realpathSync } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, resolve } from 'node:path'
@@ -191,23 +191,21 @@ export function parseRange(header: string | null, size: number): ByteRange | nul
   return { start, end }
 }
 
-/** 必须在 app ready **之前**调用:scheme 的特权只能在那时登记 */
-export function registerNotesScheme(): void {
-  protocol.registerSchemesAsPrivileged([
-    {
-      scheme: NOTES_ASSET_SCHEME,
-      privileges: {
-        standard: true,
-        secure: true,
-        supportFetchAPI: true,
-        // stream 是 `<video>` 能边下边播的前提
-        stream: true,
-        // 沙箱 iframe 是不透明 origin:字体 / ES module / fetch 兄弟资源需要 CORS
-        corsEnabled: true,
-        bypassCSP: false
-      }
+/** 笔记附件协议的 scheme 特权描述。由 schemes.ts 与其它 scheme 一起登记。 */
+export function notesSchemePrivileges(): CustomScheme {
+  return {
+    scheme: NOTES_ASSET_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      // stream 是 `<video>` 能边下边播的前提
+      stream: true,
+      // 沙箱 iframe 是不透明 origin:字体 / ES module / fetch 兄弟资源需要 CORS
+      corsEnabled: true,
+      bypassCSP: false
     }
-  ])
+  }
 }
 
 function headersFor(kind: NoteAssetKind, full: string): Record<string, string> {

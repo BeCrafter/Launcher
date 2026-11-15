@@ -1160,7 +1160,7 @@ export default [
     title: '新建:一个输入框,默认「未命名.md」,只选中主名,直接打字回车建成 Markdown 笔记',
     tags: ['files', 'rail', 'create'],
     async run(ctx) {
-      await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
+      await ctx.newDoc('note')
       await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
         timeout: 5000,
         message: '根层出现新建名字输入框'
@@ -1209,7 +1209,7 @@ export default [
     title: '新建:在同一格里把后缀改成 js 后按文件创建(以前类型是另一格,名字里的后缀不算数)',
     tags: ['files', 'rail', 'create'],
     async run(ctx) {
-      await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
+      await ctx.newDoc('note')
       await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
         timeout: 5000,
         message: '根层出现新建名字输入框'
@@ -1266,7 +1266,7 @@ export default [
     tags: ['files', 'rail', 'create'],
     async run(ctx) {
       // 先用底部入口建一个目录,再用目录行的 + 建文件
-      await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[1]?.click()`)
+      await ctx.newDoc('folder')
       await ctx.cdp.waitFor(`document.querySelector('.notes-folder-edit .notes-folder-input') !== null`, {
         timeout: 5000,
         message: '出现新建目录输入框'
@@ -1278,7 +1278,8 @@ export default [
         { timeout: 10_000, message: '目录「新目录」出现' }
       )
 
-      await ctx.cdp.eval(`document.querySelector('.notes-folder-row[data-folder-path="新目录"]')?.querySelector('[data-folder-act="new-note"]')?.click()`)
+      await ctx.openFolderNewMenu('新目录')
+      await ctx.pickNew('note')
       await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
         timeout: 5000,
         message: '目录里出现新建名字输入框'
@@ -1607,7 +1608,7 @@ export default [
       const first = '笔记改后缀'
       const renamed = '改过的笔记'
       const body = '留下的正文'
-      await ctx.cdp.eval(`document.querySelectorAll('.notes-new-folder')[0]?.click()`)
+      await ctx.newDoc('note')
       await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
         timeout: 5000,
         message: '根层出现新建名字输入框'
@@ -1901,6 +1902,403 @@ export default [
       eq(restored?.kind, 'text', '完成后类型图标恢复')
       includes(restored?.cls ?? '', 'fa-file-lines', '恢复的仍是文本文件图标')
       await ctx.cdp.eval(`delete document.documentElement.dataset.openingSpinnerDelay`)
+    }
+  },
+
+  {
+    id: 'files/drawio-open-edit',
+    area: 'files',
+    title:
+      'draw.io 图表:文件行是图表图标,文件页挂 draw.io iframe(E2E 用 stub),编辑后自动保存,重开读到已保存的 XML',
+    tags: ['files', 'drawio', 'autosave'],
+    async run(ctx) {
+      const rel = 'e2e-图表.drawio'
+      const original =
+        '<mxfile host="e2e"><diagram id="d1" name="Page-1"><mxGraphModel><root>' +
+        '<mxCell id="0"/><mxCell id="1" parent="0"/>' +
+        '<mxCell id="2" value="方块" vertex="1" parent="1"/>' +
+        '</root></mxGraphModel></diagram></mxfile>'
+      writeFile(ctx, rel, original)
+
+      await waitFileRow(ctx, rel)
+      const row = await ctx.cdp.json(`(() => {
+        const el = document.querySelector(${JSON.stringify(fileSelector(rel))})
+        const icon = el?.querySelector('.notes-file-icon')
+        return {
+          kind: el?.dataset.fileKind ?? null,
+          iconKind: icon?.dataset.kind ?? null,
+          cls: icon?.className ?? ''
+        }
+      })()`)
+      eq(row?.kind, 'drawio', '文件行按 drawio 类型标记')
+      eq(row?.iconKind, 'drawio', '图标 data-kind = drawio')
+      includes(row?.cls ?? '', 'fa-diagram-project', '图标是流程图')
+      const orange = await ctx.cdp.json(`(() => {
+        const probe = document.createElement('span')
+        probe.style.color = 'var(--orange)'
+        document.body.appendChild(probe)
+        const want = getComputedStyle(probe).color
+        probe.remove()
+        const el = document.querySelector(${JSON.stringify(fileSelector(rel) + ' .notes-file-icon')})
+        return { got: getComputedStyle(el).color, want }
+      })()`)
+      eq(orange?.got, orange?.want, '图标用 draw.io 的橙色')
+
+      await openFile(ctx, rel)
+      await ctx.cdp.waitFor(`document.querySelector('.file-main .drawio-frame') !== null`, {
+        timeout: 15_000,
+        message: '文件页里是 draw.io iframe'
+      })
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector('.file-main .drawio-mode')?.dataset.drawioMode ?? null`
+        ),
+        'offline',
+        'E2E 的 stub 视作已装离线包,不再请求远程编辑器'
+      )
+
+      const frame = await frameHandle(
+        ctx,
+        'launcher-drawio://',
+        `window.__drawioStub?.loaded === true && window.__drawioStub.mode === 'editor'`,
+        'draw.io 收到 load 消息'
+      )
+      eq(
+        await ctx.cdp.evalIn(frame.sessionId, `window.__drawioStub?.configured === true`),
+        true,
+        'draw.io 先完成 configure 握手,拿到父页的主题配置'
+      )
+      ok(
+        await ctx.cdp.evalIn(
+          frame.sessionId,
+          `typeof window.__drawioStub?.config?.customCss === 'string' && window.__drawioStub.config.customCss !== ''`
+        ),
+        'configure 里带着应用主题的 customCss'
+      )
+      eq(
+        await ctx.cdp.evalIn(frame.sessionId, `document.querySelector('.cell')?.textContent ?? null`),
+        '方块',
+        'iframe 里显示的是文件里的图'
+      )
+
+      // 在 stub 里改图 → 发 autosave → files-store 落盘
+      await ctx.cdp.evalIn(
+        frame.sessionId,
+        `document.querySelector('[data-stub-action="edit"]')?.click()`
+      )
+      await waitFileSaved(ctx)
+      await ctx.waitForNode(
+        () => readFileSync(absPath(ctx, rel), 'utf8').includes('stub-edit'),
+        '自动保存把 draw.io 的改动写回磁盘'
+      )
+
+      // 切走再打开:新的 iframe 拿到的是磁盘上已保存的 XML
+      await ctx.cdp.eval(
+        `[...document.querySelectorAll('.notes-row-main')].find((el) => el.textContent?.includes(${JSON.stringify(
+          ctx.noteTitle
+        )}))?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+        timeout: 10_000,
+        message: '切回笔记'
+      })
+      await openFile(ctx, rel)
+      const reopened = await frameHandle(
+        ctx,
+        'launcher-drawio://',
+        `window.__drawioStub?.loaded === true && String(window.__drawioStub.xml).includes('stub-edit')`,
+        '重开后 iframe 收到已保存的 XML'
+      )
+      eq(
+        await ctx.cdp.evalIn(reopened.sessionId, `document.querySelector('.cell')?.textContent ?? null`),
+        'stub-edit',
+        '重开后显示的是保存过的内容'
+      )
+    }
+  },
+
+  {
+    id: 'files/drawio-theme-chrome',
+    area: 'files',
+    title:
+      'draw.io 界面配色跟随应用主题:configure 握手下发 customCss,深浅两套变量同源,不碰图形内容色',
+    tags: ['files', 'drawio', 'theme'],
+    async run(ctx) {
+      const rel = 'e2e-主题.drawio'
+      writeFile(
+        ctx,
+        rel,
+        '<mxfile host="e2e"><diagram id="d1" name="Page-1"><mxGraphModel><root>' +
+          '<mxCell id="0"/><mxCell id="1" parent="0"/>' +
+          '<mxCell id="2" value="主题方块" vertex="1" parent="1"/>' +
+          '</root></mxGraphModel></diagram></mxfile>'
+      )
+      await waitFileRow(ctx, rel)
+      const wasLight = await ctx.cdp.eval(`document.body.classList.contains('light-theme')`)
+
+      const backToNote = async () => {
+        await ctx.cdp.eval(
+          `[...document.querySelectorAll('.notes-row-main')].find((el) => el.textContent?.includes(${JSON.stringify(
+            ctx.noteTitle
+          )}))?.click()`
+        )
+        await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+          timeout: 10_000,
+          message: '切回笔记'
+        })
+      }
+
+      // 打开图表 → 等 configure 完成 → 同时取父页当前主题变量和 stub 收到的 CSS
+      const inspect = async () => {
+        await openFile(ctx, rel)
+        const frame = await frameHandle(
+          ctx,
+          'launcher-drawio://',
+          `window.__drawioStub?.configured === true && window.__drawioStub?.loaded === true`,
+          'draw.io 完成 configure 后才初始化'
+        )
+        const stub = await ctx.cdp.evalIn(
+          frame.sessionId,
+          `(() => {
+            const p = new URLSearchParams(location.search)
+            return {
+              configure: p.get('configure'),
+              dark: p.get('dark'),
+              configured: window.__drawioStub.configured,
+              css: window.__drawioStub.config && window.__drawioStub.config.customCss
+            }
+          })()`
+        )
+        const tokens = await ctx.cdp.json(`(() => {
+          const s = getComputedStyle(document.body)
+          return {
+            surface: s.getPropertyValue('--surface').trim(),
+            text: s.getPropertyValue('--text').trim(),
+            accent: s.getPropertyValue('--accent').trim(),
+            accent2: s.getPropertyValue('--accent2').trim(),
+            editorBg: s.getPropertyValue('--editor-bg').trim()
+          }
+        })()`)
+        return { stub, tokens }
+      }
+
+      try {
+        // 深色(应用默认):去掉 light-theme 类
+        await ctx.cdp.eval(`document.body.classList.remove('light-theme')`)
+        const dark = await inspect()
+        eq(dark.stub?.configure, '1', 'URL 带 configure=1')
+        eq(dark.stub?.dark, '1', '深色下 draw.io 用 dark=1')
+        eq(dark.stub?.configured, true, 'stub 完成了 configure 握手')
+        const darkCss = dark.stub?.css ?? ''
+        includes(darkCss, 'color-scheme: dark;')
+        includes(darkCss, `--ge-panel-color: ${dark.tokens.surface};`)
+        includes(darkCss, `--ge-dark-panel-color: ${dark.tokens.surface};`)
+        includes(darkCss, `--dark-text-color: ${dark.tokens.text};`)
+        includes(darkCss, `--dark-accent-text-color: ${dark.tokens.accent2};`)
+        includes(darkCss, `--workspace-color: ${dark.tokens.editorBg};`)
+        ok(!darkCss.includes('--ge-dark-color'), '不覆盖图形填充默认色')
+        ok(!darkCss.includes('--ge-light-color'), '不覆盖图形文字默认色')
+
+        await backToNote()
+        await ctx.cdp.eval(`document.body.classList.add('light-theme')`)
+        const light = await inspect()
+        eq(light.stub?.dark, '0', '浅色下 draw.io 用 dark=0')
+        const lightCss = light.stub?.css ?? ''
+        includes(lightCss, 'color-scheme: light;')
+        includes(lightCss, `--ge-panel-color: ${light.tokens.surface};`)
+        includes(lightCss, `--text-color: ${light.tokens.text};`)
+        includes(lightCss, `--accent-text-color: ${light.tokens.accent};`)
+        includes(lightCss, `--workspace-color: ${light.tokens.editorBg};`)
+        ok(!lightCss.includes('--ge-dark-color'), '浅色下同样不碰图形填充色')
+        ok(!lightCss.includes('--ge-light-color'), '浅色下同样不碰图形文字色')
+      } finally {
+        await ctx.cdp.eval(`document.body.classList.toggle('light-theme', ${wasLight === true})`)
+      }
+    }
+  },
+
+  {
+    id: 'files/create-drawio',
+    area: 'files',
+    title:
+      '新建:「新增 → 图表」预填 未命名.drawio,建成后直接进编辑器,空文件由 draw.io 自己补空白图',
+    tags: ['files', 'rail', 'create', 'drawio'],
+    async run(ctx) {
+      await ctx.newDoc('drawio')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-create-fields .notes-create-name') !== null`, {
+        timeout: 5000,
+        message: '根层出现文件名输入框'
+      })
+      const field = await ctx.cdp.json(`(() => {
+        const el = document.querySelector('.notes-create-name')
+        return { value: el?.value ?? null, end: el?.selectionEnd ?? -1 }
+      })()`)
+      eq(field?.value, '未命名.drawio', '图表入口预填完整文件名')
+      eq(field?.end, 3, '只选中主名,后缀留在选区外')
+
+      const name = '图表新建'
+      await ctx.cdp.type(name)
+      await ctx.press('Enter')
+      const rel = `${name}.drawio`
+      await waitFileRow(ctx, rel)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === ${JSON.stringify(rel)}`,
+        { timeout: 15_000, message: '新建的图表在应用内打开' }
+      )
+      ok(existsSync(absPath(ctx, rel)), '磁盘上生成了 .drawio 文件')
+
+      const frame = await frameHandle(
+        ctx,
+        'launcher-drawio://',
+        `window.__drawioStub?.loaded === true`,
+        '新文件的编辑器握手完成'
+      )
+      eq(
+        await ctx.cdp.evalIn(frame.sessionId, `document.querySelector('.cell')?.textContent ?? null`),
+        '空图表',
+        '空文件交给 draw.io 自己填空白图'
+      )
+
+      await ctx.cdp.evalIn(
+        frame.sessionId,
+        `document.querySelector('[data-stub-action="edit"]')?.click()`
+      )
+      await waitFileSaved(ctx)
+      await ctx.waitForNode(
+        () => readFileSync(absPath(ctx, rel), 'utf8').includes('stub-edit'),
+        '首次编辑后磁盘上有图表 XML'
+      )
+    }
+  },
+
+  {
+    id: 'files/drawio-rename-types',
+    area: 'files',
+    title:
+      '图表改名:换成 .dio 仍是图表;改成 .md 变成笔记;再改回 .drawio 又是图表且正文还在',
+    tags: ['files', 'rail', 'rename', 'drawio'],
+    async run(ctx) {
+      const original =
+        '<mxfile host="e2e"><diagram id="d1" name="Page-1"><mxGraphModel><root>' +
+        '<mxCell id="0"/><mxCell id="1" parent="0"/>' +
+        '<mxCell id="2" value="改名保留" vertex="1" parent="1"/>' +
+        '</root></mxGraphModel></diagram></mxfile>'
+      writeFile(ctx, 'drawio-rename/图.drawio', original)
+      await openFile(ctx, 'drawio-rename/图.drawio', { expand: ['drawio-rename'] })
+      await ctx.cdp.waitFor(`document.querySelector('.file-main .drawio-frame') !== null`, {
+        timeout: 15_000,
+        message: '原始图表打开'
+      })
+
+      const fileRename = async (rel, next) => {
+        const rect = await ctx.elementRect(fileSelector(rel))
+        await ctx.cdp.mouse('mouseMoved', rect.x + rect.width - 60, rect.y + rect.height / 2)
+        await ctx.cdp.waitFor(
+          `getComputedStyle(document.querySelector(${JSON.stringify(
+            fileSelector(rel) + ' .notes-row-acts'
+          )})).display !== 'none'`,
+          { timeout: 3000, message: '悬停后文件行动作出现' }
+        )
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(
+            fileSelector(rel)
+          )})?.querySelector('[data-file-action="rename"]')?.click()`
+        )
+        await ctx.cdp.waitFor(`document.querySelector('.notes-file-rename input') !== null`, {
+          timeout: 5000,
+          message: '出现文件改名输入框'
+        })
+        await ctx.cdp.eval(`(() => {
+          const el = document.querySelector('.notes-file-rename input')
+          el.focus()
+          el.setSelectionRange(0, el.value.length)
+        })()`)
+        await ctx.cdp.type(next)
+        await ctx.press('Enter')
+      }
+
+      // .drawio → .dio:仍是图表,视图不变
+      await fileRename('drawio-rename/图.drawio', '图.dio')
+      await ctx.waitForNode(
+        () =>
+          existsSync(absPath(ctx, 'drawio-rename/图.dio')) && !existsSync(absPath(ctx, 'drawio-rename/图.drawio')),
+        '磁盘上换成 .dio'
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === '图.dio'`,
+        { timeout: 10_000, message: '打开中的标题换成 .dio' }
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(
+            fileSelector('drawio-rename/图.dio')
+          )})?.dataset.fileKind ?? null`
+        ),
+        'drawio',
+        '.dio 仍是 drawio 文件行'
+      )
+      ok(
+        await ctx.cdp.eval(`document.querySelector('.file-main .drawio-frame') !== null`),
+        '.dio 打开后还是 draw.io 编辑器'
+      )
+
+      // .dio → .md:变成笔记行,文件视图让位给笔记编辑器
+      await fileRename('drawio-rename/图.dio', '图笔记.md')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-row[data-note-id="drawio-rename/图笔记"][data-rail-copy="tree"]') !== null`,
+        { timeout: 10_000, message: '改成 .md 后成为笔记行' }
+      )
+      ok(await ctx.cdp.eval(`document.querySelector('.file-main') === null`), '笔记视图里没有文件页')
+      ok(
+        readFileSync(absPath(ctx, 'drawio-rename/图笔记.md'), 'utf8').includes('改名保留'),
+        '改成笔记后正文原样保留'
+      )
+
+      // 笔记 → .drawio:回到图表视图,内容仍是那张图
+      const rowSel = '.notes-row[data-note-id="drawio-rename/图笔记"][data-rail-copy="tree"]'
+      const rect = await ctx.elementRect(rowSel)
+      await ctx.cdp.mouse('mouseMoved', rect.x + rect.width - 40, rect.y + rect.height / 2)
+      await ctx.cdp.waitFor(
+        `(() => {
+          const acts = document.querySelector(${JSON.stringify(rowSel)})?.querySelector('.notes-row-acts')
+          return acts !== null && getComputedStyle(acts).display !== 'none'
+        })()`,
+        { timeout: 3000, message: '悬停后笔记行动作出现' }
+      )
+      await ctx.cdp.eval(
+        `document.querySelector(${JSON.stringify(
+          rowSel
+        )})?.querySelectorAll('.notes-row-acts button')[0]?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-row-rename input') !== null`, {
+        timeout: 5000,
+        message: '出现笔记改名输入框'
+      })
+      await ctx.cdp.eval(`(() => {
+        const el = document.querySelector('.notes-row-rename input')
+        el.focus()
+        el.setSelectionRange(0, el.value.length)
+      })()`)
+      await ctx.cdp.type('图二.drawio')
+      await ctx.press('Enter')
+
+      await waitFileRow(ctx, 'drawio-rename/图二.drawio', { expand: ['drawio-rename'] })
+      await openFile(ctx, 'drawio-rename/图二.drawio')
+      await ctx.cdp.waitFor(`document.querySelector('.file-main .drawio-frame') !== null`, {
+        timeout: 15_000,
+        message: '改回 .drawio 后又是 draw.io 编辑器'
+      })
+      const frame = await frameHandle(
+        ctx,
+        'launcher-drawio://',
+        `window.__drawioStub?.loaded === true && String(window.__drawioStub.xml).includes('改名保留')`,
+        '改回图表后仍载入原来的图'
+      )
+      eq(
+        await ctx.cdp.evalIn(frame.sessionId, `document.querySelector('.cell')?.textContent ?? null`),
+        '改名保留',
+        '图里的内容没丢'
+      )
     }
   }
 ]

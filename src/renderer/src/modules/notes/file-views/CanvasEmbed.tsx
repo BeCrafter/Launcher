@@ -30,6 +30,9 @@ import {
 import { decodeTextBytes } from '@shared/text-file'
 import { dataSource } from '../../../data'
 import { useT } from '../../../hooks/useT'
+import { useEffectiveTheme } from '../../../hooks/useEffectiveTheme'
+import { effectiveDrawioMode, useDrawioStore } from '../../../state/drawio-store'
+import { isDrawioText } from '@shared/drawio'
 import { highlightCodeNodes } from '../../../lib/code-highlight'
 import { renderMarkdown, type CalloutKind, type DiagramBlock } from '../../../lib/markdown'
 import { resolvePreviewSrc } from '../../../lib/note-asset'
@@ -48,6 +51,7 @@ import { MediaViewer } from './MediaViewer'
 import { ModelView } from './ModelView'
 import { OfficeView } from './OfficeView'
 import { PdfViewer } from './PdfViewer'
+import { DrawioFrame } from './DrawioFrame'
 
 export function CanvasEmbed({
   element,
@@ -329,6 +333,14 @@ function CanvasFileEmbed({ path, url: externalUrl }: { path: string; url?: strin
       )
     case 'html':
       return <HtmlViewer src={url} />
+    case 'drawio':
+      return (
+        <CanvasTextPreview
+          path={path}
+          url={bytes}
+          render={(text) => <CanvasDrawioScroll text={text} title={name} />}
+        />
+      )
     case 'csv':
       return (
         <CanvasTextPreview
@@ -386,6 +398,45 @@ function placeholderIcon(kind: NoteFileKind, ext: string, name: string): string 
   if (kind === 'archive-unsupported') return 'fa-file-zipper'
   if (kind === 'legacy-office') return 'fa-file'
   return noteFileIcon(ext, name)
+}
+
+/** 白板卡片里的 draw.io:只读 lightbox,模式跟随全局偏好(没装离线包就回退在线)。 */
+function CanvasDrawioScroll({ text, title }: { text: string; title: string }): React.JSX.Element {
+  const t = useT()
+  const theme = useEffectiveTheme()
+  const pref = useDrawioStore((s) => s.mode)
+  const status = useDrawioStore((s) => s.status)
+  const ensureStatus = useDrawioStore((s) => s.ensureStatus)
+
+  useEffect(() => {
+    void ensureStatus().catch(() => {})
+  }, [ensureStatus])
+
+  const valid = isDrawioText(text)
+  if (!valid || status === null) {
+    return (
+      <div className="canvas-embed-state">
+        <i
+          className={
+            valid ? 'fa-solid fa-circle-notch fa-spin' : 'fa-solid fa-triangle-exclamation'
+          }
+          aria-hidden="true"
+        />
+        <span>{valid ? t('notes.drawio.loading') : t('notes.drawio.invalid')}</span>
+      </div>
+    )
+  }
+  return (
+    <DrawioFrame
+      xml={text}
+      mode={effectiveDrawioMode(pref, status)}
+      lightbox
+      dark={theme === 'dark'}
+      lang={document.documentElement.lang.toLowerCase().startsWith('en') ? 'en' : 'zh'}
+      title={title}
+      onOpenLink={(href) => openExternal(href)}
+    />
+  )
 }
 
 /** 文本类文件要先读正文才能渲染。失败显示同一块「无法嵌入」。 */

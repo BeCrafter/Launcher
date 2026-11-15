@@ -28,6 +28,8 @@ import type { SettingsStore } from './settings/store'
 import type { TrayController } from './settings/types'
 import type { AiStack } from './ai'
 import type { NotesService } from './services/notes-service'
+import type { DrawioPack } from './services/drawio-pack'
+import type { DrawioStatusEvent } from '../shared/drawio'
 import type { UpdateController } from './services/update-controller'
 import type { VaultSync } from './services/vault-sync/service'
 import { SYNC_SECRET_IDS, type SyncSecretId, type SyncSecrets } from './services/vault-sync/secrets'
@@ -74,6 +76,8 @@ export interface IpcDeps {
   ai: AiStack
   /** 笔记(阶段 5) */
   notes: NotesService
+  /** draw.io 离线资源包(按需下载/校验/解压) */
+  drawio: DrawioPack
   /** 应用内更新(检查/下载/重启) */
   updater: UpdateController
   /** 笔记同步。独立进程不传:它没有网络和设置 */
@@ -141,11 +145,20 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.shellPickFile, async (e, opts: { mode: PickFileMode; title?: string }): Promise<PickedFile | null> => {
     const win = BrowserWindow.fromWebContents(e.sender)
     const isPlist = opts?.mode === 'plist'
+    const isWar = opts?.mode === 'war'
     const r = await dialog.showOpenDialog(win ?? undefined as never, {
       title: opts?.title,
-      defaultPath: isPlist ? join(app.getPath('home'), 'Library/LaunchAgents') : '/usr/local/bin',
+      defaultPath: isPlist
+        ? join(app.getPath('home'), 'Library/LaunchAgents')
+        : isWar
+          ? app.getPath('downloads')
+          : '/usr/local/bin',
       properties: ['openFile', 'showHiddenFiles'],
-      filters: isPlist ? [{ name: 'Property List', extensions: ['plist'] }] : undefined
+      filters: isPlist
+        ? [{ name: 'Property List', extensions: ['plist'] }]
+        : isWar
+          ? [{ name: 'draw.io Web 包', extensions: ['war'] }]
+          : undefined
     })
     if (r.canceled || r.filePaths.length === 0) return null
     const path = r.filePaths[0]
@@ -390,6 +403,39 @@ export function registerIpc(deps: IpcDeps): void {
       name: String(input?.name ?? '')
     })
   )
+
+  // ── draw.io 离线资源包 ──
+  ipcMain.handle(IPC.drawioStatus, () => deps.drawio.status())
+  ipcMain.handle(IPC.drawioCancel, () => {
+    deps.drawio.cancel()
+  })
+  ipcMain.handle(IPC.drawioDownload, async (e) => {
+    const send = (event: DrawioStatusEvent): void => {
+      if (!e.sender.isDestroyed()) e.sender.send(IPC_EVENTS.drawioChanged, event)
+    }
+    const initial = await deps.drawio.status()
+    send({ status: { ...initial, downloading: true } })
+    try {
+      const status = await deps.drawio.download((progress) => {
+        send({ status: { ...initial, downloading: true }, progress })
+      })
+      send({ status })
+      return { ok: true, status }
+    } catch (err) {
+      const status = await deps.drawio.status()
+      send({ status })
+      return { ok: false, status, message: errorText(err) }
+    }
+  })
+  ipcMain.handle(IPC.drawioImportWar, async (_e, warPath: unknown) => {
+    try {
+      const status = await deps.drawio.importWar(String(warPath ?? ''))
+      return { ok: true, status }
+    } catch (err) {
+      return { ok: false, status: await deps.drawio.status(), message: errorText(err) }
+    }
+  })
+
   ipcMain.handle(IPC.notesOpenFile, async (_e, path: string) => {
     const abs = deps.notes.resolveNoteFile(String(path ?? ''))
     if (abs === null) return { ok: false, message: '文件不存在或不在笔记目录内' }
@@ -462,4 +508,8 @@ export function registerIpc(deps: IpcDeps): void {
     return deps.sync.secrets.get(provider) ?? ''
   })
   ipcMain.handle(IPC.notesSyncTest, () => deps.sync?.test() ?? { ok: false, message: '同步未启用' })
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CANVAS_EMBED_KINDS,
   canvasExternalData,
   canvasPreviewExtensions,
   gltfSiblingNames,
@@ -11,7 +12,17 @@ import {
 
 describe('isCanvasPreviewName', () => {
   it('可预览的类型可以嵌', () => {
-    for (const name of ['说明.pdf', '片.mp4', '稿.pptx', '文.docx', '模型.glb', '图.apng', '片.AVI']) {
+    for (const name of [
+      '说明.pdf',
+      '片.mp4',
+      '稿.pptx',
+      '文.docx',
+      '模型.glb',
+      '图.apng',
+      '片.AVI',
+      '图.drawio',
+      '图.dio'
+    ]) {
       expect(isCanvasPreviewName(name)).toBe(true)
     }
   })
@@ -38,7 +49,16 @@ describe('canvas preview extensions', () => {
     expect(all).toContain('txt')
     expect(all).not.toContain('doc')
     expect(all).not.toContain('rar')
+    expect(all).toContain('drawio')
+    expect(all).toContain('dio')
     expect(new Set(all).size).toBe(all.length)
+  })
+
+  it('图表是同级的嵌入类型,接受 .drawio / .dio', () => {
+    const drawio = CANVAS_EMBED_KINDS.find((kind) => kind.id === 'drawio')
+    expect(drawio?.extensions).toEqual(['drawio', 'dio'])
+    expect(isCanvasPreviewExt('drawio')).toBe(true)
+    expect(isCanvasPreviewExt('dio')).toBe(true)
   })
 })
 

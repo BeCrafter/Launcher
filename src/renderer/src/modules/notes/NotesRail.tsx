@@ -29,6 +29,7 @@ import { useRailResize } from '../../lib/use-rail-resize'
 import { useFilesStore } from '../../state/files-store'
 import { useNotesStore } from '../../state/notes-store'
 import { openFileDoc, openNoteDoc, useActiveDocKind } from './doc-actions'
+import { NotesNewMenu, type NewItemKind } from './NotesNewMenu'
 
 /**
  * 缩进栅格。目录与笔记/文件共用同一列:
@@ -343,9 +344,10 @@ interface NameEdit {
   copy?: RailCopy
 }
 
-/** 新建文档时的默认完整文件名。后缀在同一格里,直接改即可。白板另用 .excal。 */
+/** 新建文档时的默认完整文件名。后缀在同一格里,直接改即可。白板/图表各自用自己的后缀。 */
 const NEW_DOC_NAME = '未命名.md'
 const NEW_CANVAS_NAME = '未命名.excal'
+const NEW_DRAWIO_NAME = '未命名.drawio'
 
 /** 目录行上看到的笔记文件名。标题自己已经以 .md 结尾时不再补一份。 */
 function noteRowFileName(title: string): string {
@@ -511,6 +513,8 @@ export function NotesRail(): React.JSX.Element {
 
   const [edit, setEdit] = useState<NameEdit | null>(null)
   const [draftName, setDraftName] = useState('')
+  /** 「新增」二级菜单:浮层挂在 body,这里只记触发按钮与落点目录 */
+  const [newMenu, setNewMenu] = useState<{ anchor: HTMLElement; parent: string } | null>(null)
   /**
    * 用户实际点开的那一份副本。置顶笔记在置顶栏和目录树里各有一份,
    * 用 state 而不是 ref:点同一篇笔记的另一份时 store 会提前 return、不重渲染,
@@ -1351,6 +1355,28 @@ export function NotesRail(): React.JSX.Element {
     setEdit(null)
     setDraftName('')
   }
+  /** 根层与目录行的「新增」都开同一个二级菜单;再点同一颗按钮收起 */
+  const openNewMenu = (event: React.MouseEvent<HTMLButtonElement>, parent: string): void => {
+    event.stopPropagation()
+    const anchor = event.currentTarget
+    setNewMenu((prev) => (prev !== null && prev.anchor === anchor ? null : { anchor, parent }))
+  }
+  const pickNew = (kind: NewItemKind): void => {
+    const parent = newMenu?.parent ?? ''
+    setNewMenu(null)
+    if (parent !== '') {
+      setSelectedFolder(parent)
+      useNotesStore.getState().setExpanded(parent, true)
+    }
+    if (kind === 'folder') {
+      startEdit({ mode: 'create', kind: 'folder', parent, path: '' })
+      return
+    }
+    // 笔记/白板/图表共用一条创建链:输入框里给完整文件名,后缀可继续改
+    const name =
+      kind === 'note' ? NEW_DOC_NAME : kind === 'canvas' ? NEW_CANVAS_NAME : NEW_DRAWIO_NAME
+    startEdit({ mode: 'create', kind: 'note', parent, path: '' }, name)
+  }
   /**
    * 新建文档:输入框里是完整文件名。
    * 没有扩展名,或是 md / markdown,走笔记;其余整段交给 createFile。
@@ -1742,39 +1768,12 @@ export function NotesRail(): React.JSX.Element {
           <span className="notes-folder-acts" style={renaming ? { display: 'none' } : undefined}>
             <button
               type="button"
-              data-folder-act="new-note"
-              title={t('notes.folder.newNote')}
-              onClick={() => {
-                setSelectedFolder(f.path)
-                useNotesStore.getState().setExpanded(f.path, true)
-                startEdit({ mode: 'create', kind: 'note', parent: f.path, path: '' }, NEW_DOC_NAME)
-              }}
+              data-folder-act="new"
+              title={t('notes.folder.newMenu')}
+              aria-haspopup="menu"
+              onClick={(event) => openNewMenu(event, f.path)}
             >
               <i className="fa-solid fa-plus" />
-            </button>
-            <button
-              type="button"
-              data-folder-act="new-canvas"
-              title={t('notes.folder.newCanvas')}
-              onClick={() => {
-                setSelectedFolder(f.path)
-                useNotesStore.getState().setExpanded(f.path, true)
-                startEdit({ mode: 'create', kind: 'note', parent: f.path, path: '' }, NEW_CANVAS_NAME)
-              }}
-            >
-              <i className="fa-solid fa-chalkboard" />
-            </button>
-            <button
-              type="button"
-              data-folder-act="new-folder"
-              title={t('notes.folder.newSub')}
-              onClick={() => {
-                setSelectedFolder(f.path)
-                useNotesStore.getState().setExpanded(f.path, true)
-                startEdit({ mode: 'create', kind: 'folder', parent: f.path, path: '' })
-              }}
-            >
-              <i className="fa-regular fa-folder-closed" />
             </button>
             <button
               type="button"
@@ -2056,40 +2055,21 @@ export function NotesRail(): React.JSX.Element {
           </div>
         ) : (
           <div className={'notes-new-row' + (isEmpty ? ' prominent' : '')}>
-            {/* 根层两个入口并排:上面那颗 + 是「建到当前选中的目录里」,
-                这里明确是「建在根层」—— 否则一旦选过某个目录,就再也没法在根层新建了 */}
+            {/* 根层唯一的入口:类型收进二级菜单,不再按文件类型并排加按钮。
+                它明确建在根层 —— 目录内的「新增」在目录行 hover 里。 */}
             <button
               type="button"
-              className="notes-new-folder"
-              title={t('notes.action.newTitle')}
-              aria-label={t('notes.action.newTitle')}
-              onClick={() => startEdit({ mode: 'create', kind: 'note', parent: '', path: '' }, NEW_DOC_NAME)}
+              className="notes-new-btn"
+              data-new-menu="root"
+              title={t('notes.new.title')}
+              aria-label={t('notes.new.title')}
+              aria-haspopup="menu"
+              aria-expanded={newMenu !== null && newMenu.parent === ''}
+              onClick={(event) => openNewMenu(event, '')}
             >
               <i className="fa-solid fa-plus" />
-              <span>{t('notes.action.new')}</span>
-            </button>
-            <button
-              type="button"
-              className="notes-new-folder"
-              title={t('notes.folder.newTitle')}
-              aria-label={t('notes.folder.newTitle')}
-              onClick={() => startEdit({ mode: 'create', kind: 'folder', parent: '', path: '' })}
-            >
-              <i className="fa-solid fa-plus" />
-              <span>{t('notes.folder.new')}</span>
-            </button>
-            <button
-              type="button"
-              className="notes-new-folder"
-              data-new="canvas"
-              title={t('notes.action.newCanvasTitle')}
-              aria-label={t('notes.action.newCanvasTitle')}
-              onClick={() =>
-                startEdit({ mode: 'create', kind: 'note', parent: '', path: '' }, NEW_CANVAS_NAME)
-              }
-            >
-              <i className="fa-solid fa-chalkboard" />
-              <span>{t('notes.action.newCanvas')}</span>
+              <span>{t('notes.new.label')}</span>
+              <i className="fa-solid fa-chevron-down notes-new-caret" aria-hidden="true" />
             </button>
           </div>
         )}
@@ -2135,6 +2115,14 @@ export function NotesRail(): React.JSX.Element {
         onDoubleClick={resetWidth}
         onKeyDown={onResizeKeyDown}
       />
+
+      {newMenu !== null && (
+        <NotesNewMenu
+          anchor={newMenu.anchor}
+          onPick={pickNew}
+          onClose={() => setNewMenu(null)}
+        />
+      )}
     </div>
   )
 }

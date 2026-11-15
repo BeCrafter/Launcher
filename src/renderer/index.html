@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Launcher</title>
+    <!-- 在线 draw.io 编辑器首屏要从 embed.diagrams.net 拉约 11MB 资源;先把 DNS/TLS 建好 -->
+    <link rel="preconnect" href="https://embed.diagrams.net" crossorigin />
     <!--
       启动期的底色与过渡页样式,**刻意内联在这里**、不依赖打包出来的那 686KB CSS:
         · 过渡页是「窗口还没画出应用」这段时间唯一的内容,不能等外部样式表;

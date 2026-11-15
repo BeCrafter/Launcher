@@ -1508,6 +1508,70 @@ describe('非 Markdown 文件与批量导入', () => {
   })
 })
 
+describe('draw.io 图表文件', () => {
+  const XML = '<mxfile host="app.diagrams.net"><diagram id="a" name="Page-1"/></mxfile>'
+
+  it('statFile 归到 drawio,不给 CodeMirror 编辑', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), '图.drawio'), XML)
+    writeFileSync(join(svc.dir(), '短.dio'), XML)
+
+    expect(svc.statFile('图.drawio')).toMatchObject({
+      kind: 'drawio',
+      editable: false,
+      ext: 'drawio',
+      mime: 'application/vnd.jgraph.mxfile'
+    })
+    expect(svc.statFile('短.dio')).toMatchObject({ kind: 'drawio', editable: false })
+  })
+
+  it('readFile 照常读正文:打开后要交给 draw.io 编辑器', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), '图.drawio'), XML)
+
+    const out = await svc.readFile('图.drawio')
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error('expected read')
+    expect(out.doc).toMatchObject({ kind: 'drawio', text: XML, editable: true, tooLarge: false })
+    expect(out.doc.revision).toMatch(/^[0-9a-f]{40}$/)
+  })
+
+  it('按文本读:编码坏了报 binary 而不是 unsupported', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), '坏.drawio'), Buffer.from([0x41, 0x00, 0x42]))
+
+    const out = await svc.readFile('坏.drawio')
+    expect(out.ok).toBe(true)
+    if (!out.ok) throw new Error('expected read')
+    expect(out.doc).toMatchObject({ kind: 'drawio', editable: false, reason: 'binary' })
+  })
+
+  it('保存走同一套 CAS,写回 XML 后再读一致', async () => {
+    const svc = makeService()
+    writeFileSync(join(svc.dir(), '图.drawio'), XML)
+    const first = await svc.readFile('图.drawio')
+    if (!first.ok || !first.doc.editable) throw new Error('expected text')
+
+    const next = XML.replace('name="Page-1"', 'name="Page-2"')
+    const saved = await svc.saveFile({
+      path: '图.drawio',
+      text: next,
+      expectedRevision: first.doc.revision
+    })
+    expect(saved.ok).toBe(true)
+    expect(read(svc.dir(), '图.drawio')).toBe(next)
+
+    const stale = await svc.saveFile({
+      path: '图.drawio',
+      text: XML,
+      expectedRevision: first.doc.revision
+    })
+    expect(stale.ok).toBe(false)
+    if (stale.ok) throw new Error('expected conflict')
+    expect(stale.kind).toBe('conflict')
+  })
+})
+
 describe('非 Markdown 文件:stat / read / save / bytes', () => {
   it('statFile 按扩展名分类,并拒绝根层 assets 与越界路径', async () => {
     const svc = makeService()

@@ -115,7 +115,10 @@ export async function launchApp({ root, profileDir }) {
         ...process.env,
         LAUNCHER_E2E_USER_DATA: profileDir,
         // 双击文件行时不真的拉起系统默认应用(会抢焦点,CI 上不可控)
-        LAUNCHER_E2E_STUB_OPEN: '1'
+        LAUNCHER_E2E_STUB_OPEN: '1',
+        // draw.io 不下载 50MB 真实包、也绝不请求 embed.diagrams.net:
+        // launcher-drawio://stub 提供实现同一套 embed 协议的测试页
+        LAUNCHER_E2E_DRAWIO_STUB: '1'
       },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe']

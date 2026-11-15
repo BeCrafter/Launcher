@@ -1,6 +1,6 @@
 // 文件视图的头部与主体分发。文档状态在 files-store,这里只负责呈现。
 
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import {
   ARCHIVE_MAX_BYTES,
   IMAGE_MAX_BYTES,
@@ -28,6 +28,9 @@ import { ArchiveView } from './file-views/ArchiveView'
 import { ModelView } from './file-views/ModelView'
 import { DecodedImageViewer } from './file-views/DecodedImageViewer'
 import { CanvasView } from './file-views/CanvasView'
+import { DrawioView } from './file-views/DrawioView'
+import type { DrawioFrameHandle } from './file-views/DrawioFrame'
+import { effectiveDrawioMode, useDrawioStore } from '../../state/drawio-store'
 import { BytesLoader } from './file-views/BytesLoader'
 import { Skeleton } from '../../components/ui/Skeleton'
 
@@ -58,6 +61,32 @@ export function FileView(): React.JSX.Element {
   const reload = useFilesStore((s) => s.reload)
   const resolveConflict = useFilesStore((s) => s.resolveConflict)
   const setViewMode = useFilesStore((s) => s.setViewMode)
+
+  // draw.io:模式按钮在文件头,iframe 的 ref 用来在切换前导出一份最新 XML
+  const drawioRef = useRef<DrawioFrameHandle>(null)
+  const drawioPref = useDrawioStore((s) => s.mode)
+  const drawioStatus = useDrawioStore((s) => s.status)
+  const drawioPhase = useDrawioStore((s) => s.phase)
+  const drawioProgress = useDrawioStore((s) => s.progress)
+  const drawioError = useDrawioStore((s) => s.error)
+  const drawioRequestOffline = useDrawioStore((s) => s.requestOffline)
+  const drawioSwitchOnline = useDrawioStore((s) => s.switchOnline)
+  const drawioDownload = useDrawioStore((s) => s.download)
+  const drawioCancel = useDrawioStore((s) => s.cancel)
+  const drawioImportWar = useDrawioStore((s) => s.importWar)
+  const drawioDismiss = useDrawioStore((s) => s.dismissConfirm)
+  const drawioMode = effectiveDrawioMode(drawioPref, drawioStatus)
+
+  const switchDrawioMode = useCallback(async () => {
+    // 切模式会重建 iframe:先把 draw.io 里还没 autosave 的那一拍导出来并落盘
+    const latest = await drawioRef.current?.exportXml()
+    if (latest != null && latest !== useFilesStore.getState().file?.text) {
+      setText(latest)
+    }
+    if (useFilesStore.getState().dirty) await flush()
+    if (drawioMode === 'offline') drawioSwitchOnline()
+    else await drawioRequestOffline()
+  }, [drawioMode, drawioRequestOffline, drawioSwitchOnline, flush, setText])
 
   const changeMode = useCallback(
     (kind: 'html' | 'csv', next: FileViewMode) => {
@@ -100,6 +129,16 @@ export function FileView(): React.JSX.Element {
   const mode = file.kind === 'html' || file.kind === 'csv' ? modes[file.kind] : null
   const dirPart = parentOf(file.path)
   const editable = file.editable
+  const drawioPercent =
+    drawioProgress !== null && drawioProgress.total > 0
+      ? Math.min(100, Math.round((drawioProgress.received / drawioProgress.total) * 100))
+      : null
+  const drawioPhaseLabel =
+    drawioProgress?.phase === 'verify'
+      ? t('notes.drawio.verifying')
+      : drawioProgress?.phase === 'extract'
+        ? t('notes.drawio.extracting')
+        : t('notes.drawio.downloading')
 
   return (
     <div className="notes-main file-main">
@@ -125,7 +164,7 @@ export function FileView(): React.JSX.Element {
           <span className="file-meta">{formatBytes(file.size)}</span>
         </div>
         <div className="notes-hd-actions">
-          {(isTextKind(file.kind) || file.kind === 'canvas') &&
+          {(isTextKind(file.kind) || file.kind === 'canvas' || file.kind === 'drawio') &&
             (saving ? (
               <span className="notes-save-state">{t('notes.save.saving')}</span>
             ) : dirty ? (
@@ -133,7 +172,7 @@ export function FileView(): React.JSX.Element {
             ) : (
               <span className="notes-save-state">{t('notes.save.saved')}</span>
             ))}
-          {!editable && <span className="file-badge">{t('notes.file.readonly')}</span>}
+          {!editable && file.kind !== 'drawio' && <span className="file-badge">{t('notes.file.readonly')}</span>}
           {mode !== null && (
             <div className="notes-modes" role="group" aria-label={t('notes.file.preview')}>
               {(['source', 'preview', 'split'] as const).map((m) => (
@@ -158,6 +197,27 @@ export function FileView(): React.JSX.Element {
                 </button>
               ))}
             </div>
+          )}
+          {file.kind === 'drawio' && (
+            <button
+              type="button"
+              className="notes-act drawio-mode"
+              data-drawio-mode={drawioMode}
+              title={
+                drawioMode === 'offline'
+                  ? t('notes.drawio.switchOnline')
+                  : t('notes.drawio.switchOffline')
+              }
+              aria-label={
+                drawioMode === 'offline'
+                  ? t('notes.drawio.switchOnline')
+                  : t('notes.drawio.switchOffline')
+              }
+              onClick={() => void switchDrawioMode()}
+            >
+              <i className={drawioMode === 'offline' ? 'fa-solid fa-hard-drive' : 'fa-solid fa-cloud'} />
+              <span>{drawioMode === 'offline' ? t('notes.drawio.offline') : t('notes.drawio.online')}</span>
+            </button>
           )}
           <button
             type="button"
@@ -191,6 +251,82 @@ export function FileView(): React.JSX.Element {
           </button>
         </div>
       </div>
+
+      {file.kind === 'drawio' && drawioPhase !== 'idle' && (
+        <div className="notes-banner drawio-pack" data-drawio-phase={drawioPhase}>
+          <i
+            className={
+              drawioPhase === 'downloading'
+                ? 'fa-solid fa-circle-notch fa-spin'
+                : drawioPhase === 'error'
+                  ? 'fa-solid fa-triangle-exclamation'
+                  : 'fa-solid fa-cloud-arrow-down'
+            }
+            aria-hidden="true"
+          />
+          <div className="drawio-pack-text">
+            {drawioPhase === 'confirm' && <span>{t('notes.drawio.confirm')}</span>}
+            {drawioPhase === 'downloading' && (
+              <>
+                <span>{drawioPhaseLabel}</span>
+                {drawioPercent !== null && (
+                  <span className="drawio-pack-pct">{drawioPercent}%</span>
+                )}
+                <div className="drawio-pack-bar" aria-hidden="true">
+                  <span
+                    className={drawioPercent === null ? 'indeterminate' : undefined}
+                    style={drawioPercent === null ? undefined : { width: `${drawioPercent}%` }}
+                  />
+                </div>
+              </>
+            )}
+            {drawioPhase === 'error' && (
+              <span>{drawioError ?? t('notes.drawio.failed')}</span>
+            )}
+          </div>
+          <div className="notes-banner-actions">
+            {drawioPhase === 'confirm' && (
+              <>
+                <button type="button" className="d-btn accent" onClick={() => void drawioDownload()}>
+                  <span>{t('notes.drawio.downloadAndSwitch')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="d-btn"
+                  onClick={() => void drawioImportWar(t('notes.drawio.pickWar'))}
+                >
+                  <span>{t('notes.drawio.pickWarShort')}</span>
+                </button>
+                <button type="button" className="d-btn" onClick={() => drawioDismiss()}>
+                  <span>{t('common.cancel')}</span>
+                </button>
+              </>
+            )}
+            {drawioPhase === 'downloading' && (
+              <button type="button" className="d-btn" onClick={() => void drawioCancel()}>
+                <span>{t('common.cancel')}</span>
+              </button>
+            )}
+            {drawioPhase === 'error' && (
+              <>
+                <button type="button" className="d-btn accent" onClick={() => void drawioDownload()}>
+                  <span>{t('notes.drawio.retry')}</span>
+                </button>
+                <button
+                  type="button"
+                  className="d-btn"
+                  onClick={() => void drawioImportWar(t('notes.drawio.pickWar'))}
+                >
+                  <span>{t('notes.drawio.pickWarShort')}</span>
+                </button>
+                <button type="button" className="d-btn" onClick={() => drawioDismiss()}>
+                  <span>{t('common.cancel')}</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {conflict !== null && (
         <div className="notes-banner conflict">
@@ -235,6 +371,22 @@ export function FileView(): React.JSX.Element {
           />
         ) : file.kind === 'canvas' ? (
           <CanvasView key={docSession} text={file.text} />
+        ) : file.kind === 'drawio' ? (
+          <DrawioView
+            key={docSession}
+            text={file.text}
+            frameRef={drawioRef}
+            onAutosave={setText}
+            onSave={(xml) => {
+              setText(xml)
+              void flush()
+            }}
+            onReplace={(xml) => {
+              setText(xml)
+              void flush()
+            }}
+            onOpenLink={(href) => void window.launcher.openExternal(href)}
+          />
         ) : isTextKind(file.kind) ? (
           <FileEditor
             key={docSession}

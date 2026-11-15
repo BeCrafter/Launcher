@@ -16,3 +16,6 @@ CLAUDE.md
 # 笔记编辑器 E2E 的临时 profile / 截图 / 报告
 .e2e-notes-tmp/
 e2e/notes/.tmp/
+
+# 本地预览实例的隔离 profile(手动 node/npm run dev 时用 LAUNCHER_E2E_USER_DATA 指到这里)
+.dev-preview/

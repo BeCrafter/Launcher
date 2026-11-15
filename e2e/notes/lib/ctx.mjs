@@ -742,6 +742,54 @@ export class NoteE2EContext {
     }
   }
 
+  // ── 左侧目录:新增二级菜单 ──
+
+  /** 根层的「新增」按钮,点开后是文件类型浮层。 */
+  async openNewMenu() {
+    await this.cdp.eval(`document.querySelector('[data-new-menu="root"]')?.click()`)
+    await this.cdp.waitFor(`document.querySelector('.notes-new-menu[data-new-menu-layer]') !== null`, {
+      timeout: 3000,
+      message: '「新增」二级菜单已打开'
+    })
+  }
+
+  /** 目录行 hover 里的「新增」。调用前目录行必须已经在 DOM 里。 */
+  async openFolderNewMenu(path) {
+    const clicked = await this.cdp.eval(`(() => {
+      const row = [...document.querySelectorAll('.notes-folder-row')]
+        .find((el) => el.dataset.folderPath === ${JSON.stringify(path)})
+      if (row === undefined) return false
+      row.querySelector('[data-folder-act="new"]')?.click()
+      return true
+    })()`)
+    if (clicked !== true) throw new Error(`找不到目录行:${path}`)
+    await this.cdp.waitFor(`document.querySelector('.notes-new-menu[data-new-menu-layer]') !== null`, {
+      timeout: 3000,
+      message: `目录「${path}」的「新增」菜单已打开`
+    })
+  }
+
+  /** 在已打开的浮层里选类型。kind: note / canvas / drawio / folder */
+  async pickNew(kind) {
+    await this.cdp.waitFor(
+      `document.querySelector('.notes-new-menu [data-new-item=${JSON.stringify(kind)}]') !== null`,
+      { timeout: 3000, message: `菜单里有「${kind}」` }
+    )
+    await this.cdp.eval(
+      `document.querySelector('.notes-new-menu [data-new-item=${JSON.stringify(kind)}]')?.click()`
+    )
+    await this.cdp.waitFor(`document.querySelector('.notes-new-menu') === null`, {
+      timeout: 3000,
+      message: '选完类型后菜单收起'
+    })
+  }
+
+  /** 根层「新增」→ 选类型。 */
+  async newDoc(kind) {
+    await this.openNewMenu()
+    await this.pickNew(kind)
+  }
+
   /** Node 侧的轮询等待（用于跨多次 CDP 调用才能判断的条件）。 */
   async waitForNode(predicate, message, { timeout = 8000, interval = 60 } = {}) {
     const started = Date.now()

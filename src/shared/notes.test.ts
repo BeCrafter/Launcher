@@ -10,6 +10,10 @@ import {
   parentOf,
   resolveNotesDir,
   splitFileExt,
+  isNoteFileEditable,
+  isTextBackedKind,
+  noteFileKind,
+  noteFileMime,
   MAX_FOLDER_DEPTH,
   NOTE_ID_MAX,
   NOTE_SEGMENT_MAX
@@ -196,5 +200,32 @@ describe('noteAssetKindOfUrl', () => {
   it('没有后缀返回 null', () => {
     expect(noteAssetKindOfUrl('assets/x')).toBeNull()
     expect(noteAssetKindOfUrl('')).toBeNull()
+  })
+})
+
+describe('drawio 文件类型', () => {
+  it('两种扩展名都归到 drawio', () => {
+    expect(noteFileKind('drawio')).toBe('drawio')
+    expect(noteFileKind('dio')).toBe('drawio')
+    expect(noteFileKind('DRAWIO')).toBe('drawio')
+  })
+
+  it('用 jgraph 的 MIME,浏览器下载时能识别', () => {
+    expect(noteFileMime('drawio')).toBe('application/vnd.jgraph.mxfile')
+    expect(noteFileMime('dio')).toBe('application/vnd.jgraph.mxfile')
+  })
+
+  it('正文按文本读写,但不交给 CodeMirror', () => {
+    expect(isTextBackedKind('drawio')).toBe(true)
+    expect(isNoteFileEditable('drawio')).toBe(false)
+  })
+
+  it('文本类都算 text-backed,二进制不算', () => {
+    for (const kind of ['text', 'code', 'markdown', 'csv', 'html', 'canvas', 'unsupported'] as const) {
+      expect(isTextBackedKind(kind)).toBe(true)
+    }
+    for (const kind of ['image', 'pdf', 'video', 'audio', 'archive', 'model', 'docx'] as const) {
+      expect(isTextBackedKind(kind)).toBe(false)
+    }
   })
 })

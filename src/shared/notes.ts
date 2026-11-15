@@ -268,6 +268,7 @@ export type NoteFileKind =
   | 'model'
   | 'legacy-office'
   | 'canvas'
+  | 'drawio'
   | 'unsupported'
 
 /**
@@ -462,7 +463,11 @@ const EXT_KIND: Record<string, NoteFileKind> = {
   // 库内新建用短后缀 .excal。导出仍是 Excalidraw 自己的 .excalidraw,
   // 已经在库里的 .excalidraw 也按白板打开。
   excal: 'canvas',
-  excalidraw: 'canvas'
+  excalidraw: 'canvas',
+  // draw.io 的 XML 图表。磁盘上是普通 XML 文本,但不用 CodeMirror:
+  // 打开后由 draw.io 编辑器接管,保存仍走 notes.saveFile。
+  drawio: 'drawio',
+  dio: 'drawio'
 }
 
 /** 无扩展名但显然是代码/配置的文件名(小写) */
@@ -507,6 +512,15 @@ export function isNoteFileEditable(kind: NoteFileKind): boolean {
 }
 
 /**
+ * 正文以文本形式读写的类型。它们不一定能用 CodeMirror 编辑:
+ * 白板/图表有自己的编辑器,但打开时要把磁盘上的文本读进来、保存时写回去。
+ * 主进程的 stat/readFile 与 renderer 的 files-store 都走这一条,避免各处散落 `kind === 'canvas'`。
+ */
+export function isTextBackedKind(kind: NoteFileKind): boolean {
+  return isNoteFileEditable(kind) || kind === 'canvas' || kind === 'drawio' || kind === 'unsupported'
+}
+
+/**
  * 文件协议/下载用的 Content-Type。只按扩展名判断,**不嗅探内容** ——
  * 嗅探会让一个改名成 .png 的恶意文件决定响应头,而扩展名是确定的。
  */
@@ -520,6 +534,8 @@ const FILE_MIME: Record<string, string> = {
   json: 'application/json; charset=utf-8',
   excal: 'application/vnd.excalidraw+json',
   excalidraw: 'application/vnd.excalidraw+json',
+  drawio: 'application/vnd.jgraph.mxfile',
+  dio: 'application/vnd.jgraph.mxfile',
   jsonc: 'application/json; charset=utf-8',
   jsonl: 'application/x-ndjson; charset=utf-8',
   xml: 'application/xml; charset=utf-8',
