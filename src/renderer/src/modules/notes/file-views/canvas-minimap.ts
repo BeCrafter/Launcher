@@ -1,11 +1,15 @@
 // 白板角落的小地图。Excalidraw 0.18 没有小地图,这里用它公开的场景元素和视口自己画。
-// 每个元素是一块色块,不还原笔画,也看不到嵌进去的文件内容。
+// 地图主体是整张白板的栅格缩略图(由 exportToCanvas 生成,形状/文字/图片都在);
+// 缩略图生成前或失败时退回按元素外接框画的色块,保证地图始终可用。
 // 点空白把视口中心移过去,拖视口框平移,滚轮缩放且让光标下的那一点留住。
 // 缩放步长和上下限跟 Excalidraw 0.18 的按钮一致:0.1,最小 0.1,最大 30。
 
 export const MINIMAP_WIDTH = 180
 export const MINIMAP_HEIGHT = 120
 export const MINIMAP_PAD = 8
+
+/** 缩略图长边的栅格上限:180 的地图用 2x,缩小后仍然清晰。 */
+export const MINIMAP_THUMB_MAX = 360
 
 export const CANVAS_ZOOM_STEP = 0.1
 export const CANVAS_MIN_ZOOM = 0.1
@@ -22,6 +26,21 @@ export interface SceneBox {
   width: number
   height: number
   color: string
+}
+
+/** 内容在场景坐标里的外接框。不用 Excalidraw 导出的同名 tuple,调用方按名字区分。 */
+export interface ContentBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+}
+
+export interface MapRect {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 export interface SceneViewport {
@@ -88,12 +107,29 @@ function isPaint(color: string | undefined): color is string {
   return color !== undefined && color !== '' && color !== 'transparent'
 }
 
+/** 回退色块的外接框。空板返回 null。 */
+export function boundsOfBlocks(blocks: readonly SceneBox[]): ContentBounds | null {
+  if (blocks.length === 0) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const block of blocks) {
+    minX = Math.min(minX, block.x)
+    minY = Math.min(minY, block.y)
+    maxX = Math.max(maxX, block.x + block.width)
+    maxY = Math.max(maxY, block.y + block.height)
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null
+  return { minX, minY, maxX, maxY }
+}
+
 /**
  * 小地图怎么装下全部内容和当前视口。
  * 空白板就只显示当前视口,并让它占满小地图。
  */
 export function minimapFrame(
-  blocks: readonly SceneBox[],
+  bounds: ContentBounds | null,
   viewport: SceneViewport,
   mapWidth: number,
   mapHeight: number
@@ -102,11 +138,11 @@ export function minimapFrame(
   let minY = viewportTop(viewport)
   let maxX = minX + viewport.width / viewport.zoom
   let maxY = minY + viewport.height / viewport.zoom
-  for (const block of blocks) {
-    minX = Math.min(minX, block.x)
-    minY = Math.min(minY, block.y)
-    maxX = Math.max(maxX, block.x + block.width)
-    maxY = Math.max(maxY, block.y + block.height)
+  if (bounds !== null) {
+    minX = Math.min(minX, bounds.minX)
+    minY = Math.min(minY, bounds.minY)
+    maxX = Math.max(maxX, bounds.maxX)
+    maxY = Math.max(maxY, bounds.maxY)
   }
   const spanX = Math.max(maxX - minX, 1)
   const spanY = Math.max(maxY - minY, 1)
@@ -127,6 +163,36 @@ export function minimapFrame(
     viewHeight: Math.max((viewport.height / viewport.zoom) * scale, 1)
   }
 }
+
+/** 缩略图在小地图上的落点:和 frame 用同一套场景坐标,旋转元素也不会错位。 */
+export function thumbnailRect(bounds: ContentBounds, frame: MinimapFrame): MapRect {
+  return {
+    x: frame.originX + bounds.minX * frame.scale,
+    y: frame.originY + bounds.minY * frame.scale,
+    width: Math.max((bounds.maxX - bounds.minX) * frame.scale, 1),
+    height: Math.max((bounds.maxY - bounds.minY) * frame.scale, 1)
+  }
+}
+
+/**
+ * 场景矩形 → 小地图逻辑坐标。缩略图区域就是内容外接框的落点,两者线性对应。
+ * 给测试读取某块嵌入卡片的位置,不参与绘制。
+ */
+export function sceneRectToMap(
+  rect: { x: number; y: number; width: number; height: number },
+  bounds: ContentBounds,
+  contentRect: MapRect
+): MapRect {
+  const spanX = Math.max(bounds.maxX - bounds.minX, 1e-6)
+  const spanY = Math.max(bounds.maxY - bounds.minY, 1e-6)
+  return {
+    x: contentRect.x + ((rect.x - bounds.minX) / spanX) * contentRect.width,
+    y: contentRect.y + ((rect.y - bounds.minY) / spanY) * contentRect.height,
+    width: (rect.width / spanX) * contentRect.width,
+    height: (rect.height / spanY) * contentRect.height
+  }
+}
+
 
 function viewportLeft(viewport: SceneViewport): number {
   return -viewport.scrollX

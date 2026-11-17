@@ -314,35 +314,128 @@ async function drawRectangle(ctx) {
   await ctx.cdp.mouse('mouseReleased', from.x + 120, from.y + 80, { buttons: 0 })
 }
 
-/** 小地图上视口框外面的色块。框是描边,色块是实心的,取最靠右的一块。 */
-async function minimapOutsideBlock(ctx) {
+/**
+ * 小地图上内容缩略图的中心,并确认它落在视口框外 —— 点那里是平移,不是拖框。
+ * `data-view` / `data-content` 都是小地图逻辑坐标(180×120),由组件绘制时写入。
+ */
+async function minimapContentPoint(ctx) {
   const point = await ctx.cdp.json(`(() => {
     const map = document.querySelector('.canvas-minimap-map')
     if (map === null) return null
-    const context = map.getContext('2d')
-    if (context === null) return null
-    const pixels = context.getImageData(0, 0, map.width, map.height).data
-    const at = (x, y) => (y * map.width + x) * 4
-    const filled = (x, y) => {
-      const i = at(x, y)
-      return pixels[i + 3] > 200 && pixels[i] < 80 && pixels[i + 1] < 80 && pixels[i + 2] < 80
+    const parse = (name) => (map.dataset[name] ?? '').split(',').map(Number)
+    const view = parse('view')
+    const content = parse('content')
+    if (content.length !== 4 || content.some((value) => !Number.isFinite(value))) return null
+    const [x, y, width, height] = content
+    const cx = x + width / 2
+    const cy = y + height / 2
+    if (view.length === 4) {
+      const [vx, vy, vw, vh] = view
+      if (cx >= vx && cx <= vx + vw && cy >= vy && cy <= vy + vh) return null
     }
-    let best = null
-    for (let y = 2; y < map.height - 2; y += 1) {
-      for (let x = 2; x < map.width - 2; x += 1) {
-        if (!filled(x, y) || !filled(x - 1, y) || !filled(x + 1, y) || !filled(x, y - 1) || !filled(x, y + 1)) continue
-        if (best === null || x > best.x) best = { x, y }
-      }
-    }
-    if (best === null) return null
     const box = map.getBoundingClientRect()
+    return { x: box.left + (cx / 180) * box.width, y: box.top + (cy / 120) * box.height }
+  })()`)
+  ok(point !== null && typeof point.x === 'number', '小地图上找得到视口框外的内容缩略图')
+  return point
+}
+
+/** 缩略图区域里和角落底色不同的像素数:证明画上去的是白板内容,不是一块纯色板。 */
+async function minimapContentPixels(ctx) {
+  return await ctx.cdp.json(`(() => {
+    const map = document.querySelector('.canvas-minimap-map')
+    if (map === null) return null
+    const content = (map.dataset.content ?? '').split(',').map(Number)
+    if (content.length !== 4 || content.some((value) => !Number.isFinite(value))) return null
+    const context = map.getContext('2d')
+    const dpr = map.width / 180
+    const [x, y, width, height] = content
+    const x0 = Math.max(0, Math.floor(x * dpr))
+    const y0 = Math.max(0, Math.floor(y * dpr))
+    const w = Math.min(map.width - x0, Math.ceil(width * dpr))
+    const h = Math.min(map.height - y0, Math.ceil(height * dpr))
+    if (w <= 0 || h <= 0) return null
+    const pixels = context.getImageData(x0, y0, w, h).data
+    const corner = context.getImageData(1, 1, 1, 1).data
+    let different = 0
+    for (let i = 0; i < pixels.length; i += 4) {
+      const delta = Math.max(
+        Math.abs(pixels[i] - corner[0]),
+        Math.abs(pixels[i + 1] - corner[1]),
+        Math.abs(pixels[i + 2] - corner[2])
+      )
+      if (delta > 50) different += 1
+    }
+    return { total: w * h, different }
+  })()`)
+}
+
+/**
+ * 每块嵌入卡片在小地图上的像素统计。场景矩形经 `data-embeds.bounds` +
+ * `data-content` 线性换算到地图逻辑坐标,再按 `canvas.width/180` 换到设备像素。
+ * `pixels` 取卡片内部 60% 区域(避开边框),`full` 覆盖整块卡片(类型色条在边缘)。
+ */
+async function minimapEmbedPixels(ctx) {
+  return await ctx.cdp.json(`(() => {
+    const map = document.querySelector('.canvas-minimap-map')
+    if (map === null) return null
+    let data
+    try { data = JSON.parse(map.dataset.embeds || '{}') } catch { return null }
+    if (!Array.isArray(data.bounds) || !Array.isArray(data.cards)) return null
+    const content = (map.dataset.content ?? '').split(',').map(Number)
+    if (content.length !== 4 || content.some((value) => !Number.isFinite(value))) return null
+    const [bx0, by0, bx1, by1] = data.bounds
+    const [cx, cy, cw, ch] = content
+    if (!(bx1 > bx0) || !(by1 > by0)) return null
+    const dpr = map.width / 180
+    const context = map.getContext('2d')
+    const stats = (rect, inset) => {
+      const [x, y, w, h] = rect
+      const mx = cx + ((x - bx0) / (bx1 - bx0)) * cw
+      const my = cy + ((y - by0) / (by1 - by0)) * ch
+      const mw = (w / (bx1 - bx0)) * cw
+      const mh = (h / (by1 - by0)) * ch
+      const x0 = Math.max(0, Math.floor((mx + mw * inset) * dpr))
+      const y0 = Math.max(0, Math.floor((my + mh * inset) * dpr))
+      const x1 = Math.min(map.width, Math.ceil((mx + mw * (1 - inset)) * dpr))
+      const y1 = Math.min(map.height, Math.ceil((my + mh * (1 - inset)) * dpr))
+      if (x1 <= x0 || y1 <= y0) return null
+      const pixels = context.getImageData(x0, y0, x1 - x0, y1 - y0).data
+      let red = 0
+      let dark = 0
+      let blue = 0
+      let cyan = 0
+      let ink = 0
+      let colored = 0
+      for (let i = 0; i < pixels.length; i += 4) {
+        const r = pixels[i]
+        const g = pixels[i + 1]
+        const b = pixels[i + 2]
+        if (r > 150 && g < 110 && b < 110) red += 1
+        if (r < 100 && g < 100 && b < 100) dark += 1
+        if (b > 190 && b - r > 15 && g > 150) blue += 1
+        if (r < 140 && g > 120 && b > 140) cyan += 1
+        if (Math.max(r, g, b) < 165) ink += 1
+        // 深色主题下子白板导出会走 invert+hue-rotate,#a5d8ff 不再是浅蓝,
+        // 但仍带明显色相;用它证明画的是子画布而不是一块灰底。
+        if (Math.max(r, g, b) - Math.min(r, g, b) > 18) colored += 1
+      }
+      return { total: pixels.length / 4, red, dark, blue, cyan, ink, colored }
+    }
     return {
-      x: box.left + (best.x + 0.5) * (box.width / map.width),
-      y: box.top + (best.y + 0.5) * (box.height / map.height)
+      status: map.dataset.embedsStatus,
+      bounds: data.bounds,
+      cards: data.cards.map((card) => ({
+        id: card.id,
+        kind: card.kind,
+        mode: card.mode,
+        content: card.content,
+        rect: card.rect,
+        pixels: stats(card.rect, 0.2),
+        full: stats(card.rect, 0)
+      }))
     }
   })()`)
-  ok(point !== null && typeof point.x === 'number', '小地图框外找得到矩形色块')
-  return point
 }
 
 /** 画面上矩形描边的外接矩形。默认描边接近黑色,背景是白的。 */
@@ -717,6 +810,35 @@ function internalEmbedScene(refs) {
       width: 360,
       height: 240,
       link: entry.kind === 'note' ? `${entry.id}.md` : entry.path,
+      strokeColor: 'transparent',
+      backgroundColor: 'transparent',
+      isDeleted: false,
+      customData: { launcher: entry }
+    })),
+    appState: {},
+    files: {}
+  })
+}
+
+/** 小地图用例:2×3 排布的大嵌入卡片,缩略图里每块都够大,颜色/文字能被读到。 */
+function minimapEmbedScene(refs) {
+  return JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'e2e',
+    elements: refs.map((entry, index) => ({
+      type: 'embeddable',
+      id: `mini-embed-${index + 1}`,
+      x: (index % 3) * 780,
+      y: Math.floor(index / 3) * 560,
+      width: 720,
+      height: 520,
+      link:
+        entry.kind === 'note'
+          ? `${entry.id}.md`
+          : entry.kind === 'file'
+            ? entry.path
+            : entry.url,
       strokeColor: 'transparent',
       backgroundColor: 'transparent',
       isDeleted: false,
@@ -2570,7 +2692,7 @@ export default [
   {
     id: 'canvas/minimap',
     area: 'canvas',
-    title: '小地图默认收起,手动打开后记住;点击和滚轮都带动视口,关掉后滚轮不再带动白板',
+    title: '小地图默认收起,手动打开后记住;地图画的是白板内容的缩略图,点击和滚轮都带动视口,关掉后滚轮不再带动白板',
     tags: ['canvas', 'minimap'],
     async run(ctx) {
       await createCanvas(ctx, '小地图')
@@ -2588,9 +2710,12 @@ export default [
       const saved = JSON.parse(readFileSync(absPath(ctx, '小地图.excal'), 'utf8'))
       const rectangle = liveElements(saved).find((element) => element.type === 'rectangle')
       ok(rectangle !== undefined && rectangle.width > 40, '画布上有一块矩形')
-      // 挪到当前视口右边。小地图会把视口框缩小,矩形的色块落在框外,点击才是平移而不是拖框。
+      // 挪到当前视口右边。小地图会把视口框缩小,内容缩略图落在框外,点击才是平移而不是拖框。
+      // 顺便填成红色:缩略图里那块颜色好认,E2E 才能确认画的真是白板内容。
       const shift = 900
       rectangle.x += shift
+      rectangle.backgroundColor = '#ff0000'
+      rectangle.fillStyle = 'solid'
       writeFileSync(absPath(ctx, '小地图.excal'), JSON.stringify(saved))
       await ctx.cdp.eval(`document.querySelector('.notes-row[data-note-id]')?.click()`)
       await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
@@ -2602,6 +2727,15 @@ export default [
         timeout: 10_000,
         message: '重开后小地图还在'
       })
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-map')?.dataset.thumb === 'ready'`,
+        { timeout: 10_000, message: '小地图画出了白板内容的缩略图' }
+      )
+      const thumbPixels = await minimapContentPixels(ctx)
+      ok(
+        thumbPixels !== null && thumbPixels.different > 3,
+        `缩略图里看得到白板内容(内容区 ${thumbPixels?.total ?? 0} 像素里 ${thumbPixels?.different ?? 0} 个不同)`
+      )
       const zoomButtons = await ctx.cdp.eval(
         `['.zoom-in-button', '.zoom-out-button', '.reset-zoom-button'].every((sel) => document.querySelector(sel) !== null)`
       )
@@ -2640,7 +2774,7 @@ export default [
       )
 
       const percentBefore = await zoomPercent(ctx)
-      const block = await minimapOutsideBlock(ctx)
+      const block = await minimapContentPoint(ctx)
       await ctx.cdp.click(block.x, block.y)
       await sleep(400)
       const after = await rectangleOnBoard(ctx)
@@ -2650,7 +2784,7 @@ export default [
       const centerX = after.x + after.width / 2
       ok(
         Math.abs(centerX - (board.left + board.width / 2)) < board.width * 0.25,
-        '点小地图框外的色块,矩形移到画面中间一带'
+        '点小地图框外的内容,矩形移到画面中间一带'
       )
       eq(await zoomPercent(ctx), percentBefore, '点击只平移,不改缩放')
 
@@ -2695,6 +2829,131 @@ export default [
       await ctx.cdp.waitFor(
         `document.querySelector('.canvas-minimap-map') === null && document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed') === 'false'`,
         { timeout: 10_000, message: '关掉的小地图在另一块白板上仍然关着' }
+      )
+    }
+  },
+
+  {
+    id: 'canvas/minimap-embeds',
+    area: 'canvas',
+    title:
+      '小地图把嵌入卡片按类型画进缩略图:笔记正文、图片、PDF 首页、子白板是内容快照,网页是类型卡;重开白板仍然如此',
+    tags: ['canvas', 'minimap', 'embed'],
+    async run(ctx) {
+      const noteText = [
+        '---',
+        'tags: [e2e]',
+        '---',
+        '# 小地图笔记标题',
+        '第一行正文文字。',
+        '第二行正文文字。',
+        '第三行正文文字。'
+      ].join('\n')
+      writeVaultFile(ctx, '小地图笔记.md', noteText)
+      writeVaultFile(
+        ctx,
+        '红图.svg',
+        '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200"><rect width="200" height="200" fill="#e03131"/></svg>'
+      )
+      // 整页涂黑:缩略图里那一片要明显是深色,证明画的是 PDF 首页而不是类型卡。
+      writeVaultFile(ctx, '卡片.pdf', onePagePdf('0 0 0 rg 0 0 595 842 re f'))
+      writeVaultFile(ctx, '子白板.excal', childBoardScene('子板文字'))
+      writeCanvas(
+        ctx,
+        '小地图嵌入板.excal',
+        minimapEmbedScene([
+          { kind: 'note', id: '小地图笔记' },
+          { kind: 'file', path: '红图.svg' },
+          { kind: 'file', path: '卡片.pdf' },
+          { kind: 'file', path: '子白板.excal' },
+          { kind: 'web', url: 'https://example.com/minimap' }
+        ])
+      )
+
+      await openCanvasFile(ctx, '小地图嵌入板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-toggle') !== null`,
+        { timeout: 15_000, message: '右下角出现小地图开关' }
+      )
+      if (
+        (await ctx.cdp.eval(
+          `document.querySelector('.canvas-minimap-toggle')?.getAttribute('aria-pressed')`
+        )) !== 'true'
+      ) {
+        await pointerClick(ctx, '.canvas-minimap-toggle')
+      }
+      await ctx.cdp.waitFor(`document.querySelector('.canvas-minimap-map') !== null`, {
+        timeout: 5000,
+        message: '小地图展开'
+      })
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-map')?.dataset.thumb === 'ready'`,
+        { timeout: 15_000, message: '小地图画出缩略图' }
+      )
+      // 第一遍只有类型卡;等 PDF / 子白板这类异步内容都回来。
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-map')?.dataset.embedsStatus === 'refined'`,
+        { timeout: 30_000, message: '嵌入卡片的内容快照合成完成' }
+      )
+
+      const first = await minimapEmbedPixels(ctx)
+      ok(first !== null, '读得到小地图上的嵌入卡片数据')
+      eq(first.cards.length, 5, '五块嵌入卡片都在小地图里')
+      const byKind = Object.fromEntries(first.cards.map((card) => [card.kind, card]))
+      eq(byKind.note?.content, 'text', '笔记卡画的是正文')
+      eq(byKind.image?.content, 'image', '图片卡画的是真实图片')
+      eq(byKind.pdf?.content, 'pdf', 'PDF 卡画的是首页')
+      eq(byKind.canvas?.content, 'board', '子白板卡画的是子画布')
+      eq(byKind.web?.content, 'type', '网页卡只能是类型卡')
+
+      const ratio = (pixels, key) =>
+        pixels === null || pixels.total === 0 ? 0 : pixels[key] / pixels.total
+      ok(
+        ratio(byKind.image?.pixels, 'red') > 0.2,
+        `图片卡内部是红色(${((ratio(byKind.image?.pixels, 'red')) * 100).toFixed(0)}%)`
+      )
+      ok(
+        ratio(byKind.pdf?.pixels, 'dark') > 0.2,
+        `PDF 卡内部是深色首页(${((ratio(byKind.pdf?.pixels, 'dark')) * 100).toFixed(0)}%)`
+      )
+      // 浅色主题下子白板的蓝矩形保持 #a5d8ff;深色主题下导出会反相成暗蓝。
+      // 两种都算「画出了子画布」,所以除了浅蓝,再看有色相变化的像素。
+      ok(
+        ratio(byKind.canvas?.pixels, 'blue') > 0.12 ||
+          ratio(byKind.canvas?.pixels, 'colored') > 0.12,
+        `子白板卡内部画出了子画布(浅蓝 ${((ratio(byKind.canvas?.pixels, 'blue')) * 100).toFixed(0)}% / 有色 ${((ratio(byKind.canvas?.pixels, 'colored')) * 100).toFixed(0)}%)`
+      )
+      ok(
+        (byKind.note?.pixels?.ink ?? 0) > 3,
+        `笔记卡上有正文文字像素(${byKind.note?.pixels?.ink ?? 0} 个)`
+      )
+      ok(
+        (byKind.web?.full?.cyan ?? 0) > 0,
+        `网页卡带青色类型色条(${byKind.web?.full?.cyan ?? 0} 个像素)`
+      )
+
+      // 回列表再打开同一块白板:整条加载/缓存路径再走一遍。
+      await ctx.cdp.eval(`document.querySelector('.notes-row[data-note-id]')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+        timeout: 10_000,
+        message: '先离开白板'
+      })
+      await openCanvasFile(ctx, '小地图嵌入板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-minimap-map')?.dataset.embedsStatus === 'refined'`,
+        { timeout: 30_000, message: '重开白板后嵌入快照再次完成' }
+      )
+      const again = await minimapEmbedPixels(ctx)
+      ok(again !== null, '重开后仍读得到嵌入卡片数据')
+      const againByKind = Object.fromEntries(again.cards.map((card) => [card.kind, card]))
+      eq(againByKind.note?.content, 'text', '重开后笔记仍是正文快照')
+      eq(againByKind.image?.content, 'image', '重开后图片仍是真实图片')
+      eq(againByKind.pdf?.content, 'pdf', '重开后 PDF 仍是首页')
+      eq(againByKind.canvas?.content, 'board', '重开后子白板仍是子画布')
+      eq(againByKind.web?.content, 'type', '重开后网页仍是类型卡')
+      ok(
+        ratio(againByKind.image?.pixels, 'red') > 0.2,
+        '重开后图片卡仍是红色'
       )
     }
   },

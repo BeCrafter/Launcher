@@ -4,12 +4,15 @@ import {
   CANVAS_MIN_ZOOM,
   MINIMAP_HEIGHT,
   MINIMAP_WIDTH,
+  boundsOfBlocks,
   centerOnMapPoint,
   dragView,
   minimapBlocks,
   minimapFrame,
   minimapOpenFrom,
   pointInView,
+  sceneRectToMap,
+  thumbnailRect,
   zoomAtMapPoint,
   type SceneViewport
 } from './canvas-minimap'
@@ -54,9 +57,63 @@ describe('minimapBlocks', () => {
   })
 })
 
+describe('boundsOfBlocks', () => {
+  it('空板返回 null,否则取所有色块的外接框', () => {
+    expect(boundsOfBlocks([])).toBeNull()
+    expect(
+      boundsOfBlocks([
+        { x: -10, y: 5, width: 20, height: 30, color: '#000' },
+        { x: 40, y: -20, width: 10, height: 10, color: '#000' }
+      ])
+    ).toEqual({ minX: -10, minY: -20, maxX: 50, maxY: 35 })
+  })
+})
+
+describe('thumbnailRect', () => {
+  it('内容框按 frame 的 scale/origin 落在小地图上', () => {
+    const bounds = { minX: 100, minY: 50, maxX: 300, maxY: 210 }
+    const frame = minimapFrame(bounds, VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
+    const rect = thumbnailRect(bounds, frame)
+    expect(rect.x).toBeCloseTo(frame.originX + 100 * frame.scale, 6)
+    expect(rect.y).toBeCloseTo(frame.originY + 50 * frame.scale, 6)
+    expect(rect.width).toBeCloseTo(200 * frame.scale, 6)
+    expect(rect.height).toBeCloseTo(160 * frame.scale, 6)
+  })
+
+  it('内容在视口外也按同一套坐标落位,不会跑出外接框', () => {
+    const bounds = { minX: 5000, minY: 4000, maxX: 5100, maxY: 4080 }
+    const frame = minimapFrame(bounds, VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
+    const rect = thumbnailRect(bounds, frame)
+    expect(rect.x).toBeGreaterThanOrEqual(0)
+    expect(rect.x + rect.width).toBeLessThanOrEqual(MINIMAP_WIDTH)
+    expect(rect.y).toBeGreaterThanOrEqual(0)
+    expect(rect.y + rect.height).toBeLessThanOrEqual(MINIMAP_HEIGHT)
+  })
+})
+
+describe('sceneRectToMap', () => {
+  it('场景矩形按内容外接框缩到小地图的内容区域里', () => {
+    const bounds = { minX: 100, minY: 50, maxX: 500, maxY: 350 }
+    const content = { x: 10, y: 20, width: 160, height: 90 }
+    expect(
+      sceneRectToMap({ x: 300, y: 150, width: 100, height: 50 }, bounds, content)
+    ).toEqual({ x: 90, y: 50, width: 40, height: 15 })
+  })
+
+  it('外接框退化成一点时也不除零', () => {
+    const rect = sceneRectToMap(
+      { x: 0, y: 0, width: 10, height: 10 },
+      { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+      { x: 0, y: 0, width: 100, height: 100 }
+    )
+    expect(Number.isFinite(rect.x)).toBe(true)
+    expect(Number.isFinite(rect.width)).toBe(true)
+  })
+})
+
 describe('minimapFrame', () => {
   it('空白板只显示当前视口,视口框在小地图里面', () => {
-    const frame = minimapFrame([], VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
+    const frame = minimapFrame(null, VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
     expect(frame.viewWidth).toBeGreaterThan(1)
     expect(frame.viewHeight).toBeGreaterThan(1)
     expect(frame.viewX).toBeGreaterThanOrEqual(0)
@@ -67,7 +124,7 @@ describe('minimapFrame', () => {
 
   it('视口外的元素也在小地图里,视口框小于整张图', () => {
     const blocks = [{ x: -2000, y: -2000, width: 100, height: 100, color: '#000' }]
-    const frame = minimapFrame(blocks, VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
+    const frame = minimapFrame(boundsOfBlocks(blocks), VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
     expect(frame.viewWidth).toBeLessThan(MINIMAP_WIDTH / 2)
     const blockX = frame.originX + blocks[0].x * frame.scale
     expect(blockX).toBeGreaterThanOrEqual(0)
@@ -77,7 +134,7 @@ describe('minimapFrame', () => {
 
 describe('导航', () => {
   const blocks = [{ x: 1000, y: 200, width: 80, height: 40, color: '#000' }]
-  const frame = minimapFrame(blocks, VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
+  const frame = minimapFrame(boundsOfBlocks(blocks), VIEW, MINIMAP_WIDTH, MINIMAP_HEIGHT)
   const blockX = frame.originX + 1040 * frame.scale
   const blockY = frame.originY + 220 * frame.scale
 

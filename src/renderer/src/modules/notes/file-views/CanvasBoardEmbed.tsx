@@ -19,15 +19,14 @@ import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types'
 import type { BinaryFiles, ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types'
 import type { ImportedDataState } from '@excalidraw/excalidraw/data/types'
 import { canvasEmbedAllowed } from '@shared/canvas-ref'
-import { dataSource } from '../../../data'
 import { useEffectiveTheme } from '../../../hooks/useEffectiveTheme'
 import { useT } from '../../../hooks/useT'
 import { getCurrentLang } from '../../../i18n'
 import { useFilesStore } from '../../../state/files-store'
 import { boardOrigin, openFileDoc } from '../doc-actions'
 import { CanvasEmbed } from './CanvasEmbed'
+import { loadBoard } from './canvas-board-load'
 import {
-  BOARD_PREVIEW_MAX_BYTES,
   BOARD_PREVIEW_PADDING,
   boardPreviewMode,
   canvasBoardExportAppState,
@@ -284,27 +283,4 @@ function LiveBoard({
       />
     </div>
   )
-}
-
-type BoardLoad =
-  | { ok: true; text: string; size: number }
-  | { ok: false; reason: 'missing' | 'unavailable' | 'too-large' }
-
-/** 先 stat 拦大小,再读正文。8 MiB 之外的白板不为了看一眼预览去搬整份文本。 */
-async function loadBoard(path: string): Promise<BoardLoad> {
-  try {
-    const stat = await dataSource().notes.statFile(path)
-    if (stat === null) return { ok: false, reason: 'missing' }
-    if (stat.size > BOARD_PREVIEW_MAX_BYTES) return { ok: false, reason: 'too-large' }
-    const out = await dataSource().notes.readFile(path)
-    if (!out.ok) {
-      return { ok: false, reason: out.kind === 'not-found' ? 'missing' : 'unavailable' }
-    }
-    if (!out.doc.editable) {
-      return { ok: false, reason: out.doc.tooLarge ? 'too-large' : 'unavailable' }
-    }
-    return { ok: true, text: out.doc.text, size: out.doc.size }
-  } catch {
-    return { ok: false, reason: 'unavailable' }
-  }
 }

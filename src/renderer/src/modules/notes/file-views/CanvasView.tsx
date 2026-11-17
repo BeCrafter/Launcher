@@ -341,7 +341,12 @@ function CanvasBoard({
           <CanvasEmbedMenu board={boardRef.current} onPick={insertEmbed} onWeb={beginWebEmbed} />
           <CanvasLibraryLoad api={api} board={boardRef.current} />
           <CanvasDropGuard api={api} board={boardRef.current} onEmbed={insertEmbed} />
-          <CanvasMinimap api={api} board={boardRef.current} />
+          <CanvasMinimap
+            api={api}
+            theme={theme}
+            board={boardRef.current}
+            boardPath={boardPath}
+          />
         </>
       )}
     </div>
