@@ -9,7 +9,7 @@
 // 顺序按 `n:`/`f:` token 记进 localStorage;目录树里的副本仍是原生拖拽。
 // 置顶/改名/移动都会真实写盘,用例之间用唯一名字隔离,并在末尾取消置顶。
 
-import { existsSync } from 'node:fs'
+import { existsSync, utimesSync } from 'node:fs'
 import { eq, ok } from '../lib/assert.mjs'
 import { sleep } from '../lib/cdp.mjs'
 import { BASIC } from '../lib/fixtures.mjs'
@@ -42,12 +42,35 @@ async function seedNoteInFolder(ctx, folder, title) {
   makeFolder(ctx, folder)
   const id = `${folder}/${title}`
   writeNoteFile(ctx, `${id}.md`, `---\ntitle: ${title}\n---\n\n正文\n`)
-  await expandFolder(ctx, folder)
-  await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(noteRow(id, 'tree'))}) !== null`, {
-    timeout: 10_000,
-    message: `笔记行出现在目录里:${id}`
-  })
-  return id
+  const selector = noteRow(id, 'tree')
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    await expandFolder(ctx, folder)
+    try {
+      await ctx.cdp.waitFor(`document.querySelector(${JSON.stringify(selector)}) !== null`, {
+        timeout: 1200,
+        message: `笔记行出现在目录里:${id}`
+      })
+      return id
+    } catch (err) {
+      if (Date.now() >= deadline) {
+        const state = await ctx.cdp.eval(`(() => {
+          const row = document.querySelector('.notes-folder-row[data-folder-path=${JSON.stringify(folder)}]')
+          return {
+            folder: row !== null,
+            expanded: row?.querySelector('.notes-folder-name')?.getAttribute('aria-expanded') ?? null,
+            rows: [...document.querySelectorAll('.notes-row')]
+              .map((el) => el.dataset.noteId)
+              .filter((id) => id !== undefined && id.startsWith(${JSON.stringify(`${folder}/`)}))
+          }
+        })()`)
+        throw new Error(`笔记行没出现:${id} ${JSON.stringify(state)}`)
+      }
+      // 应用的 fs.watch 只盯笔记根目录,新目录里的文件本身不会触发根目录事件。
+      // 碰一下根目录 mtime,让它重扫整棵树(scan 是全量的)。
+      utimesSync(absPath(ctx, '.'), new Date(), new Date())
+    }
+  }
 }
 
 /** 等同一篇笔记在 DOM 里恰好有 count 份。 */
@@ -1293,6 +1316,60 @@ export default [
         await ctx.cdp.json(`document.querySelectorAll('.notes-pinned-files > .notes-row').length`),
         0,
         '收尾后置顶区清空'
+      )
+    }
+  },
+
+  {
+    // 期望变更:标题行那颗置顶按钮和左栏行的悬停图钉完全重复,已按需求移除。
+    // 入口只保留左栏(目录副本与置顶副本都能置顶/取消),所以这里同时断言
+    // 「标题行没有图钉」和「左栏的置顶仍然完整可用、状态仍可见」。
+    id: 'pin/rail-only-entry',
+    area: 'pin',
+    title: '置顶入口只在左栏:标题行不再挂图钉;打开已置顶的笔记后标题行仍没有,状态看左栏图钉与置顶区',
+    tags: ['pin', 'rail', 'header'],
+    fixture: BASIC,
+    async run(ctx) {
+      const id = await seedNoteInFolder(ctx, '置顶戊', '入口甲')
+
+      // 先从目录行置顶(笔记还没打开,这条路径最稳),置顶区与目录各一份。
+      await clickNotePin(ctx, id)
+      await waitCopies(ctx, id, 2, '从目录行置顶后两份出现')
+
+      // 打开已置顶的笔记:标题行没有置顶按钮,状态由左栏表达。
+      await clickRow(ctx, noteRow(id, 'tree'))
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-hd-actions .fa-thumbtack') === null`,
+        { message: '已置顶时标题行也没有置顶按钮' }
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(noteRow(id, 'tree'))})?.querySelector('.notes-row-pin') !== null`
+        ),
+        true,
+        '左栏目录行显示真实置顶状态'
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(noteRow(id, 'pinned'))}) !== null`
+        ),
+        true,
+        '置顶区仍有这份副本'
+      )
+
+      // 左栏取消置顶仍然有效;标题行在未置顶状态下同样没有置顶按钮。
+      await clickNotePin(ctx, id)
+      await waitCopies(ctx, id, 1, '从左栏取消置顶后只剩目录那份')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-hd-actions .fa-thumbtack') === null`,
+        { message: '未置顶时标题行也没有置顶按钮' }
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(noteRow(id, 'tree'))})?.querySelector('.notes-row-pin') === null`
+        ),
+        true,
+        '取消置顶后目录行不再显示图钉'
       )
     }
   }

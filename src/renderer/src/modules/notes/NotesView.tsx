@@ -94,7 +94,6 @@ export function NotesView(): React.JSX.Element {
   const toggleScrollSync = useNotesStore((s) => s.toggleScrollSync)
   const setBody = useNotesStore((s) => s.setBody)
   const setTitle = useNotesStore((s) => s.setTitle)
-  const togglePin = useNotesStore((s) => s.togglePin)
   const toggleTask = useNotesStore((s) => s.toggleTask)
   const addRef = useNotesStore((s) => s.addRef)
   const removeRef = useNotesStore((s) => s.removeRef)
@@ -749,14 +748,6 @@ export function NotesView(): React.JSX.Element {
               onClick={referenceInAi}
             >
               <i className="fa-solid fa-wand-magic-sparkles" />
-            </button>
-            <button
-              type="button"
-              className={'notes-act' + (draft.pinned ? ' active' : '')}
-              title={draft.pinned ? t('notes.action.unpin') : t('notes.action.pin')}
-              onClick={togglePin}
-            >
-              <i className="fa-solid fa-thumbtack" />
             </button>
             <button
               type="button"

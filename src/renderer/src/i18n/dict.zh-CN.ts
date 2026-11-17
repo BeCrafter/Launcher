@@ -261,8 +261,6 @@ export const zhCN: Record<string, string> = {
   "notes.mode.split": "分栏",
   "notes.mode.edit": "编辑",
   "notes.mode.preview": "预览",
-  "notes.action.pin": "置顶",
-  "notes.action.unpin": "取消置顶",
   "notes.action.delete": "删除笔记",
   "notes.action.referenceAi": "在 AI 中引用（选中一段则只引这一段）",
   "notes.find.open": "查找与替换（⌘F）",

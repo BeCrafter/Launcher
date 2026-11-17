@@ -261,8 +261,6 @@ export const enUS: Record<string, string> = {
   "notes.mode.split": "Split",
   "notes.mode.edit": "Edit",
   "notes.mode.preview": "Preview",
-  "notes.action.pin": "Pin",
-  "notes.action.unpin": "Unpin",
   "notes.action.delete": "Delete note",
   "notes.action.referenceAi": "Reference in AI (select text to reference just that part)",
   "notes.find.open": "Find and replace (⌘F)",
