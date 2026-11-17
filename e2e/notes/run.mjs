@@ -115,8 +115,11 @@ async function main() {
   const runDir = join(tmpDir, `run-${timestamp()}`)
   const profileDir = join(runDir, 'profile')
   const failuresDir = join(runDir, 'failures')
+  // 导出走这个目录而不是原生保存框(dialog 在 E2E 里没人点)
+  const exportsDir = join(runDir, 'exports')
   mkdirSync(profileDir, { recursive: true })
   mkdirSync(failuresDir, { recursive: true })
+  mkdirSync(exportsDir, { recursive: true })
   seedNotes(profileDir, [MAIN_NOTE, LINK_NOTE])
 
   console.log(`启动隔离实例…（profile: ${profileDir}）`)
@@ -131,12 +134,14 @@ async function main() {
       LAUNCHER_R2_BASE: await updateStub.url(),
       LAUNCHER_E2E_UPDATE_MODE: 'self',
       LAUNCHER_UPDATE_CHECK_FIRST_MS: '500',
-      LAUNCHER_UPDATE_CHECK_INTERVAL_MS: '1500'
+      LAUNCHER_UPDATE_CHECK_INTERVAL_MS: '1500',
+      LAUNCHER_E2E_EXPORT_DIR: exportsDir
     }
   })
   const ctx = new NoteE2EContext({
     cdp: app.cdp,
     profileDir,
+    exportsDir,
     noteFile: MAIN_NOTE.file,
     noteTitle: MAIN_NOTE.title,
     logs: app.logs,

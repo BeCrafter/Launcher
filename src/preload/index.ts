@@ -47,6 +47,7 @@ const api: LauncherApi = {
   openExternal: (url) => ipcRenderer.invoke(IPC.openExternal, url),
   pickFile: (opts) => ipcRenderer.invoke(IPC.shellPickFile, opts),
   saveTextFile: (opts) => ipcRenderer.invoke(IPC.shellSaveText, opts),
+  savePdf: (opts) => ipcRenderer.invoke(IPC.shellSavePdf, opts),
   saveViewportPng: (opts) => ipcRenderer.invoke(IPC.shellSaveViewportPng, opts),
   reportBadgeCount: (count) => ipcRenderer.invoke(IPC.agentsBadge, count),
   // 启动进度上报:单向 send(不需要回执),main 据此决定何时显示窗口
@@ -132,6 +133,7 @@ const api: LauncherApi = {
     read: (id) => ipcRenderer.invoke(IPC.notesRead, id),
     create: (input) => ipcRenderer.invoke(IPC.notesCreate, input),
     save: (input) => ipcRenderer.invoke(IPC.notesSave, input),
+    exportMarkdown: (input) => ipcRenderer.invoke(IPC.notesExportMarkdown, input),
     rename: (input) => ipcRenderer.invoke(IPC.notesRename, input),
     remove: (input) => ipcRenderer.invoke(IPC.notesRemove, input),
     search: (query, limit) => ipcRenderer.invoke(IPC.notesSearch, query, limit),

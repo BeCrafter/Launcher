@@ -447,6 +447,14 @@
   background: var(--border);
 }
 
+/* 导出进行中（PDF 生成约 1 秒）：按钮与菜单项都置灰，避免连点弹两次保存框 */
+.notes-new-menu-item:disabled,
+.notes-export-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
 
 /* 外层不滚动,只用来给自绘滚动条做定位参照 */
 .notes-rail-listwrap {

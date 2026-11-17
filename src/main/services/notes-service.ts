@@ -68,6 +68,7 @@ import {
   type NoteImportInput,
   type NoteImportResult,
   type NoteMeta,
+  type NoteMetaPatch,
   type NoteRemoveInput,
   type NoteRenameInput,
   type NoteSaveAssetResult,
@@ -88,6 +89,7 @@ import {
   type FrontmatterFields,
   type FrontmatterSplit
 } from '../domains/frontmatter'
+import { composeNoteMarkdown } from '../domains/note-export'
 import { slugifyFolderName, slugifyNoteTitle, titleFromBody, uniqueNoteId } from '../domains/note-id'
 import { compactStamp, localIso } from '../domains/note-time'
 import type { CanvasRetarget } from '../../shared/canvas-ref'
@@ -98,6 +100,15 @@ export interface NotesService {
   dir(): string
   list(): Promise<NotesListPayload>
   read(id: string): Promise<Note | null>
+  /**
+   * 拼出完整 .md 文本(含 frontmatter)但不写盘 —— 导出用。
+   * 与 save 共用同一段拼装;导出不该改写笔记文件,也不该刷 updated。
+   */
+  exportMarkdown(input: {
+    id: string
+    body: string
+    meta?: NoteMetaPatch
+  }): Promise<{ ok: true; text: string } | { ok: false; message: string }>
   create(input: NoteCreateInput): Promise<Note>
   /**
    * 首次运行与「界面语言变了」两件事共用这一个入口:
@@ -701,6 +712,35 @@ export function createNotesService(opts: {
       return toNote(parsed)
     },
 
+    /**
+     * 导出:读磁盘原文(未知键/BOM/EOL 的载体),套上当前缓冲的正文与元数据。
+     * 不写盘 —— 用户可能在导出前还没保存,导出不该顺便把改动落下去。
+     */
+    async exportMarkdown(input) {
+      if (!isSafeNoteId(input.id)) return { ok: false as const, message: `非法笔记 id:${input.id}` }
+      const file = fileOf(opts.getDir(), input.id)
+      if (!existsSync(file)) return { ok: false as const, message: `找不到 ${input.id}.md` }
+      let text: string
+      let st: Stats
+      try {
+        text = readFileSync(file, 'utf8')
+        st = statSync(file)
+      } catch (err) {
+        return { ok: false as const, message: String(err) }
+      }
+      const composed = composeNoteMarkdown({
+        raw: text,
+        body: input.body,
+        meta: input.meta ?? {},
+        createdIso: localIso(birthOf(st, st.mtimeMs)),
+        nowIso: localIso(now()),
+        // 导出不是一次编辑:「更新于」保持磁盘原值
+        touchUpdated: false
+      })
+      if (!composed.ok) return { ok: false as const, message: composed.error }
+      return { ok: true as const, text: composed.text }
+    },
+
     async ensureSample(input) {
       const p = scan().payload
       // 扫描失败时不动手:那说明目录本身有问题,不是「空」
@@ -805,39 +845,19 @@ export function createNotesService(opts: {
       }
 
       const st = statSync(file)
-      const split = splitFrontmatter(text)
-      const { fields } = readFrontmatter(split)
-      const meta = input.meta ?? {}
-      const hasMeta = Object.keys(meta).length > 0
-      const ts = localIso(now())
-      // 置顶/取消置顶这类动作只改元数据,不该动 updated ——
-      // 否则取消置顶时那篇会突然跳到「最近更新」的最前面,像是刚编辑过
-      const touchUpdated = input.touchUpdated !== false
+      const composed = composeNoteMarkdown({
+        raw: text,
+        body: input.body,
+        meta: input.meta ?? {},
+        createdIso: localIso(birthOf(st, st.mtimeMs)),
+        nowIso: localIso(now()),
+        // 置顶/取消置顶这类动作只改元数据,不该动 updated ——
+        // 否则取消置顶时那篇会突然跳到「最近更新」的最前面,像是刚编辑过
+        touchUpdated: input.touchUpdated !== false
+      })
+      if (!composed.ok) return { ok: false, kind: 'invalid', message: composed.error }
 
-      let frontmatterLines: string[] | null
-      if (split.unclosed) {
-        // 围栏没闭合:整份都是正文。只改正文是安全的,改元数据会把块插进正文中间 → 拒绝
-        if (hasMeta) {
-          return { ok: false, kind: 'invalid', message: 'frontmatter 围栏未闭合,无法改写元数据' }
-        }
-        frontmatterLines = null
-      } else if (!split.present) {
-        // D1:不「收养」裸 .md —— 只改正文时不给它凭空长出 frontmatter
-        frontmatterLines = hasMeta
-          ? renderFrontmatter({
-              ...meta,
-              created: localIso(birthOf(st, st.mtimeMs)),
-              ...(touchUpdated ? { updated: ts } : {})
-            })
-          : null
-      } else {
-        const patch: Partial<FrontmatterFields> = { ...meta }
-        if (touchUpdated) patch.updated = ts
-        if (fields.created === undefined) patch.created = localIso(birthOf(st, st.mtimeMs))
-        frontmatterLines = patchFrontmatter(split, patch)
-      }
-
-      const out = assembleFile({ bom: split.bom, eol: split.eol, frontmatterLines, body: input.body })
+      const out = composed.text
       const tmp = `${file}.tmp`
       writeFileSync(tmp, out, 'utf8')
       renameSync(tmp, file) // 同盘原子替换,避免半写文件

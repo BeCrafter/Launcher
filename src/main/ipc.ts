@@ -9,12 +9,18 @@ import {
   type AppInfo,
   type ContainerAction,
   type InstallChannel,
+  type NoteExportMarkdownInput,
   type PickedFile,
   type PickFileMode,
+  type SavePdfInput,
+  type SaveTextFileInput,
   type ServicesListPayload,
   type NotesSyncStatus,
   type SettingsPatch
 } from '../shared/ipc'
+import { encodeTextBytes } from '../shared/text-file'
+import { pickExportPath } from './domains/export-target'
+import { renderPdf } from './services/pdf-export'
 import { isAllowedExternalUrl } from '../shared/url-guard'
 import type { AgentScope, CloneInput, CronJob, CronScope, RenameInput, SaveFormInput, SaveXmlInput } from '../shared/models'
 import type { AgentService } from './services/agent-service'
@@ -172,16 +178,38 @@ export function registerIpc(deps: IpcDeps): void {
     return { path, content }
   })
 
-  ipcMain.handle(IPC.shellSaveText, async (e, opts: { suggestedName: string; content: string; title?: string }): Promise<string | null> => {
+  ipcMain.handle(IPC.shellSaveText, async (e, opts: SaveTextFileInput): Promise<string | null> => {
     const win = BrowserWindow.fromWebContents(e.sender)
-    const r = await dialog.showSaveDialog(win ?? undefined as never, {
+    const path = await pickExportPath(win, {
       title: opts?.title,
-      defaultPath: opts?.suggestedName
+      suggestedName: opts?.suggestedName ?? 'export.txt',
+      filters: opts?.filters
     })
-    if (r.canceled || !r.filePath) return null
-    await fsp.writeFile(r.filePath, opts?.content ?? '', 'utf8')
-    console.log(`[ipc] saveText ${r.filePath}`)
-    return r.filePath
+    if (path === null) return null
+    // 原文导出要保留 BOM/行尾;没有 encoding/eol 就维持旧的 UTF-8 写法
+    const bytes =
+      opts?.encoding !== undefined && opts?.eol !== undefined
+        ? encodeTextBytes(opts.encoding, opts.eol, opts.content ?? '')
+        : (opts?.content ?? '')
+    await fsp.writeFile(path, bytes)
+    const size = typeof bytes === 'string' ? Buffer.byteLength(bytes) : bytes.byteLength
+    console.log(`[note-export] write ${path} ${size}`)
+    return path
+  })
+
+  // 导出 PDF:隐藏窗口打印一段 HTML。见 services/pdf-export.ts 的取舍说明。
+  ipcMain.handle(IPC.shellSavePdf, async (e, opts: SavePdfInput): Promise<string | null> => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    const path = await pickExportPath(win, {
+      title: opts?.title,
+      suggestedName: opts?.suggestedName ?? 'export.pdf',
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (path === null) return null
+    const pdf = await renderPdf({ html: opts?.html ?? '' })
+    await fsp.writeFile(path, pdf)
+    console.log(`[note-export] pdf ${path} ${pdf.byteLength}`)
+    return path
   })
 
   // 只截发起这次调用的窗口,并且矩形必须落在页面里。不能拿来截别的屏幕。
@@ -340,6 +368,9 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.notesRead, (_e, id: string) => deps.notes.read(String(id)))
   ipcMain.handle(IPC.notesCreate, (_e, input: NoteCreateInput) => deps.notes.create(input))
   ipcMain.handle(IPC.notesSave, (_e, input: NoteSaveInput) => deps.notes.save(input))
+  ipcMain.handle(IPC.notesExportMarkdown, (_e, input: NoteExportMarkdownInput) =>
+    deps.notes.exportMarkdown(input)
+  )
   ipcMain.handle(IPC.notesRename, (_e, input: NoteRenameInput) => deps.notes.rename(input))
   ipcMain.handle(IPC.notesRemove, (_e, input: NoteRemoveInput) => deps.notes.remove(input))
   ipcMain.handle(IPC.notesSearch, (_e, query: string, limit?: number) =>

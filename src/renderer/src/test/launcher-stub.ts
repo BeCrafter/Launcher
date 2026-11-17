@@ -108,6 +108,7 @@ export function installLauncherStub(options: LauncherStubOptions = {}): MockedLa
     openExternal: vi.fn(async () => undefined),
     pickFile: vi.fn(async () => null),
     saveTextFile: vi.fn(async () => null),
+    savePdf: vi.fn(async () => null),
     saveViewportPng: vi.fn(async () => null),
     reportBadgeCount: vi.fn(async () => undefined),
     notifyBootPainted: vi.fn(),
@@ -141,7 +142,7 @@ export function installLauncherStub(options: LauncherStubOptions = {}): MockedLa
       skills: vi.fn(async () => []),
       catalog: vi.fn(async () => [])
     },
-    notes: { search: vi.fn(async () => []) },
+    notes: { search: vi.fn(async () => []), exportMarkdown: vi.fn(async () => ({ ok: true as const, text: '' })) },
     notesSync: {
       status: vi.fn(async () => ({
         phase: 'idle',

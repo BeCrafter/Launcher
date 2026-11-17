@@ -18,6 +18,8 @@ import { showToast } from '../../lib/utils'
 import { useFilesStore, type FileDoc, type FileViewMode } from '../../state/files-store'
 import { useNotesStore } from '../../state/notes-store'
 import { DocBackButton } from './DocBackButton'
+import { DocExportMenu } from './DocExportMenu'
+import { canExportFile } from './export-actions'
 import { CsvView } from './file-views/CsvView'
 import { FileEditor } from './FileEditor'
 import { FilePlaceholder } from './file-views/FilePlaceholder'
@@ -176,6 +178,7 @@ export function FileView(): React.JSX.Element {
               <span className="notes-save-state">{t('notes.save.saved')}</span>
             ))}
           {!editable && file.kind !== 'drawio' && <span className="file-badge">{t('notes.file.readonly')}</span>}
+          {canExportFile(file) && <DocExportMenu source={{ kind: 'file', file }} />}
           {mode !== null && (
             <div className="notes-modes" role="group" aria-label={t('notes.file.preview')}>
               {(['source', 'preview', 'split'] as const).map((m) => (

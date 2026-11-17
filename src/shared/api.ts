@@ -27,7 +27,11 @@ import type {
   AiRetractInput,
   AiRetractResult,
   AiSendInput,
-  AiTestResult
+  AiTestResult,
+  NoteExportMarkdownInput,
+  NoteExportMarkdownResult,
+  SavePdfInput,
+  SaveTextFileInput
 } from './ipc'
 import type { DrawioStatus, DrawioStatusEvent } from './drawio'
 import type {
@@ -92,8 +96,10 @@ export interface LauncherApi {
   openExternal: (url: string) => Promise<void>
   /** 原生文件选择:plist(含内容,用于导入)/ executable(仅路径,用于表单) */
   pickFile: (opts: { mode: PickFileMode; title?: string }) => Promise<PickedFile | null>
-  /** 原生保存框 + 写文本(日志导出);取消 → null */
-  saveTextFile: (opts: { suggestedName: string; content: string; title?: string }) => Promise<string | null>
+  /** 原生保存框 + 写文本(日志导出 / 文档导出);取消 → null */
+  saveTextFile: (opts: SaveTextFileInput) => Promise<string | null>
+  /** 原生保存框 + 把 HTML 打印成 PDF;取消 → null */
+  savePdf: (opts: SavePdfInput) => Promise<string | null>
   /** 截当前窗口里的一块区域,弹出保存框写成 PNG;取消 → null */
   saveViewportPng: (opts: {
     x: number
@@ -224,6 +230,8 @@ export interface LauncherApi {
     create: (input: NoteCreateInput) => Promise<Note>
     /** 写正文/元数据;带 expectedRevision 做 CAS,冲突回 conflict 而不是静默覆盖 */
     save: (input: NoteSaveInput) => Promise<NoteSaveOutcome>
+    /** 拼出完整 .md(含 frontmatter)供导出;不写盘、不改 updated */
+    exportMarkdown: (input: NoteExportMarkdownInput) => Promise<NoteExportMarkdownResult>
     /** 改标题并重命名文件(显式动作;改标题本身不会自动改文件名) */
     rename: (input: NoteRenameInput) => Promise<NoteSaveOutcome>
     /** 删除:应用内走系统废纸篓,可恢复 */

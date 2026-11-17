@@ -44,6 +44,7 @@ import { referenceNoteInAi } from '../../lib/ai-nav'
 import { confirmDangerous } from '../../lib/elevation'
 import { useFilesStore } from '../../state/files-store'
 import { DocBackButton } from './DocBackButton'
+import { DocExportMenu } from './DocExportMenu'
 import { useNotesStore } from '../../state/notes-store'
 import { useNoteRefPickerStore } from '../../state/note-ref-picker-store'
 import { useLightboxStore } from '../../state/lightbox-store'
@@ -732,6 +733,7 @@ export function NotesView(): React.JSX.Element {
             {saving && <span className="notes-save-state">{t('notes.save.saving')}</span>}
             {!saving && dirty && <span className="notes-save-state dirty">{t('notes.save.dirty')}</span>}
             {!saving && !dirty && <span className="notes-save-state">{t('notes.save.saved')}</span>}
+            <DocExportMenu source={{ kind: 'note', draft }} />
             <button
               type="button"
               className="notes-act"

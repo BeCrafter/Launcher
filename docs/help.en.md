@@ -175,8 +175,13 @@ location and are not editable) — the middle part is the name you can change, a
 There are only two rows up top: the title, and one row of "view switcher | links and tags". The switcher is three icon
 buttons (split / edit-only / preview-only, with tooltips); the vertical bar separates it from the service links and tags,
 which wrap onto more lines only when there are many. At the right end of the title row sit this note's actions:
-**reference in AI** (✨, see "Referencing notes in the AI"), pin, delete. The list shows names only and is always sorted by most
-recently updated — no sort control to set each time. Tags are no longer listed as a row of their own (they get
+**reference in AI** (✨, see "Referencing notes in the AI"), **export**, delete. Pinning stays on the rail row
+(the thumbtack that appears on hover); the title row does not repeat it. Export can write this note as
+**Markdown** (a full `.md`, frontmatter included), **HTML**, or **PDF**. Export uses **what is currently in the
+editor** (unsaved edits included) and always opens the system save dialog. For other text files (`.txt`, code, CSV)
+the same button offers "original / HTML / PDF"; HTML files have no export — the in-app preview is already the final
+result, so just view it. The list shows names only and is always sorted by most recently updated — no sort control
+to set each time. Tags are no longer listed as a row of their own (they get
 numerous and unreadable). Instead they work **through the search box**: if what you type matches a tag, notes carrying
 that tag are **ranked first** and marked `#tag` at the end of the row so you can see why they matched. When nothing
 matches a tag, you get the ordinary content results in exactly the same order as before.

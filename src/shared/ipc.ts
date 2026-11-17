@@ -4,6 +4,8 @@ import type { AgentScope, CronJob } from './models'
 import type { CronScope, DockerContainer, DockerUnavailableReason, PortService } from './models'
 import type { LauncherSettings, NotesSyncProvider } from './settings'
 import type { AiApprovalDecision, AiAttachment, AiMention, AiUserSegment } from './ai'
+import type { ExportFileFilter } from './note-export'
+import type { NoteFileTextEncoding, NoteMetaPatch } from './notes'
 
 // ── invoke 通道 ──
 export const IPC = {
@@ -14,6 +16,7 @@ export const IPC = {
   openExternal: 'shell:openExternal',
   shellPickFile: 'shell:pickFile',
   shellSaveText: 'shell:saveText',
+  shellSavePdf: 'shell:savePdf',
   shellSaveViewportPng: 'shell:saveViewportPng',
   shellRevealLog: 'agents:revealLog',
   agentsBadge: 'agents:badgeCount',
@@ -90,6 +93,8 @@ export const IPC = {
   notesRead: 'notes:read',
   notesCreate: 'notes:create',
   notesSave: 'notes:save',
+  /** 拼出完整 .md(含 frontmatter)供导出,不写盘 */
+  notesExportMarkdown: 'notes:exportMarkdown',
   notesRename: 'notes:rename',
   notesRemove: 'notes:remove',
   notesSearch: 'notes:search',
@@ -310,6 +315,40 @@ export interface PickedFile {
   /** plist 模式返回文件内容(≤1MB);executable 模式为 null */
   content: string | null
 }
+
+// ── 导出负载 ──
+
+/** shell:saveText 的入参(顺手承担笔记/文件导出的「弹框 + 写盘」) */
+export interface SaveTextFileInput {
+  suggestedName: string
+  content: string
+  title?: string
+  filters?: ExportFileFilter[]
+  /**
+   * 原文导出:按原编码/行尾写回。缺省 = UTF-8 写入(兼容旧的日志导出)。
+   * 内容仍是 LF 归一的字符串,由 main 侧 encodeTextBytes 还原。
+   */
+  encoding?: NoteFileTextEncoding
+  eol?: '\n' | '\r\n'
+}
+
+/** shell:savePdf:把一段 HTML 打印成 PDF 并弹框保存 */
+export interface SavePdfInput {
+  suggestedName: string
+  html: string
+  title?: string
+}
+
+/** notes:exportMarkdown:用当前缓冲拼完整 .md,不写盘 */
+export interface NoteExportMarkdownInput {
+  id: string
+  body: string
+  meta?: NoteMetaPatch
+}
+
+export type NoteExportMarkdownResult =
+  | { ok: true; text: string }
+  | { ok: false; message: string }
 
 // ── Launch Agents 负载 ──
 

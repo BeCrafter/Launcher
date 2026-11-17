@@ -17,9 +17,11 @@ const EDITOR_LINE = (text) =>
 const MODES = ['split', 'edit', 'preview']
 
 export class NoteE2EContext {
-  constructor({ cdp, profileDir, noteFile, noteTitle, logs, updateStub }) {
+  constructor({ cdp, profileDir, exportsDir, noteFile, noteTitle, logs, updateStub }) {
     this.cdp = cdp
     this.profileDir = profileDir
+    /** 导出落盘目录(main 侧由 LAUNCHER_E2E_EXPORT_DIR 指到这里,不弹原生保存框) */
+    this.exportsDir = exportsDir ?? null
     this.noteFile = noteFile
     this.noteTitle = noteTitle
     /** 应用进程日志(main 的 console.log 会进这里);用于断言打开文件的 IPC 落点 */
