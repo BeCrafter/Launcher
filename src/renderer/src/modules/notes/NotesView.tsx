@@ -735,15 +735,6 @@ export function NotesView(): React.JSX.Element {
             <button
               type="button"
               className="notes-act"
-              data-find-open
-              title={t('notes.find.open')}
-              onClick={() => openFind(false)}
-            >
-              <i className="fa-solid fa-magnifying-glass" />
-            </button>
-            <button
-              type="button"
-              className="notes-act"
               title={t('notes.action.referenceAi')}
               onClick={referenceInAi}
             >

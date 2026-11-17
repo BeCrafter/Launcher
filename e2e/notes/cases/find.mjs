@@ -308,17 +308,21 @@ export default [
   },
 
   {
-    id: 'find/header-button',
+    // 期望变更:标题栏那颗搜索按钮和 ⌘F 完全重复,已按需求移除。
+    // 入口只保留快捷键,所以这里断言的正是「按钮不在、快捷键仍能打开并聚焦」。
+    id: 'find/shortcut-only',
     area: 'find',
-    title: '标题栏搜索按钮:点击同样打开面板并聚焦查询框',
+    title: '标题栏不再挂搜索按钮(入口只有 ⌘F / ⌘⌥F);快捷键仍打开面板并聚焦查询框',
     tags: ['find', 'header'],
     fixture: BASIC,
     async run(ctx) {
-      await ctx.cdp.eval(`document.querySelector('[data-find-open]')?.click()`)
-      await ctx.cdp.waitFor(PANEL_OPEN, { message: '点击标题栏按钮打开面板' })
+      await ctx.cdp.waitFor(`document.querySelector('.notes-hd-actions [data-find-open]') === null`, {
+        message: '标题栏没有搜索按钮'
+      })
+      await openFind(ctx, false)
       await ctx.cdp.waitFor(
         `document.activeElement === document.querySelector('.notes-find-input')`,
-        { message: '打开后焦点在查询框' }
+        { message: '⌘F 打开后焦点在查询框' }
       )
     }
   }
