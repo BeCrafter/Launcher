@@ -578,6 +578,30 @@
 }
 
 /*
+ * 置顶区内部排序:行与行之间画一条插入线,和「移入目录」的色块是两件事。
+ * 线画在行自己的伪元素上,不额外量位置,也不改变行高。
+ * 笔记行和文件行共用(两类各自有一条顺序)。
+ */
+.notes-row[data-pin-drop='before']::before,
+.notes-row[data-pin-drop='after']::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent2);
+  pointer-events: none;
+  z-index: 3;
+}
+.notes-row[data-pin-drop='before']::before {
+  top: -1px;
+}
+.notes-row[data-pin-drop='after']::after {
+  bottom: -1px;
+}
+
+/*
  * 松手后的飞行层:外观就是被移的那一行,从旧坐标滑到新坐标。
  * 位置由脚本写 inline。滑的期间真正的新行先藏住。
  */
@@ -725,7 +749,12 @@
   background: transparent;
   color: inherit;
   cursor: pointer;
-  padding: 0;
+  /* 拖拽源必须覆盖整行高度。行自己带 6px 上下留白,按钮原先只占中间 16px:
+     按在行的上/下边缘时指针落在留白上,拖动根本起不来(置顶区排序看起来「没反应」)。 */
+  align-self: stretch;
+  margin-top: -6px;
+  margin-bottom: -6px;
+  padding: 6px 0;
   text-align: left;
   font-size: 12.5px;
 }
@@ -858,6 +887,35 @@
   flex: none;
   color: var(--muted);
   font-size: 10.5px;
+}
+
+/* 置顶区排序的跟手卡片:复用 .notes-drag-card 的排版,位置由脚本每帧写进 transform。
+   它自己必须 pointer-events: none —— 命中检测靠 elementFromPoint,卡片不能挡路。 */
+.notes-pin-drag-card {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 60;
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* 指针拖拽时不要顺手选中行里的标题文字(没有文本选区,也不会触发原生文本拖拽)。
+   置顶区的笔记行和文件行都走指针排序。 */
+.notes-pinned .notes-row .notes-row-main {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.notes-pin-dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
+/* 指针落在最后一行下方的空隙时也算「放到最后」,和插入线的语义一致。
+   没有置顶文件时这块是空的,别给置顶笔记下面多加一截留白。 */
+.notes-pinned-files:not(:empty) {
+  padding-bottom: 4px;
 }
 
 /* 移动还没结束时的不确定条。同盘 rename 通常一闪而过,

@@ -4,7 +4,7 @@
 //   · 不能把新笔记的 dirty 清掉(否则新笔记的输入再也不会被保存);
 //   · 旧笔记的冲突不能挂到新笔记的裁决上(否则「使用磁盘版本」会把旧内容灌进新草稿)。
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Note, NoteFileStat, NoteFileTextDoc } from '@shared/notes'
+import type { Note, NoteFileStat, NoteFileTextDoc, NoteMeta } from '@shared/notes'
 
 const mocks = vi.hoisted(() => ({
   toast: vi.fn(),
@@ -551,5 +551,251 @@ describe('notes-store:moveNote(拖拽移动)', () => {
     expect(mocks.repath).toHaveBeenCalledWith('pic.png', next)
     expect([...useNotesStore.getState().expanded]).toEqual(['乙'])
     expect(useNotesStore.getState().moveLand).toEqual({ fromId: 'pic.png', toId: '乙/pic.png', kind: 'file' })
+  })
+})
+
+describe('notes-store:文件行置顶', () => {
+  const png = {
+    path: '素材/图.png',
+    name: '图.png',
+    ext: 'png',
+    size: 4,
+    mtimeMs: 1
+  }
+
+  beforeEach(() => {
+    mocks.toast.mockReset()
+    mocks.list.mockReset()
+    mocks.renameFile.mockReset()
+    mocks.list.mockResolvedValue({
+      notes: [],
+      folders: ['素材'],
+      files: [png],
+      dir: '/notes',
+      truncated: 0,
+      truncatedFiles: 0,
+      error: null
+    })
+    useNotesStore.setState({
+      files: [png],
+      folders: ['素材'],
+      dir: '/notes',
+      loaded: true,
+      pinnedFiles: [],
+      pinnedOrder: [],
+      pinnedCollapsed: false
+    })
+  })
+
+  it('置顶 / 取消置顶只改列表,不碰文件字节', () => {
+    useNotesStore.getState().setFilePinned(png.path, true)
+    expect(useNotesStore.getState().pinnedFiles).toEqual([png.path])
+
+    useNotesStore.getState().setFilePinned(png.path, false)
+    expect(useNotesStore.getState().pinnedFiles).toEqual([])
+  })
+
+  it('不存在的文件不会被置顶', () => {
+    useNotesStore.getState().setFilePinned('走了.png', true)
+    expect(useNotesStore.getState().pinnedFiles).toEqual([])
+  })
+
+  it('拖动排序按混排顺序的下标挪动,未置顶的路径不动', () => {
+    const txt = (path: string) => ({
+      path,
+      name: path,
+      ext: 'txt',
+      size: 2,
+      mtimeMs: 1
+    })
+    const files = [txt('a.txt'), txt('b.txt'), txt('c.txt')]
+    useNotesStore.setState({
+      files,
+      pinnedOrder: ['f:a.txt', 'f:b.txt', 'f:c.txt'],
+      pinnedFiles: ['a.txt', 'b.txt', 'c.txt']
+    })
+
+    useNotesStore.getState().reorderPinned('file', 'c.txt', 0)
+    expect(useNotesStore.getState().pinnedFiles).toEqual(['c.txt', 'a.txt', 'b.txt'])
+
+    useNotesStore.getState().reorderPinned('file', 'c.txt', 3)
+    expect(useNotesStore.getState().pinnedFiles).toEqual(['a.txt', 'b.txt', 'c.txt'])
+
+    useNotesStore.getState().reorderPinned('file', '走了.txt', 0)
+    expect(useNotesStore.getState().pinnedFiles).toEqual(['a.txt', 'b.txt', 'c.txt'])
+  })
+
+  it('改名后 pin 跟着服务端返回的新路径', async () => {
+    useNotesStore.setState({
+      pinnedOrder: [`f:${png.path}`],
+      pinnedFiles: [png.path]
+    })
+    const next: NoteFileStat = {
+      path: '素材/新名字.png',
+      name: '新名字.png',
+      ext: 'png',
+      kind: 'image',
+      mime: 'image/png',
+      size: 4,
+      mtimeMs: 2,
+      editable: false,
+      tooLarge: false
+    }
+    mocks.renameFile.mockResolvedValue({ ok: true, file: next })
+    mocks.list.mockResolvedValue({
+      notes: [],
+      folders: ['素材'],
+      files: [next],
+      dir: '/notes',
+      truncated: 0,
+      truncatedFiles: 0,
+      error: null
+    })
+
+    await useNotesStore.getState().renameFile(png.path, next.name)
+
+    expect(useNotesStore.getState().pinnedFiles).toEqual([next.path])
+  })
+
+  it('改成 .md 变成笔记后不再保留文件 pin', async () => {
+    useNotesStore.setState({
+      pinnedOrder: [`f:${png.path}`],
+      pinnedFiles: [png.path]
+    })
+    const next: NoteFileStat = {
+      path: '素材/笔记.md',
+      name: '笔记.md',
+      ext: 'md',
+      kind: 'markdown',
+      mime: 'text/markdown',
+      size: 4,
+      mtimeMs: 2,
+      editable: true,
+      tooLarge: false
+    }
+    mocks.renameFile.mockResolvedValue({ ok: true, file: next })
+    mocks.list.mockResolvedValue({
+      notes: [],
+      folders: ['素材'],
+      files: [],
+      dir: '/notes',
+      truncated: 0,
+      truncatedFiles: 0,
+      error: null
+    })
+
+    await useNotesStore.getState().renameFile(png.path, next.name)
+
+    expect(useNotesStore.getState().pinnedFiles).toEqual([])
+  })
+})
+
+describe('置顶区混排顺序', () => {
+  const note = (id: string, pinned = true): NoteMeta => ({
+    id,
+    title: id,
+    created: '2026-01-01T00:00:00+08:00',
+    updated: '2026-01-01T00:00:00+08:00',
+    tags: [],
+    pinned,
+    refs: [],
+    excerpt: '',
+    mtimeMs: 1,
+    size: 1,
+    frontmatterIssues: [],
+    refsUnparsed: false,
+    opaque: false
+  })
+
+  const txt = (path: string) => ({ path, name: path, ext: 'txt', size: 2, mtimeMs: 1 })
+
+  const payload = (notes: NoteMeta[], files: { path: string; name: string; ext: string; size: number; mtimeMs: number }[] = []) => ({
+    notes,
+    folders: [],
+    files,
+    dir: '/notes',
+    truncated: 0,
+    truncatedFiles: 0,
+    error: null
+  })
+
+  beforeEach(() => {
+    mocks.toast.mockReset()
+    mocks.list.mockReset()
+    useNotesStore.setState({
+      notes: [note('a'), note('b'), note('c')],
+      folders: [],
+      files: [txt('x.txt')],
+      dir: '/notes',
+      loaded: true,
+      pinnedFiles: [],
+      pinnedOrder: ['n:a', 'n:b', 'n:c']
+    })
+  })
+
+  it('笔记与文件在同一条顺序里任意交错拖动', () => {
+    useNotesStore.setState({
+      pinnedOrder: ['n:a', 'f:x.txt', 'n:b', 'n:c'],
+      pinnedFiles: ['x.txt']
+    })
+
+    useNotesStore.getState().reorderPinned('file', 'x.txt', 0)
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['f:x.txt', 'n:a', 'n:b', 'n:c'])
+    expect(useNotesStore.getState().pinnedFiles).toEqual(['x.txt'])
+
+    useNotesStore.getState().reorderPinned('note', 'c', 0)
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['n:c', 'f:x.txt', 'n:a', 'n:b'])
+
+    useNotesStore.getState().reorderPinned('note', '不在了', 0)
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['n:c', 'f:x.txt', 'n:a', 'n:b'])
+  })
+
+  it('新置顶的文件插到最前,取消置顶就从顺序里移除', () => {
+    useNotesStore.setState({ pinnedOrder: ['n:a'], pinnedFiles: [] })
+    useNotesStore.getState().setFilePinned('x.txt', true)
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['f:x.txt', 'n:a'])
+    expect(useNotesStore.getState().pinnedFiles).toEqual(['x.txt'])
+
+    useNotesStore.getState().setFilePinned('x.txt', false)
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['n:a'])
+    expect(useNotesStore.getState().pinnedFiles).toEqual([])
+  })
+
+  it('取消置顶的笔记在 reload 后从顺序里移除,文件条目保留', async () => {
+    useNotesStore.setState({ pinnedOrder: ['n:a', 'f:x.txt', 'n:b', 'n:c'], pinnedFiles: ['x.txt'] })
+    mocks.list.mockResolvedValue(payload([note('a'), note('b', false), note('c')], [txt('x.txt')]))
+    await useNotesStore.getState().load()
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['n:a', 'f:x.txt', 'n:c'])
+  })
+
+  it('升级前就置顶的笔记 / 旧的文件 pin 在首次加载后补到末尾', async () => {
+    // 模拟升级后第一次打开:内存里还没加载过,只有旧 key
+    useNotesStore.setState({ pinnedOrder: [], pinnedFiles: [], loaded: false })
+    mocks.list.mockResolvedValue(
+      payload([note('x'), note('y'), note('z', false)], [txt('old.txt')])
+    )
+    // 旧 key 里的文件 pin(迁移用)
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) =>
+        key === 'launcherNotesPinnedFiles'
+          ? JSON.stringify({ '/notes': ['old.txt'] })
+          : null,
+      setItem: (): void => undefined
+    })
+    try {
+      await useNotesStore.getState().load()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['n:x', 'n:y', 'f:old.txt'])
+    expect(useNotesStore.getState().pinnedFiles).toEqual(['old.txt'])
+  })
+
+  it('文件被删除后 reload 把它的条目 prune 掉', async () => {
+    useNotesStore.setState({ pinnedOrder: ['f:x.txt', 'n:a'], pinnedFiles: ['x.txt'] })
+    mocks.list.mockResolvedValue(payload([note('a')], []))
+    await useNotesStore.getState().load()
+    expect(useNotesStore.getState().pinnedOrder).toEqual(['n:a'])
+    expect(useNotesStore.getState().pinnedFiles).toEqual([])
   })
 })

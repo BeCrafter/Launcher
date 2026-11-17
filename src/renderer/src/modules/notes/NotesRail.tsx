@@ -19,6 +19,11 @@ import { EmptyState } from '../../components/ui/EmptyState'
 import { Skeleton } from '../../components/ui/Skeleton'
 import { useT } from '../../hooks/useT'
 import { buildNoteTree, sortNotes, type NoteFolderNode } from '../../lib/note-tree'
+import {
+  parsePinnedToken,
+  pinnedToken,
+  type PinnedKind
+} from '../../lib/pinned-files'
 import { fileKind, noteFileIcon } from '../../lib/note-file'
 import { refTypeLabel } from '../../lib/note-refs'
 import { rankByTagHits, tagHitsOf } from '../../lib/note-search'
@@ -102,8 +107,8 @@ function dragSourceName(source: HTMLElement | null): string {
   return text.trim()
 }
 
-function mountDragCard(e: React.DragEvent, kindLabel: string): void {
-  const source = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
+/** 拖拽卡片本体。原生拖拽拿它当 setDragImage,指针拖拽把它跟在指针旁边。 */
+function buildDragCard(source: HTMLElement | null, kindLabel: string): HTMLDivElement {
   const icon = source?.querySelector('i') ?? null
   const card = document.createElement('div')
   card.className = 'notes-drag-card'
@@ -123,6 +128,12 @@ function mountDragCard(e: React.DragEvent, kindLabel: string): void {
   kind.className = 'notes-drag-card-kind'
   kind.textContent = kindLabel
   card.append(title, kind)
+  return card
+}
+
+function mountDragCard(e: React.DragEvent, kindLabel: string): void {
+  const source = e.currentTarget instanceof HTMLElement ? e.currentTarget : null
+  const card = buildDragCard(source, kindLabel)
   card.style.position = 'fixed'
   card.style.left = '-1000px'
   card.style.top = '0'
@@ -160,6 +171,47 @@ interface FlightSource {
   iconKind: string | null
   /** 相对列表内容的坐标,加上当时的 scrollTop。列表滚动不会把起点弄错。 */
   box: { x: number; y: number; w: number; h: number }
+}
+
+/** 置顶文件行用指针拖拽排序(不走原生 HTML5 DnD)。移动超过这个距离才算拖,否则仍是点击。 */
+const PIN_DRAG_THRESHOLD = 4
+/** 指针贴近列表上下边缘时,每帧滚这么多像素 */
+const PIN_SCROLL_STEP = 12
+/** 距列表边缘多近开始自动滚 */
+const PIN_SCROLL_EDGE = 28
+
+/**
+ * 一次置顶文件行的指针拖拽。
+ *
+ * 手势过程需要的都是**同步可读**的值,所以放在 ref 里:window 监听器挂在按下那一帧,
+ * 之后每次重渲染(插入线、`.dragging`)都换不出新闭包,读 state 会拿到拖动开始时的旧值。
+ */
+/** 置顶区的一行:笔记或任意类型的非 Markdown 文件,顺序由 pinnedOrder 决定 */
+type PinnedEntry =
+  | { kind: 'note'; note: NoteMeta }
+  | { kind: 'file'; file: NoteFileMeta }
+
+interface PinDragSession {
+  pointerId: number
+  id: string
+  /** 置顶区里的笔记行和文件行都走指针拖拽;排序时各按各的列表算 */
+  kind: 'note' | 'file'
+  source: HTMLElement
+  startX: number
+  startY: number
+  lastX: number
+  lastY: number
+  active: boolean
+  card: HTMLElement | null
+  /** 松手时的落点:置顶区排序 / 目录或根层移动 / 都不是 */
+  zone: 'pin' | 'drop' | null
+  /** zone === 'pin' 时插到哪一行之前;null = 放到最后 */
+  anchor: string | null
+  /** zone === 'drop' 时的目标目录,'' = 根层 */
+  parent: string | null
+  scrollDir: -1 | 0 | 1
+  scrollRaf: number | null
+  detach: () => void
 }
 
 /** 行相对列表内容的坐标。绝对定位的飞行层随内容一起滚,要用内容坐标。 */
@@ -282,7 +334,7 @@ function landingOf(
   if (flight === null) return false
   if (flight.kind === 'folder') return id === flight.toId || id.startsWith(`${flight.toId}/`)
   if (flight.kind !== kind || id !== flight.toId) return false
-  // 笔记有两份时只藏真正在飞的那份;文件没有副本,行为不变
+  // 置顶的笔记 / 文件都有两份:只藏真正在飞的那份
   return flight.copy === null || flight.copy === copy
 }
 
@@ -504,9 +556,12 @@ export function NotesRail(): React.JSX.Element {
   const clearMoveLand = useNotesStore((s) => s.clearMoveLand)
   const showMoving = useDelayedOpening(moving, openingSpinnerDelay())
   const importPaths = useNotesStore((s) => s.importPaths)
-  const openFile = useNotesStore((s) => s.openFile)
   const removeFile = useNotesStore((s) => s.removeFile)
   const setPinned = useNotesStore((s) => s.setPinned)
+  const pinnedFiles = useNotesStore((s) => s.pinnedFiles)
+  const pinnedOrder = useNotesStore((s) => s.pinnedOrder)
+  const setFilePinned = useNotesStore((s) => s.setFilePinned)
+  const reorderPinned = useNotesStore((s) => s.reorderPinned)
   const renameNote = useNotesStore((s) => s.renameNote)
   const convertNoteToFile = useNotesStore((s) => s.convertNoteToFile)
   const remove = useNotesStore((s) => s.remove)
@@ -539,6 +594,18 @@ export function NotesRail(): React.JSX.Element {
   /** 被拖的那一份副本;只有它进入 .dragging,置顶栏那份原样不动 */
   const [draggingCopy, setDraggingCopy] = useState<RailCopy | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
+  /**
+   * 置顶区内部排序:插到哪一条之前(null = 放最后);只画插入线,不参与目录落点。
+   * 锚点是混排顺序里的 token(`n:<id>` / `f:<path>`),笔记和各类型文件共用一条顺序。
+   */
+  const [pinDrop, setPinDrop] = useState<{ anchor: string | null } | null>(null)
+  /** 正在进行中的置顶行指针拖拽(笔记行/文件行;按下就开始记,超过阈值才算真正拖动) */
+  const pinSessionRef = useRef<PinDragSession | null>(null)
+  /**
+   * 拖过阈值之后松手,浏览器还会合成一次 click。它的 target 可能落在别的行、
+   * 目录按钮甚至置顶区表头上,所以统一在 window 捕获阶段按时间窗吃掉。
+   */
+  const suppressClickUntilRef = useRef(0)
   // OS 文件拖入是**另一套**状态:null = 没在拖;'' = 根层;其余 = 目标目录
   const [fileDragTarget, setFileDragTarget] = useState<string | null>(null)
   const railRef = useRef<HTMLDivElement | null>(null)
@@ -1072,6 +1139,11 @@ export function NotesRail(): React.JSX.Element {
 
   const onListScroll = (): void => {
     syncThumb()
+    // 拖拽中滚动(滚轮或贴边自动滚)后,插入线要按新位置重算,否则松手会落到别处
+    const session = pinSessionRef.current
+    if (session !== null && session.active) {
+      retargetPinnedDrag(session, session.lastX, session.lastY)
+    }
     setScrolling(true)
     if (scrollTimer.current !== null) clearTimeout(scrollTimer.current)
     scrollTimer.current = setTimeout(() => setScrolling(false), 900)
@@ -1103,7 +1175,45 @@ export function NotesRail(): React.JSX.Element {
     return rankByTagHits(sortNotes(list, 'created'), tagHits)
   }, [notes, searchResults, refFilter, tagFilter, tagHits])
 
-  const pinned = useMemo(() => visible.filter((n) => n.pinned), [visible])
+  /**
+   * 置顶区的**一条混排顺序**:笔记与各类文件(.txt/.png/白板/图表/代码……)按用户拖出来的
+   * `pinnedOrder` 交错显示,和它们来自哪个目录、是不是同一种文件无关。
+   * 还没进顺序的置顶项(升级前的旧数据、外部改了 frontmatter)按「笔记在前、文件在后」补到末尾。
+   */
+  const pinnedEntries = useMemo(() => {
+    const notesById = new Map(visible.filter((n) => n.pinned).map((n) => [n.id, n]))
+    const filesByPath = new Map(files.map((f) => [f.path, f]))
+    const out: PinnedEntry[] = []
+    const seen = new Set<string>()
+    for (const token of pinnedOrder) {
+      const entry = parsePinnedToken(token)
+      if (entry === null || seen.has(token)) continue
+      seen.add(token)
+      if (entry.kind === 'note') {
+        const note = notesById.get(entry.id)
+        if (note !== undefined) out.push({ kind: 'note', note })
+      } else {
+        const file = filesByPath.get(entry.id)
+        if (file !== undefined) out.push({ kind: 'file', file })
+      }
+    }
+    for (const n of visible) {
+      const token = pinnedToken('note', n.id)
+      if (n.pinned && !seen.has(token)) {
+        seen.add(token)
+        out.push({ kind: 'note', note: n })
+      }
+    }
+    for (const path of pinnedFiles) {
+      const token = pinnedToken('file', path)
+      if (seen.has(token)) continue
+      const file = filesByPath.get(path)
+      if (file === undefined) continue
+      seen.add(token)
+      out.push({ kind: 'file', file })
+    }
+    return out
+  }, [visible, files, pinnedOrder, pinnedFiles])
   const unpinned = useMemo(() => visible.filter((n) => !n.pinned), [visible])
   // 目录树只用于「没在搜索」时。搜索时**必须摊平渲染**:
   // buildNoteTree 会按笔记的路径自动补出目录节点,而目录默认是折叠的 ——
@@ -1140,6 +1250,7 @@ export function NotesRail(): React.JSX.Element {
     draggingRef.current = { id, kind, copy }
     setDraggingId(id)
     setDraggingCopy(copy)
+    setPinDrop(null)
     hideRailHover()
   }
 
@@ -1148,6 +1259,7 @@ export function NotesRail(): React.JSX.Element {
     setDraggingId(null)
     setDraggingCopy(null)
     setDropTarget(null)
+    setPinDrop(null)
   }
 
   /** 记下松手时那一行的样子和位置。旧行拆掉之后,飞行层靠这份快照画。 */
@@ -1170,20 +1282,14 @@ export function NotesRail(): React.JSX.Element {
     }
   }
 
-  const finishDrop = (e: React.DragEvent, parent: string): void => {
-    if (hasFiles(e)) return
-    e.preventDefault()
-    e.stopPropagation()
-    const drag = draggingRef.current
-    const id = e.dataTransfer.getData('text/plain')
-    const kind = readDragKind(e) ?? drag?.kind ?? null
-    // endDrag 会清掉 draggingRef;起飞副本要先记下来,fold 分支延后到超时回调里才量
-    const copy = drag?.copy ?? null
-    endDrag()
-    if (id === '' || kind === null || id !== drag?.id) return
+  /**
+   * 松手后真正把行移进目标目录。原生拖拽和置顶区的指针拖拽共用这一段:
+   * 展开中的目录先收起再移动(换列表会把子项当帧拆掉,看不到收起),然后播飞行。
+   */
+  const commitDrop = (id: string, kind: DragKind, copy: RailCopy | null, parent: string): void => {
     if (moving || foldRef.current !== null) return
 
-    // 展开中的目录先在原位收起,再移动。现在换列表会把子项当帧拆掉,看不到收起。
+    // 展开中的目录先在原位收起,再移动。
     const openPaths =
       kind === 'folder'
         ? [...expanded].filter((path) => path === id || path.startsWith(`${id}/`))
@@ -1226,6 +1332,23 @@ export function NotesRail(): React.JSX.Element {
     }
     captureFlightSource(id, kind, copy)
     void moveNote(id, parent, kind)
+  }
+  /** 指针拖拽的窗口监听器只挂一次;重渲染后要拿到最新的 commitDrop */
+  const commitDropRef = useRef(commitDrop)
+  commitDropRef.current = commitDrop
+
+  const finishDrop = (e: React.DragEvent, parent: string): void => {
+    if (hasFiles(e)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const drag = draggingRef.current
+    const id = e.dataTransfer.getData('text/plain')
+    const kind = readDragKind(e) ?? drag?.kind ?? null
+    // endDrag 会清掉 draggingRef;起飞副本要先记下来,fold 分支延后到超时回调里才量
+    const copy = drag?.copy ?? null
+    endDrag()
+    if (id === '' || kind === null || id !== drag?.id) return
+    commitDrop(id, kind, copy, parent)
   }
 
   const cancelFlight = (): void => {
@@ -1293,6 +1416,273 @@ export function NotesRail(): React.JSX.Element {
     setDropTarget((cur) => (cur === null ? cur : null))
   }
 
+  /**
+   * 指针落在置顶区的哪条边界:返回要插到它之前的那一行的 token,全部在下半部则 null(末尾)。
+   *
+   * 所有行(笔记和各类文件)在同一条混排顺序里,拖动不受类型 / 来源目录限制。
+   */
+  const pinAnchorAt = (container: HTMLElement, clientY: number): string | null => {
+    const rows = container.querySelectorAll<HTMLElement>(
+      '.notes-row[data-rail-copy="pinned"]'
+    )
+    for (const row of rows) {
+      const box = row.getBoundingClientRect()
+      if (clientY < box.top + box.height / 2) {
+        if (row.dataset.noteId !== undefined) return pinnedToken('note', row.dataset.noteId)
+        if (row.dataset.filePath !== undefined) return pinnedToken('file', row.dataset.filePath)
+        return null
+      }
+    }
+    return null
+  }
+
+  /** 置顶区排序的落点:指针下是置顶区 / 目录 / 根投放条;顺带更新插入线与落点色块。 */
+  const retargetPinnedDrag = (session: PinDragSession, x: number, y: number): void => {
+    const clear = (): void => {
+      session.zone = null
+      session.anchor = null
+      session.parent = null
+      setPinDrop((cur) => (cur === null ? cur : null))
+      setDropTarget((cur) => (cur === null ? cur : null))
+    }
+    const hit = document.elementFromPoint(x, y)
+    if (hit === null) {
+      clear()
+      return
+    }
+    // 整个置顶区(笔记行 + 各类文件行)都是排序落点:只画插入线,不亮「移入目录」色块。
+    // 锚点是混排顺序里的 token,不区分类型 —— 任意两行之间都能插。
+    const pinnedZone = hit.closest<HTMLElement>('.notes-pinned')
+    if (pinnedZone !== null) {
+      const anchor = pinAnchorAt(pinnedZone, y)
+      session.zone = 'pin'
+      session.anchor = anchor
+      session.parent = null
+      setPinDrop((cur) => (cur !== null && cur.anchor === anchor ? cur : { anchor }))
+      setDropTarget((cur) => (cur === null ? cur : null))
+      return
+    }
+    // canDropInto 读 draggingRef:松手时要赶在 endDrag 之前判
+    const folderRow = hit.closest<HTMLElement>('.notes-folder-row')
+    const folderPath = folderRow?.dataset.folderPath ?? null
+    const onRoot = folderRow === null && hit.closest('.notes-rootdrop') !== null
+    const target = folderPath ?? (onRoot ? '' : null)
+    if (target !== null && canDropInto(target)) {
+      session.zone = 'drop'
+      session.anchor = null
+      session.parent = target
+      setPinDrop((cur) => (cur === null ? cur : null))
+      setDropTarget((cur) => (cur === target ? cur : target))
+      return
+    }
+    clear()
+  }
+
+  /**
+   * 贴边自动滚。原生拖拽由 Chromium 代劳;指针拖拽不滚动的话,
+   * 视口外的目录永远拖不到 —— 这直接决定「还能不能把置顶文件拖进目录」。
+   */
+  const scrollPinnedDrag = (session: PinDragSession): void => {
+    if (session.scrollRaf !== null) return
+    session.scrollRaf = requestAnimationFrame(() => {
+      session.scrollRaf = null
+      const list = listRef.current
+      if (list === null || pinSessionRef.current !== session || !session.active) return
+      if (session.scrollDir === 0) return
+      const before = list.scrollTop
+      list.scrollTop = before + session.scrollDir * PIN_SCROLL_STEP
+      // 到顶 / 到底:滚不动就别空转
+      if (list.scrollTop === before) {
+        session.scrollDir = 0
+        return
+      }
+      // 指针没动,滚完也可能跨过一行:按最后的坐标重新算落点
+      retargetPinnedDrag(session, session.lastX, session.lastY)
+      scrollPinnedDrag(session)
+    })
+  }
+
+  const updatePinScrollDir = (session: PinDragSession, x: number, y: number): void => {
+    const list = listRef.current
+    if (list === null) return
+    const box = list.getBoundingClientRect()
+    // 指针横向已经离开列表(拖到正文/编辑器)时不要替用户滚
+    const inside = x >= box.left && x <= box.right
+    if (!inside) {
+      session.scrollDir = 0
+      return
+    }
+    if (y < box.top + PIN_SCROLL_EDGE) session.scrollDir = -1
+    else if (y > box.bottom - PIN_SCROLL_EDGE) session.scrollDir = 1
+    else session.scrollDir = 0
+    if (session.scrollDir !== 0) scrollPinnedDrag(session)
+  }
+
+  /** 收尾:拆卡片/监听,把落点提交给 store。commit=false 表示取消(Escape / 失焦)。 */
+  const endPinPointerDrag = (session: PinDragSession, commit: boolean): void => {
+    if (pinSessionRef.current !== session) return
+    pinSessionRef.current = null
+    session.detach()
+    if (session.scrollRaf !== null) {
+      cancelAnimationFrame(session.scrollRaf)
+      session.scrollRaf = null
+    }
+    try {
+      session.source.releasePointerCapture(session.pointerId)
+    } catch {
+      /* 已经释放过了 */
+    }
+    session.card?.remove()
+    session.card = null
+    document.body.classList.remove('notes-pin-dragging')
+    // 没超过阈值:这次只是普通按下,后面的 click 照常打开文件
+    if (!session.active) return
+    // 拖过阈值后松手仍会合成一次 click,它的 target 可能是别的行 / 目录按钮 / 置顶表头
+    // 只拦 rail 内的:拖到正文里松手后紧接着点编辑器,不该被吞掉
+    const railBox = railRef.current?.getBoundingClientRect()
+    const insideRail =
+      railBox !== undefined &&
+      session.lastX >= railBox.left &&
+      session.lastX <= railBox.right &&
+      session.lastY >= railBox.top &&
+      session.lastY <= railBox.bottom
+    if (insideRail) suppressClickUntilRef.current = performance.now() + 250
+    // 落点用松手时的坐标现算,不依赖上一帧渲染出来的插入线 state
+    if (commit) retargetPinnedDrag(session, session.lastX, session.lastY)
+    const zone = commit ? session.zone : null
+    const anchor = session.anchor
+    const parent = session.parent
+    endDrag()
+    if (zone === 'pin') {
+      // 混排顺序只有一条:锚点就是松手时那一行在数组里的位置(null → 末尾)。
+      const order = useNotesStore.getState().pinnedOrder
+      const toIndex = anchor === null ? order.length : order.indexOf(anchor)
+      if (toIndex >= 0) reorderPinned(session.kind, session.id, toIndex)
+      return
+    }
+    if (zone === 'drop' && parent !== null) {
+      // 拖进目录:笔记与文件都用被拖条目自己的类型,不能一律当文件。
+      commitDropRef.current(session.id, session.kind, 'pinned', parent)
+    }
+  }
+
+  /**
+   * 置顶行的起拖入口(笔记行和文件行共用)。
+   *
+   * 为什么不用原生 DnD:`dragstart` 在置顶行上不可靠(真实鼠标下根本不发火,
+   * 端到端过去靠 CDP 注入 DragData 才绿),所以排序改走 pointer ——
+   * 和点击/双击/Enter 同一条事件通道,松手位置也由自己算。
+   * 按下只记录起点,超过阈值才真正接管,普通点击不受影响。
+   */
+  const beginPinPointerDrag = (
+    e: React.PointerEvent<HTMLElement>,
+    id: string,
+    kind: 'note' | 'file'
+  ): void => {
+    // 触屏不接管:手指在列表上拖动应该是滚动
+    if (e.button !== 0 || !e.isPrimary || e.pointerType === 'touch') return
+    if (moving || flat || foldRef.current !== null) return
+    if (pinSessionRef.current !== null) return
+    const source = e.currentTarget
+    const session: PinDragSession = {
+      pointerId: e.pointerId,
+      id,
+      kind,
+      source,
+      startX: e.clientX,
+      startY: e.clientY,
+      lastX: e.clientX,
+      lastY: e.clientY,
+      active: false,
+      card: null,
+      zone: null,
+      anchor: null,
+      parent: null,
+      scrollDir: 0,
+      scrollRaf: null,
+      detach: () => {}
+    }
+    pinSessionRef.current = session
+    // 指针移出窗口后仍要收到 pointerup(window blur 另作兜底)
+    try {
+      source.setPointerCapture(e.pointerId)
+    } catch {
+      /* 捕获失败不影响主流程 */
+    }
+
+    const activate = (): void => {
+      session.active = true
+      cancelFlight()
+      draggingRef.current = { id: session.id, kind: session.kind, copy: 'pinned' }
+      setDraggingId(session.id)
+      setDraggingCopy('pinned')
+      setPinDrop(null)
+      setDropTarget(null)
+      hideRailHover()
+      // draggable=false 之后换成指针拖,按下那一下仍可能选中标题文字
+      window.getSelection()?.removeAllRanges()
+      const card = buildDragCard(source, t(dragKindLabelKey(session.kind)))
+      card.classList.add('notes-pin-drag-card')
+      document.body.appendChild(card)
+      session.card = card
+      document.body.classList.add('notes-pin-dragging')
+    }
+
+    const moveCard = (): void => {
+      if (session.card === null) return
+      session.card.style.transform = `translate3d(${session.lastX + 14}px, ${session.lastY + 8}px, 0)`
+    }
+
+    const onMove = (ev: PointerEvent): void => {
+      if (pinSessionRef.current !== session) return
+      // 没有按键的移动是别处的悬停(比如鼠标在窗口上随手移动),不属于这次拖拽:
+      // 跟着它走卡片会突然跳到窗口另一边。真按下时 buttons 一定非 0。
+      if (ev.buttons === 0) return
+      session.lastX = ev.clientX
+      session.lastY = ev.clientY
+      if (!session.active) {
+        const dx = ev.clientX - session.startX
+        const dy = ev.clientY - session.startY
+        if (Math.hypot(dx, dy) < PIN_DRAG_THRESHOLD) return
+        activate()
+      }
+      moveCard()
+      retargetPinnedDrag(session, ev.clientX, ev.clientY)
+      updatePinScrollDir(session, ev.clientX, ev.clientY)
+    }
+    const onUp = (ev: PointerEvent): void => {
+      if (pinSessionRef.current !== session || ev.pointerId !== session.pointerId) return
+      session.lastX = ev.clientX
+      session.lastY = ev.clientY
+      endPinPointerDrag(session, true)
+    }
+    const onCancel = (ev: PointerEvent): void => {
+      if (pinSessionRef.current !== session || ev.pointerId !== session.pointerId) return
+      endPinPointerDrag(session, false)
+    }
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== 'Escape' || pinSessionRef.current !== session) return
+      ev.preventDefault()
+      ev.stopPropagation()
+      endPinPointerDrag(session, false)
+    }
+    const onBlur = (): void => {
+      if (pinSessionRef.current === session) endPinPointerDrag(session, false)
+    }
+    session.detach = (): void => {
+      window.removeEventListener('pointermove', onMove, true)
+      window.removeEventListener('pointerup', onUp, true)
+      window.removeEventListener('pointercancel', onCancel, true)
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('blur', onBlur)
+    }
+    window.addEventListener('pointermove', onMove, true)
+    window.addEventListener('pointerup', onUp, true)
+    window.addEventListener('pointercancel', onCancel, true)
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('blur', onBlur)
+  }
+
   /** 指针下最近一行的落点目录;行上的 data-drop-folder 由目录/笔记/文件行统一提供 */
   const fileDropPath = (e: React.DragEvent): string => {
     const hit = (e.target as Element | null)?.closest?.('[data-drop-folder]')
@@ -1340,6 +1730,21 @@ export function NotesRail(): React.JSX.Element {
       window.removeEventListener('dragend', reset)
       window.removeEventListener('drop', reset)
     }
+  }, [])
+
+  /**
+   * 指针拖拽松手后,浏览器还会合成一次 click。它的 target 可能是另一条文件行
+   * (打开别的文件)、目录按钮(切换折叠)甚至置顶表头,所以统一在捕获阶段按时间窗吃掉,
+   * 而不是在某一行的 onClick 里判 —— 那样既挡不住别的行,漏掉一次还会吃掉下一次正常点击。
+   */
+  useEffect(() => {
+    const swallow = (e: MouseEvent): void => {
+      if (performance.now() >= suppressClickUntilRef.current) return
+      e.preventDefault()
+      e.stopPropagation()
+    }
+    window.addEventListener('click', swallow, true)
+    return () => window.removeEventListener('click', swallow, true)
   }, [])
 
   const loading = !loaded && notes.length === 0
@@ -1485,7 +1890,12 @@ export function NotesRail(): React.JSX.Element {
   )
 
   /** 笔记行:只有名字。可拖拽;悬停露出置顶与删除。lane 标记这是置顶栏副本还是目录树里的那一份 */
-  const noteRow = (n: NoteMeta, depth: number, lane: RailCopy): React.JSX.Element => {
+  const noteRow = (
+    n: NoteMeta,
+    depth: number,
+    lane: RailCopy,
+    pinDrop?: 'before' | 'after'
+  ): React.JSX.Element => {
     const renaming =
       edit !== null &&
       edit.mode === 'rename' &&
@@ -1507,6 +1917,7 @@ export function NotesRail(): React.JSX.Element {
       data-landing={landingOf(flight, n.id, 'note', lane) ? 'true' : undefined}
       data-note-id={n.id}
       data-rail-copy={lane}
+      data-pin-drop={pinDrop}
       data-drop-folder={parentOf(n.id)}
       // 点击热区放在整行:标题按钮只占内容区 16px,行的上下留白、左侧缩进、
       // 右侧留白和悬停动作浮层的背景都在按钮之外 —— 只挂在按钮上会「点了没反应」。
@@ -1525,14 +1936,22 @@ export function NotesRail(): React.JSX.Element {
         <button
           type="button"
           className="notes-row-main"
-          draggable={!flat && !moving}
+          // 置顶副本走 pointer 排序(和文件行一致),不再同时当原生拖拽源;目录树副本保持原生 DnD
+          draggable={lane === 'pinned' ? false : !flat && !moving}
           title={opening ? t('notes.opening') : `${n.id} · ${relTime(n.updated, t)}`}
           aria-busy={opening || undefined}
-          onDragStart={(e) => {
-            e.stopPropagation()
-            beginDrag(e, n.id, 'note', lane)
-          }}
+          onDragStart={
+            lane === 'pinned'
+              ? undefined
+              : (e) => {
+                  e.stopPropagation()
+                  beginDrag(e, n.id, 'note', lane)
+                }
+          }
           onDragEnd={endDrag}
+          onPointerDown={
+            lane === 'pinned' ? (e) => beginPinPointerDrag(e, n.id, 'note') : undefined
+          }
         >
           <RowIconSlot opening={opening} icon="fa-file-lines" kind="markdown" />
           {n.pinned && <i className="fa-solid fa-thumbtack notes-row-pin" />}
@@ -1589,25 +2008,38 @@ export function NotesRail(): React.JSX.Element {
     )
   }
 
-  /** 文件行:单击在应用内打开;系统默认应用是悬停动作里的显式按钮 */
-  const fileRow = (f: NoteFileMeta, depth: number): React.JSX.Element => {
+  /** 文件行:单击在应用内打开;系统默认应用只在右上角页面里保留(白板/图表除外) */
+  const fileRow = (
+    f: NoteFileMeta,
+    depth: number,
+    lane: RailCopy = 'tree',
+    pinDrop?: 'before' | 'after'
+  ): React.JSX.Element => {
     const active = f.path === activeFilePath
     const opening = f.path === openingFilePath
     const kind = fileKind(f.ext, f.name)
-    const renaming = edit !== null && edit.mode === 'rename' && edit.kind === 'file' && edit.path === f.path
+    const pinned = pinnedFiles.includes(f.path)
+    const renaming =
+      edit !== null &&
+      edit.mode === 'rename' &&
+      edit.kind === 'file' &&
+      edit.path === f.path &&
+      (edit.copy === undefined || edit.copy === lane)
     return (
       <div
-        key={`file:${f.path}`}
+        key={`${lane}:file:${f.path}`}
         className={
           'notes-row notes-file-row' +
           (active ? ' active' : '') +
           (opening ? ' opening' : '') +
-          (draggingId === f.path ? ' dragging' : '')
+          (draggingId === f.path && (draggingCopy === null || draggingCopy === lane) ? ' dragging' : '')
         }
         style={{ paddingLeft: rowPad(depth) }}
         data-landing={landingOf(flight, f.path, 'file') ? 'true' : undefined}
         data-file-path={f.path}
         data-file-kind={kind}
+        data-rail-copy={lane}
+        data-pin-drop={pinDrop}
         data-drop-folder={parentOf(f.path)}
         title={f.path}
         // 整行热区(与笔记行一致):行的留白、缩进与悬停浮层都算点击范围
@@ -1627,14 +2059,22 @@ export function NotesRail(): React.JSX.Element {
             className="notes-row-main notes-file-main"
             role="button"
             tabIndex={0}
-            draggable={!flat && !moving}
+            // 置顶副本走 pointer 排序,不再同时当原生拖拽源;目录树副本保持原生 DnD
+            draggable={lane === 'pinned' ? false : !flat && !moving}
             title={t('notes.file.open')}
             aria-busy={opening || undefined}
-            onDragStart={(e) => {
-              e.stopPropagation()
-              beginDrag(e, f.path, 'file')
-            }}
+            onDragStart={
+              lane === 'pinned'
+                ? undefined
+                : (e) => {
+                    e.stopPropagation()
+                    beginDrag(e, f.path, 'file', lane)
+                  }
+            }
             onDragEnd={endDrag}
+            onPointerDown={
+              lane === 'pinned' ? (e) => beginPinPointerDrag(e, f.path, 'file') : undefined
+            }
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
@@ -1643,6 +2083,7 @@ export function NotesRail(): React.JSX.Element {
             }}
           >
             <RowIconSlot opening={opening} icon={noteFileIcon(f.ext, f.name)} kind={kind} />
+            {pinned && <i className="fa-solid fa-thumbtack notes-row-pin" />}
             <span className="notes-row-title">{f.name}</span>
           </div>
         )}
@@ -1653,14 +2094,14 @@ export function NotesRail(): React.JSX.Element {
         >
           <button
             type="button"
-            data-file-action="open-external"
-            title={t('notes.file.openExternal')}
+            data-file-action="pin"
+            title={pinned ? t('notes.row.unpin') : t('notes.row.pin')}
             onClick={(e) => {
               e.stopPropagation()
-              void openFile(f.path)
+              setFilePinned(f.path, !pinned)
             }}
           >
-            <i className="fa-solid fa-arrow-up-right-from-square" />
+            <i className="fa-solid fa-thumbtack" />
           </button>
           <button
             type="button"
@@ -1668,7 +2109,7 @@ export function NotesRail(): React.JSX.Element {
             title={t('notes.file.rename')}
             onClick={(e) => {
               e.stopPropagation()
-              startEdit({ mode: 'rename', kind: 'file', parent: '', path: f.path }, f.name)
+              startEdit({ mode: 'rename', kind: 'file', parent: '', path: f.path, copy: lane }, f.name)
             }}
           >
             <i className="fa-solid fa-pen" />
@@ -2009,8 +2450,9 @@ export function NotesRail(): React.JSX.Element {
           />
         )}
 
-        {/* 置顶区:始终在列表最顶 —— 这是「置顶」二字唯一的兑现方式 */}
-        {pinned.length > 0 && (
+        {/* 置顶区:始终在列表最顶 —— 这是「置顶」二字唯一的兑现方式。
+            笔记与各类文件共用一条混排顺序,可以任意交错、跨目录拖动。 */}
+        {pinnedEntries.length > 0 && (
           <div className="notes-pinned" ref={pinnedRef}>
             <button
               type="button"
@@ -2021,9 +2463,32 @@ export function NotesRail(): React.JSX.Element {
               <i className={pinnedCollapsed ? 'fa-solid fa-caret-right' : 'fa-solid fa-caret-down'} />
               <i className="fa-solid fa-thumbtack" />
               <span>{t('notes.pinned.section')}</span>
-              <span className="notes-group-count">{pinned.length}</span>
+              <span className="notes-group-count">{pinnedEntries.length}</span>
             </button>
-            {!pinnedCollapsed && pinned.map((n) => noteRow(n, 0, 'pinned'))}
+            {!pinnedCollapsed && (
+              // 类名沿用 `.notes-pinned-files`(样式与既有用例都按它定位);里面现在装的是
+              // 笔记行和各类文件行混排的一整条列表。
+              <div className="notes-pinned-files">
+                {pinnedEntries.map((entry, i) => {
+                  const token =
+                    entry.kind === 'note'
+                      ? pinnedToken('note', entry.note.id)
+                      : pinnedToken('file', entry.file.path)
+                  const last = i === pinnedEntries.length - 1
+                  const drop =
+                    pinDrop === null
+                      ? undefined
+                      : pinDrop.anchor === token
+                        ? 'before'
+                        : pinDrop.anchor === null && last
+                          ? 'after'
+                          : undefined
+                  return entry.kind === 'note'
+                    ? noteRow(entry.note, 0, 'pinned', drop)
+                    : fileRow(entry.file, 0, 'pinned', drop)
+                })}
+              </div>
+            )}
           </div>
         )}
 

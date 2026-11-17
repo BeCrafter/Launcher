@@ -21,7 +21,17 @@ import { normalizeTag } from '../lib/note-tags'
 import { dataSource } from '../data'
 import { getCurrentLang, makeT } from '../i18n'
 import { cleanIpcErrorMessage } from '../lib/ipc-error'
-import { ancestorsOf } from '../lib/note-tree'
+import { ancestorsOf, sortNotes } from '../lib/note-tree'
+import {
+  dropPinnedTokenFolder,
+  movePinnedFile,
+  normalizePinnedOrder,
+  pinnedFilesOf,
+  pinnedToken,
+  remapPinnedToken,
+  remapPinnedTokenFolder,
+  type PinnedKind
+} from '../lib/pinned-files'
 import { toggleTaskLine } from '../lib/note-task'
 import { CHOICE } from '../lib/choice'
 import { showToast } from '../lib/utils'
@@ -38,6 +48,82 @@ const RAIL_LS_KEY = 'launcherNotesRailCollapsed'
 const SCROLL_SYNC_LS_KEY = 'launcherNotesScrollSync'
 const EXPANDED_LS_KEY = 'launcherNotesExpandedFolders'
 const PINNED_LS_KEY = 'launcherNotesPinnedCollapsed'
+/**
+ * 置顶区混排顺序:一个 `{ [笔记目录]: token[] }` 的 map,换目录不串。
+ * token 是 `n:<笔记 id>` / `f:<文件路径>`,笔记和各类文件可以任意交错。
+ */
+const PINNED_ORDER_LS_KEY = 'launcherNotesPinnedOrder'
+/**
+ * 旧版只存文件的置顶列表。仅在首次加载/换目录时读来迁移进混排顺序;
+ * 写的时候仍与它保持同步,方便回退旧版本。
+ */
+const PINNED_FILES_LS_KEY = 'launcherNotesPinnedFiles'
+
+/**
+ * 读整个目录 → 置顶列表的映射。解析失败一律当空:
+ * 记不住顺序不是错误,不能影响笔记列表本身。
+ */
+function readPinnedMap(key: string): Record<string, string[]> {
+  const raw = lsGet(key)
+  if (raw === null) return {}
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+    const out: Record<string, string[]> = {}
+    for (const [dir, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue
+      out[dir] = value.filter((p): p is string => typeof p === 'string')
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function persistPinnedMap(key: string, dir: string, list: readonly string[]): void {
+  const map = readPinnedMap(key)
+  if (list.length === 0) delete map[dir]
+  else map[dir] = [...list]
+  lsSet(key, JSON.stringify(map))
+}
+
+function persistPinnedFilesMap(dir: string, pins: readonly string[]): void {
+  persistPinnedMap(PINNED_FILES_LS_KEY, dir, pins)
+}
+
+/** 混排顺序是唯一真源;旧的文件列表跟着它派生,保持两份 key 一致 */
+function persistPinnedOrder(dir: string, order: readonly string[]): void {
+  persistPinnedMap(PINNED_ORDER_LS_KEY, dir, order)
+  persistPinnedFilesMap(dir, filesFromOrder(order))
+}
+
+function readPinnedOrderForDir(dir: string): string[] {
+  return readPinnedMap(PINNED_ORDER_LS_KEY)[dir] ?? []
+}
+
+/** 旧版只有文件置顶:迁移时按旧顺序读出来 */
+function readLegacyPinnedFilesForDir(dir: string): string[] {
+  return readPinnedMap(PINNED_FILES_LS_KEY)[dir] ?? []
+}
+
+/**
+ * 当前置顶笔记的 id,按列表默认顺序(created)。
+ * 升级前就置顶、还没进混排顺序的条目按这个顺序补到末尾 —— 用户看到的顺序不变。
+ */
+function pinnedNoteIds(notes: readonly NoteMeta[]): string[] {
+  return sortNotes([...notes], 'created')
+    .filter((n) => n.pinned)
+    .map((n) => n.id)
+}
+
+/** 顺序里的文件路径 —— 旧的文件置顶接口仍按它工作 */
+function filesFromOrder(order: readonly string[]): string[] {
+  return pinnedFilesOf(order)
+}
+
+function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i])
+}
 
 function readExpanded(): Set<string> {
   const raw = lsGet(EXPANDED_LS_KEY)
@@ -143,6 +229,10 @@ interface NotesState {
   folders: string[]
   /** 非 Markdown 文件(根层 assets/ 除外) */
   files: NoteFileMeta[]
+  /** 置顶的文件行(目录相对路径,从混排顺序里派生);笔记的置顶在 frontmatter 里,不在这里 */
+  pinnedFiles: string[]
+  /** 置顶区混排顺序(tokens):`n:<笔记 id>` / `f:<文件路径>`,笔记与各类文件可任意交错 */
+  pinnedOrder: string[]
   /** 展开的目录(持久化:下次打开还在原来的位置) */
   expanded: Set<string>
   /** 当前选中的目录(「新建笔记」建在这里;'' = 根层) */
@@ -195,6 +285,13 @@ interface NotesState {
   setTitle(v: string): void
   setTags(tags: string[]): void
   togglePin(): void
+  /** 文件行的置顶(不写文件字节,按目录记在 localStorage) */
+  setFilePinned(path: string, pinned: boolean): void
+  /**
+   * 在置顶区拖动任意一行(笔记 / 各类文件):把这一条挪到混排顺序的 toIndex 之前。
+   * toIndex 按当前显示的混排顺序计,`order.length` 表示末尾。
+   */
+  reorderPinned(kind: PinnedKind, id: string, toIndex: number): void
   addRef(ref: NoteRef): void
   removeRef(ref: NoteRef): void
   toggleTask(line: number, next: boolean): void
@@ -304,10 +401,30 @@ export const useNotesStore = create<NotesState>((set, get) => {
   /** 结构性改动(建/删/改名)后重载列表 —— id 可能变了,不能只打补丁 */
   async function reload(patch?: { moveLand: NotesState['moveLand'] }): Promise<void> {
     const payload = await dataSource().notes.list()
+    // 换目录(或首次加载)才重读取置顶;同一目录里以内存为准,改名/移动刚改好的路径不能被旧值盖回。
+    const firstLoad = !get().loaded
+    const dirChanged = payload.dir !== get().dir
+    const storedOrder =
+      firstLoad || dirChanged ? readPinnedOrderForDir(payload.dir) : get().pinnedOrder
+    // 旧版只有文件置顶:新 key 空着而旧 key 有值时迁移一次,保持升级前的显示顺序。
+    const legacyFiles =
+      storedOrder.length === 0 && (firstLoad || dirChanged)
+        ? readLegacyPinnedFilesForDir(payload.dir)
+        : []
+    // 列表被上限截断时看不到全部条目,传 null 表示「这一类无法判断」,原样保留。
+    const pinnedOrder = normalizePinnedOrder(
+      storedOrder,
+      payload.truncated === 0 ? pinnedNoteIds(payload.notes) : null,
+      payload.truncatedFiles === 0 ? payload.files.map((f) => f.path) : null,
+      legacyFiles
+    )
+    if (!sameOrder(storedOrder, pinnedOrder)) persistPinnedOrder(payload.dir, pinnedOrder)
     set({
       notes: payload.notes,
       folders: payload.folders,
       files: payload.files,
+      pinnedFiles: filesFromOrder(pinnedOrder),
+      pinnedOrder,
       dir: payload.dir,
       truncated: payload.truncated,
       truncatedFiles: payload.truncatedFiles,
@@ -316,6 +433,17 @@ export const useNotesStore = create<NotesState>((set, get) => {
       ...(patch ?? {})
     })
     if (get().query.trim() !== '') await get().setQuery(get().query)
+  }
+
+  /**
+   * 把改名/移动/拖动算好的新混排顺序落到 state 与 localStorage。
+   * 必须在 reload() 之前调用:否则 normalize 会把已经失效的旧条目先删掉,迁移就丢了。
+   */
+  function applyPinnedOrder(next: string[]): void {
+    const current = get().pinnedOrder
+    if (sameOrder(current, next)) return
+    persistPinnedOrder(get().dir, next)
+    set({ pinnedOrder: next, pinnedFiles: filesFromOrder(next) })
   }
 
   /**
@@ -336,6 +464,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
     notes: [],
     folders: [],
     files: [],
+    pinnedFiles: [],
+    pinnedOrder: [],
     expanded: readExpanded(),
     selectedFolder: '',
     dir: '',
@@ -584,6 +714,13 @@ export const useNotesStore = create<NotesState>((set, get) => {
           )
           return null
         }
+        // 改完仍是文件才把 pin 带过去;改成 .md 就变成笔记,文件 pin 没有意义了。
+        const token = pinnedToken('file', path)
+        applyPinnedOrder(
+          outcome.file.kind === 'markdown'
+            ? get().pinnedOrder.filter((t) => t !== token)
+            : remapPinnedToken(get().pinnedOrder, 'file', path, outcome.file.path)
+        )
         await reload()
         // 这块文件被别人引用的白板若还开着,主进程已经改好了磁盘,得重读一遍场景
         await reloadRetargeted(outcome.retargeted)
@@ -665,6 +802,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
           showToast(out.message, '#f87171', 'fa-circle-exclamation')
           return
         }
+        applyPinnedOrder(get().pinnedOrder.filter((t) => t !== pinnedToken('file', path)))
         await reload()
         showToast(t()('toast.noteFileDeleted'), '#4ade80', 'fa-trash-can')
       } catch (err) {
@@ -688,6 +826,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
         if (get().selectedFolder === id || get().selectedFolder.startsWith(`${id}/`)) {
           set({ selectedFolder: '' })
         }
+        applyPinnedOrder(dropPinnedTokenFolder(get().pinnedOrder, id))
         await reload()
         showToast(t()('toast.folderDeleted'), '#4ade80', 'fa-trash-can')
       } catch (err) {
@@ -699,6 +838,7 @@ export const useNotesStore = create<NotesState>((set, get) => {
       try {
         if (!(await flushOpenCanvas())) return
         const { id: next, retargeted } = await dataSource().notes.renameFolder({ id, name })
+        applyPinnedOrder(remapPinnedTokenFolder(get().pinnedOrder, id, next))
         const cur = get().currentId
         // 打开中的笔记在改名后的目录里 → 它的 id 前缀也变了,得跟着换(否则下一次保存会 not-found)
         if (cur !== null && cur.startsWith(`${id}/`)) {
@@ -867,6 +1007,17 @@ export const useNotesStore = create<NotesState>((set, get) => {
           showToast(out.message, '#f87171', 'fa-circle-exclamation')
           return
         }
+        // 置顶按路径走:文件移动用服务端返回的新路径(撞名会加序号),目录移动换前缀。
+        if (kind === 'file') {
+          applyPinnedOrder(
+            remapPinnedToken(get().pinnedOrder, 'file', id, out.file?.path ?? out.id)
+          )
+        } else if (kind === 'folder') {
+          // 目录里的笔记 id 和文件路径都换前缀,顺序保持原位
+          applyPinnedOrder(remapPinnedTokenFolder(get().pinnedOrder, id, out.id))
+        } else {
+          applyPinnedOrder(remapPinnedToken(get().pinnedOrder, 'note', id, out.id))
+        }
         // 打开中的笔记(或它所在的目录)被移动了 → id 前缀跟着换,否则下次保存会 not-found
         const freshDraft = get().draft
         if (freshDraft !== null && (freshDraft.id === id || freshDraft.id.startsWith(`${id}/`))) {
@@ -959,6 +1110,8 @@ export const useNotesStore = create<NotesState>((set, get) => {
         }
         if (!('note' in out)) return
         const next = out.note
+        // 置顶顺序按 id 记:改名换了 id,把这一条原位换掉(等 reload 处理会被补到末尾)
+        applyPinnedOrder(remapPinnedToken(get().pinnedOrder, 'note', id, next.id))
         // 打开中的就是这篇 → 草稿跟着换成新 id / 新标题(否则下一次保存会 not-found)
         const d = get().draft
         if (d !== null && d.id === id) {
@@ -1019,6 +1172,14 @@ export const useNotesStore = create<NotesState>((set, get) => {
         if (d !== null && d.id === id && 'note' in out) {
           set({ draft: { ...d, pinned, revision: out.note.revision } })
         }
+        // 新置顶放最前、取消置顶就移出混排顺序;必须在 reload 之前写进内存,
+        // 否则 reload 会拿着拖动前的旧顺序把这次操作盖回去。
+        const token = pinnedToken('note', id)
+        applyPinnedOrder(
+          pinned
+            ? [token, ...get().pinnedOrder.filter((t) => t !== token)]
+            : get().pinnedOrder.filter((t) => t !== token)
+        )
         await reload()
         showToast(
           t()(pinned ? 'toast.notePinned' : 'toast.noteUnpinned'),
@@ -1028,6 +1189,25 @@ export const useNotesStore = create<NotesState>((set, get) => {
       } catch (err) {
         showToast(cleanIpcErrorMessage(err), '#f87171', 'fa-circle-exclamation')
       }
+    },
+
+    setFilePinned(path, pinned) {
+      const token = pinnedToken('file', path)
+      const current = get().pinnedOrder
+      if (current.includes(token) === pinned) return
+      if (!get().files.some((f) => f.path === path)) return
+      // 新 pin 放最前;之后用户可以在置顶区把笔记和各类文件混排拖动。
+      applyPinnedOrder(pinned ? [token, ...current] : current.filter((t) => t !== token))
+      showToast(
+        t()(pinned ? 'toast.notePinned' : 'toast.noteUnpinned'),
+        '#4ade80',
+        'fa-thumbtack'
+      )
+    },
+
+    reorderPinned(kind, id, toIndex) {
+      // 纯界面顺序,不写任何文件字节;条目已经不在顺序里就什么也不做。
+      applyPinnedOrder(movePinnedFile(get().pinnedOrder, pinnedToken(kind, id), toIndex))
     },
 
     scheduleSave() {
