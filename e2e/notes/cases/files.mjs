@@ -41,6 +41,11 @@ function fileSelector(rel) {
   return `[data-file-path=${JSON.stringify(rel)}]`
 }
 
+/** 文件页标题行的动作按钮(与左栏 `data-file-action` 区分开)。 */
+function headerAction(action) {
+  return `[data-file-header-action="${action}"]`
+}
+
 async function expandFolder(ctx, path) {
   // 夹具是直接写盘的:等目录监听把新目录推给列表,再展开。
   const selector = `.notes-folder-row[data-folder-path=${JSON.stringify(path)}]`
@@ -2383,7 +2388,8 @@ export default [
       writeFile(ctx, '守卫图.drawio', '<mxfile/>')
       for (const rel of ['守卫.txt', '守卫板.excal', '守卫图.drawio']) await waitFileRow(ctx, rel)
 
-      // 目录行:三类文件都不再有外部打开按钮(文件行动作只剩置顶/改名/访达/删除)。
+      // 目录行:三类文件都不再有外部打开按钮,悬停动作和笔记行完全一致
+      // (改名 / 置顶 / 删除),不再挂逐行的「在访达中显示」。
       for (const rel of ['守卫.txt', '守卫板.excal', '守卫图.drawio']) {
         await ctx.cdp.waitFor(
           `document.querySelector(${JSON.stringify(
@@ -2391,6 +2397,20 @@ export default [
           )}) === null`,
           { message: `目录行没有外部打开:${rel}` }
         )
+        const acts = await ctx.cdp.json(`(() => {
+          const row = document.querySelector(${JSON.stringify(fileSelector(rel))})
+          if (row === null) return null
+          return {
+            actions: [...row.querySelectorAll('.notes-row-acts [data-file-action]')]
+              .map((el) => el.dataset.fileAction),
+            count: row.querySelectorAll('.notes-row-acts button').length,
+            reveal: row.querySelector('[data-file-action="reveal"]') !== null
+          }
+        })()`)
+        ok(acts !== null, `找到文件行:${rel}`)
+        eq(acts.actions, ['rename', 'pin', 'delete'], `文件行动作与笔记行一致:${rel}`)
+        eq(acts.count, 3, `文件行只有三颗动作:${rel}`)
+        eq(acts.reveal, false, `文件行没有在访达中显示:${rel}`)
       }
 
       // 普通文件:页面右上角保留,并且真的把绝对路径交给默认应用。
@@ -2411,9 +2431,138 @@ export default [
           `document.querySelector('[data-file-header-action="open-external"]') === null`,
           { message: `白板/图表右上角没有外部打开:${rel}` }
         )
+        // 删除按钮对所有文件类型都在(和笔记页一样)。
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-file-header-action="delete"]') !== null`,
+          { message: `白板/图表右上角也有删除:${rel}` }
+        )
         const opened = await ctx.cdp.eval(`window.launcher.notes.openFile(${JSON.stringify(rel)})`)
         eq(opened.ok, false, `${rel} 交给默认应用时被拒绝`)
       }
+    }
+  },
+
+  {
+    id: 'files/header-delete',
+    area: 'files',
+    title:
+      '文件页右上角也有删除:二次确认可取消,确认后离开视图、左栏行消失、磁盘文件进废纸篓并回到空态',
+    tags: ['files', 'header'],
+    async run(ctx) {
+      writeFile(ctx, '待删.txt', '删我\n')
+      await openFile(ctx, '待删.txt')
+      await ctx.cdp.waitFor(
+        `document.querySelector('[data-file-header-action="delete"]') !== null`,
+        { message: '文件页右上角有删除按钮' }
+      )
+
+      // 先取消:文件与视图都必须原地不动。
+      await ctx.cdp.eval(
+        `document.querySelector('[data-file-header-action="delete"]')?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('#dangerModal.open') !== null`, {
+        message: '删除前弹出二次确认'
+      })
+      await ctx.cdp.eval(`document.querySelector('#dangerModal .d-btn:not(.red)')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('#dangerModal.open') === null`, {
+        message: '取消后关闭确认框'
+      })
+      ok(existsSync(absPath(ctx, '待删.txt')), '取消删除后文件还在')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === '待删.txt'`,
+        { message: '取消后仍停在文件页' }
+      )
+
+      // 再确认:行、磁盘、视图一起收掉。
+      await ctx.cdp.eval(
+        `document.querySelector('[data-file-header-action="delete"]')?.click()`
+      )
+      await ctx.cdp.waitFor(`document.querySelector('#dangerModal.open') !== null`, {
+        message: '再次弹出二次确认'
+      })
+      await ctx.cdp.eval(`document.querySelector('#dangerModal .d-btn.red')?.click()`)
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector('待删.txt'))}) === null`,
+        { message: '确认后文件行消失' }
+      )
+      await ctx.waitForNode(() => !existsSync(absPath(ctx, '待删.txt')), '文件移出笔记目录')
+      await ctx.cdp.waitFor(`document.querySelector('#toast.show') !== null`, {
+        message: '删除成功 toast 出现'
+      })
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main') === null && document.querySelector('.notes-firstrun') !== null`,
+        { message: '删除后离开文件页,回到选择文档的空态' }
+      )
+    }
+  },
+
+  {
+    id: 'files/header-actions-by-kind',
+    area: 'files',
+    title:
+      '标题行按钮按类型收敛:编辑类没有重新加载,只读预览保留;占位页头部不再重复外部打开/访达;白板图表没有外部打开',
+    tags: ['files', 'header'],
+    async run(ctx) {
+      const has = (action) =>
+        `document.querySelector(${JSON.stringify(headerAction(action))}) !== null`
+      const lacks = (action) =>
+        `document.querySelector(${JSON.stringify(headerAction(action))}) === null`
+
+      writeFile(ctx, '头部文本.txt', '正文\n')
+      writeFile(ctx, '头部图片.png', PNG_1PX)
+      writeFile(ctx, '头部图表.drawio', '<mxfile/>')
+      writeFile(ctx, '头部旧档.doc', Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0, 1, 2, 3]))
+
+      // 编辑类文本:自动保存,不再挂「重新加载」;文档级动作仍在。
+      await openFile(ctx, '头部文本.txt')
+      await ctx.cdp.waitFor(lacks('reload'), { message: '文本编辑页没有重新加载' })
+      for (const action of ['open-external', 'reveal', 'delete']) {
+        await ctx.cdp.waitFor(has(action), { message: `文本编辑页有 ${action}` })
+      }
+      await ctx.cdp.waitFor(`document.querySelector('.notes-hd-actions .notes-export-btn') !== null`, {
+        message: '文本编辑页有导出'
+      })
+
+      // 只读图片:没有自动刷新,保留「重新加载」;导出对这种类型不提供。
+      await openFile(ctx, '头部图片.png')
+      await ctx.cdp.waitFor(has('reload'), { message: '图片预览保留重新加载' })
+      for (const action of ['open-external', 'reveal', 'delete']) {
+        await ctx.cdp.waitFor(has(action), { message: `图片预览有 ${action}` })
+      }
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-hd-actions .notes-export-btn') === null`),
+        true,
+        '图片没有导出按钮'
+      )
+
+      // 图表:应用自己的格式,编辑类没有刷新,也不能交给默认应用。
+      await openFile(ctx, '头部图表.drawio')
+      await ctx.cdp.waitFor(lacks('reload'), { message: '图表页没有重新加载' })
+      await ctx.cdp.waitFor(lacks('open-external'), { message: '图表页没有外部打开' })
+      for (const action of ['reveal', 'delete']) {
+        await ctx.cdp.waitFor(has(action), { message: `图表页有 ${action}` })
+      }
+
+      // 无法预览的占位:头部不再重复,正文仍提供两颗入口。
+      await openFile(ctx, '头部旧档.doc')
+      await ctx.cdp.waitFor(has('reload'), { message: '占位页保留重新加载' })
+      await ctx.cdp.waitFor(lacks('open-external'), { message: '占位页头部没有外部打开' })
+      await ctx.cdp.waitFor(lacks('reveal'), { message: '占位页头部没有在访达中显示' })
+      await ctx.cdp.waitFor(has('delete'), { message: '占位页仍有删除' })
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelectorAll('.file-placeholder-actions .d-btn').length`
+        ),
+        2,
+        '占位正文仍有两颗入口'
+      )
+      await ctx.cdp.eval(
+        `document.querySelector('.file-placeholder-actions .d-btn.accent')?.click()`
+      )
+      await ctx.waitForLog(
+        `[note-open] ${absPath(ctx, '头部旧档.doc')}`,
+        '占位正文的「用默认应用打开」仍可用'
+      )
     }
   }
 ]

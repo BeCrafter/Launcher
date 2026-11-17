@@ -11,6 +11,7 @@ import {
   type NoteFileKind
 } from '@shared/notes'
 import { useT } from '../../hooks/useT'
+import { confirmDangerous } from '../../lib/elevation'
 import { formatBytes } from '../../lib/format-bytes'
 import { noteFileIcon } from '../../lib/note-file'
 import { noteFileUrl } from '../../lib/note-file-url'
@@ -225,22 +226,27 @@ export function FileView(): React.JSX.Element {
               <span>{drawioMode === 'offline' ? t('notes.drawio.offline') : t('notes.drawio.online')}</span>
             </button>
           )}
-          <button
-            type="button"
-            className="notes-act"
-            title={t('notes.file.reload')}
-            onClick={() => {
-              if (dirty) {
-                showToast(t('notes.save.dirty'), '#fbbf24', 'fa-triangle-exclamation')
-                return
-              }
-              void reload()
-            }}
-          >
-            <i className="fa-solid fa-rotate" />
-          </button>
-          {/* 白板 / 图表是应用自己的格式,不交给默认应用;其他文件保留这个入口。 */}
-          {canOpenFileExternally(file.kind) && (
+          {/* 编辑类由应用自己写盘并自动保存,外部改动走冲突条;重新加载只留给只读预览
+              —— 图片/PDF/Office 等没有外部改动监听,这里是唯一的手动刷新入口。 */}
+          {!file.editable && (
+            <button
+              type="button"
+              className="notes-act"
+              data-file-header-action="reload"
+              title={t('notes.file.reload')}
+              onClick={() => {
+                if (dirty) {
+                  showToast(t('notes.save.dirty'), '#fbbf24', 'fa-triangle-exclamation')
+                  return
+                }
+                void reload()
+              }}
+            >
+              <i className="fa-solid fa-rotate" />
+            </button>
+          )}
+          {/* 白板 / 图表是应用自己的格式;无法预览的占位正文已有这颗按钮,头部不再重复。 */}
+          {file.binaryReason === null && canOpenFileExternally(file.kind) && (
             <button
               type="button"
               className="notes-act"
@@ -251,13 +257,35 @@ export function FileView(): React.JSX.Element {
               <i className="fa-solid fa-arrow-up-right-from-square" />
             </button>
           )}
+          {file.binaryReason === null && (
+            <button
+              type="button"
+              className="notes-act"
+              data-file-header-action="reveal"
+              title={t('notes.file.reveal')}
+              onClick={() => void window.launcher.notes.reveal(file.path)}
+            >
+              <i className="fa-solid fa-folder-open" />
+            </button>
+          )}
+          {/* 和笔记页一致:正在看的文件也能在这里删掉,不必再回左栏找悬停按钮。 */}
           <button
             type="button"
-            className="notes-act"
-            title={t('notes.file.reveal')}
-            onClick={() => void window.launcher.notes.reveal(file.path)}
+            className="notes-act danger"
+            data-file-header-action="delete"
+            title={t('notes.file.delete')}
+            onClick={() => {
+              void (async () => {
+                const confirmed = await confirmDangerous.request(
+                  t('notes.file.deleteMessage').replace('{NAME}', file.name)
+                )
+                if (!confirmed) return
+                await useFilesStore.getState().leave()
+                await useNotesStore.getState().removeFile(file.path)
+              })()
+            }}
           >
-            <i className="fa-solid fa-folder-open" />
+            <i className="fa-solid fa-trash-can" />
           </button>
         </div>
       </div>

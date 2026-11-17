@@ -2094,17 +2094,6 @@ export function NotesRail(): React.JSX.Element {
         >
           <button
             type="button"
-            data-file-action="pin"
-            title={pinned ? t('notes.row.unpin') : t('notes.row.pin')}
-            onClick={(e) => {
-              e.stopPropagation()
-              setFilePinned(f.path, !pinned)
-            }}
-          >
-            <i className="fa-solid fa-thumbtack" />
-          </button>
-          <button
-            type="button"
             data-file-action="rename"
             title={t('notes.file.rename')}
             onClick={(e) => {
@@ -2116,14 +2105,14 @@ export function NotesRail(): React.JSX.Element {
           </button>
           <button
             type="button"
-            data-file-action="reveal"
-            title={t('notes.file.reveal')}
+            data-file-action="pin"
+            title={pinned ? t('notes.row.unpin') : t('notes.row.pin')}
             onClick={(e) => {
               e.stopPropagation()
-              void window.launcher.notes.reveal(f.path)
+              setFilePinned(f.path, !pinned)
             }}
           >
-            <i className="fa-solid fa-folder-open" />
+            <i className="fa-solid fa-thumbtack" />
           </button>
           <button
             type="button"
