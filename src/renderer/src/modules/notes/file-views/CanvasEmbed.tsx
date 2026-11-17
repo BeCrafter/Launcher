@@ -13,7 +13,10 @@ import {
   MAX_TEXT_FILE_BYTES,
   MODEL_MAX_BYTES,
   OFFICE_MAX_BYTES,
+  baseNameOf,
+  isNoteFileEditable,
   noteFileKind,
+  splitFileExt,
   type NoteFileKind
 } from '@shared/notes'
 import {
@@ -25,13 +28,17 @@ import {
   canvasDisplayPath,
   canvasEmbedRef,
   canvasRefBadge,
-  type CanvasEmbedBadge
+  isCanvasPath,
+  type CanvasEmbedBadge,
+  type CanvasInternalRef
 } from '@shared/canvas-ref'
 import { decodeTextBytes } from '@shared/text-file'
 import { dataSource } from '../../../data'
 import { useT } from '../../../hooks/useT'
 import { useEffectiveTheme } from '../../../hooks/useEffectiveTheme'
+import { useFilesStore } from '../../../state/files-store'
 import { effectiveDrawioMode, useDrawioStore } from '../../../state/drawio-store'
+import { boardOrigin, openFileDoc, openNoteDoc, type DocOrigin } from '../doc-actions'
 import { isDrawioText } from '@shared/drawio'
 import { highlightCodeNodes } from '../../../lib/code-highlight'
 import { renderMarkdown, type CalloutKind, type DiagramBlock } from '../../../lib/markdown'
@@ -84,6 +91,7 @@ export function CanvasEmbed({
     kind === 'note' || kind === 'vault' || kind === 'external' || kind === 'canvas'
       ? t(`notes.canvas.embed.badge.${kind}`)
       : null
+  const rootRef = useRef<HTMLDivElement | null>(null)
   // 角标要长在 Excalidraw 的链接气泡上,可那个气泡是它自己渲染的,没有插槽。
   // 选中这张卡片时把文案写到根上的自定义属性,气泡链接前的伪元素读它;
   // 取消选中(或换成别的元素)就撤掉,别的元素的链接不会带上角标。
@@ -95,16 +103,68 @@ export function CanvasEmbed({
       root.style.removeProperty('--canvas-embed-badge')
     }
   }, [selected, badge])
+  // 卡片进入交互后,用户可能正在框选正文。Excalidraw 在 document 上听 copy/cut,
+  // 又把 Cmd+X / Delete 绑成「剪切 / 删除画布元素」。选区在卡片里时先把这些事件截住,
+  // 但不 preventDefault —— 浏览器仍照原生选区把文字写进剪贴板。
+  useEffect(() => {
+    const node = rootRef.current
+    if (!active || depth !== 0 || node === null) return
+    const onClipboard = (event: ClipboardEvent): void => {
+      if (selectionInside(node)) event.stopPropagation()
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!selectionInside(node)) return
+      const modifier = event.metaKey || event.ctrlKey
+      if (modifier) {
+        const key = event.key.toLowerCase()
+        if (key === 'c' || key === 'x') event.stopPropagation()
+        return
+      }
+      if (!event.altKey && (event.key === 'Backspace' || event.key === 'Delete')) {
+        event.stopPropagation()
+      }
+    }
+    window.addEventListener('copy', onClipboard, true)
+    window.addEventListener('cut', onClipboard, true)
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('copy', onClipboard, true)
+      window.removeEventListener('cut', onClipboard, true)
+      window.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [active, depth])
+  // 跳过去以后文档页头部要能回来:来源就是这块正在看的外层白板。
+  const docAction = canvasDocAction(target, depth, t, boardOrigin(boardPath))
   return (
     <div
       className="canvas-embed"
+      ref={rootRef}
       data-embed-active={active ? 'true' : 'false'}
       data-embed-selected={selected ? 'true' : 'false'}
       data-embed-kind={kind}
       data-embed-depth={depth}
       data-embed-label={label}
       data-embed-path={path ?? ''}
+      data-embed-action={docAction?.kind}
     >
+      {docAction !== null && (
+        <button
+          type="button"
+          className="canvas-embed-doc-open"
+          data-embed-open=""
+          title={docAction.label}
+          aria-label={docAction.label}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            // 先让外层白板把未落盘的正文交出去;切文档时 leave() 也会再 flush 一次。
+            void useFilesStore.getState().flush()
+            docAction.run()
+          }}
+        >
+          <i className={`fa-solid ${docAction.icon}`} />
+        </button>
+      )}
       {external !== null ? (
         <CanvasExternalCard embed={external} />
       ) : target === null ? (
@@ -120,6 +180,59 @@ export function CanvasEmbed({
       )}
     </div>
   )
+}
+
+interface CanvasDocAction {
+  kind: 'edit' | 'open'
+  icon: string
+  label: string
+  run: () => void
+}
+
+/**
+ * 卡片右上角给哪个入口。白板自己渲染「编辑白板」(见 CanvasBoardEmbed),这里不再重复;
+ * 嵌套预览里也不该再挂一遍;库外文件没有库内路径,应用内编辑器打不开,同样留空。
+ */
+function canvasDocAction(
+  target: CanvasInternalRef | null,
+  depth: number,
+  t: (key: string) => string,
+  origin: DocOrigin | null
+): CanvasDocAction | null {
+  if (target === null || depth !== 0) return null
+  if (target.kind === 'note') {
+    const id = target.id
+    return {
+      kind: 'edit',
+      icon: 'fa-pen-to-square',
+      label: t('notes.canvas.embed.editNote'),
+      run: () => openNoteDoc(id, origin)
+    }
+  }
+  if (isCanvasPath(target.path)) return null
+  const path = target.path
+  const name = baseNameOf(path)
+  const fileKind = noteFileKind(splitFileExt(name).ext, name)
+  const editable = isNoteFileEditable(fileKind) || fileKind === 'drawio'
+  return {
+    kind: editable ? 'edit' : 'open',
+    icon: editable ? 'fa-pen-to-square' : 'fa-arrow-up-right-from-square',
+    label: t(editable ? 'notes.canvas.embed.editFile' : 'notes.canvas.embed.openFile'),
+    run: () => openFileDoc(path, origin)
+  }
+}
+
+/** 选区是否落在这块卡片里。折叠选区是光标,不算要复制的内容。 */
+function selectionInside(node: Node): boolean {
+  const selection = window.getSelection()
+  if (selection === null || selection.isCollapsed || selection.rangeCount === 0) return false
+  try {
+    // 选区从卡片里起、拖到卡片外时,共同祖先已经不在卡片里;
+    // 只要与卡片相交就算「要复制卡片内容」。
+    return selection.getRangeAt(0).intersectsNode(node)
+  } catch {
+    return false
+  }
 }
 
 /** 库外文件。原文件还在这台电脑上就读它,否则读打包进项目的那份。 */

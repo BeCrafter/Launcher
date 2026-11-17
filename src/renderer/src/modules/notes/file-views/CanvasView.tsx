@@ -35,7 +35,8 @@ import { useT } from '../../../hooks/useT'
 import { getCurrentLang } from '../../../i18n'
 import { useFilesStore } from '../../../state/files-store'
 import { openExternal } from '../../../lib/utils'
-import { openFileDoc, openNoteDoc } from '../doc-actions'
+import { recallBoardViewport, rememberBoardViewport } from '../../../lib/board-viewport'
+import { boardOrigin, openFileDoc, openNoteDoc } from '../doc-actions'
 import { CanvasEmbed } from './CanvasEmbed'
 // 模块一加载就改掉白板容器上的滚轮监听,必须赶在 Excalidraw 挂监听之前。
 import './canvas-wheel'
@@ -200,14 +201,23 @@ function CanvasBoard({
     const parsed = parseCanvas(text)
     if (!parsed.ok || parsed.blank) return null
     const restored = restore(parsed.data as ImportedDataState, null, null)
+    const appState = { ...restored.appState, collaborators: new Map() }
+    // 视口不进文件(Excalidraw 标了 export: false),会话里单独记。上次看过就接着看,
+    // 否则用 restore() 的默认值。
+    const view = boardPath === null ? null : recallBoardViewport(boardPath)
+    if (view !== null) {
+      appState.scrollX = view.scrollX
+      appState.scrollY = view.scrollY
+      appState.zoom = { value: view.zoom.value }
+    }
     return {
       elements: restored.elements.map(migrateCanvasElement),
-      appState: { ...restored.appState, collaborators: new Map() },
+      appState,
       files: restored.files
     }
     // initialData 只在挂载时读一次。换文件会重挂(FileView 的 key),不跟着每次保存变。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [blank])
+  }, [blank, boardPath])
 
   useEffect(() => {
     if (api === null) return
@@ -314,10 +324,16 @@ function CanvasBoard({
           const ref = canvasEmbedRef(element.customData, element.link ?? null)
           if (ref === null) return
           event.preventDefault()
-          if (ref.kind === 'note') openNoteDoc(ref.id)
-          else if (ref.kind === 'file') openFileDoc(ref.path)
+          // Excalidraw 自带的蓝色链接角标也是入口,和卡片按钮一样记住来源白板。
+          const origin = boardOrigin(boardPath)
+          if (ref.kind === 'note') openNoteDoc(ref.id, origin)
+          else if (ref.kind === 'file') openFileDoc(ref.path, origin)
           else if (ref.kind === 'web') openExternal(ref.url)
           // 库外文件没有通用的安全打开方式;卡片自己已经能预览
+        }}
+        onScrollChange={(scrollX, scrollY, zoom) => {
+          // 平移与缩放都会走到这里;离开后重开同一块白板时接着看原来的位置。
+          if (boardPath !== null) rememberBoardViewport(boardPath, { scrollX, scrollY, zoom })
         }}
       />
       {api !== null && boardRef.current !== null && (

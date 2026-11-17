@@ -43,6 +43,7 @@ import { showToast } from '../../lib/utils'
 import { referenceNoteInAi } from '../../lib/ai-nav'
 import { confirmDangerous } from '../../lib/elevation'
 import { useFilesStore } from '../../state/files-store'
+import { DocBackButton } from './DocBackButton'
 import { useNotesStore } from '../../state/notes-store'
 import { useNoteRefPickerStore } from '../../state/note-ref-picker-store'
 import { useLightboxStore } from '../../state/lightbox-store'
@@ -726,6 +727,7 @@ export function NotesView(): React.JSX.Element {
               />
             </span>
             <span className="notes-path-ext">.md</span>
+            <DocBackButton />
           </div>
           <div className="notes-hd-actions">
             {saving && <span className="notes-save-state">{t('notes.save.saving')}</span>}

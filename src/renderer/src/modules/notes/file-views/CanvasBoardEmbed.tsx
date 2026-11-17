@@ -4,7 +4,7 @@
 // 图片、网页、PDF 走我们自己的 renderEmbeddable,和打开它时看到的一样。导出的 SVG
 // 画不了这些(只有一个占位路径),所以只留作更深一层的兜底。
 // 内层完全不吃指针:外层画布仍能选中、拖动这张卡片,滚轮和拖拽不会两边打架;
-// 要看里面的细节就点右上角「打开」。
+// 要看里面的细节就点右上角「编辑白板」。
 // 再往里(depth ≥ 1)退回静态 SVG:一层只读画布足够,再套会越挂越重,还能无限套。
 
 import { useEffect, useRef, useState } from 'react'
@@ -24,7 +24,7 @@ import { useEffectiveTheme } from '../../../hooks/useEffectiveTheme'
 import { useT } from '../../../hooks/useT'
 import { getCurrentLang } from '../../../i18n'
 import { useFilesStore } from '../../../state/files-store'
-import { openFileDoc } from '../doc-actions'
+import { boardOrigin, openFileDoc } from '../doc-actions'
 import { CanvasEmbed } from './CanvasEmbed'
 import {
   BOARD_PREVIEW_MAX_BYTES,
@@ -157,7 +157,8 @@ export function CanvasBoardEmbed({
     }
   }, [path, self, theme, live])
 
-  const canOpen = view !== 'missing' && view !== 'self'
+  // 嵌套只读预览不再挂重复入口:点不着第二层卡片上的按钮,真正要编辑的是外层那张卡片。
+  const canOpen = view !== 'missing' && view !== 'self' && depth === 0
 
   return (
     <>
@@ -189,19 +190,20 @@ export function CanvasBoardEmbed({
       {canOpen && (
         <button
           type="button"
-          className="md-embed-open canvas-embed-board-open"
-          data-board-open=""
-          title={t('notes.canvas.embed.openBoard')}
-          aria-label={t('notes.canvas.embed.openBoard')}
+          className="md-embed-open canvas-embed-doc-open"
+          data-embed-open=""
+          title={t('notes.canvas.embed.editBoard')}
+          aria-label={t('notes.canvas.embed.editBoard')}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation()
             // 先让外层白板把未落盘的正文交出去;flush 同步捕获待写内容,再切文档不会丢。
             void useFilesStore.getState().flush()
-            openFileDoc(path)
+            // 来源是**外层**这块白板,不是被打开的子白板:文档页里按返回要回到这里。
+            openFileDoc(path, boardOrigin(boardPath))
           }}
         >
-          <i className="fa-solid fa-arrow-up-right-from-square" />
+          <i className="fa-solid fa-pen-to-square" />
         </button>
       )}
     </>

@@ -1219,6 +1219,37 @@ body.notes-pin-dragging {
 .notes-title::placeholder {
   color: var(--dim);
 }
+/* 「从白板跳来」的来源入口:标题后的一枚来源 chip。
+   比裸箭头更像「你在哪、从哪来」，也不再和目录折叠的 « 相邻。 */
+.notes-doc-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  align-self: center;
+  flex-shrink: 0;
+  max-width: 180px;
+  margin-left: 8px;
+  padding: 3px 9px 3px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--wash-accent);
+  color: var(--accent2);
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.notes-doc-back:hover {
+  background: color-mix(in srgb, var(--accent2) 22%, transparent);
+}
+.notes-doc-back i {
+  font-size: 10.5px;
+}
+.notes-doc-back-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .notes-hd-actions {
   display: flex;
   align-items: center;
@@ -5400,6 +5431,14 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
 .canvas-embed[data-embed-active='true'] * {
   pointer-events: auto;
 }
+/* Excalidraw 根上是 user-select:none,会一路继承进来。激活后把这层收回来,
+   卡片里的正文才能框选复制。PDF 文字层本来就单独声明了 text。 */
+.canvas-embed[data-embed-active='true'] .canvas-embed-note,
+.canvas-embed[data-embed-active='true'] .canvas-embed-code,
+.canvas-embed[data-embed-active='true'] .file-csv {
+  user-select: text;
+  -webkit-user-select: text;
+}
 /* 没点「开始交互」之前卡片不接指针,工具条浮在页面上只会挡内容。激活后再出来。 */
 .canvas-embed:not([data-embed-active='true']) .file-pdf-view .file-image-tools,
 .canvas-embed:not([data-embed-active='true']) .file-pdf-outline {
@@ -5557,18 +5596,25 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
   display: none !important;
 }
 /* 预览永远不接指针 —— 即使外层卡片被双击激活。选中、拖动、滚轮都留给外层画布,
-   不然两层画布会抢同一串事件。要看细节就点右上角「打开」。
+   不然两层画布会抢同一串事件。要看细节就点右上角「编辑白板」。
    放在 [data-embed-active] 的放行之后,同权重靠后者生效。 */
 .canvas-embed .canvas-embed-board-live,
 .canvas-embed .canvas-embed-board-live * {
   pointer-events: none;
 }
-/* 打开按钮浮在右上角。复用 .md-embed-open 的指针豁免:卡片没激活时也点得着。 */
-.canvas-embed .canvas-embed-board-open {
+/* 卡片右上角统一一个应用入口:笔记 / 库内文件是「编辑」,白板是「编辑白板」。
+   只在卡片被选中或进入交互后出现,悬停不出现:
+   - 未选中时 Excalidraw 会自己在同一个角落画一个蓝色 link 角标(它的绘制条件是
+     element.link 且元素未被选中),再叠一个按钮就重了;角标本身可点,走 onLinkOpen
+     打开同一份文档,不需要我们重复挂入口。
+   - 元素一旦选中,那枚角标自动消失,这时才轮到我们的按钮,两者永远不同屏。
+   隐藏时连指针都不接,不留看不见的点击区。用 opacity 而不是 display,
+   出现/消失时正文不重排(右侧内边距一直保留)。 */
+.canvas-embed .canvas-embed-doc-open {
   position: absolute;
   top: 6px;
   right: 6px;
-  z-index: 1;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5580,9 +5626,35 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
   background: var(--surface);
   color: var(--muted);
   font-size: 11px;
+  opacity: 0;
+  transition: opacity 120ms ease;
 }
-.canvas-embed .canvas-embed-board-open:hover {
+/* 子元素也要一起断指针:.md-embed-open 的指针豁免会把图标单独放行,
+   否则看不见的图标仍然点得着按钮。 */
+.canvas-embed .canvas-embed-doc-open,
+.canvas-embed .canvas-embed-doc-open * {
+  pointer-events: none;
+}
+.canvas-embed .canvas-embed-doc-open:focus-visible,
+.canvas-embed[data-embed-selected='true'] .canvas-embed-doc-open,
+.canvas-embed[data-embed-active='true'] .canvas-embed-doc-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.canvas-embed .canvas-embed-doc-open:hover {
   color: var(--accent2);
+}
+/* 按钮压着右上角,文本区让出右内边距,免得盖住正文末字。 */
+.canvas-embed[data-embed-action] .canvas-embed-note,
+.canvas-embed[data-embed-action] .canvas-embed-code {
+  padding-right: 42px;
+}
+.canvas-embed[data-embed-action] .file-csv-note {
+  padding-right: 42px;
+}
+/* 图片 / PDF 的工具条也浮在右上角,入口按钮出现时把它往下让一行。 */
+.canvas-embed[data-embed-action] .file-image-tools {
+  top: 38px;
 }
 
 /* 选择器贴着「更多工具」,窄窗口时收回画布里。列表是唯一滚动的一块。 */

@@ -15,6 +15,8 @@
 // 与角标(笔记 / 库内 / 库外):笔记补 .md、库内文件用相对路径、库外文件用绝对路径,
 // 中文原样显示;Excalidraw 自带的链接气泡也读同一条可读路径,旧白板里的编码地址打开时升成可读。
 // 笔记 / 文件 / 所在目录改名后,白板里的引用跟着改,重开卡片仍照常渲染。
+// 嵌入卡片右上角有明确的「编辑 / 打开」入口,卡片没激活也点得着;
+// 点进卡片后正文可以框选、Cmd+C 复制,不会把整张卡片当画布元素剪切或删除。
 // 库内白板也能嵌进另一块白板:卡片里是导出好的静态预览(SVG),右上角「打开」进入子白板;
 // 空场景 / 坏文件 / 白板嵌自己 / 引用丢失各有状态,预览永远不改子白板的字节。
 // 缩放看 `.reset-zoom-button` 里的百分比。小地图开关在帮助按钮左边,中间留空;
@@ -190,6 +192,19 @@ async function pointerClick(ctx, selector) {
   ok(box !== null, `要点到:${selector}`)
   ok(box.hit, `指针落点被别的东西挡住:${selector} ← ${box.by ?? '视口外'}`)
   await ctx.cdp.click(box.x, box.y)
+}
+
+/** 卡片右上角入口默认透明且不接指针;悬停 / 选中后应完全显示并可点。 */
+async function waitEntryShown(ctx, selector, message) {
+  await ctx.cdp.waitFor(
+    `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)})
+      if (el === null) return false
+      const style = getComputedStyle(el)
+      return Number(style.opacity) >= 0.99 && style.pointerEvents === 'auto'
+    })()`,
+    { timeout: 5000, message }
+  )
 }
 
 /** 在画布上层找一块不压着工具栏、缩放条和已有文字的空白。 */
@@ -687,6 +702,31 @@ function externalScene(fileName, embed) {
   })
 }
 
+/** 一块指向库内笔记 / 文件的嵌入。link 是可读路径,真实引用在 customData.launcher。 */
+function internalEmbedScene(refs) {
+  return JSON.stringify({
+    type: 'excalidraw',
+    version: 2,
+    source: 'e2e',
+    elements: refs.map((entry, index) => ({
+      type: 'embeddable',
+      id: `embed-${index + 1}`,
+      x: index * 420,
+      // 起点贴着画布顶边会被 Excalidraw 顶部工具条压住,往下让出一段。
+      y: 160,
+      width: 360,
+      height: 240,
+      link: entry.kind === 'note' ? `${entry.id}.md` : entry.path,
+      strokeColor: 'transparent',
+      backgroundColor: 'transparent',
+      isDeleted: false,
+      customData: { launcher: entry }
+    })),
+    appState: {},
+    files: {}
+  })
+}
+
 /** 一份能导出的子白板:一块矩形 + 一行字。restore 会补齐缺的字段。 */
 function childBoardScene(text) {
   return JSON.stringify({
@@ -1023,6 +1063,22 @@ async function clickCard(ctx, name) {
     await sleep(150)
   }
   ok(false, `点了三次都没选中卡片:${name}`)
+}
+
+/** 等某块白板重新挂上(返回来源白板后用它)。 */
+async function waitBoardOpen(ctx, name) {
+  await ctx.cdp.waitFor(
+    `document.querySelector('.file-main .file-name')?.textContent === ${JSON.stringify(name)} &&
+     document.querySelector('.canvas-board .excalidraw') !== null`,
+    { timeout: 15_000, message: `回到白板:${name}` }
+  )
+}
+
+/** 选中卡片、点右上角入口,进入它指向的文档。 */
+async function openEmbeddedDoc(ctx, label, entrySelector) {
+  await clickCard(ctx, label)
+  await waitEntryShown(ctx, entrySelector, `${label} 选中后入口出现`)
+  await pointerClick(ctx, entrySelector)
 }
 
 /** 等气泡里的角标变成期望值。'NOPOPUP' 表示连气泡都不该出现。 */
@@ -3062,10 +3118,453 @@ export default [
   },
 
   {
+    id: 'canvas/embed-open-doc',
+    area: 'canvas',
+    title: '卡片右上角的编辑入口默认隐藏,选中或进入交互后出现,并把笔记和库内文件送回各自的编辑器',
+    tags: ['canvas', 'embed', 'edit'],
+    async run(ctx) {
+      const noteId = '可打开的笔记'
+      writeVaultFile(
+        ctx,
+        `${noteId}.md`,
+        `---\ntitle: ${noteId}\n---\n\n# ${noteId}\n\n一段正文\n`
+      )
+      writeVaultFile(ctx, '可打开的文本.txt', '一段可以编辑的文本\n')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(`[data-note-id="${noteId}"]`)}) !== null`,
+        { timeout: 10_000, message: '笔记出现在目录里' }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector('可打开的文本.txt'))}) !== null`,
+        { timeout: 10_000, message: '文本文件出现在目录里' }
+      )
+      writeCanvas(
+        ctx,
+        '嵌入操作.excal',
+        internalEmbedScene([
+          { kind: 'note', id: noteId },
+          { kind: 'file', path: '可打开的文本.txt' }
+        ])
+      )
+      await openCanvasFile(ctx, '嵌入操作.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelectorAll('.canvas-embed-doc-open').length === 2`,
+        { timeout: 10_000, message: '笔记和文件卡片各有一个入口按钮' }
+      )
+
+      // 默认藏着:看不见,也不接指针(没有「看不见却点得着」的按钮)。
+      const rest = await ctx.cdp.json(`[...document.querySelectorAll('.canvas-embed-doc-open')]
+        .map((el) => ({ opacity: Number(getComputedStyle(el).opacity),
+                        pe: getComputedStyle(el).pointerEvents,
+                        iconPe: getComputedStyle(el.querySelector('i')).pointerEvents }))`)
+      eq(rest.length, 2, '两个入口都挂上了')
+      for (const state of rest) {
+        eq(state.opacity, 0, '入口默认透明')
+        eq(state.pe, 'none', '入口默认不接指针')
+        // 地址栏的指针豁免会把图标单独放行,这里必须一起断掉,否则看不见也点得着。
+        eq(state.iconPe, 'none', '入口里的图标默认也不接指针')
+      }
+
+      // 指针移到笔记卡片中部:只是悬停,入口不能出现。
+      // 这时 Excalidraw 自己会在同一个角落画蓝色 link 角标,再叠一个按钮就重了;
+      // 我们的入口只在选中 / 进入交互(角标自动收起)后出现。
+      const noteCard = `[data-embed-path=${JSON.stringify(`${noteId}.md`)}]`
+      const noteSpot = await cardCenter(ctx, `${noteId}.md`)
+      await ctx.cdp.mouse('mouseMoved', noteSpot.x, noteSpot.y, {
+        button: 'none',
+        buttons: 0,
+        clickCount: 0
+      })
+      // 指针停在卡片中心:只悬停,入口必须仍然藏着(之前是 hover 就显示)。
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(noteCard)})?.getAttribute('data-embed-hover')`
+        ),
+        null,
+        '悬停不再写 data-embed-hover'
+      )
+      const hovered = await ctx.cdp.json(`(() => {
+        const el = document.querySelector(${JSON.stringify(`${noteCard} .canvas-embed-doc-open`)})
+        return el === null
+          ? null
+          : { opacity: Number(getComputedStyle(el).opacity),
+              pe: getComputedStyle(el).pointerEvents }
+      })()`)
+      ok(hovered !== null, '悬停后入口按钮仍在 DOM 里')
+      eq(hovered.opacity, 0, '悬停不显示入口')
+      eq(hovered.pe, 'none', '悬停时入口不接指针')
+
+      // 点一下选中卡片(同时会进入交互):入口这时才出现。
+      await clickCard(ctx, `${noteId}.md`)
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(noteCard)})?.dataset.embedSelected === 'true'`,
+        { timeout: 5000, message: '笔记卡片被选中' }
+      )
+      await waitEntryShown(ctx, `${noteCard} .canvas-embed-doc-open`, '选中后入口出现')
+
+      // 笔记:按钮绕过卡片整体 pointer-events:none,点完直接进笔记编辑器。
+      await pointerClick(ctx, `${noteCard} .canvas-embed-doc-open`)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value === ${JSON.stringify(noteId)}`,
+        { timeout: 10_000, message: '点入口打开笔记' }
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.notes-editor-pane .cm-content') !== null`, {
+        timeout: 10_000,
+        message: '笔记编辑器挂上'
+      })
+
+      // 回到白板,再走库内文本文件。重新打开后卡片要等 Excalidraw 重新挂上。
+      await openCanvasFile(ctx, '嵌入操作.excal')
+      const fileCard = `[data-embed-path=${JSON.stringify('可打开的文本.txt')}]`
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(
+          '[data-embed-label="可打开的文本.txt"]'
+        )}) !== null`,
+        { timeout: 10_000, message: '文本卡片重新挂上' }
+      )
+      // 文本卡片同样先选中,入口才出现(悬停不算)。
+      await clickCard(ctx, '可打开的文本.txt')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileCard)})?.dataset.embedSelected === 'true'`,
+        { timeout: 5000, message: '文本卡片被选中' }
+      )
+      await waitEntryShown(ctx, `${fileCard} .canvas-embed-doc-open`, '选中后文本入口出现')
+      await pointerClick(ctx, `${fileCard} .canvas-embed-doc-open`)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === '可打开的文本.txt'`,
+        { timeout: 10_000, message: '点入口打开库内文件' }
+      )
+      await ctx.cdp.waitFor(`document.querySelector('.file-main .cm-editor') !== null`, {
+        timeout: 10_000,
+        message: '文件编辑器挂上'
+      })
+    }
+  },
+
+  {
+    id: 'canvas/embed-back-to-board',
+    area: 'canvas',
+    title: '从卡片跳到文档后,头部返回按钮与 Esc 都能回到来源白板并恢复缩放/滚动;文档页自己的 Esc 不被抢,普通目录打开没有返回',
+    tags: ['canvas', 'embed', 'back'],
+    async run(ctx) {
+      const noteId = '回跳笔记'
+      const boardName = '回跳白板.excal'
+      const noteEntry = `[data-embed-label=${JSON.stringify(`${noteId}.md`)}] .canvas-embed-doc-open`
+      const fileEntry = `[data-embed-label="回跳文本.txt"] .canvas-embed-doc-open`
+
+      writeVaultFile(
+        ctx,
+        `${noteId}.md`,
+        `---\ntitle: ${noteId}\n---\n\n# ${noteId}\n\n一段正文\n`
+      )
+      writeVaultFile(ctx, '回跳文本.txt', '一段可以编辑的文本\n')
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(`[data-note-id="${noteId}"]`)}) !== null`,
+        { timeout: 10_000, message: '笔记出现在目录里' }
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(fileSelector('回跳文本.txt'))}) !== null`,
+        { timeout: 10_000, message: '文本文件出现在目录里' }
+      )
+      writeCanvas(
+        ctx,
+        boardName,
+        internalEmbedScene([
+          { kind: 'note', id: noteId },
+          { kind: 'file', path: '回跳文本.txt' }
+        ])
+      )
+      await openCanvasFile(ctx, boardName)
+      await ctx.cdp.waitFor(
+        `document.querySelectorAll('.canvas-embed-doc-open').length === 2`,
+        { timeout: 10_000, message: '两张卡片的入口都挂上' }
+      )
+
+      // 1. 入口按钮:点回白板,按钮只在「来自白板」的文档页出现。
+      await openEmbeddedDoc(ctx, `${noteId}.md`, noteEntry)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value === ${JSON.stringify(noteId)}`,
+        { timeout: 10_000, message: '点入口打开笔记' }
+      )
+      const backTitle = await ctx.cdp.eval(
+        `document.querySelector('[data-doc-back]')?.getAttribute('title')`
+      )
+      includes(String(backTitle ?? ''), boardName, '返回按钮的提示里有白板名')
+      includes(String(backTitle ?? ''), 'Esc', '返回按钮的提示里写了 Esc')
+      // 入口是一枚标题旁的来源 chip:名字直接露出来,不是又一个裸箭头。
+      const chip = await ctx.cdp.json(`(() => {
+        const el = document.querySelector('[data-doc-back]')
+        if (el === null) return null
+        const title = document.querySelector('.notes-title')
+        const chipRect = el.getBoundingClientRect()
+        const titleRect = title === null ? null : title.getBoundingClientRect()
+        return {
+          text: el.textContent?.trim() ?? '',
+          icon: el.querySelector('i')?.className ?? '',
+          inPath: el.closest('.notes-path') !== null,
+          afterTitle: titleRect !== null && chipRect.left >= titleRect.right - 2
+        }
+      })()`)
+      ok(chip !== null, '笔记页有来源 chip')
+      includes(chip.text, boardName, 'chip 上直接写着白板名')
+      includes(chip.icon, 'fa-reply', 'chip 用回弯箭头图标')
+      eq(chip.inPath, true, 'chip 在标题路径里')
+      eq(chip.afterTitle, true, 'chip 在标题右侧')
+      await ctx.cdp.eval(`document.querySelector('[data-doc-back]')?.click()`)
+      await waitBoardOpen(ctx, boardName)
+      eq(
+        await ctx.cdp.eval(`document.querySelector('[data-doc-back]') === null`),
+        true,
+        '回到白板后返回按钮消失'
+      )
+
+      // 2. Esc:没有别的归属时直接回白板。
+      await openEmbeddedDoc(ctx, `${noteId}.md`, noteEntry)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-editor-pane .cm-content') !== null`, {
+        timeout: 10_000,
+        message: '笔记编辑器挂上'
+      })
+      await ctx.press('Escape')
+      await waitBoardOpen(ctx, boardName)
+
+      // 3. 文档页自己的 Esc 优先:查找栏开着时,第一下只关查找,第二下才回白板。
+      await openEmbeddedDoc(ctx, `${noteId}.md`, noteEntry)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-editor-pane .cm-content') !== null`, {
+        timeout: 10_000,
+        message: '笔记编辑器再次挂上'
+      })
+      await ctx.pressLetter('f', 4) // ⌘F
+      await ctx.cdp.waitFor(`document.querySelector('.notes-find') !== null`, {
+        timeout: 5000,
+        message: '⌘F 打开查找栏'
+      })
+      await ctx.press('Escape')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-find') === null`, {
+        timeout: 5000,
+        message: '第一下 Esc 只关查找栏'
+      })
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector('[data-doc-back]') !== null &&
+           document.querySelector('.notes-title') !== null`
+        ),
+        true,
+        '关查找栏时还停在笔记页'
+      )
+      await ctx.press('Escape')
+      await waitBoardOpen(ctx, boardName)
+
+      // 4. 文件视图同样有返回入口(趁默认视口两张卡片都在)。
+      await openEmbeddedDoc(ctx, '回跳文本.txt', fileEntry)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.file-main .file-name')?.textContent === '回跳文本.txt'`,
+        { timeout: 10_000, message: '点入口打开库内文件' }
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('[data-doc-back]') !== null`),
+        true,
+        '文件视图头部也有返回按钮'
+      )
+      const fileChip = await ctx.cdp.json(`(() => {
+        const el = document.querySelector('[data-doc-back]')
+        const name = document.querySelector('.file-main .file-name')
+        if (el === null || name === null) return null
+        return {
+          text: el.textContent?.trim() ?? '',
+          inPath: el.closest('.file-path') !== null,
+          afterName: el.getBoundingClientRect().left >= name.getBoundingClientRect().right - 2
+        }
+      })()`)
+      ok(fileChip !== null, '文件页有来源 chip')
+      includes(fileChip.text, boardName, '文件页 chip 上写着白板名')
+      eq(fileChip.inPath, true, '文件页 chip 在文件路径里')
+      eq(fileChip.afterName, true, '文件页 chip 在文件名右侧')
+      await ctx.press('Escape')
+      await waitBoardOpen(ctx, boardName)
+
+      // 5. 视口:缩放 + 中键平移后离开,回来时百分比和卡片屏幕位置都不变。
+      await ctx.cdp.eval(`document.querySelector('.zoom-in-button')?.click()`)
+      await sleep(200)
+      const zoomed = await zoomPercent(ctx)
+      const boardSpot = await ctx.cdp.json(`(() => {
+        const box = document.querySelector('.canvas-board').getBoundingClientRect()
+        return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+      })()`)
+      ok(boardSpot !== null, '量到白板中心')
+      await ctx.cdp.mouse('mousePressed', boardSpot.x, boardSpot.y, {
+        button: 'middle',
+        buttons: 4
+      })
+      await ctx.cdp.mouse('mouseMoved', boardSpot.x + 45, boardSpot.y + 35, {
+        button: 'middle',
+        buttons: 4
+      })
+      await ctx.cdp.mouse('mouseReleased', boardSpot.x + 45, boardSpot.y + 35, {
+        button: 'middle',
+        buttons: 0
+      })
+      await sleep(200)
+      const cardRect = () =>
+        ctx.cdp.json(`(() => {
+          const el = document.querySelector('[data-embed-label=${JSON.stringify(`${noteId}.md`)}]')
+          if (el === null) return null
+          const r = el.getBoundingClientRect()
+          return { left: r.left, top: r.top }
+        })()`)
+      await clickCard(ctx, `${noteId}.md`)
+      const beforeRect = await cardRect()
+      ok(beforeRect !== null, '平移后笔记卡片还在视口里')
+      await waitEntryShown(ctx, noteEntry, '选中后入口出现')
+      await pointerClick(ctx, noteEntry)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-title') !== null`, {
+        timeout: 10_000,
+        message: '从平移后的白板进入笔记'
+      })
+      await ctx.press('Escape')
+      await waitBoardOpen(ctx, boardName)
+      eq(await zoomPercent(ctx), zoomed, '返回后缩放百分比不变')
+      const afterRect = await cardRect()
+      ok(afterRect !== null, '返回后卡片还在')
+      ok(
+        Math.abs(afterRect.left - beforeRect.left) <= 2 &&
+          Math.abs(afterRect.top - beforeRect.top) <= 2,
+        `返回后卡片屏幕位置不变(离开前 ${beforeRect.left.toFixed(1)},${beforeRect.top.toFixed(1)};` +
+          `回来 ${afterRect.left.toFixed(1)},${afterRect.top.toFixed(1)})`
+      )
+
+      // 6. 普通目录导航不记来源:没有返回按钮,Esc 也不跳。
+      await ctx.cdp.eval(
+        `document.querySelector(${JSON.stringify(`.notes-row[data-note-id="${noteId}"]`)})?.click()`
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value === ${JSON.stringify(noteId)}`,
+        { timeout: 10_000, message: '从目录打开笔记' }
+      )
+      eq(
+        await ctx.cdp.eval(`document.querySelector('[data-doc-back]') === null`),
+        true,
+        '普通目录打开不显示返回按钮'
+      )
+      await ctx.press('Escape')
+      await sleep(300)
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector('.notes-title')?.value === ${JSON.stringify(noteId)} &&
+           document.querySelector('.canvas-board') === null`
+        ),
+        true,
+        '没有来源时 Esc 留在笔记页'
+      )
+    }
+  },
+
+  {
+    id: 'canvas/embed-copy',
+    area: 'canvas',
+    title: '激活嵌入卡片后能框选正文并复制,Cmd+X 和 Delete 不会把整张卡片毁掉',
+    tags: ['canvas', 'embed', 'copy'],
+    async run(ctx) {
+      const noteId = '可复制的笔记'
+      writeVaultFile(
+        ctx,
+        `${noteId}.md`,
+        `---\ntitle: ${noteId}\n---\n\n# ${noteId}\n\n一段**选中我**的正文\n`
+      )
+      await ctx.cdp.waitFor(
+        `document.querySelector(${JSON.stringify(`[data-note-id="${noteId}"]`)}) !== null`,
+        { timeout: 10_000, message: '笔记出现在目录里' }
+      )
+      writeCanvas(
+        ctx,
+        '复制板.excal',
+        internalEmbedScene([{ kind: 'note', id: noteId }])
+      )
+      await openCanvasFile(ctx, '复制板.excal')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.canvas-embed-note strong')?.textContent === '选中我'`,
+        { timeout: 10_000, message: '笔记按渲染样式挂上' }
+      )
+
+      // 没激活之前 Excalidraw 根上的 user-select:none 会继承下来;激活后要收回来。
+      eq(
+        await ctx.cdp.eval(`getComputedStyle(document.querySelector('.canvas-embed-note')).userSelect`),
+        'none',
+        '没激活时卡片正文还不能选'
+      )
+      await activateCard(ctx, `${noteId}.md`)
+      eq(
+        await ctx.cdp.eval(`getComputedStyle(document.querySelector('.canvas-embed-note')).userSelect`),
+        'text',
+        '激活后卡片正文可以框选'
+      )
+
+      // 真实鼠标在加粗文字上拖一下。用矩形中点兜底,避免落到行首空白处。
+      const selectStrong = async () => {
+        const rect = await ctx.cdp.json(`(() => {
+          const el = document.querySelector('.canvas-embed-note strong')
+          if (el === null) return null
+          const r = el.getBoundingClientRect()
+          return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }
+        })()`)
+        ok(rect !== null, '找到可以框选的正文')
+        // 上一轮留下的选区会让「从选区内再拖一次」变成调光标,先清掉。
+        await ctx.cdp.eval(`window.getSelection()?.removeAllRanges()`)
+        await sleep(120)
+        const y = rect.top + (rect.bottom - rect.top) / 2
+        await ctx.cdp.mouse('mousePressed', rect.left - 2, y, { buttons: 1 })
+        await ctx.cdp.mouse('mouseMoved', (rect.left + rect.right) / 2, y, { buttons: 1 })
+        await ctx.cdp.mouse('mouseMoved', rect.right + 2, y, { buttons: 1 })
+        await ctx.cdp.mouse('mouseReleased', rect.right + 2, y, { buttons: 0 })
+        await sleep(150)
+        return ctx.cdp.eval(`window.getSelection()?.toString() ?? ''`)
+      }
+
+      includes(await selectStrong(), '选中我', '激活后能框选卡片里的正文')
+
+      // 复制要真落到剪贴板,不能被 Excalidraw 换成画布元素的 JSON。
+      const previous = await ctx.cdp.eval(`navigator.clipboard.readText().catch(() => null)`)
+      try {
+        await ctx.cdp.eval(`document.execCommand('copy')`)
+        await ctx.cdp.waitFor(
+          `navigator.clipboard.readText().then((text) => text.includes('选中我')).catch(() => false)`,
+          { timeout: 5000, message: '剪贴板里是框选的正文' }
+        )
+      } finally {
+        if (typeof previous === 'string') {
+          await ctx.cdp.eval(
+            `navigator.clipboard.writeText(${JSON.stringify(previous)}).catch(() => {})`
+          )
+        }
+      }
+
+      // 选区还在时,Cmd+X / Delete 不能被 Excalidraw 当成「剪切 / 删除画布元素」。
+      await selectStrong()
+      await ctx.pressLetter('x', 4)
+      await sleep(300)
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(`[data-embed-path="${noteId}.md"]`)}) !== null`
+        ),
+        'Cmd+X 之后卡片还在'
+      )
+
+      await selectStrong()
+      await ctx.press('Delete')
+      await sleep(300)
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector(${JSON.stringify(`[data-embed-path="${noteId}.md"]`)}) !== null`
+        ),
+        'Delete 之后卡片还在'
+      )
+    }
+  },
+
+  {
     id: 'canvas/embed-board',
     area: 'canvas',
     title:
-      '白板嵌入库内白板:卡片里挂只读画布,子白板嵌的图片是真内容,更深一层退回静态 SVG;卡片不接指针,右上角「打开」进入子白板;空白/坏文件/自嵌/引用丢失各有状态',
+      '白板嵌入库内白板:卡片里挂只读画布,子白板嵌的图片是真内容,更深一层退回静态 SVG;右上角统一「编辑白板」入口选中后出现,嵌套层不重复挂;空白/坏文件/自嵌/引用丢失各有状态',
     tags: ['canvas', 'embed', 'board'],
     async run(ctx) {
       const child = '子白板.excal'
@@ -3181,16 +3680,44 @@ export default [
       eq(embed.customData?.launcher?.kind, 'file', '真实引用种类是库内文件')
       eq(embed.customData?.launcher?.path, child, 'launcher 记下子白板路径')
 
-      // 卡片还没点开也能点右上角的「打开」:按钮要绕过卡片整体的 pointer-events:none。
+      // 卡片还没点开也能点右上角的「编辑白板」:指针进入卡片后按钮出现。
       eq(
         await ctx.cdp.eval(
           `document.querySelector('.canvas-embed[data-embed-kind="canvas"]')?.dataset.embedActive`
         ),
         'false',
-        '点打开之前卡片没有进入交互'
+        '点入口之前卡片没有进入交互'
       )
-      // 只认外层卡片自己的按钮:卡片里那块嵌套白板也有同名按钮(它不接指针)。
-      await pointerClick(ctx, '.canvas-embed[data-embed-depth="0"] > .canvas-embed-board-open')
+      // 统一的编辑入口:外层卡片有,嵌套预览里不再重复挂着点不着的按钮。
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed[data-embed-depth="0"] > .canvas-embed-doc-open')?.title ?? null`
+        ),
+        '编辑白板',
+        '外层白板卡片的入口叫「编辑白板」'
+      )
+      eq(
+        await ctx.cdp.eval(
+          `document.querySelectorAll('.canvas-embed[data-embed-depth="1"] .canvas-embed-doc-open').length`
+        ),
+        0,
+        '嵌套预览里不再挂重复入口'
+      )
+      ok(
+        await ctx.cdp.eval(
+          `document.querySelector('.canvas-embed-board-open') === null &&
+           document.querySelector('[data-board-open]') === null`
+        ),
+        '旧的「打开白板」按钮类名与属性都已经移除'
+      )
+      // 选中外层卡片后「编辑白板」才出现(悬停不出现,未选中时右上角是 Excalidraw 自己的链接角标)。
+      await clickCard(ctx, child)
+      await waitEntryShown(
+        ctx,
+        '.canvas-embed[data-embed-depth="0"] > .canvas-embed-doc-open',
+        '选中后「编辑白板」出现'
+      )
+      await pointerClick(ctx, '.canvas-embed[data-embed-depth="0"] > .canvas-embed-doc-open')
       await ctx.cdp.waitFor(
         `document.querySelector('.file-main .file-name')?.textContent === ${JSON.stringify(child)}`,
         { timeout: 15_000, message: '点打开按钮进入子白板' }
@@ -3252,7 +3779,7 @@ export default [
       )
       eq(readFileSync(absPath(ctx, broken), 'utf8'), brokenBytes, '预览不写坏白板的字节')
 
-      // 白板嵌自己:不导出,也不给「打开」按钮。
+      // 白板嵌自己:不导出,也不给「编辑白板」入口。
       await openCanvasFile(ctx, '自嵌板.excal')
       await ctx.cdp.waitFor(
         `document.querySelector('.canvas-embed-board')?.dataset.boardPreview === 'self'`,
@@ -3261,9 +3788,9 @@ export default [
       ok(
         await ctx.cdp.eval(
           `document.querySelector('.canvas-embed-state span')?.textContent === '这块白板嵌入了自己' &&
-           document.querySelector('[data-board-open]') === null`
+           document.querySelector('[data-embed-open]') === null`
         ),
-        '自嵌不给预览也不给打开按钮'
+        '自嵌不给预览也不给编辑入口'
       )
 
       // 引用的白板不在库里:找不到文件,也就没有可打开的路径。
@@ -3275,9 +3802,9 @@ export default [
       ok(
         await ctx.cdp.eval(
           `document.querySelector('.canvas-embed-state span')?.textContent === '找不到这个文件' &&
-           document.querySelector('[data-board-open]') === null`
+           document.querySelector('[data-embed-open]') === null`
         ),
-        '引用丢失不给打开按钮'
+        '引用丢失不给编辑入口'
       )
     }
   }

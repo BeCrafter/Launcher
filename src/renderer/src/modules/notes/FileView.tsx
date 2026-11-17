@@ -17,6 +17,7 @@ import { noteFileUrl } from '../../lib/note-file-url'
 import { showToast } from '../../lib/utils'
 import { useFilesStore, type FileDoc, type FileViewMode } from '../../state/files-store'
 import { useNotesStore } from '../../state/notes-store'
+import { DocBackButton } from './DocBackButton'
 import { CsvView } from './file-views/CsvView'
 import { FileEditor } from './FileEditor'
 import { FilePlaceholder } from './file-views/FilePlaceholder'
@@ -162,6 +163,7 @@ export function FileView(): React.JSX.Element {
           <span className="notes-title-wrap">
             <span className="file-name">{file.name}</span>
           </span>
+          <DocBackButton />
           <span className="file-meta">{formatBytes(file.size)}</span>
         </div>
         <div className="notes-hd-actions">
