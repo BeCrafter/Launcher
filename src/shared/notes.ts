@@ -512,6 +512,14 @@ export function isNoteFileEditable(kind: NoteFileKind): boolean {
 }
 
 /**
+ * 能不能交给系统默认应用打开。白板与图表是应用自己的场景格式,
+ * 外部打开只会看到裸 JSON / XML,也绕开了应用内的保存与引用维护 —— 一律禁止。
+ */
+export function canOpenFileExternally(kind: NoteFileKind): boolean {
+  return kind !== 'canvas' && kind !== 'drawio'
+}
+
+/**
  * 正文以文本形式读写的类型。它们不一定能用 CodeMirror 编辑:
  * 白板/图表有自己的编辑器,但打开时要把磁盘上的文本读进来、保存时写回去。
  * 主进程的 stat/readFile 与 renderer 的 files-store 都走这一条,避免各处散落 `kind === 'canvas'`。

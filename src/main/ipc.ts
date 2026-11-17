@@ -45,6 +45,7 @@ import type {
   NoteSaveAssetInput,
   NoteSaveInput
 } from '../shared/notes'
+import { baseNameOf, canOpenFileExternally, noteFileKind, splitFileExt } from '../shared/notes'
 import type {
   AiApprovalInput,
   AiAutoApproveInput,
@@ -439,6 +440,11 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.notesOpenFile, async (_e, path: string) => {
     const abs = deps.notes.resolveNoteFile(String(path ?? ''))
     if (abs === null) return { ok: false, message: '文件不存在或不在笔记目录内' }
+    // 白板 / 图表是应用自己的格式,交给系统应用只会看到裸 JSON / XML。
+    const name = baseNameOf(abs)
+    if (!canOpenFileExternally(noteFileKind(splitFileExt(name).ext, name))) {
+      return { ok: false, message: '白板和图表不支持用默认应用打开' }
+    }
     // E2E 不能真的拉起系统应用(会抢焦点、在 CI 上不可控);只验证到路径解析这一层
     if (process.env['LAUNCHER_E2E_STUB_OPEN'] === '1') {
       console.log(`[note-open] ${abs}`)

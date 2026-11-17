@@ -12,6 +12,7 @@ import {
   splitFileExt,
   isNoteFileEditable,
   isTextBackedKind,
+  canOpenFileExternally,
   noteFileKind,
   noteFileMime,
   MAX_FOLDER_DEPTH,
@@ -226,6 +227,19 @@ describe('drawio 文件类型', () => {
     }
     for (const kind of ['image', 'pdf', 'video', 'audio', 'archive', 'model', 'docx'] as const) {
       expect(isTextBackedKind(kind)).toBe(false)
+    }
+  })
+})
+
+describe('canOpenFileExternally', () => {
+  it('白板和图表禁止外部打开', () => {
+    expect(canOpenFileExternally('canvas')).toBe(false)
+    expect(canOpenFileExternally('drawio')).toBe(false)
+  })
+
+  it('其他类型保留外部打开', () => {
+    for (const kind of ['text', 'code', 'markdown', 'csv', 'html', 'image', 'pdf', 'unsupported'] as const) {
+      expect(canOpenFileExternally(kind)).toBe(true)
     }
   })
 })

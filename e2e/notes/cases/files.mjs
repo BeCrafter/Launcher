@@ -2358,5 +2358,50 @@ export default [
         '图里的内容没丢'
       )
     }
+  },
+  {
+    id: 'files/header-external-guard',
+    area: 'files',
+    title:
+      '目录行不再显示外部打开;打开普通文件后页面右上角仍可交给默认应用,白板和图表没有这个按钮',
+    tags: ['files', 'external'],
+    async run(ctx) {
+      writeFile(ctx, '守卫.txt', '正文\n')
+      writeFile(ctx, '守卫板.excal', '{}')
+      writeFile(ctx, '守卫图.drawio', '<mxfile/>')
+      for (const rel of ['守卫.txt', '守卫板.excal', '守卫图.drawio']) await waitFileRow(ctx, rel)
+
+      // 目录行:三类文件都不再有外部打开按钮(文件行动作只剩置顶/改名/访达/删除)。
+      for (const rel of ['守卫.txt', '守卫板.excal', '守卫图.drawio']) {
+        await ctx.cdp.waitFor(
+          `document.querySelector(${JSON.stringify(
+            `${fileSelector(rel)} [data-file-action="open-external"]`
+          )}) === null`,
+          { message: `目录行没有外部打开:${rel}` }
+        )
+      }
+
+      // 普通文件:页面右上角保留,并且真的把绝对路径交给默认应用。
+      await openFile(ctx, '守卫.txt')
+      await ctx.cdp.waitFor(
+        `document.querySelector('[data-file-header-action="open-external"]') !== null`,
+        { message: '文本文件右上角有外部打开' }
+      )
+      await ctx.cdp.eval(
+        `document.querySelector('[data-file-header-action="open-external"]')?.click()`
+      )
+      await ctx.waitForLog(`[note-open] ${absPath(ctx, '守卫.txt')}`, '外部打开走默认应用')
+
+      // 白板 / 图表:头部不能出现外部打开,主进程也不放行。
+      for (const rel of ['守卫板.excal', '守卫图.drawio']) {
+        await openFile(ctx, rel)
+        await ctx.cdp.waitFor(
+          `document.querySelector('[data-file-header-action="open-external"]') === null`,
+          { message: `白板/图表右上角没有外部打开:${rel}` }
+        )
+        const opened = await ctx.cdp.eval(`window.launcher.notes.openFile(${JSON.stringify(rel)})`)
+        eq(opened.ok, false, `${rel} 交给默认应用时被拒绝`)
+      }
+    }
   }
 ]

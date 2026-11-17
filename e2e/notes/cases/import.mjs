@@ -201,7 +201,7 @@ export default [
     id: 'import/file-row-open-delete',
     area: 'import',
     title:
-      '文件行:单击在应用内打开、悬停按钮才交给默认应用,删除确认后文件与行一起消失',
+      '文件行:单击在应用内打开、目录里不再挂外部打开,打开后从页面右上角交给默认应用;删除确认后文件与行一起消失',
     tags: ['import', 'file-row'],
     fixture: BASIC,
     async run(ctx) {
@@ -229,13 +229,17 @@ export default [
         { message: '当前文件行是活动态' }
       )
 
-      // 「用默认应用打开」改为文件行上的显式按钮(悬停动作第一项)。
+      // 目录行不再提供外部打开;外部打开只保留在打开后的页面右上角。
+      await ctx.cdp.waitFor(
+        `document.querySelector('[data-file-path="open-me.txt"] [data-file-action="open-external"]') === null`,
+        { message: '目录行没有外部打开按钮' }
+      )
       await ctx.cdp.eval(
-        `document.querySelector('[data-file-path="open-me.txt"] [data-file-action="open-external"]')?.click()`
+        `document.querySelector('[data-file-header-action="open-external"]')?.click()`
       )
       await ctx.waitForLog(
         `[note-open] ${join(notesDir(ctx), 'open-me.txt')}`,
-        '悬停按钮解析出绝对路径并交给系统默认应用'
+        '页面右上角的外部打开解析出绝对路径并交给系统默认应用'
       )
 
       await ctx.cdp.eval(

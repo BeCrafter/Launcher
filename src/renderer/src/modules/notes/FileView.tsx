@@ -6,6 +6,7 @@ import {
   IMAGE_MAX_BYTES,
   MODEL_MAX_BYTES,
   OFFICE_MAX_BYTES,
+  canOpenFileExternally,
   parentOf,
   type NoteFileKind
 } from '@shared/notes'
@@ -233,14 +234,18 @@ export function FileView(): React.JSX.Element {
           >
             <i className="fa-solid fa-rotate" />
           </button>
-          <button
-            type="button"
-            className="notes-act"
-            title={t('notes.file.openExternal')}
-            onClick={() => void useNotesStore.getState().openFile(file.path)}
-          >
-            <i className="fa-solid fa-arrow-up-right-from-square" />
-          </button>
+          {/* 白板 / 图表是应用自己的格式,不交给默认应用;其他文件保留这个入口。 */}
+          {canOpenFileExternally(file.kind) && (
+            <button
+              type="button"
+              className="notes-act"
+              data-file-header-action="open-external"
+              title={t('notes.file.openExternal')}
+              onClick={() => void useNotesStore.getState().openFile(file.path)}
+            >
+              <i className="fa-solid fa-arrow-up-right-from-square" />
+            </button>
+          )}
           <button
             type="button"
             className="notes-act"
