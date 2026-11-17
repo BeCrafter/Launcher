@@ -199,7 +199,7 @@ in-app update check won't offer them either.
 
 ## Upgrading
 
-The app checks for updates automatically — once at launch, then hourly. When a new version is found, a
+The app checks for updates automatically — once at launch, then every 10 minutes. When a new version is found, a
 bottom-right banner shows the version: click **Download** to start (nothing is downloaded silently), or
 **Later** to mute that version for this session. You can turn automatic checking off in
 Settings → About → "Check for updates automatically".

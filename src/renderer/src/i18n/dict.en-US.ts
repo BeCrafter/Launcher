@@ -787,7 +787,7 @@ export const enUS: Record<string, string> = {
   "sci.wildcardHint": "blank = any",
   "settings.about.arch.rowDesc": "Apple Silicon (arm64) & Intel (x86_64) universal binary",
   "settings.about.arch.rowTitle": "Supported architectures",
-  "settings.about.autoCheck.rowDesc": "Checks once at launch, then hourly; a new version is only announced in-app and never downloaded automatically",
+  "settings.about.autoCheck.rowDesc": "Checks once at launch, then every 10 minutes; a new version is only announced in-app and never downloaded automatically",
   "settings.about.autoCheck.rowTitle": "Check for updates automatically",
   "settings.about.btn.checkUpdates": "Check for Updates",
   "settings.about.license.rowDesc": "MIT License · pure native, no heavy Electron dependencies",

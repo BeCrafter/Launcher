@@ -787,7 +787,7 @@ export const zhCN: Record<string, string> = {
   "sci.wildcardHint": "省略字段 = 通配",
   "settings.about.arch.rowDesc": "Apple Silicon (arm64) & Intel (x86_64) 通用二进制",
   "settings.about.arch.rowTitle": "系统架构支持",
-  "settings.about.autoCheck.rowDesc": "启动后检查一次、之后每小时一次;发现新版本只在应用内提示,不会自动下载",
+  "settings.about.autoCheck.rowDesc": "启动后检查一次、之后每 10 分钟一次;发现新版本只在应用内提示,不会自动下载",
   "settings.about.autoCheck.rowTitle": "自动检查更新",
   "settings.about.btn.checkUpdates": "检查更新",
   "settings.about.license.rowDesc": "基于 MIT License 开源发布 · 纯原生无 Electron 臃肿依赖",

@@ -83,7 +83,7 @@ export interface LauncherSettings {
   menubarBadge: boolean
   // ── 更新 ──
   /**
-   * 启动后自动检查新版本,之后每小时一次。
+   * 启动后自动检查新版本,之后每 10 分钟一次。
    * 只做提示、不自动下载 —— 一次静默下载几百 MB 属于替用户做决定。
    */
   autoUpdateCheck: boolean

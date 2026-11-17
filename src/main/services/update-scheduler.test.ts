@@ -60,7 +60,7 @@ describe('update-scheduler', () => {
     await vi.advanceTimersByTimeAsync(FIRST + INTERVAL * 2)
     expect(h.checks()).toBe(0)
 
-    // available 是「等用户点下载」的稳定态,也不该被每小时检查重置
+    // available 是「等用户点下载」的稳定态,也不该被每 10 分钟一次的检查重置
     h.setPhase('available')
     await vi.advanceTimersByTimeAsync(INTERVAL)
     expect(h.checks()).toBe(0)

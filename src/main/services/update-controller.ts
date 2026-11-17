@@ -190,7 +190,7 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     }
     const failCheck = (code: UpdateErrorCode, reason: string): UpdateState => {
       if (!auto) return fail(code, reason)
-      // 每小时一次的后台检查不该因为一次网络抖动把设置页打成错误态,
+      // 每 10 分钟一次的后台检查不该因为一次网络抖动把设置页打成错误态,
       // 更不该冲掉已有的 upToDate;记一行日志,界面状态原样保留。
       log(`自动检查失败(${code}):${reason}`)
       phase = previous.phase
@@ -230,7 +230,7 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     manifest = null
     resolved = null
     checkedAt = null
-    // 自动检查不发 checking:后台活,不让设置页每小时闪一下
+    // 自动检查不发 checking:后台活,不让设置页每 10 分钟闪一下
     if (!auto) emit()
 
     try {

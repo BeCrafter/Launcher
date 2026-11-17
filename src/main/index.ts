@@ -490,7 +490,7 @@ async function startApp(): Promise<void> {
   })
   app.once('before-quit', () => updater.dispose())
 
-  // 自动检查:启动后先查一次,之后每小时。e2e 会用更短的间隔(见 LAUNCHER_UPDATE_CHECK_*)。
+  // 自动检查:启动后先查一次,之后每 10 分钟。e2e 会用更短的间隔(见 LAUNCHER_UPDATE_CHECK_*)。
   const envMs = (name: string, fallback: number): number => {
     const n = Number(process.env[name])
     return Number.isFinite(n) && n >= 200 ? Math.trunc(n) : fallback
@@ -500,7 +500,7 @@ async function startApp(): Promise<void> {
     getPhase: () => updater.getState().phase,
     getAutoEnabled: () => store.get().autoUpdateCheck,
     firstDelayMs: envMs('LAUNCHER_UPDATE_CHECK_FIRST_MS', 15_000),
-    intervalMs: envMs('LAUNCHER_UPDATE_CHECK_INTERVAL_MS', 60 * 60 * 1000),
+    intervalMs: envMs('LAUNCHER_UPDATE_CHECK_INTERVAL_MS', 10 * 60 * 1000),
     log: (m) => console.log(`[update-check] ${m}`)
   })
   app.once('before-quit', () => updateScheduler.stop())

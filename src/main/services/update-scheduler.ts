@@ -1,4 +1,4 @@
-// 自动检查更新的调度器:启动后查一次,之后每小时一次。
+// 自动检查更新的调度器:启动后查一次,之后每 10 分钟一次。
 //
 // 只做「调用 check」这一件事:状态机、下载、安装全在 UpdateController 里,
 // 这里不持有任何更新自己的状态(phase 现读,设置开关现读)。
@@ -7,7 +7,7 @@
 //   · 只在 idle / upToDate 时发起。available 时再查会把状态机从「等用户点下载」
 //     打回 checking 再重建,targetVersion 也跟着重算;checking/downloading/ready
 //     等相位本来就不该被打断,直接跳过。
-//   · error 不自动重试:error 是用户可见的失败(下载/校验/助手启动),每小时重试
+//   · error 不自动重试:error 是用户可见的失败(下载/校验/助手启动),每 10 分钟重试
 //     会把 error 的日志路径与原因冲掉、界面反复闪;网络抖动在 auto 模式下不会落 error
 //     (controller 会还原原相位),所以下一个 tick 本来就会再试一次。
 //   · 定时器 unref:不因为这个后台活拦住进程退出;退出时仍有 stop() 兜底。
@@ -15,7 +15,7 @@
 import type { UpdatePhase } from '../../shared/ipc'
 
 const DEFAULT_FIRST_DELAY_MS = 15_000
-const DEFAULT_INTERVAL_MS = 60 * 60 * 1000
+const DEFAULT_INTERVAL_MS = 10 * 60 * 1000
 /** 这些相位里发起检查是安全的:没有进行中的下载/待重启 */
 const CHECKABLE: ReadonlySet<UpdatePhase> = new Set<UpdatePhase>(['idle', 'upToDate'])
 
