@@ -398,13 +398,25 @@ async function waitFrame(ctx, sessionId, expression, message, timeout = 10_000) 
 }
 
 async function frameHandle(ctx, urlPart, predicate, message, timeout = 15_000) {
-  const handles = await ctx.cdp.attachFrame(urlPart)
-  for (const frame of handles) {
+  // 子目标可能先挂上、stub 还没 load 完;也可能先看到上一个用例残留的目标。
+  // 在超时内反复 attach,直到某一帧真的满足条件。
+  const started = Date.now()
+  while (Date.now() - started < timeout) {
     try {
-      if ((await ctx.cdp.evalIn(frame.sessionId, predicate)) === true) return frame
+      const handles = await ctx.cdp.attachFrame(urlPart, {
+        timeout: Math.max(200, timeout - (Date.now() - started))
+      })
+      for (const frame of handles) {
+        try {
+          if ((await ctx.cdp.evalIn(frame.sessionId, predicate)) === true) return frame
+        } catch {
+          // 目标可能正在导航;继续试下一个
+        }
+      }
     } catch {
-      // 目标可能正在导航;继续试下一个
+      // 目标还没出现,下一轮再试
     }
+    await sleep(80)
   }
   throw new Error(message)
 }
