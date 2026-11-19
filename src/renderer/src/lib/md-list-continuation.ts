@@ -9,7 +9,9 @@
 
 import {
   formatOrderedToken,
+  isBlankInQuote,
   listSyntaxAt,
+  LIST_BLANK_LIMIT,
   parseListLine,
   QUOTE_PREFIX_RE,
   THEMATIC_BREAK_RE,
@@ -189,9 +191,17 @@ function parentListItem(
   const leads: number[] = []
   const quote = syntax.quote
   let indent = syntax.indent.length
+  let blankRun = 0
   for (let i = index - 1; i >= 0; i -= 1) {
     const line = lines[i]
-    if (line.trim() === '') continue
+    if (isBlankInQuote(line, quote)) {
+      blankRun += 1
+      // 连续 2 个空行 = 组边界:不再跨组借用父级编号
+      if (blankRun > LIST_BLANK_LIMIT) return null
+      continue
+    }
+    blankRun = 0
+    if (line.trim() === '') return null
     if ((QUOTE_PREFIX_RE.exec(line)?.[1] ?? '') !== quote) return null
     const item = THEMATIC_BREAK_RE.test(line.slice(quote.length)) ? null : parseListLine(line)
     if (item === null) {

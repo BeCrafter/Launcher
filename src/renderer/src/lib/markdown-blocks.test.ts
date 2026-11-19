@@ -193,6 +193,67 @@ describe('list items', () => {
     expect(all[1].from).toBe(2)
   })
 
+  it('反缩进归一:4 空格与 2 空格子项都挂在上一个父项下', () => {
+    const text = '- 父\n    - 子A\n  - 子B\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => b.from)).toEqual([0, 1, 2])
+    expect(all[1].parentId).toBe(all[0].id)
+    expect(all[2].parentId).toBe(all[0].id)
+  })
+
+  it('反缩进比上一段子项浅、但仍比父项深:归到最近父项', () => {
+    const text = '- 父\n  - 子A\n    - 孙\n   - 子B\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => b.from)).toEqual([0, 1, 2, 3])
+    expect(all[2].parentId).toBe(all[1].id)
+    expect(all[3].parentId).toBe(all[1].id)
+  })
+
+  it('同一父项下混用无序 / 有序子级,两段都是它的子块', () => {
+    const text = '- 父\n  - 子\n  1. 序\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => [b.from, b.ordered])).toEqual([
+      [0, false],
+      [1, false],
+      [2, true]
+    ])
+    expect(all[1].parentId).toBe(all[0].id)
+    expect(all[2].parentId).toBe(all[0].id)
+  })
+
+  it('连续两个空行结束列表:后续项各自成组', () => {
+    const text = '- 甲\n\n\n- 乙\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => b.from)).toEqual([0, 3])
+    expect(all[0].to).toBe(3)
+    expect(all[1].parentId).toBe(all[0].parentId)
+  })
+
+  it('连续两个空行清空嵌套栈:更深的行不再是上一个条目的子项', () => {
+    const text = '- 甲\n\n\n  - 子\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => b.from)).toEqual([0, 3])
+    expect(all[1].parentId).toBe(all[0].parentId)
+    expect(all[1].parentId).not.toBe(all[0].id)
+  })
+
+  it('条目内围栏里的连续空行不截断条目', () => {
+    const text = '- 甲\n  ```\n\n\n  ```\n  续行\n\n\n- 乙\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => b.from)).toEqual([0, 8])
+    // 围栏与续行都算甲的自有正文
+    expect(all[0].contentTo).toBe(6)
+  })
+
+  it('深层子项里的围栏按相对缩进识别,内部连续空行不截断条目', () => {
+    const text = '- 父\n  - 子\n    ```\n\n\n    ```\n    续行\n\n\n- 乙\n'
+    const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')
+    expect(all.map((b) => b.from)).toEqual([0, 1, 9])
+    expect(all[1].parentId).toBe(all[0].id)
+    // 围栏(含内部两个空行)与续行都属于「子」这一项
+    expect(all[1].contentTo).toBe(7)
+  })
+
   it('counts by characters, so a deeper indent is a child and the same indent is a sibling', () => {
     const text = '- 甲\n    - 深一层\n- 乙\n'
     const all = parseMarkdownBlocks(text).filter((b) => b.kind === 'listItem')

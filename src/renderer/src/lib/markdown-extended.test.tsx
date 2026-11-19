@@ -284,8 +284,11 @@ describe('块级:嵌套列表', () => {
     expect(out).toContain('<ol class="md-list" type="1">')
   })
 
-  it('跨过多个空行续接时,行锚点仍是真实文档行号', () => {
+  it('连续两个空行结束列表后,新列表项的行锚点仍是真实文档行号', () => {
     const out = html('- 甲\n  - 乙\n\n\n  - 丙', { extended: true, lineAnchors: true })
+    // 丙 已不在甲乙那棵树里:两空行断了组,它是一棵新的根列表
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(3)
+    expect(out.indexOf('丙')).toBeGreaterThan(out.indexOf('</ul>'))
     expect(out).toContain('data-line="0"')
     expect(out).toContain('data-line="1"')
     expect(out).toContain('data-line="4"')
@@ -312,6 +315,25 @@ describe('块级:嵌套列表', () => {
     expect(out.slice(out.indexOf('<ul class="md-list">', out.indexOf('<ul class="md-list">') + 1))).toContain('丙')
   })
 
+  it('有序松散嵌套:空行后的小写序号仍留在同一个子列表', () => {
+    const out = html('1. 甲\n  a. 乙\n\n  b. 丙')
+    expect(out.match(/<ol class="md-list"/g)?.length).toBe(2)
+    const inner = out.slice(out.indexOf('<ol class="md-list" type="a">'))
+    expect(inner).toContain('乙')
+    expect(inner).toContain('丙')
+  })
+
+  it('空行后缩进回到根层的项不会掉进上一个子列表', () => {
+    const out = html('- 父\n  - 子\n\n- 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(3)
+    // 内层列表只装「子」,「乙」在它关闭之后回到根层
+    const start = out.indexOf('<ul class="md-list">', 1)
+    const inner = out.slice(start, out.indexOf('</ul>', start))
+    expect(inner).toContain('子')
+    expect(inner).not.toContain('乙')
+  })
+
   // 标记样式只跟源码符号走,不按深度递进;同一缩进混用符号仍是一个列表。
   it('无序标记按源码符号逐项渲染:- ● / + ○ / * ▪', () => {
     const out = html('- 甲\n+ 乙\n* 丙')
@@ -319,6 +341,151 @@ describe('块级:嵌套列表', () => {
     expect(out).toContain('<li style="list-style-type:disc">甲</li>')
     expect(out).toContain('<li style="list-style-type:circle">乙</li>')
     expect(out).toContain('<li style="list-style-type:square">丙</li>')
+  })
+
+  it('同缩进混用符号 + 空行仍是同一个列表,各显示各的标记', () => {
+    const out = html('- 甲\n\n+ 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(1)
+    expect(out).toContain('style="list-style-type:disc">甲')
+    expect(out).toContain('style="list-style-type:circle">乙')
+  })
+
+  // 符号矩阵:父项是 - / + / * 时,子项仍各按自己的符号渲染,层级只看缩进。
+  for (const parent of ['-', '+', '*'] as const) {
+    it(`父项 \`${parent}\` 下的三种符号各自渲染`, () => {
+      const own = { '-': 'disc', '+': 'circle', '*': 'square' } as const
+      const out = html(`${parent} 父\n  - 子减\n  + 子加\n  * 子星`)
+      expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+      expect(out).toContain(`style="list-style-type:${own[parent]}">父`)
+      expect(out).toContain('style="list-style-type:disc">子减')
+      expect(out).toContain('style="list-style-type:circle">子加')
+      expect(out).toContain('style="list-style-type:square">子星')
+    })
+  }
+
+  it('列表从 + 或 * 开始时就是空心圆 / 方块,不要求上面先有 -', () => {
+    const out = html('+ 甲\n* 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(1)
+    expect(out).toContain('style="list-style-type:circle">甲')
+    expect(out).toContain('style="list-style-type:square">乙')
+    expect(out).not.toContain('list-style-type:disc')
+  })
+
+  it('缩进严格按字符数分层:深一层是子项,回到外层缩进是兄弟项', () => {
+    const out = html('- 甲\n  - 子\n- 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(3)
+    const start = out.indexOf('<ul class="md-list">', 1)
+    const inner = out.slice(start, out.indexOf('</ul>', start))
+    expect(inner).toContain('子')
+    expect(inner).not.toContain('乙')
+  })
+
+  it('一个空格的缩进也算更深一层', () => {
+    const out = html('- 甲\n - 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(2)
+  })
+
+  it('单个空行后的子项挂在上一个条目下,而不是列表开头那一项', () => {
+    const out = html('- 甲\n- 乙\n\n  - 乙子')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    const nested = out.indexOf('<ul class="md-list">', 1)
+    // 子列表紧跟在「乙」这一项之后
+    expect(out.slice(0, nested).endsWith('乙')).toBe(true)
+    expect(out.indexOf('甲')).toBeLessThan(out.indexOf('乙'))
+  })
+
+  // 嵌套只看「最近父级」:4 空格子项后面跟 2 空格子项,两段都挂在同一个父项下。
+  it('反缩进归一:4 空格与 2 空格子项都挂在上一个父项下', () => {
+    const out = html('- 父\n    - 子A\n  - 子B')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(3)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(3)
+    // 父项下两段相邻子列表,子B 不在根层
+    expect(out.indexOf('子A')).toBeGreaterThan(out.indexOf('父'))
+    expect(out.indexOf('子B')).toBeGreaterThan(out.indexOf('子A'))
+    expect(out.indexOf('子B')).toBeLessThan(out.lastIndexOf('</li>'))
+  })
+
+  it('反缩进比上一段子项浅、但仍比父项深:归到最近父项,不能掉到顶层', () => {
+    const out = html('- 父\n  - 子A\n    - 孙\n   - 子B')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(4)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(4)
+    // 孙与子B 都是子A 的子级
+    expect(out.indexOf('孙')).toBeGreaterThan(out.indexOf('子A'))
+    expect(out.indexOf('子B')).toBeGreaterThan(out.indexOf('孙'))
+  })
+
+  it('没有中间项时,深缩进只增加一层,不按绝对宽度多分层', () => {
+    const out = html('- 父\n      - 孙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(2)
+  })
+
+  it('同一父项下混用无序和有序子级,各成一段子列表', () => {
+    const out = html('- 父\n  - 子\n  1. 序')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.match(/<ol class="md-list"/g)?.length).toBe(1)
+    expect(out.indexOf('序')).toBeGreaterThan(out.indexOf('子'))
+  })
+
+  it('反缩进后又变深:更深项归到最近的 2 空格父项,不再回到第一段子列表', () => {
+    const out = html('- 父\n    - 子A\n  - 子B\n    - 子C')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(4)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(4)
+    // 子C 是子B 的子级,不是子A 的兄弟
+    expect(out.indexOf('子C')).toBeGreaterThan(out.indexOf('子B'))
+    expect(out.indexOf('子C')).toBeLessThan(out.lastIndexOf('</li>'))
+  })
+
+  it('任务项同样可以挂多段子列表', () => {
+    const out = html('- [ ] 父\n  - 子\n  1. 序')
+    expect(out.match(/class="md-task"/g)?.length).toBe(1)
+    const body = out.indexOf('md-task-body')
+    expect(out.indexOf('<ul class="md-list">', body)).toBeGreaterThan(body)
+    expect(out.indexOf('<ol class="md-list"', body)).toBeGreaterThan(body)
+  })
+
+  it('单个空行不打断反缩进归并', () => {
+    const out = html('- 父\n    - 子A\n\n  - 子B')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(3)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(3)
+  })
+
+  it('连续两个空行在根层分成两个列表', () => {
+    const out = html('- 甲\n\n\n- 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.match(/<li [^>]*>/g)?.length).toBe(2)
+  })
+
+  it('连续两个空行清空整个嵌套栈:更深的行另起一组,挂在父项外面', () => {
+    const out = html('- 父\n  - 子\n\n\n   - 孙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(3)
+    // 孙的后一段根列表在第一棵子列表关闭之后
+    expect(out.indexOf('孙')).toBeGreaterThan(out.indexOf('</ul>', out.indexOf('子')))
+  })
+
+  it('引用里的连续两个空行同样断组', () => {
+    const out = html('> - 甲\n>\n>\n>   - 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+  })
+
+  it('组边界后没有有序上级:a. 不再当列表,十进制仍可另起', () => {
+    const out = html('1. 甲\n\n\n  a. 乙\n\n\n1. 丙')
+    expect(out).not.toContain('type="a"')
+    expect(out.match(/<ol class="md-list" type="1">/g)?.length).toBe(2)
+  })
+
+  it('被段落隔开的两个列表保持独立,不会合并', () => {
+    const out = html('- 甲\n\n段落\n\n- 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out).toContain('<p class="md-p"')
+  })
+
+  it('被分隔线隔开的两个列表保持独立', () => {
+    const out = html('- 甲\n\n---\n\n- 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out).toContain('md-hr')
   })
 
   it('嵌套项同样按自己的符号显示标记', () => {

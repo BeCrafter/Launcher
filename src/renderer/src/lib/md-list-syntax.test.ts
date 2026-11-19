@@ -197,6 +197,38 @@ describe('缩进', () => {
   })
 })
 
+describe('空行分组边界:1 个透明,连续 2 个结束上下文', () => {
+  it('单个空行保留有序档位', () => {
+    expect(listSyntaxAt(['1. 甲', '', '  a. 乙'], 2)?.style).toBe(1)
+  })
+
+  it('连续两个空行重置档位:a. 不再是列表', () => {
+    expect(listSyntaxAt(['1. 甲', '', '', '  a. 乙'], 3)).toBeNull()
+  })
+
+  it('连续两个空行后十进制仍可另起列表', () => {
+    expect(listSyntaxAt(['1. 甲', '', '', '1. 乙'], 3)?.number).toBe(1)
+  })
+
+  it('引用层里的 > 空行同样按空行计数', () => {
+    expect(listSyntaxAt(['> 1. 甲', '>', '>   a. 乙'], 2)?.style).toBe(1)
+    expect(listSyntaxAt(['> 1. 甲', '>', '>', '>   a. 乙'], 3)).toBeNull()
+  })
+
+  it('引用层里的物理空行结束上下文,不能跨层借用上级', () => {
+    expect(listSyntaxAt(['> 1. 甲', '', '>   a. 乙'], 2)).toBeNull()
+  })
+
+  it('缩进换标记:跨 1 个空行仍按上级,跨 2 个空行按无上级', () => {
+    expect(indentMarkdownLines(['- 甲', '', '  - 乙'], [2], 'in')?.get(2)).toBe('    + 乙')
+    expect(indentMarkdownLines(['- 甲', '', '', '  - 乙'], [3], 'in')?.get(3)).toBe('    - 乙')
+  })
+
+  it('反向缩进时按最近父项换标记', () => {
+    expect(indentMarkdownLines(['- 父', '    - 子A', '  - 子B'], [2], 'in')?.get(2)).toBe('    + 子B')
+  })
+})
+
 describe('indentMarkdownLines:标记跟随上一级', () => {
   const plan = (
     lines: string[],

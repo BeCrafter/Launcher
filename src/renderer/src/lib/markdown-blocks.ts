@@ -1,7 +1,7 @@
 import { noteAssetKindOfUrl, type NoteAssetKind } from '@shared/notes'
 import type { CalloutKind } from './markdown'
 import { alignOpenOf, isAlignClose, type TextAlign } from './note-align'
-import { listSyntaxAt, THEMATIC_BREAK_RE } from './md-list-syntax'
+import { listSyntaxAt, skipTransparentBlankLines, THEMATIC_BREAK_RE } from './md-list-syntax'
 
 export type MarkdownBlockKind =
   | 'frontmatter'
@@ -111,16 +111,20 @@ function consumeFence(
   lines: string[],
   start: number,
   fence: { char: '`' | '~'; length: number },
-  limit: number
+  limit: number,
+  baseIndent = 0
 ): ConsumedBlock {
   let i = start + 1
+  // 围栏可能缩进在列表项的内容列里(例如 2 空格父项下的 4 空格围栏)。
+  // 闭合行与信息串都按 `baseIndent` 之后的相对缩进判断,最多再吃 3 个空格。
   const close = new RegExp(`^ {0,3}${fence.char}{${fence.length},}\\s*$`)
-  while (i < limit && !close.test(lines[i])) i += 1
+  while (i < limit && !close.test(lines[i].slice(baseIndent))) i += 1
   if (i < limit) i += 1
   // 信息串的第一个词决定它到底是什么 —— 手柄/菜单据此出不同的图标与类型名。
   // 这三个是应用自带的围栏语言（预览各有各的渲染），其余一律是代码块：
   //   mermaid → 图表、embed → 网页嵌入、table → 带样式的表格（预览会套一层 .md-table-scope）
-  const info = lines[start].slice(lines[start].indexOf(fence.char) + fence.length).trim().toLowerCase()
+  const open = lines[start].slice(baseIndent)
+  const info = open.slice(open.indexOf(fence.char) + fence.length).trim().toLowerCase()
   const lang = info.split(/\s+/)[0] ?? ''
   const kind = lang === 'mermaid' ? 'diagram' : lang === 'embed' ? 'embed' : lang === 'table' ? 'table' : 'fence'
   return { kind, contentTo: i, to: withTrailingBlanks(lines, i, limit) }
@@ -232,7 +236,8 @@ function inItem(lines: readonly string[], index: number, mark: ItemMark): boolea
 /**
  * 条目「吃到」的最后一行的下一行（不含尾随空行）。
  * 判据顺序即优先级：围栏整段跳过 → 缩进到内容列的行算续行 → 空行往后看一个非空行
- * （仍属于条目就继续，否则停在空行前）→ 同层 / 更浅的条目标记结束 → 顶格的其他块结束。
+ * （1 个空行透明，仍属于条目就继续；连续 2 个空行是组边界，直接停在空行前）→
+ * 同层 / 更浅的条目标记结束 → 顶格的其他块结束。
  */
 function itemRegionEnd(lines: string[], from: number, limit: number, mark: ItemMark): number {
   let i = from + 1
@@ -240,23 +245,32 @@ function itemRegionEnd(lines: string[], from: number, limit: number, mark: ItemM
   while (i < limit) {
     const line = lines[i]
     if (blank(line)) {
-      let j = i
-      while (j < limit && blank(lines[j])) j += 1
-      if (j < limit && inItem(lines, j, mark)) {
-        i = j
+      const next = skipTransparentBlankLines(lines, i, limit)
+      if (next !== null && next < limit && inItem(lines, next, mark)) {
+        i = next
         continue
       }
       break
     }
     if (!inItem(lines, i, mark)) break
-    const fence = fenceOf(line)
-    i = fence !== null ? Math.max(consumeFence(lines, i, fence, limit).contentTo, i + 1) : i + 1
+    // 围栏可能缩进在列表项的内容列里(2–4 空格甚至更深)。先按常规 0–3 空格认;
+    // 认不到时把整段前导空白当作基准,闭合行再按同一基准匹配。
+    let fence = fenceOf(line)
+    let fenceBase = 0
+    if (fence === null) {
+      fenceBase = indentOf(line)
+      fence = fenceOf(line.slice(fenceBase))
+    }
+    i =
+      fence !== null
+        ? Math.max(consumeFence(lines, i, fence, limit, fenceBase).contentTo, i + 1)
+        : i + 1
     end = i
   }
   return end
 }
 
-/** 一层条目：缩进完全相等 + 同一种标记。条目之间允许空行（松列表）。 */
+/** 一层条目：缩进完全相等 + 同一种标记。条目之间最多隔 1 个空行（松列表）。 */
 function parseItemRun(
   lines: string[],
   start: number,
@@ -297,13 +311,15 @@ function parseItemRun(
     })
     i = regionEnd
 
-    // 松列表：条目之间的空行归前一个条目的 `to`，槽位因此不留缝
-    let j = i
-    while (j < limit && blank(lines[j])) j += 1
-    const next = j < limit ? itemMarkAt(lines, j) : null
-    if (next !== null && next.indent === indent && next.ordered === ordered) {
-      i = j
-      continue
+    // 松列表：单个空行透明，条目的 `to` 仍吞掉它、槽位因此不留缝。
+    // 连续 2 个空行是组边界，不跨过去续接（组自己的 `to` 仍按槽位语义吞掉尾随空行）。
+    const nextAt = skipTransparentBlankLines(lines, i, limit)
+    if (nextAt !== null && nextAt < limit) {
+      const next = itemMarkAt(lines, nextAt)
+      if (next !== null && next.indent === indent && next.ordered === ordered) {
+        i = nextAt
+        continue
+      }
     }
     break
   }

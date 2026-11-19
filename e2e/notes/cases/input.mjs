@@ -34,6 +34,18 @@ const ORDERED_LEVELS = [
 ].join('\n')
 const ORDERED_ALPHA = ['# 字母续行', '', '1. 甲', '  a. 乙', ''].join('\n')
 const CODE_LIST = ['# 代码块', '', '```', '- 不是列表', '```', ''].join('\n')
+const BLANK_BOUNDARY = [
+  '# 空行边界标记',
+  '',
+  '- 甲',
+  '',
+  '- 乙',
+  '',
+  '',
+  '- 丙',
+  ''
+].join('\n')
+const BLANK_ENTER = ['# 空行回车', '', '1. 父', '', '', '  a. 乙', ''].join('\n')
 
 function nonEmpty(lines) {
   return lines.filter((line) => line.trim() !== '')
@@ -245,6 +257,41 @@ export default [
       includes(await ctx.lines(), '    + 内层甲一', 'Tab 增加一级缩进,标记跟随上一级变为 +')
       await ctx.press('Tab', 8)
       includes(await ctx.lines(), '  + 内层甲一', 'Shift+Tab 恢复原缩进,标记仍跟随上一级为 +')
+    }
+  },
+
+  {
+    // 两空行是组边界:上一个列表不再算作上级,标记回退 `-`;
+    // 单个空行仍透明,标记继续按上一级递进。
+    id: 'input/tab-marker-after-two-blank-lines',
+    area: 'input',
+    title: 'Tab 换标记:跨 1 个空行仍跟随上一级,连续 2 个空行后按无上级回退 -',
+    tags: ['input', 'list', 'tab', 'blank-line'],
+    fixture: BLANK_BOUNDARY,
+    async run(ctx, t) {
+      await ctx.setCursor('- 乙', 0)
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '  + 乙', '单个空行后仍按上一级换 +')
+      await ctx.setCursor('- 丙', 0)
+      await ctx.press('Tab')
+      includes(await ctx.lines(), '  - 丙', '连续两个空行后没有上级,标记保持 -')
+    }
+  },
+
+  {
+    // 两空行清空有序上下文后, a. 不再是列表:回车不按前一组续出 b.
+    id: 'input/enter-after-two-blank-lines-no-continuation',
+    area: 'input',
+    title: '两空行后的 a. 行回车:不再按前一组的有序上级续出 b.,只插入普通换行',
+    tags: ['input', 'list', 'blank-line'],
+    fixture: BLANK_ENTER,
+    async run(ctx, t) {
+      const line = '  a. 乙'
+      await ctx.setCursor(line, line.length)
+      await ctx.press('Enter')
+      const lines = await ctx.lines()
+      includes(lines, line, '原行保持原样')
+      ok(!lines.some((text) => text.trim().startsWith('b.')), '没有续出 b. 行')
     }
   },
 

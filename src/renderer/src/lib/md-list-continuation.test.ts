@@ -110,6 +110,17 @@ describe('planMarkdownContinuation:字母与罗马数字', () => {
   it('顶格 a. 不是列表,不接管回车', () => {
     expect(at(['a. 注意'], 0)).toBeNull()
   })
+
+  it('连续两个空行后 a. 不再算列表,回车不接管', () => {
+    expect(at(['1. 甲', '', '', '  a. '], 3)).toBeNull()
+  })
+
+  it('单个空行后空的 a. 仍退回父列表接编号', () => {
+    expect(at(['1. 甲', '', '  a. '], 2)).toMatchObject({
+      normalize: { insert: '2. ' },
+      insert: ''
+    })
+  })
 })
 
 describe('planMarkdownContinuation:交给上游', () => {

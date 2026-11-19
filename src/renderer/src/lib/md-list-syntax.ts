@@ -265,6 +265,51 @@ function leadWidth(line: string): number {
   return /^[ \t]*/.exec(bodyAfterQuote(line))?.[0].length ?? 0
 }
 
+/** 透明空行上限:1 个空行仍透明;连续 2 个空行是组边界,结束当前列表与所有未闭合层级。 */
+export const LIST_BLANK_LIMIT = 1
+
+/**
+ * 这一行在给定引用层里是否算空行。
+ *
+ * 普通层只认物理空行;引用层里 `>` / `> ` 这种前缀之后没有正文的行也算。
+ * `>` 与 `> ` 的尾随空格差异按 `trimEnd` 归一 —— 它们是同一层引用。
+ * 没有引用前缀的物理空行**不属于**引用层(它本来就结束引用)。
+ */
+export function isBlankInQuote(line: string, quote = ''): boolean {
+  const lineQuote = QUOTE_PREFIX_RE.exec(line)?.[1] ?? ''
+  return lineQuote.trimEnd() === quote.trimEnd() && bodyAfterQuote(line).trim() === ''
+}
+
+/**
+ * 从 `from` 起连续空行的条数(不越过 `limit`)。
+ * 引用层用 `isBlankInQuote` 判定,普通层就是连续物理空行。
+ */
+export function blankRunLength(
+  lines: readonly string[],
+  from: number,
+  limit = lines.length,
+  quote = ''
+): number {
+  let n = 0
+  while (from + n < limit && isBlankInQuote(lines[from + n], quote)) n += 1
+  return n
+}
+
+/**
+ * 空行透明前瞻:返回空行之后第一个非空行的下标。
+ * 空行游程超过 `LIST_BLANK_LIMIT`(即连续 2 个及以上)时返回 `null` ——
+ * 这是组边界,调用方必须停止续接、清空未闭合层级。
+ */
+export function skipTransparentBlankLines(
+  lines: readonly string[],
+  from: number,
+  limit = lines.length,
+  quote = ''
+): number | null {
+  const run = blankRunLength(lines, from, limit, quote)
+  return run > LIST_BLANK_LIMIT ? null : from + run
+}
+
 interface OrderedContext {
   /** 有序上级的个数。无序上级不算。扫到列表上下文结束就停。 */
   orderedAncestors: number
@@ -273,9 +318,12 @@ interface OrderedContext {
 }
 
 /**
- * 从这一行往上找列表上下文。空行跳过;续行必须落在候选上级的内容列里,
- * 否则上下文结束 —— 与块模型 `inItem` 同一口径。
- * 引用前缀必须一致。分隔线既不当上级,也不算续行。
+ * 从这一行往上找列表上下文。
+ *
+ * 单个空行透明(松散列表);**连续 2 个空行是组边界**,上下文立即结束 ——
+ * 与预览 `parseListExt`、块模型 `parseItemRun` 同一口径。
+ * 续行必须落在候选上级的内容列里,否则上下文结束 —— 与块模型 `inItem` 同一口径。
+ * 引用前缀必须一致(引用层里的 `>` 空行按空行计数)。分隔线既不当上级,也不算续行。
  */
 function orderedContextOf(
   lines: readonly string[],
@@ -288,9 +336,18 @@ function orderedContextOf(
   const leads: number[] = []
   let siblingNumber: number | null = null
   let orderedAncestors = 0
+  let blankRun = 0
   for (let i = index - 1; i >= 0; i -= 1) {
     const line = lines[i]
-    if (line.trim() === '') continue
+    if (isBlankInQuote(line, quote)) {
+      blankRun += 1
+      // 连续 2 个空行 = 组边界:上面的有序上级全部作废,档位从十进制重来
+      if (blankRun > LIST_BLANK_LIMIT) break
+      continue
+    }
+    blankRun = 0
+    // 引用层里没有引用前缀的物理空行会在这里结束上下文(不能跨层借用上级)
+    if (line.trim() === '') break
     if ((QUOTE_PREFIX_RE.exec(line)?.[1] ?? '') !== quote) break
     const syntax = THEMATIC_BREAK_RE.test(bodyAfterQuote(line)) ? null : parseListLine(line)
     if (syntax === null) {
@@ -355,6 +412,7 @@ export function isListLineAt(lines: readonly string[], index: number): boolean {
 /**
  * 目标行的上一级无序列表标记,以及由它推出的本级标记。
  * 没有上级、上级是有序列表、或中间存在更浅的续行 → 本级用基础标记 `-`。
+ * 单个空行透明;连续 2 个空行是组边界,同样没有上级。
  */
 function parentMarkerOf(
   lines: readonly string[],
@@ -363,9 +421,17 @@ function parentMarkerOf(
   quote: string
 ): string {
   const leads: number[] = []
+  let blankRun = 0
   for (let i = index - 1; i >= 0; i -= 1) {
     const line = lines[i]
-    if (line.trim() === '') continue
+    if (isBlankInQuote(line, quote)) {
+      blankRun += 1
+      // 连续 2 个空行 = 组边界:没有上级,本级回退基础标记 `-`
+      if (blankRun > LIST_BLANK_LIMIT) return '-'
+      continue
+    }
+    blankRun = 0
+    if (line.trim() === '') return '-'
     if ((QUOTE_PREFIX_RE.exec(line)?.[1] ?? '') !== quote) return '-'
     const syntax = THEMATIC_BREAK_RE.test(bodyAfterQuote(line)) ? null : parseListLine(line)
     if (syntax !== null) {

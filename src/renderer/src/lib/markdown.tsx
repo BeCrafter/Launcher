@@ -37,7 +37,12 @@ import {
   type MediaTarget
 } from './note-media-size'
 import { alignOpenOf, isAlignClose } from './note-align'
-import { isListLineAt, listSyntaxAt, type OrderedStyle } from './md-list-syntax'
+import {
+  isListLineAt,
+  listSyntaxAt,
+  skipTransparentBlankLines,
+  type OrderedStyle
+} from './md-list-syntax'
 import { openExternal } from './utils'
 import {
   clampTableCol,
@@ -1228,7 +1233,11 @@ interface ListItemExt {
   value: number | null
   /** 无序项的源码符号。标记样式按它逐项渲染;有序项为 null。 */
   bullet: '-' | '+' | '*' | null
-  children: ListNodeExt | null
+  /**
+   * 同一父项下的多段子列表,按文档顺序排列。
+   * 缩进 4 空格的一段和 2 空格的一段、`ul` 一段和 `ol` 一段,都挂在这里、彼此同级。
+   */
+  children: ListNodeExt[]
 }
 interface ListNodeExt {
   ordered: boolean
@@ -1262,9 +1271,19 @@ function previewListLine(lines: string[], index: number): ReturnType<typeof list
  * 同一缩进上 `1.` 和 `a.` 拆成两个列表;无序符号(`-` / `+` / `*`)不参与分组,
  * 只决定该项的标记样式。
  *
- * 空行透明:空行后只要还是同层同种类的列表行就继续(松散列表);缩进更深则挂成
- * 上一项的子列表;否则列表结束,并把空行原样留给 `renderBlocks`(不能吞掉)。
- * 与块模型 `itemRegionEnd` / `parseItemRun`、编辑上下文 `orderedContextOf` 同一口径。
+ * 空行:单个空行透明(松散列表);**连续 2 个空行是组边界**,结束当前列表和
+ * 所有未闭合层级,空行原样留给 `renderBlocks`(不能吞掉)。与块模型
+ * `itemRegionEnd` / `parseItemRun`、编辑上下文 `orderedContextOf` 同一口径。
+ *
+ * 分组规则:
+ * - **合并**:缩进完全相等、同为有序 / 无序、有序档位相同,且中间最多一个空行。
+ *   无序符号 `-` / `+` / `*` 不同也合并(样式逐项走,BULLET_STYLE)。
+ * - **拆开**:中间隔着非列表块(段落 / 标题 / 分隔线 / 围栏 / 表格 / 引用)、
+ *   ul ↔ ol 互换、有序档位变化(1. ↔ a. ↔ i.)、连续 2 个空行。
+ * - **层级**:只看「比最近的父项更深」。缩进更深的下一项开一段 child run;
+ *   child run 结束后如果下一行仍比本项深,再开下一段 —— 所以 4 空格子项后面
+ *   跟 2 空格子项时,两段都挂在同一个父项下,视觉同级;反向缩进不会掉到顶层。
+ *   一段 run 内部仍要求缩进**字符数完全相等**(同级兄弟的判据)。
  */
 function parseListExt(lines: string[], start: number, baseLine = 0): { list: ListNodeExt; next: number } {
   const first = previewListLine(lines, start)!
@@ -1278,12 +1297,6 @@ function parseListExt(lines: string[], start: number, baseLine = 0): { list: Lis
     m.indent.length === indent &&
     m.ordered === ordered &&
     (m.style === null ? null : ORDERED_TYPE[m.style]) === type
-  /** 空行整组透明:返回下一个非空行下标。只用于前瞻,不直接推进 i。 */
-  const skipBlankLines = (from: number): number => {
-    let j = from
-    while (j < lines.length && lines[j].trim() === '') j += 1
-    return j
-  }
   const items: ListItemExt[] = []
   let i = start
 
@@ -1295,22 +1308,24 @@ function parseListExt(lines: string[], start: number, baseLine = 0): { list: Lis
     const task: boolean | undefined = m.task ? m.checked : undefined
     const bullet = m.ordered ? null : (m.marker as '-' | '+' | '*')
     i++
-    // 子列表:缩进更深的那一串;和父项之间允许空行
-    let children: ListNodeExt | null = null
-    const childAt = skipBlankLines(i)
-    if (childAt < lines.length) {
+    // 子列表可以有多段:每段自己决定缩进和种类。child run 结束后,
+    // 只要下一非空行仍比本项深,就再开一段 —— 4 空格与 2 空格子项因此同级。
+    // 连续 2 个空行 → null,整条递归栈逐层结束(组边界)。
+    const children: ListNodeExt[] = []
+    for (;;) {
+      const childAt = skipTransparentBlankLines(lines, i)
+      if (childAt === null || childAt >= lines.length) break
       const n = previewListLine(lines, childAt)
-      if (n !== null && n.quote === '' && n.indent.length > indent) {
-        const sub = parseListExt(lines, childAt, baseLine)
-        children = sub.list
-        i = sub.next
-      }
+      if (n === null || n.quote !== '' || n.indent.length <= indent) break
+      const sub = parseListExt(lines, childAt, baseLine)
+      children.push(sub.list)
+      i = sub.next
     }
     items.push({ line, text: m.content, task, value: m.number, bullet, children })
-    // 同层续接:只有下一条非空行仍属于本列表时才跨过空行;
+    // 同层续接:只有下一条非空行仍是本层兄弟时才跨过空行;
     // 否则 i 停在第一个尾随空行上,由 renderBlocks 处理后面的块。
-    const siblingAt = skipBlankLines(i)
-    if (siblingAt < lines.length && sameLevel(previewListLine(lines, siblingAt))) {
+    const siblingAt = skipTransparentBlankLines(lines, i)
+    if (siblingAt !== null && siblingAt < lines.length && sameLevel(previewListLine(lines, siblingAt))) {
       i = siblingAt
       continue
     }
@@ -1355,12 +1370,16 @@ function renderListExt(node: ListNodeExt, keyBase: string, ctx: ExtCtx): ReactNo
           {it.task !== undefined ? (
             <div className="md-task-body">
               {renderInlineExt(parseInlineExt(it.text, 0, srcLine(ctx, it.line)), `${keyBase}-i${n}`, ctx)}
-              {it.children !== null && renderListExt(it.children, `${keyBase}-c${n}`, ctx)}
+              {it.children.map((child, ci) =>
+                renderListExt(child, `${keyBase}-c${n}-${ci}`, ctx)
+              )}
             </div>
           ) : (
             <>
               {renderInlineExt(parseInlineExt(it.text, 0, srcLine(ctx, it.line)), `${keyBase}-i${n}`, ctx)}
-              {it.children !== null && renderListExt(it.children, `${keyBase}-c${n}`, ctx)}
+              {it.children.map((child, ci) =>
+                renderListExt(child, `${keyBase}-c${n}-${ci}`, ctx)
+              )}
             </>
           )}
         </li>

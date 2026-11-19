@@ -47,8 +47,40 @@ describe('buildMarkdownHtml', () => {
     expect(out).toContain('<article class="md-export">')
   })
 
-  it('本地图片内联成 data: URL', async () => {
-    stubAssets(async () => ({
+  it('导出的列表保留符号样式与空行后的嵌套层级', async () => {
+    const out = await buildMarkdownHtml({
+      title: 't',
+      source: '- 甲\n+ 乙\n* 丙\n\n- 父\n  - 子甲\n\n  - 子乙\n'
+    })
+    // 符号 → 标记样式是内联样式,导出 HTML 天然带过去,不需要另抄一套 CSS
+    expect(out).toContain('style="list-style-type:disc"')
+    expect(out).toContain('style="list-style-type:circle"')
+    expect(out).toContain('style="list-style-type:square"')
+    // 空行不打断嵌套:根层列表 + 子列表
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+  })
+
+  it('导出的嵌套按最近父级归一:4 / 2 空格子项都在父项下', async () => {
+    const out = await buildMarkdownHtml({
+      title: 't',
+      source: '- 父\n    - 子A\n  - 子B\n'
+    })
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(3)
+    expect(out.indexOf('子A')).toBeGreaterThan(out.indexOf('父'))
+    expect(out.indexOf('子B')).toBeGreaterThan(out.indexOf('子A'))
+    expect(out.indexOf('子B')).toBeLessThan(out.lastIndexOf('</li>'))
+  })
+
+  it('导出的列表在连续两个空行处断组', async () => {
+    const out = await buildMarkdownHtml({
+      title: 't',
+      source: '- 甲\n\n\n  - 丙\n'
+    })
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.indexOf('丙')).toBeGreaterThan(out.indexOf('</ul>'))
+  })
+
+  it('本地图片内联成 data: URL', async () => {    stubAssets(async () => ({
       ok: true,
       data: new Uint8Array([1, 2, 3]),
       size: 3,

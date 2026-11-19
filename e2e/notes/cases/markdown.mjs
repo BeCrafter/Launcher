@@ -58,7 +58,8 @@ const LIST_GLYPHS = [
   '  * 子星号',
   '- [ ] 任务项'
 ].join('\n')
-// 空行在任意层级都透明:子项之间、父项与子项之间的空行都不打断嵌套。
+// 空行在任意层级都透明:子项之间、父项与子项之间的空行都不打断嵌套;
+// 子列表最后一项与下一个根层项之间的空行也不能把根层项吸进子列表。
 const LOOSE_NESTED = [
   '# 松散嵌套',
   '',
@@ -66,7 +67,55 @@ const LOOSE_NESTED = [
   '  - 子项甲',
   '',
   '  - 子项乙',
+  '',
   '- 父项乙'
+].join('\n')
+// 多个列表的分组:同缩进混符号合并;段落 / 空行 + 换种类才拆开。
+const MULTIPLE_LISTS = [
+  '# 多列表分组',
+  '',
+  '- 甲',
+  '+ 乙',
+  '* 丙',
+  '',
+  '段落把它们隔开。',
+  '',
+  '- 丁',
+  '',
+  '1. 一',
+  '2. 二'
+].join('\n')
+// 嵌套只看最近的父项:4 空格子项后面跟 2 空格子项,两段都挂在同一个父项下;
+// 3 空格子项跟在 4 空格子项后面时,归到最近的 2 空格父项,而不是掉到顶层。
+const NORMALIZED_NESTING = [
+  '# 嵌套归一',
+  '',
+  '- 父甲',
+  '    - 子甲一',
+  '  - 子甲二',
+  '- 父乙',
+  '  - 子乙一',
+  '    - 孙乙一',
+  '   - 子乙二',
+  '- 父丙',
+  '      - 深缩进子'
+].join('\n')
+// 1 个空行透明;连续 2 个空行结束所有未闭合层级,后面的列表另起一组。
+const TWO_BLANK_SPLIT = [
+  '# 空行分组',
+  '',
+  '- 单空甲',
+  '',
+  '- 单空乙',
+  '',
+  '  - 单空子',
+  '',
+  '- 单空丙',
+  '',
+  '',
+  '  - 双空深缩进',
+  '',
+  '- 双空乙'
 ].join('\n')
 const TABLE_IMAGE = [
   '# 表格图片',
@@ -835,6 +884,195 @@ export default [
         Math.abs(out.父项乙.left - out.父项甲.left) <= 1,
         `父项乙回到根层缩进(实际 ${out.父项甲.left} / ${out.父项乙.left})`
       )
+    }
+  },
+
+  {
+    // 分组规则:缩进相同 + 同种类(都无序)且只隔空行 → 合并成一组,符号不同也合并;
+    // 中间隔着段落、或换成有序,才拆成独立的组,组与组之间按块间距上下分开。
+    id: 'markdown/multiple-lists-grouping',
+    area: 'markdown',
+    title: '多个列表:同缩进混符号合并为一组;段落与有序种类各自分组,组间留出间距',
+    tags: ['render', 'preview', 'list'],
+    fixture: MULTIPLE_LISTS,
+    async run(ctx, t) {
+      await ctx.cdp.waitFor(`document.querySelectorAll('.notes-preview-body > .md-list').length === 3`, {
+        message: '根层有三个独立的列表'
+      })
+      const out = await ctx.cdp.json(`(() => {
+        const lists = [...document.querySelectorAll('.notes-preview-body > .md-list')]
+        const info = (el) => {
+          const lis = [...el.querySelectorAll(':scope > li')]
+          const first = lis[0].getBoundingClientRect()
+          const last = lis[lis.length - 1].getBoundingClientRect()
+          return {
+            tag: el.tagName,
+            items: lis.length,
+            styles: lis.map((li) => getComputedStyle(li).listStyleType),
+            top: Math.round(first.top),
+            bottom: Math.round(last.bottom),
+            left: Math.round(first.left)
+          }
+        }
+        const para = document.querySelector('.notes-preview-body .md-p')
+        return {
+          lists: lists.map(info),
+          paraTop: para === null ? null : Math.round(para.getBoundingClientRect().top)
+        }
+      })()`)
+      eq(out.lists.length, 3, '段落与有序种类把内容分成三组')
+      eq(out.lists[0].items, 3, '第一组三项:符号不同仍是同一个无序列表')
+      eq(out.lists[0].styles, ['disc', 'circle', 'square'], '组内逐项按源码符号显示')
+      eq(out.lists[1].tag, 'UL', '段落之后另起一个无序列表')
+      eq(out.lists[2].tag, 'OL', '有序列独立成组')
+      eq(out.lists[2].styles[0], 'decimal', '有序组用数字标记')
+      eq(out.lists[0].left, out.lists[1].left, '同层列表左缘一致,不因分组产生缩进')
+      ok(out.paraTop !== null, '段落夹在两组之间')
+      ok(out.paraTop > out.lists[0].bottom, '第一组在段落上方')
+      ok(out.lists[1].top > out.paraTop, '第二组在段落下方')
+      ok(out.lists[1].bottom < out.lists[2].top, '无序组与有序组上下分开,没有并成一行')
+    }
+  },
+
+  {
+    // 反缩进归一:缩进只表示「比最近的父项更深」,4 空格与 2 空格子项视觉同级;
+    // 3 空格子项跟在 4 空格子项后面时,归到最近的 2 空格父项。
+    id: 'markdown/normalized-nesting',
+    area: 'markdown',
+    title: '嵌套归一:4 / 2 空格子项都挂在同一父项下,反向缩进归到最近父项,不按绝对宽度分层',
+    tags: ['render', 'preview', 'list', 'indent'],
+    fixture: NORMALIZED_NESTING,
+    async run(ctx, t) {
+      await ctx.cdp.waitFor(`document.querySelector('.notes-preview-body > .md-list') !== null`, {
+        message: '预览渲染列表'
+      })
+      const out = await ctx.cdp.json(`(() => {
+        const body = document.querySelector('.notes-preview-body')
+        if (body === null) return null
+        const own = (el) => {
+          for (const node of el.childNodes) {
+            if (node.nodeType === 3 && (node.textContent ?? '').trim() !== '') return node.textContent.trim()
+          }
+          return ''
+        }
+        const root = body.querySelector(':scope > .md-list')
+        if (root === null) return null
+        const all = [...root.querySelectorAll('li')]
+        const info = (text) => {
+          const el = all.find((li) => own(li) === text)
+          if (el === undefined) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            right: Math.round(r.right),
+            nested: el.querySelectorAll(':scope > .md-list').length
+          }
+        }
+        return {
+          rootLists: body.querySelectorAll(':scope > .md-list').length,
+          rootItems: root.querySelectorAll(':scope > li').length,
+          父甲: info('父甲'),
+          子甲一: info('子甲一'),
+          子甲二: info('子甲二'),
+          父乙: info('父乙'),
+          子乙一: info('子乙一'),
+          孙乙一: info('孙乙一'),
+          子乙二: info('子乙二'),
+          父丙: info('父丙'),
+          深缩进子: info('深缩进子'),
+          bodyRight: Math.round(body.getBoundingClientRect().right)
+        }
+      })()`)
+      ok(out !== null, '预览存在根层 .md-list')
+      eq(out.rootLists, 1, '整棵树只有一个根列表')
+      eq(out.rootItems, 3, '根层只有父甲、父乙、父丙三项')
+      for (const name of ['父甲', '子甲一', '子甲二', '父乙', '子乙一', '孙乙一', '子乙二', '父丙', '深缩进子']) {
+        ok(out[name] !== null, `找到 ${name}`)
+      }
+      eq(out.父甲.nested, 2, '父甲下有两段子列表:4 空格与 2 空格各一段')
+      eq(out.父乙.nested, 1, '父乙下只有一段子列表')
+      eq(out.子乙一.nested, 2, '子乙一下有两段子列表:孙乙一与 3 空格的子乙二')
+      eq(out.父丙.nested, 1, '父丙下只有一段子列表')
+      ok(
+        Math.abs(out.子甲一.left - out.子甲二.left) <= 1 && out.子甲一.left > out.父甲.left + 8,
+        `4 / 2 空格子项视觉同级且在父项右侧(子甲一 ${out.子甲一.left} / 子甲二 ${out.子甲二.left} / 父甲 ${out.父甲.left})`
+      )
+      ok(
+        Math.abs(out.孙乙一.left - out.子乙二.left) <= 1 && out.孙乙一.left > out.子乙一.left + 8,
+        `孙乙一与 3 空格的子乙二同级,归到最近父项(孙 ${out.孙乙一.left} / 子乙二 ${out.子乙二.left} / 子乙一 ${out.子乙一.left})`
+      )
+      ok(
+        Math.abs(out.深缩进子.left - out.子甲一.left) <= 1 && out.深缩进子.left > out.父丙.left + 8,
+        `6 空格子项没有中间项时只加一层(深缩进子 ${out.深缩进子.left} / 子甲一 ${out.子甲一.left} / 父丙 ${out.父丙.left})`
+      )
+      ok(out.子甲二.top > out.子甲一.top, '两段子列表按源码顺序纵向排列')
+      ok(out.子乙二.top > out.孙乙一.top, '反向缩进的子乙二排在孙乙一之后')
+      ok(out.父乙.top > out.子甲二.top, '父乙排在父甲整棵子树之后')
+      ok(out.父丙.top > out.子乙二.top, '父丙排在父乙整棵子树之后')
+      ok(out.子乙二.right <= out.bodyRight + 1, '嵌套内容不横向溢出预览区')
+    }
+  },
+
+  {
+    // 分组边界:1 个空行仍然透明;连续 2 个空行结束当前列表与所有未闭合层级。
+    id: 'markdown/two-blank-lines-split-groups',
+    area: 'markdown',
+    title: '连续两个空行断组:单空行仍聚合,两空行后更深的行另起根组、不挂在上一个父项下',
+    tags: ['render', 'preview', 'list', 'blank-line'],
+    fixture: TWO_BLANK_SPLIT,
+    async run(ctx, t) {
+      await ctx.cdp.waitFor(`document.querySelectorAll('.notes-preview-body > .md-list').length === 3`, {
+        message: '连续两个空行把列表分成三组'
+      })
+      const out = await ctx.cdp.json(`(() => {
+        const body = document.querySelector('.notes-preview-body')
+        if (body === null) return null
+        const own = (el) => {
+          for (const node of el.childNodes) {
+            if (node.nodeType === 3 && (node.textContent ?? '').trim() !== '') return node.textContent.trim()
+          }
+          return ''
+        }
+        const lists = [...body.querySelectorAll(':scope > .md-list')]
+        const info = (el) => {
+          const lis = [...el.querySelectorAll(':scope > li')]
+          const first = lis[0].getBoundingClientRect()
+          const last = lis[lis.length - 1].getBoundingClientRect()
+          return {
+            tag: el.tagName,
+            items: lis.map(own),
+            nestedLists: el.querySelectorAll(':scope > li > .md-list').length,
+            top: Math.round(first.top),
+            bottom: Math.round(last.bottom),
+            left: Math.round(first.left)
+          }
+        }
+        const deep = [...body.querySelectorAll('li')].find((li) => own(li) === '双空深缩进')
+        return {
+          lists: lists.map(info),
+          deepParentIsBody: deep !== undefined && deep.parentElement?.parentElement === body,
+          deepTop: deep === undefined ? null : Math.round(deep.getBoundingClientRect().top),
+          deepBottom: deep === undefined ? null : Math.round(deep.getBoundingClientRect().bottom)
+        }
+      })()`)
+      eq(out.lists.length, 3, '三组:单空聚合组、两空行后的深缩进组、最后的根层组')
+      eq(out.lists[0].items, ['单空甲', '单空乙', '单空丙'], '单个空行后的同层项仍在同一组')
+      eq(out.lists[0].nestedLists, 1, '单空行后的子项仍挂在父项下')
+      eq(out.lists[1].items, ['双空深缩进'], '连续两个空行后,更深的行另起一组')
+      ok(out.deepParentIsBody, '深缩进项直接挂在预览正文下,没有挂进上一个父项')
+      eq(out.lists[2].items, ['双空乙'], '两空行断组后回到根层的项单独成组')
+      ok(
+        out.lists[1].top > out.lists[0].bottom + 1,
+        `第一组与两空行后的组上下分开(第一组底 ${out.lists[0].bottom} / 下一组顶 ${out.lists[1].top})`
+      )
+      ok(out.lists[2].top > out.lists[1].bottom + 1, '最后的根层组与前一组上下分开')
+      const lefts = out.lists.map((list) => list.left)
+      ok(
+        lefts.every((left) => Math.abs(left - lefts[0]) <= 1),
+        `各组根列表左缘一致(实际 ${lefts.join(' / ')})`
+      )
+      ok(out.lists[0].tag === 'UL' && out.lists[1].tag === 'UL', '两组都是无序列表')
     }
   },
 
