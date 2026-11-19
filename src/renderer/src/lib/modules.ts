@@ -22,7 +22,7 @@ export interface ModuleRecord {
   showStatusBar: boolean
   /**
    * 不渲染顶栏。笔记页用它:该页的操作(新建、目录)都在 rail 里,顶栏只剩一个面包屑 ——
-   * 而侧边栏本来就高亮了当前模块,再占 44px 说一遍是纯浪费,不如整条让给内容。
+   * 而侧边栏本来就高亮了当前模块,再占 54px 说一遍是纯浪费,不如整条让给内容。
    */
   hideTopbar?: boolean
 }

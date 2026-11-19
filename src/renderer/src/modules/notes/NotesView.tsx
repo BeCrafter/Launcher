@@ -760,74 +760,6 @@ export function NotesView(): React.JSX.Element {
           </div>
         </div>
 
-        {conflict !== null && (
-          <div className="notes-banner conflict">
-            <i className="fa-solid fa-code-merge" />
-            <span>{t('notes.conflict.banner')}</span>
-            <div className="notes-banner-actions">
-              <button type="button" className="d-btn" onClick={() => void resolveConflict('disk')}>
-                <span>{t('notes.conflict.useDisk')}</span>
-              </button>
-              <button type="button" className="d-btn accent" onClick={() => void resolveConflict('mine')}>
-                <span>{t('notes.conflict.useMine')}</span>
-              </button>
-            </div>
-          </div>
-        )}
-        {conflict === null && externalChanged && (
-          <div className="notes-banner warn">
-            <i className="fa-solid fa-triangle-exclamation" />
-            <span>{t('notes.external.banner')}</span>
-            <div className="notes-banner-actions">
-              <button
-                type="button"
-                className="d-btn"
-                onClick={() => {
-                  const id = draft.id
-                  void (async () => {
-                    const { dataSource } = await import('../../data')
-                    const note = await dataSource().notes.read(id)
-                    if (note) {
-                      useNotesStore.setState({
-                        draft: { ...useNotesStore.getState().draft!, body: note.body, revision: note.revision },
-                        dirty: false,
-                        externalChanged: false
-                      })
-                      showToast(t('toast.noteReloaded'), '#60a5fa', 'fa-rotate')
-                    }
-                  })()
-                }}
-              >
-                <span>{t('notes.external.reload')}</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {metaLocked && (
-          <div className="notes-banner warn">
-            <i className="fa-solid fa-lock" />
-            <span>
-              {draft.unclosed ? t('notes.fm.unclosed') : t('notes.fm.opaque')}
-            </span>
-          </div>
-        )}
-        {draft.frontmatterIssues.length > 0 && (
-          <div className="notes-banner warn">
-            <i className="fa-solid fa-triangle-exclamation" />
-            <span>
-              {t('notes.fm.issues')}
-              {draft.frontmatterIssues.join('、')}
-            </span>
-          </div>
-        )}
-        {draft.refsUnparsed && (
-          <div className="notes-banner warn">
-            <i className="fa-solid fa-link-slash" />
-            <span>{t('notes.refs.unparsed')}</span>
-          </div>
-        )}
-
         {/* 只有两行:标题行 + 这一行。视图切换在最左,竖线之后才是关联与标签 ——
             关联/标签多的时候这一行会自然折行,不需要为它们单独留一行。 */}
         <div className="notes-meta">
@@ -926,6 +858,77 @@ export function NotesView(): React.JSX.Element {
             {t('notes.meta.updatedAt').replace('{TIME}', relTime(draft.updated, t))}
           </span>
         </div>
+
+        {/* 横幅放在工具条行**之后**:标题行 + 工具条行合计 54px,底线要与左侧栏头/其他页顶栏
+            (窗口 y=66)同高(见 notes.css 的 .notes-hd / .notes-meta)。横幅若夹在两者之间,一出现就会把
+            工具条和底线往下推;放在分隔线下方既保持头部高度,也仍在正文之前。 */}
+        {conflict !== null && (
+          <div className="notes-banner conflict">
+            <i className="fa-solid fa-code-merge" />
+            <span>{t('notes.conflict.banner')}</span>
+            <div className="notes-banner-actions">
+              <button type="button" className="d-btn" onClick={() => void resolveConflict('disk')}>
+                <span>{t('notes.conflict.useDisk')}</span>
+              </button>
+              <button type="button" className="d-btn accent" onClick={() => void resolveConflict('mine')}>
+                <span>{t('notes.conflict.useMine')}</span>
+              </button>
+            </div>
+          </div>
+        )}
+        {conflict === null && externalChanged && (
+          <div className="notes-banner warn">
+            <i className="fa-solid fa-triangle-exclamation" />
+            <span>{t('notes.external.banner')}</span>
+            <div className="notes-banner-actions">
+              <button
+                type="button"
+                className="d-btn"
+                onClick={() => {
+                  const id = draft.id
+                  void (async () => {
+                    const { dataSource } = await import('../../data')
+                    const note = await dataSource().notes.read(id)
+                    if (note) {
+                      useNotesStore.setState({
+                        draft: { ...useNotesStore.getState().draft!, body: note.body, revision: note.revision },
+                        dirty: false,
+                        externalChanged: false
+                      })
+                      showToast(t('toast.noteReloaded'), '#60a5fa', 'fa-rotate')
+                    }
+                  })()
+                }}
+              >
+                <span>{t('notes.external.reload')}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {metaLocked && (
+          <div className="notes-banner warn">
+            <i className="fa-solid fa-lock" />
+            <span>
+              {draft.unclosed ? t('notes.fm.unclosed') : t('notes.fm.opaque')}
+            </span>
+          </div>
+        )}
+        {draft.frontmatterIssues.length > 0 && (
+          <div className="notes-banner warn">
+            <i className="fa-solid fa-triangle-exclamation" />
+            <span>
+              {t('notes.fm.issues')}
+              {draft.frontmatterIssues.join('、')}
+            </span>
+          </div>
+        )}
+        {draft.refsUnparsed && (
+          <div className="notes-banner warn">
+            <i className="fa-solid fa-link-slash" />
+            <span>{t('notes.refs.unparsed')}</span>
+          </div>
+        )}
 
         <div className="notes-shell" ref={shellRef}>
           {/* 纯预览模式下**不卸载**编辑器:重建 CodeMirror 会丢滚动位置、撤销栈与选区 */}

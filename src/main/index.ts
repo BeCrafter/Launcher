@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, net, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeTheme, net, screen, shell } from 'electron'
 import { copyFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -31,6 +31,7 @@ import { connectSync } from './services/vault-sync/connect'
 import { createSyncSecrets } from './services/vault-sync/secrets'
 import { createVaultSync } from './services/vault-sync/service'
 import { installFrameScrollbar } from './services/frame-scrollbar'
+import { shouldRevealTrafficLights } from './traffic-lights'
 import {
   otherLang,
   sampleNoteBody,
@@ -235,9 +236,13 @@ function createWindow(): void {
     minHeight: 450,
     show: false,
     title: APP_NAME,
-    // 接管标题栏:应用自绘 28px 色带(与侧边栏同色 --surface),交通灯驻留其上
+    // 接管标题栏:应用自绘 12px 色带(与侧边栏同色 --surface),交通灯默认藏起来,
+    // 只在光标进入窗口顶部 24px 时露出(见下方 shouldRevealTrafficLights)。
+    // 露出位置在左侧栏头(窗口 y12–66)的中线上,允许压住 Logo:
+    //   x=6:灯组宽 52px(3×12 + 2×8),左对齐后落在 6–58,仍在折叠态 64px 侧栏内,左边留 6px;
+    //   y=33:12px 灯体落在 33–45,正好盖住 Logo(23–55)中部。
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 20, y: 6 },
+    trafficLightPosition: { x: 6, y: 33 },
     backgroundColor: windowBgColor(), // 依据生效主题(启动序里 themeSource 已先应用)
     // 显式写出:窗口在隐藏期间仍要产出帧,否则「渲染层真的画出来了」这件事无从观测,
     // 整个显示门控就只能退回到计时器(见 services/boot-gate.ts)
@@ -257,6 +262,49 @@ function createWindow(): void {
     }
   })
   bootLog('window created')
+
+  // 交通灯悬停显隐:默认隐藏,光标进入窗口顶部触发带才露出。
+  // 拖动带是 `-webkit-app-region: drag`,渲染层收不到鼠标事件,所以按光标位置轮询;
+  // 定时器只在窗口可见且聚焦时存在,失焦/隐藏立刻藏灯并停表。
+  let trafficLightsVisible = false
+  const setTrafficLightsVisible = (visible: boolean): void => {
+    if (mainWindow === null || mainWindow.isDestroyed()) return
+    if (process.platform === 'darwin') mainWindow.setWindowButtonVisibility(visible)
+  }
+  const syncTrafficLights = (): void => {
+    if (mainWindow === null || mainWindow.isDestroyed()) return
+    const reveal =
+      process.platform === 'darwin' &&
+      mainWindow.isVisible() &&
+      mainWindow.isFocused() &&
+      !mainWindow.isFullScreen() &&
+      shouldRevealTrafficLights(screen.getCursorScreenPoint(), mainWindow.getBounds())
+    if (reveal === trafficLightsVisible) return
+    trafficLightsVisible = reveal
+    setTrafficLightsVisible(reveal)
+  }
+  let trafficLightsTimer: NodeJS.Timeout | null = null
+  const startTrafficLightsPolling = (): void => {
+    if (trafficLightsTimer !== null) return
+    syncTrafficLights()
+    trafficLightsTimer = setInterval(syncTrafficLights, 120)
+  }
+  const stopTrafficLightsPolling = (): void => {
+    if (trafficLightsTimer !== null) {
+      clearInterval(trafficLightsTimer)
+      trafficLightsTimer = null
+    }
+    if (trafficLightsVisible) {
+      trafficLightsVisible = false
+      setTrafficLightsVisible(false)
+    }
+  }
+  setTrafficLightsVisible(false) // 打开窗口时先藏起来;hover 到顶部再出现
+  mainWindow.on('focus', startTrafficLightsPolling)
+  mainWindow.on('show', startTrafficLightsPolling)
+  mainWindow.on('blur', stopTrafficLightsPolling)
+  mainWindow.on('hide', stopTrafficLightsPolling)
+
   // 菜单栏常驻时关窗只是 hide。不在前台就不扫 launchctl。
   const syncRuntimeVisible = (): void => {
     const on = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()
@@ -358,6 +406,7 @@ function createWindow(): void {
   })
 
   mainWindow.on('closed', () => {
+    stopTrafficLightsPolling()
     bootGate?.dispose()
     bootGate = null
     mainWindow = null

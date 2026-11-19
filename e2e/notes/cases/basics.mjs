@@ -322,6 +322,323 @@ export default [
   },
 
   {
+    id: 'basics/header-align',
+    area: 'basics',
+    title: '头部对齐:拖动带 12px + 标题行/工具条合计 54px(24+30),标题与目录名同字号,rail 右线为渐变、搜索行底线通栏',
+    tags: ['smoke', 'header', 'layout'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 目录树默认展开;若被前序用例折叠了先展开,让 rail 搜索行也参与对齐断言
+      if (await ctx.cdp.eval(`document.querySelector('.notes-rail-top') === null`)) {
+        await ctx.cdp.eval(`document.querySelector('.notes-hd .notes-rail-toggle')?.click()`)
+        await ctx.cdp.waitFor(`document.querySelector('.notes-rail-top') !== null`, {
+          message: '展开目录树后出现搜索行'
+        })
+      }
+
+      const geo = await ctx.cdp.json(`(() => {
+        const box = (sel) => {
+          const el = document.querySelector(sel)
+          if (el === null) return null
+          const r = el.getBoundingClientRect()
+          return { top: r.top, bottom: r.bottom, height: r.height }
+        }
+        const text = (sel) => {
+          const el = document.querySelector(sel)
+          if (el === null) return null
+          const cs = getComputedStyle(el)
+          return { fontSize: parseFloat(cs.fontSize), color: cs.color }
+        }
+        return {
+          titlebar: box('.titlebar-drag'),
+          sidebar: box('.sidebar-header'),
+          hd: box('.notes-hd'),
+          meta: box('.notes-meta'),
+          railTop: box('.notes-rail-top'),
+          title: text('.notes-title'),
+          rowTitle: text('.notes-row-title'),
+          pathExt: text('.notes-path-ext')
+        }
+      })()`)
+      ok(
+        geo.titlebar !== null && geo.sidebar !== null && geo.hd !== null && geo.meta !== null,
+        '拖动带、标题行、工具条行与左侧栏头都在'
+      )
+      const near = (a, b) => Math.abs(a - b) <= 1
+      // 几何不允许 1px 误差:border-box 下少算底边 1px 会让工具条长到 31px、底线错开 1px,
+      // 以前的 1px 容差正好把这个问题吃掉(踩过),所以对齐/高度改用 0.5px。
+      const tight = (a, b) => Math.abs(a - b) <= 0.5
+      ok(tight(geo.titlebar.height, 12), `拖动带高度 ${geo.titlebar.height}px,应为 12px`)
+      ok(
+        tight(geo.hd.top, geo.titlebar.bottom),
+        `标题行顶边(${geo.hd.top})应紧贴拖动带下沿(${geo.titlebar.bottom})`
+      )
+      ok(
+        tight(geo.hd.top, geo.sidebar.top),
+        `标题行顶边(${geo.hd.top})与左侧栏头顶边(${geo.sidebar.top})齐平`
+      )
+      ok(tight(geo.hd.height, 24), `标题行高度 ${geo.hd.height}px,应为 24px`)
+      ok(tight(geo.meta.height, 30), `工具条行高度 ${geo.meta.height}px,应为 30px`)
+      ok(
+        tight(geo.hd.height + geo.meta.height, 54),
+        `标题行 + 工具条合计 ${geo.hd.height + geo.meta.height}px,应为 54px`
+      )
+      ok(
+        tight(geo.meta.bottom, geo.sidebar.bottom),
+        `工具条底线(${geo.meta.bottom})与左侧栏头底线(${geo.sidebar.bottom})对齐`
+      )
+      ok(
+        geo.railTop !== null && near(geo.railTop.bottom, geo.sidebar.bottom),
+        `目录树搜索行底线(${geo.railTop?.bottom})与左侧栏头底线(${geo.sidebar.bottom})对齐`
+      )
+      // 搜索行底边画通栏细线:与左侧栏头 / 右侧工具条用同一枚 --border,
+      // 加上上面 railTop.bottom === sidebar.bottom,三列在 y=66 接成一条完整的头部分界线。
+      const railBorder = await ctx.cdp.json(`(() => {
+        const rail = getComputedStyle(document.querySelector('.notes-rail-top'))
+        const sidebar = getComputedStyle(document.querySelector('.sidebar-header'))
+        return { width: rail.borderBottomWidth, color: rail.borderBottomColor, sidebarColor: sidebar.borderBottomColor }
+      })()`)
+      ok(railBorder.width === '1px', `搜索行底边应为 1px 通栏细线,实际 ${railBorder.width}`)
+      ok(
+        railBorder.color === railBorder.sidebarColor,
+        `搜索行底线色(${railBorder.color})应与左侧栏头底线(${railBorder.sidebarColor})一致`
+      )
+
+      // rail 右侧竖线:与左侧边栏同款,靠 ::after 的渐变绘制,不再用 border-right
+      const railLine = await ctx.cdp.json(`(() => {
+        const el = document.querySelector('.notes-rail')
+        return {
+          borderRight: getComputedStyle(el).borderRightWidth,
+          afterBg: getComputedStyle(el, '::after').backgroundImage
+        }
+      })()`)
+      ok(railLine.borderRight === '0px', `rail 不应再有 border-right,实际 ${railLine.borderRight}`)
+      ok(
+        railLine.afterBg.includes('linear-gradient'),
+        `rail 右侧竖线应为渐变,实际 ${railLine.afterBg}`
+      )
+
+      // 标题字号与目录/列表名一致,层级靠颜色区分(标题 --text,路径后缀 --dim)
+      ok(geo.title !== null && geo.rowTitle !== null, '笔记标题与列表标题都在')
+      ok(
+        geo.title.fontSize === geo.rowTitle.fontSize,
+        `标题字号(${geo.title.fontSize})应与列表名(${geo.rowTitle.fontSize})一致`
+      )
+      ok(
+        geo.pathExt !== null && geo.title.color !== geo.pathExt.color,
+        `标题颜色(${geo.title.color})应与路径后缀(${geo.pathExt?.color})不同`
+      )
+
+      // 工具条降一档 + 上紧下松:最高控件是视图切换组(1px 边框 + 20px 按钮 = 22px)
+      const tuning = await ctx.cdp.json(`(() => {
+        const meta = document.querySelector('.notes-meta')
+        const cs = getComputedStyle(meta)
+        const input = document.querySelector('.notes-tag-input')
+        const modes = document.querySelector('.notes-modes')
+        const btn = document.querySelector('.notes-mode-btn')
+        return {
+          paddingTop: cs.paddingTop,
+          paddingBottom: cs.paddingBottom,
+          inputColor: input ? getComputedStyle(input).color : null,
+          placeholderColor: input ? getComputedStyle(input, '::placeholder').color : null,
+          // 占位符应落到 --dim:拿同一枚 token 的路径后缀作对照,而不是和输入色比(UA 占位符本就不同色)
+          pathExtColor: getComputedStyle(document.querySelector('.notes-path-ext')).color,
+          modesHeight: modes ? modes.getBoundingClientRect().height : null,
+          modeBtnHeight: btn ? btn.getBoundingClientRect().height : null
+        }
+      })()`)
+      ok(
+        tuning.paddingTop === '2px' && tuning.paddingBottom === '5px',
+        `工具条应上紧下松(上 2px / 下 5px + 底边 1px),实际 ${tuning.paddingTop} / ${tuning.paddingBottom}`
+      )
+      ok(
+        tuning.placeholderColor !== null && tuning.placeholderColor === tuning.pathExtColor,
+        `标签占位符颜色(${tuning.placeholderColor})应等于 --dim(路径后缀 ${tuning.pathExtColor}),而不是输入文字色(${tuning.inputColor})`
+      )
+      ok(tight(tuning.modesHeight, 22), `视图切换组高 ${tuning.modesHeight}px,应为 22px`)
+      ok(tight(tuning.modeBtnHeight, 20), `视图切换按钮高 ${tuning.modeBtnHeight}px,应为 20px`)
+    }
+  },
+
+  {
+    id: 'basics/header-drag-title',
+    area: 'basics',
+    title: '标题行是窗口拖动区,标题输入框与按钮 no-drag:点标题仍能聚焦并输入',
+    tags: ['smoke', 'header', 'layout'],
+    fixture: BASIC,
+    async run(ctx) {
+      const regions = await ctx.cdp.json(`(() => {
+        const region = (el) =>
+          el === null ? null : getComputedStyle(el).getPropertyValue('-webkit-app-region')
+        return {
+          // 正值对照:顶部色带必须读得到 drag,否则说明这个 Electron 版本不暴露该计算值
+          titlebar: region(document.querySelector('.titlebar-drag')),
+          hd: region(document.querySelector('.notes-hd')),
+          input: region(document.querySelector('.notes-title')),
+          toggle: region(document.querySelector('.notes-hd .notes-rail-toggle')),
+          action: region(document.querySelector('.notes-hd-actions button'))
+        }
+      })()`)
+      eq(regions.titlebar, 'drag', '对照组:顶部色带的计算值可读,为 drag')
+      eq(regions.hd, 'drag', '标题行本身参与窗口拖动')
+      eq(regions.input, 'no-drag', '标题输入框不参与拖动,点击仍然进入编辑')
+      eq(regions.toggle, 'no-drag', '折叠按钮不参与拖动')
+      eq(regions.action, 'no-drag', '标题行动作按钮不参与拖动')
+
+      // CDP 的合成鼠标事件直接进渲染层,绕过 macOS 的非客户区命中测试;
+      // 所以这一段只证明「输入框仍然可编辑」,真正的 drag/no-drag 判定由上面的计算样式负责。
+      // 用真实鼠标坐标点到标题文字末尾:输入框必须聚焦,且能正常输入
+      const caret = await ctx.cdp.json(`(() => {
+        const r = document.querySelector('.notes-title').getBoundingClientRect()
+        return { x: r.right - 3, y: r.top + r.height / 2 }
+      })()`)
+      await ctx.cdp.click(caret.x, caret.y)
+      await ctx.cdp.waitFor(
+        `document.activeElement?.classList.contains('notes-title') === true`,
+        { message: '点击标题后输入框获得焦点' }
+      )
+      const before = await ctx.cdp.eval(`document.querySelector('.notes-title').value`)
+      await ctx.cdp.type('X')
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-title').value`),
+        `${before}X`,
+        '标题输入框仍然接收文字输入(编辑路径未被 no-drag 破坏)'
+      )
+      await ctx.cdp.key('Backspace', 'Backspace', 8)
+      eq(
+        await ctx.cdp.eval(`document.querySelector('.notes-title').value`),
+        before,
+        'Backspace 能撤销这次输入'
+      )
+      // 值已恢复,失焦改名是 no-op;避免把改动带进下一条用例
+      await ctx.cdp.eval(`document.querySelector('.notes-title').blur()`)
+    }
+  },
+
+  {
+    id: 'basics/rail-search-look',
+    area: 'basics',
+    title: '搜索框视觉:复用 .search-wrap,聚焦出现紫色环,输入后清除按钮一键清空',
+    tags: ['smoke', 'header', 'layout', 'search'],
+    fixture: BASIC,
+    async run(ctx) {
+      if (await ctx.cdp.eval(`document.querySelector('.notes-rail-top') === null`)) {
+        await ctx.cdp.eval(`document.querySelector('.notes-hd .notes-rail-toggle')?.click()`)
+        await ctx.cdp.waitFor(`document.querySelector('.notes-rail-top') !== null`, {
+          message: '展开目录树后出现搜索行'
+        })
+      }
+
+      const read = () =>
+        ctx.cdp.json(`(() => {
+          const wrap = document.querySelector('.notes-rail-search')
+          if (wrap === null) return null
+          const input = wrap.querySelector('input')
+          if (input === null || input === undefined) return null
+          const cs = getComputedStyle(wrap)
+          return {
+            primitive: wrap.classList.contains('search-wrap'),
+            boxShadow: cs.boxShadow,
+            borderColor: cs.borderColor,
+            value: input.value,
+            clear: document.querySelector('.notes-rail-clear') !== null
+          }
+        })()`)
+
+      const idle = await read()
+      ok(idle !== null, '目录树搜索框存在')
+      ok(idle.primitive, '搜索框复用 .search-wrap 原语(统一底色 / 边框 / 聚焦环)')
+      ok(idle.boxShadow === 'none', `未聚焦时不应有聚焦环,实际 ${idle.boxShadow}`)
+
+      // 窗口在 E2E 里没有系统焦点,`:focus-within` 不会命中;先让 CDP 模拟「页面已聚焦」
+      await ctx.cdp.send('Emulation.setFocusEmulationEnabled', { enabled: true })
+      await ctx.cdp.eval(`document.querySelector('.notes-rail-search input')?.focus()`)
+      // 边框色与阴影都有 0.2s 过渡:等到两者一起落到聚焦态再读,避免读到过渡起点
+      await ctx.cdp.waitFor(
+        `(() => {
+          const cs = getComputedStyle(document.querySelector('.notes-rail-search'))
+          return cs.boxShadow !== 'none' && cs.borderColor.includes('124, 106, 244')
+        })()`,
+        { message: '聚焦后出现紫色聚焦环' }
+      )
+      const focused = await read()
+      ok(
+        /124,\s*106,\s*244/.test(focused.borderColor),
+        `聚焦时边框应变为强调色,实际 ${focused.borderColor}`
+      )
+
+      await ctx.cdp.type('a')
+      await ctx.cdp.waitFor(`document.querySelector('.notes-rail-clear') !== null`, {
+        message: '输入后出现清除按钮'
+      })
+      const typed = await read()
+      ok(typed.value === 'a', `输入框应为 a,实际 ${JSON.stringify(typed.value)}`)
+
+      await ctx.cdp.eval(`document.querySelector('.notes-rail-clear')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('.notes-rail-search input').value === ''`, {
+        message: '点击清除后输入框清空'
+      })
+      const cleared = await read()
+      ok(!cleared.clear, '清空后清除按钮消失')
+    }
+  },
+
+  {
+    id: 'basics/pick-empty-bg',
+    area: 'basics',
+    title:
+      '「选一篇笔记开始」空页与左栏目录树同底色(--surface):新建笔记并删掉后落到空态,背景与 rail 一致、不再是 --bg',
+    tags: ['smoke', 'layout'],
+    fixture: BASIC,
+    async run(ctx) {
+      // 用一篇临时笔记走「删掉当前笔记」这条真实路径回到空态;
+      // 不删夹具里的主笔记,下一条用例的 reset 仍能找回它。
+      const TEMP = 'E2E 空态'
+      await ctx.newDoc('note')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-create-fields .notes-create-name') !== null`,
+        { timeout: 5000, message: '根层出现新建名字输入框' }
+      )
+      await ctx.cdp.type(TEMP)
+      await ctx.press('Enter')
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title')?.value?.includes(${JSON.stringify(TEMP)}) === true`,
+        { timeout: 15_000, message: '新建笔记自动打开' }
+      )
+
+      // 删除当前笔记:store 清空 draft,主区回到「选一篇笔记开始」。
+      await ctx.cdp.eval(`document.querySelector('.notes-hd-actions .notes-act.danger')?.click()`)
+      await ctx.cdp.waitFor(`document.querySelector('#dangerModal.open') !== null`, {
+        message: '删除前弹出二次确认'
+      })
+      await ctx.cdp.eval(`document.querySelector('#dangerModal .d-btn.red')?.click()`)
+      await ctx.cdp.waitFor(
+        `document.querySelector('.notes-title') === null &&
+          document.querySelector('.notes-main-empty .notes-firstrun-title') !== null`,
+        { timeout: 10_000, message: '删除后回到「选一篇笔记开始」空态' }
+      )
+
+      const colors = await ctx.cdp.json(`(() => {
+        const bg = (sel) => {
+          const el = document.querySelector(sel)
+          return el === null ? null : getComputedStyle(el).backgroundColor
+        }
+        return {
+          empty: bg('.notes-main-empty'),
+          rail: bg('.notes-rail'),
+          view: bg('.notes-view')
+        }
+      })()`)
+      ok(colors.empty !== null && colors.rail !== null && colors.view !== null, '空页、左栏与笔记视图都在')
+      eq(colors.empty, colors.rail, '空页底色应与左栏目录树一致(--surface)')
+      ok(
+        colors.empty !== colors.view,
+        `空页底色应覆盖 .notes-view 的 --bg(空页 ${colors.empty},视图 ${colors.view})`
+      )
+    }
+  },
+
+  {
     id: 'basics/switch-note-resets-and-doesnt-rewrite',
     area: 'basics',
     title: '切换笔记:不回写、不标脏,编辑/预览回到顶部,撤销不跨笔记',

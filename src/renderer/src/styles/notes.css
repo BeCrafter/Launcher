@@ -19,7 +19,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--border);
+  /* 右边界不用 border-right:改成与左侧边栏同款的渐变竖线(见下方 ::after) */
   /* 与应用侧边栏**同色**:两级左栏叠在一起时不该被看成两块不同区域。
      代价是笔记行不能再靠「白底卡片」区分 —— 见下面的扁平行。 */
   background: var(--surface);
@@ -31,48 +31,70 @@
    */
   font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Noto Sans SC', sans-serif;
 }
+/* 与 .sidebar::after 完全同款:头部顶端透明,向下渐入,至局部 82px(窗口 y94)达实色。
+   (rail 顶部从窗口 y12 开始,与侧边栏同一水平线,所以可以照搬同一组数值。) */
+.notes-rail::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent 4px, var(--border) 82px);
+  pointer-events: none;
+}
 
 .notes-rail-top {
   display: flex;
   align-items: center;
   gap: 6px;
-  /* 顶栏让给内容之后,这里得自己把顶部留白补回来 —— 10px 会让搜索框贴着窗口上沿。
-     与右侧标题行用同一个值,两边首行才对得齐。 */
-  padding: 24px 10px 8px;
+  /* 顶栏让给内容之后,这一行与右侧「标题行 + 工具条行」合计同高(54px):
+     搜索框垂直居中,底线落在窗口 y=66。
+     border-box 下 54px 已含这 1px 边框:底边画通栏细线,与 .sidebar-header /
+     .notes-meta 的底线用同一枚令牌,三列在 y=66 接成一条完整的头部分界线。 */
+  height: 54px;
+  min-height: 54px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
 }
+/* 复用全应用的搜索框原语(.search-wrap:浅底 + 1px 边框 + 8px 圆角 + 紫色聚焦环,
+   浅色主题覆盖见 base.css);这里只覆盖 rail 内的宽度与内边距。 */
 .notes-rail-search {
+  width: auto;
   flex: 1;
   min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 9px;
-  border: 1px solid var(--border2);
-  border-radius: 7px;
-  background: var(--surface3);
+  padding: 5px 9px;
+}
+.notes-rail-search:hover:not(:focus-within) {
+  border-color: var(--border2);
 }
 .notes-rail-search i {
-  color: var(--dim);
   font-size: 11px;
 }
 .notes-rail-search input {
   flex: 1;
   min-width: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
   font-size: 12px;
-  outline: none;
 }
 .notes-rail-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
   border: 0;
-  background: transparent;
+  background: none;
+  padding: 0;
   color: var(--dim);
   cursor: pointer;
-  padding: 0 2px;
 }
-.notes-rail-clear:hover {
-  color: var(--text);
+.notes-rail-clear i {
+  font-size: 10px;
+  transition: color 0.2s;
+}
+.notes-rail-clear:hover i {
+  color: var(--accent2);
 }
 
 /* rail 顶部的两个新建动作 */
@@ -1145,24 +1167,54 @@ body.notes-pin-dragging {
 .notes-main-empty {
   align-items: center;
   justify-content: center;
+  /* 「选一篇笔记开始」空态铺左栏目录树同款的 --surface:
+     空页和左栏连成一块,不再在 .notes-view 的 --bg 上露出一块更深的洞。
+     笔记空态与文件空态共用这一类,两者一起保持一致。 */
+  background: var(--surface);
 }
 
+/* 标题行 24px + 工具条行 30px = 54px,与左侧栏头(.sidebar-header)/ 其他页顶栏(.topbar)同高;
+   底线由 .notes-meta 的 border-bottom 画在窗口 y=66,与 .sidebar-header 连成一条横线。
+   标题缩到 12.5px(与目录名同尺寸),行内控件保持 ~20–21px,24px 内仍留得下呼吸。
+   整行兼作窗口拖动区(顶部色带从 18px 收到 12px 后,靠这一行把拖动面积补回来);
+   行内的按钮与标题输入框必须 no-drag,否则会抢掉点击/输入。 */
 .notes-hd {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* 与 .notes-rail-top 同值:左右两侧的首行要对齐 */
-  padding: 24px 14px 8px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0 14px;
+  /* 标题行只有标题输入框一个可编辑控件:它和行内所有按钮都不参与拖动 */
+  -webkit-app-region: drag;
+  /* 拖动区本来就不派发文字选择;显式写出来,与顶部色带保持一致 */
+  user-select: none;
   /* 与左侧 rail 同色:顶部这一横条要和它左边的目录栏连成一片,
      否则同一水平线上两种底色,接缝处很跳。与编辑区的区分交给下面那道边框 + 编辑区自己的底色。 */
   background: var(--surface);
+}
+/* 叶子控件和它们的容器都标 no-drag:容器之间的缝(按钮 4px 间距、分段控件的 1px 分隔线)
+   才不会变成可拖动区,避免点按钮间隙时把窗口拖走。 */
+.notes-hd button,
+.notes-hd input,
+.notes-hd-actions,
+.notes-hd .notes-modes {
+  -webkit-app-region: no-drag;
+}
+/* 文件页没有工具条行:标题行自己占满 54px,底线同样落在 y=66。
+   (没有这条,文件页会跟着 .notes-hd 缩成 24px 头,正文直接顶到拖动带下沿。) */
+.notes-hd.file-hd {
+  height: 54px;
+  min-height: 54px;
+  border-bottom: 1px solid var(--border);
 }
 .notes-rail-toggle {
   border: 0;
   background: transparent;
   color: var(--dim);
   cursor: pointer;
-  padding: 3px 5px;
+  padding: 2px 6px;
+  line-height: 1;
   border-radius: 5px;
 }
 .notes-rail-toggle:hover {
@@ -1173,7 +1225,8 @@ body.notes-pin-dragging {
    否则「折叠了目录树 + 没打开笔记」就再也没有入口把它展开 */
 .notes-rail-toggle.floating {
   position: absolute;
-  top: 22px;
+  /* 54px 头部区域内垂直居中:按钮约 20px → (54-20)/2 */
+  top: 17px;
   left: 10px;
   z-index: 5;
 }
@@ -1209,9 +1262,11 @@ body.notes-pin-dragging {
 .notes-title-mirror {
   visibility: hidden;
   white-space: pre;
-  font-size: 16px;
+  /* 必须与 .notes-title 完全一致(字号/字重/内边距),否则镜像宽度对不上,.md 会漂 */
+  font-size: 12.5px;
   font-weight: 600;
-  padding: 0 1px;
+  /* 纵向 4px:把输入框的可点区域撑到 23px,点在文字上下的行内空白也能聚焦而不是拖窗口 */
+  padding: 4px 1px;
 }
 .notes-title {
   width: 100%;
@@ -1219,10 +1274,14 @@ body.notes-pin-dragging {
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 16px;
+  /* 与左侧目录名同尺寸(12.5px);层级靠颜色区分:标题 --text,路径前缀/后缀 --dim */
+  font-size: 12.5px;
   font-weight: 600;
-  padding: 0 1px;
+  /* 与镜像层完全一致;纵向 4px 把可点区域撑到 23px,避免点在行内空白处拖走窗口 */
+  padding: 4px 1px;
   outline: none;
+  /* 行是拖动区(见 .notes-hd 的 user-select: none),输入框本身仍要能选中文字 */
+  user-select: text;
 }
 .notes-title::placeholder {
   color: var(--dim);
@@ -1237,7 +1296,7 @@ body.notes-pin-dragging {
   flex-shrink: 0;
   max-width: 180px;
   margin-left: 8px;
-  padding: 3px 9px 3px 7px;
+  padding: 2px 9px 2px 7px;
   border: 0;
   border-radius: 999px;
   background: var(--wash-accent);
@@ -1276,7 +1335,8 @@ body.notes-pin-dragging {
   background: transparent;
   color: var(--dim);
   cursor: pointer;
-  padding: 5px 7px;
+  padding: 4px 6px;
+  line-height: 1;
   border-radius: 6px;
   font-size: 12px;
 }
@@ -1328,16 +1388,22 @@ body.notes-pin-dragging {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding: 0 14px 10px;
+  /* 与标题行合计 54px:底线落在窗口 y=66,和左侧栏头 / 其他页顶栏同一条线。
+     行内最高是视图切换组(1px 边框 ×2 + 20px 按钮 = 22px);内容盒 = 30 − 2 − 5 − 1(底边) = 22px,
+     正好放下。上方只留 2px,下方 5px + 1px 边框 = 视觉上 6px —— 控制项整体偏上,不再贴着分隔线。
+     flex-wrap 保留(关联/标签多时折行会自然变高,这是既有行为);底线色取 --border,
+     与 .sidebar-header / .topbar 一致,三处接成一条横线。 */
+  min-height: 30px;
+  padding: 2px 14px 5px;
   background: var(--surface);
-  border-bottom: 1px solid var(--border2);
+  border-bottom: 1px solid var(--border);
 }
 
 /* 未配置任何关联/标签时,这一行右端会留一大片空 —— 用「更新于」把它填上有用的信息 */
 .notes-meta-time {
   margin-left: auto;
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--dim);
   white-space: nowrap;
 }
@@ -1345,12 +1411,12 @@ body.notes-pin-dragging {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 1px dashed var(--border2);
+  border: 1px dashed var(--border);
   background: transparent;
   color: var(--dim);
   border-radius: 999px;
-  padding: 3px 9px;
-  font-size: 11px;
+  padding: 2px 7px;
+  font-size: 10.5px;
   cursor: pointer;
 }
 .notes-add-ref:hover {
@@ -1367,11 +1433,11 @@ body.notes-pin-dragging {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 7px;
+  padding: 1px 6px;
   border-radius: 999px;
   background: var(--surface3);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 .notes-tag-chip button {
   border: 0;
@@ -1385,9 +1451,14 @@ body.notes-pin-dragging {
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 11px;
+  font-size: 10.5px;
   outline: none;
-  width: 96px;
+  width: 90px;
+}
+/* 占位符是提示,不是正文。浏览器的 UA 占位符色仍然偏亮,统一压到 --dim,
+   让「回车加标签」与「+ 关联服务」同一档,不再抢标题。 */
+.notes-tag-input::placeholder {
+  color: var(--dim);
 }
 
 /* 关联 chip:类型 · 名称,色调区分 有效/漂移/失效 */
@@ -1401,7 +1472,7 @@ body.notes-pin-dragging {
   align-items: center;
   border-radius: 999px;
   background: var(--surface3);
-  font-size: 11px;
+  font-size: 10.5px;
   overflow: hidden;
 }
 .note-ref-main {
@@ -1412,8 +1483,8 @@ body.notes-pin-dragging {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  padding: 3px 8px;
-  font-size: 11px;
+  padding: 2px 7px;
+  font-size: 10.5px;
 }
 .note-ref-main:disabled {
   cursor: default;
@@ -1471,7 +1542,7 @@ body.notes-pin-dragging {
 .notes-modes {
   display: inline-flex;
   flex-shrink: 0;
-  border: 1px solid var(--border2);
+  border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -1479,16 +1550,16 @@ body.notes-pin-dragging {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 27px;
-  height: 23px;
+  width: 25px;
+  height: 20px;
   border: 0;
   background: transparent;
   color: var(--dim);
   cursor: pointer;
-  font-size: 10.5px;
+  font-size: 10px;
 }
 .notes-mode-btn + .notes-mode-btn {
-  border-left: 1px solid var(--border2);
+  border-left: 1px solid var(--border);
 }
 .notes-mode-btn:hover {
   background: var(--hover);
@@ -1499,13 +1570,14 @@ body.notes-pin-dragging {
   color: var(--accent2);
 }
 
-/* 视图切换与「关联/标签」之间的那道竖线 */
+/* 视图切换与「关联/标签」之间的那道竖线:固定 12px,居中,不随行高拉满 */
 .notes-meta-sep {
   flex-shrink: 0;
   width: 1px;
-  align-self: stretch;
-  margin: 1px 3px;
-  background: var(--border2);
+  height: 12px;
+  align-self: center;
+  margin: 0 4px;
+  background: var(--border);
 }
 
 /* 三区 */
@@ -4832,8 +4904,8 @@ video.md-media {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 23px;
-  height: 23px;
+  width: 21px;
+  height: 21px;
   border: 1px solid var(--border2);
   border-radius: 6px;
   background: transparent;
@@ -5798,7 +5870,7 @@ body.light-theme .canvas-minimap-toggle[aria-pressed='true']:hover {
   color: var(--dim);
 }
 .file-name {
-  font-size: 16px;
+  font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;

@@ -1,6 +1,9 @@
 /* 应用原生 chrome(非 demo 移植:标题栏接管相关样式;demo 移植文件见各 ported-from 头注释) */
-/* 顶部统一色带:titleBarStyle hiddenInset 接管标题栏后,自绘 28px 全宽色带,
-   取 --surface 与侧边栏/顶栏同色,随主题即时切换;兼作窗口拖动区 */
+/* 顶部统一色带:titleBarStyle hiddenInset 接管标题栏后,自绘 12px 全宽色带,
+   取 --surface 与侧边栏/顶栏同色,随主题即时切换;兼作窗口拖动区。
+   交通灯默认隐藏,光标进入窗口顶部 24px(12px 色带 + 12px 容差)时才出现,
+   露出位置下移到左侧栏头中线(窗口 y33–45),横向 6–58,收进折叠态 64px 的侧栏内。
+   判定在 main/traffic-lights.ts,位置在 main/index.ts 的 trafficLightPosition。 */
 .window-root {
   height: 100vh;
   display: flex;
@@ -14,7 +17,7 @@
 }
 
 .titlebar-drag {
-  height: 28px;
+  height: 12px;
   flex-shrink: 0;
   background: var(--surface);
   -webkit-app-region: drag;
@@ -22,8 +25,8 @@
 }
 
 /* 侧边栏分割线:渐变效果保留 —— 渐变区 = logo/头部区域本身(红框处):
-   头部顶端(紧贴色带下沿)完全透明,向下渐入,至局部 82px(窗口 y110)达实色,其下实线;
-   色带区(窗口 y0-28)无线。替代原生 border-right。
+   头部顶端(紧贴色带下沿)完全透明,向下渐入,至局部 82px(窗口 y94)达实色,其下实线;
+   色带区(窗口 y0-12)无线。替代原生 border-right。
    ⚠ 必须画在 .sidebar 自己的层叠上下文里(::after):.sidebar 是 z-index:20 的 flex 子项、
    自成层叠上下文,外挂低层级线会被不透明侧边栏整体遮住(踩过)。
    线在侧边栏上 → 折叠/展开动画原生跟随。
@@ -41,7 +44,7 @@
   right: 0;
   bottom: 0;
   width: 1px;
-  /* 渐变起点 4px = 窗口 y32(色带下沿 y28 再留 4px 全透明);终点 82px = 窗口 y110 达实色 */
+  /* 渐变起点 4px = 窗口 y16(色带下沿 y12 再留 4px 全透明);终点 82px = 窗口 y94 达实色 */
   background: linear-gradient(to bottom, transparent 4px, var(--border) 82px);
   pointer-events: none;
 }

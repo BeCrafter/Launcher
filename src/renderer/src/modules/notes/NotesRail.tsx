@@ -2279,7 +2279,8 @@ export function NotesRail(): React.JSX.Element {
           (首启引导自己带顶部留白,所以这里不需要留占位。) */}
       {!isEmpty && (
         <div className="notes-rail-top">
-          <div className="notes-rail-search">
+          {/* search-wrap:全应用共用的搜索框原语(浅底/边框/聚焦环),rail 内只覆盖宽度 */}
+          <div className="search-wrap notes-rail-search">
             <i className="fa-solid fa-magnifying-glass" />
             <input
               value={query}
@@ -2288,7 +2289,7 @@ export function NotesRail(): React.JSX.Element {
             />
             {searching && (
               <button type="button" className="notes-rail-clear" onClick={() => void setQuery('')}>
-                <i className="fa-solid fa-circle-xmark" />
+                <i className="fa-solid fa-xmark" />
               </button>
             )}
           </div>
