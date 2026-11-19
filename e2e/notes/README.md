@@ -15,7 +15,7 @@ npm run test:e2e:notes:list            # 列出用例
 node e2e/notes/run.mjs --keep          # 保留临时 profile 与截图
 ```
 
-全量跑只在用户明确要求时执行;日常按改动覆盖范围用 `--filter` 跑对应分组即可。
+全量跑只在用户明确要求、发版前或改动横跨多个分组时执行;日常按改动覆盖范围用 `--filter` 跑对应分组即可。
 执行范围不影响用例义务:任何交互改动仍必须在 `cases/` 里新增/更新用例并保证可独立跑通,供后续全量验证 / CI 使用;修 bug 也先补复现用例。
 
 成功时临时目录会被删掉，报告写到 `e2e/notes/.tmp/last-report.json`；
