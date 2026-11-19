@@ -1226,6 +1226,8 @@ interface ListItemExt {
   task: boolean | undefined
   /** 源码里的序号。有序列表用它做 `<li value>`,避免浏览器从 1 / a 重数。 */
   value: number | null
+  /** 无序项的源码符号。标记样式按它逐项渲染;有序项为 null。 */
+  bullet: '-' | '+' | '*' | null
   children: ListNodeExt | null
 }
 interface ListNodeExt {
@@ -1237,6 +1239,16 @@ interface ListNodeExt {
 
 const ORDERED_TYPE: Record<OrderedStyle, '1' | 'a' | 'i'> = { 0: '1', 1: 'a', 2: 'i' }
 
+/**
+ * 无序源码符号 → 预览标记:与编辑器 Tab 换符号的顺序 (`-` → `+` → `*`) 同源。
+ * 符号只决定这一项的标记样式,不改变层级;同一缩进下混用符号仍是一个列表。
+ */
+const BULLET_STYLE: Record<'-' | '+' | '*', 'disc' | 'circle' | 'square'> = {
+  '-': 'disc',
+  '+': 'circle',
+  '*': 'square'
+}
+
 /** 预览认的列表行:顶格 a. / i. 不是列表;i. 落在罗马档时序号按罗马读,不按字母第 9 项。 */
 function previewListLine(lines: string[], index: number): ReturnType<typeof listSyntaxAt> {
   const syntax = listSyntaxAt(lines, index)
@@ -1247,36 +1259,62 @@ function previewListLine(lines: string[], index: number): ReturnType<typeof list
 /**
  * `baseLine` 把子数组里的下标换算回原文档的行号(提示块正文会用到)。
  * 宽松语法(`-[]` / `- []` / `- [x]文字`)由 `md-list-syntax` 统一识别,这里只做分组。
- * 同一缩进上 `1.` 和 `a.` 拆成两个列表。
+ * 同一缩进上 `1.` 和 `a.` 拆成两个列表;无序符号(`-` / `+` / `*`)不参与分组,
+ * 只决定该项的标记样式。
+ *
+ * 空行透明:空行后只要还是同层同种类的列表行就继续(松散列表);缩进更深则挂成
+ * 上一项的子列表;否则列表结束,并把空行原样留给 `renderBlocks`(不能吞掉)。
+ * 与块模型 `itemRegionEnd` / `parseItemRun`、编辑上下文 `orderedContextOf` 同一口径。
  */
 function parseListExt(lines: string[], start: number, baseLine = 0): { list: ListNodeExt; next: number } {
   const first = previewListLine(lines, start)!
   const indent = first.indent.length
   const ordered = first.ordered
   const type = first.style === null ? null : ORDERED_TYPE[first.style]
+  /** 同层判据与旧循环头完全一致:无引用、缩进严格相等、同有序/无序、同有序档位。 */
+  const sameLevel = (m: ReturnType<typeof previewListLine>): boolean =>
+    m !== null &&
+    m.quote === '' &&
+    m.indent.length === indent &&
+    m.ordered === ordered &&
+    (m.style === null ? null : ORDERED_TYPE[m.style]) === type
+  /** 空行整组透明:返回下一个非空行下标。只用于前瞻,不直接推进 i。 */
+  const skipBlankLines = (from: number): number => {
+    let j = from
+    while (j < lines.length && lines[j].trim() === '') j += 1
+    return j
+  }
   const items: ListItemExt[] = []
   let i = start
 
   while (i < lines.length) {
     const m = previewListLine(lines, i)
     // 引用行整体由 renderBlocks 的引用分支处理,不能在这里当列表项
-    if (m === null || m.quote !== '' || m.indent.length !== indent) break
-    // 同层混排 ul/ol,或有序的书写档不同 → 另起一个列表
-    if (m.ordered !== ordered || (m.style === null ? null : ORDERED_TYPE[m.style]) !== type) break
+    if (m === null || !sameLevel(m)) break
     const line = baseLine + i
     const task: boolean | undefined = m.task ? m.checked : undefined
+    const bullet = m.ordered ? null : (m.marker as '-' | '+' | '*')
     i++
-    // 子列表:紧随其后、缩进更深的那一串
+    // 子列表:缩进更深的那一串;和父项之间允许空行
     let children: ListNodeExt | null = null
-    if (i < lines.length) {
-      const n = previewListLine(lines, i)
+    const childAt = skipBlankLines(i)
+    if (childAt < lines.length) {
+      const n = previewListLine(lines, childAt)
       if (n !== null && n.quote === '' && n.indent.length > indent) {
-        const sub = parseListExt(lines, i, baseLine)
+        const sub = parseListExt(lines, childAt, baseLine)
         children = sub.list
         i = sub.next
       }
     }
-    items.push({ line, text: m.content, task, value: m.number, children })
+    items.push({ line, text: m.content, task, value: m.number, bullet, children })
+    // 同层续接:只有下一条非空行仍属于本列表时才跨过空行;
+    // 否则 i 停在第一个尾随空行上,由 renderBlocks 处理后面的块。
+    const siblingAt = skipBlankLines(i)
+    if (siblingAt < lines.length && sameLevel(previewListLine(lines, siblingAt))) {
+      i = siblingAt
+      continue
+    }
+    break
   }
   return { list: { ordered, type, items }, next: i }
 }
@@ -1291,6 +1329,12 @@ function renderListExt(node: ListNodeExt, keyBase: string, ctx: ExtCtx): ReactNo
           className={it.task !== undefined ? 'md-task' : undefined}
           data-line={anchor(ctx, it.line)}
           value={node.ordered && it.value !== null ? it.value : undefined}
+          // 任务项的 list-style:none 在 CSS 里,内联样式会盖掉它,所以任务项不写。
+          style={
+            it.task === undefined && !node.ordered && it.bullet !== null
+              ? { listStyleType: BULLET_STYLE[it.bullet] }
+              : undefined
+          }
         >
           {it.task !== undefined && (
             <input

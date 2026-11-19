@@ -322,6 +322,14 @@ describe('blockContainsLine', () => {
     expect([blockContainsLine(child, 0), blockContainsLine(child, 1)]).toEqual([false, true])
   })
 
+  it('父项与子项之间的空行不打断层级 —— 与预览同一口径', () => {
+    const list = parseMarkdownBlocks('- 甲\n\n  - 子\n')
+    const parent = list.find((block) => block.from === 0)!
+    const child = list.find((block) => block.from === 2)!
+    expect(child.parentId).toBe(parent.id)
+    expect([blockContainsLine(parent, 1), blockContainsLine(parent, 2)]).toEqual([true, true])
+  })
+
   it('agrees with the owner map: an owner always contains its own line', () => {
     const owners = blockOwnersByLine(blocks)
     for (const [line, owner] of owners) expect(blockContainsLine(owner, line)).toBe(true)

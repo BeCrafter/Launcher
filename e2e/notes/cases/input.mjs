@@ -241,10 +241,10 @@ export default [
       const line = '  - 内层甲一'
       await ctx.setCursor(line, 0)
       await ctx.press('Tab')
-      // 标记由**上一级**决定:上一级是 `- 外层甲` → 本级 `*`;反缩进后仍是 `*`。
-      includes(await ctx.lines(), '    * 内层甲一', 'Tab 增加一级缩进,标记跟随上一级变为 *')
+      // 标记由**上一级**决定:上一级是 `- 外层甲` → 本级 `+`;反缩进后仍是 `+`。
+      includes(await ctx.lines(), '    + 内层甲一', 'Tab 增加一级缩进,标记跟随上一级变为 +')
       await ctx.press('Tab', 8)
-      includes(await ctx.lines(), '  * 内层甲一', 'Shift+Tab 恢复原缩进,标记仍跟随上一级为 *')
+      includes(await ctx.lines(), '  + 内层甲一', 'Shift+Tab 恢复原缩进,标记仍跟随上一级为 +')
     }
   },
 
@@ -262,7 +262,7 @@ export default [
       await ctx.setCursor(line, 0)
       await ctx.press('Escape')
       await ctx.press('Tab')
-      includes(await ctx.lines(), '    * 内层甲一', 'Escape 后 Tab 仍缩进一级')
+      includes(await ctx.lines(), '    + 内层甲一', 'Escape 后 Tab 仍缩进一级')
       eq(
         await ctx.cdp.eval(`document.activeElement?.classList.contains('cm-content') === true`),
         true,
@@ -270,7 +270,7 @@ export default [
       )
       await ctx.press('Escape')
       await ctx.press('Tab', 8)
-      includes(await ctx.lines(), '  * 内层甲一', 'Escape 后 Shift+Tab 仍反缩进')
+      includes(await ctx.lines(), '  + 内层甲一', 'Escape 后 Shift+Tab 仍反缩进')
       eq(
         await ctx.cdp.eval(`document.activeElement?.classList.contains('cm-content') === true`),
         true,
@@ -282,7 +282,7 @@ export default [
   {
     id: 'input/tab-marker-follows-parent-chain',
     area: 'input',
-    title: '选中多级列表按 Tab:每层的标记跟随它的上一级,- → * → + 逐层递进',
+    title: '选中多级列表按 Tab:每层的标记跟随它的上一级,- → + → * 逐层递进',
     tags: ['input', 'list', 'tab'],
     fixture: LEVELS,
     async run(ctx, t) {
@@ -290,23 +290,23 @@ export default [
       await ctx.press('Tab')
       const lines = await ctx.lines()
       includes(lines, '  - 一级甲', '没有上级 → -')
-      includes(lines, '    * 二级甲', '上级 - → *')
-      includes(lines, '      + 三级甲', '上级 * → +')
-      includes(lines, '        - 四级甲', '上级 + → -')
+      includes(lines, '    + 二级甲', '上级 - → +')
+      includes(lines, '      * 三级甲', '上级 + → *')
+      includes(lines, '        - 四级甲', '上级 * → -')
     }
   },
 
   {
-    // 用户报告的差异:上一级是 `*`,`Tab` 后本级必须是 `+`,而不是按绝对深度算成 `*`。
+    // 用户报告的差异:上一级是 `*`,`Tab` 后本级必须是 `-`,而不是按绝对深度算成 `*`。
     id: 'input/tab-marker-follows-parent',
     area: 'input',
-    title: '同级 `*` 列表上按 Tab:新标记跟随上一级 `*` 变为 `+`',
+    title: '同级 `*` 列表上按 Tab:新标记跟随上一级 `*` 变为 `-`',
     tags: ['input', 'list', 'tab'],
     fixture: SAME_MARKER,
     async run(ctx, t) {
       await ctx.setCursor('* 乙', 0)
       await ctx.press('Tab')
-      includes(await ctx.lines(), '  + 乙', '上一级是 * → 本级 +')
+      includes(await ctx.lines(), '  - 乙', '上一级是 * → 本级 -')
       // 反缩进回顶格后没有上级,按基础标记归一成 `-`
       await ctx.press('Tab', 8)
       includes(await ctx.lines(), '- 乙', '回到顶格没有上级,标记归一为 -')
@@ -322,7 +322,7 @@ export default [
     async run(ctx, t) {
       await ctx.setCursor('  - 内层甲一', 6) // 落在「甲」上
       await ctx.press('Tab')
-      includes(await ctx.lines(), '    * 内层甲一', 'Tab 增加缩进并换标记')
+      includes(await ctx.lines(), '    + 内层甲一', 'Tab 增加缩进并换标记')
       const caret = await ctx.cdp.eval(`(() => {
         const v = document.querySelector('.notes-editor-pane .cm-content')?.cmTile?.root?.view
         if (!v) return null
@@ -346,11 +346,11 @@ export default [
       await ctx.press('Tab')
       includes(
         await ctx.lines(),
-        '>     * 引用乙',
-        '缩进在引用前缀之后,标记跟随上一级 `> - 引用甲` 变为 *'
+        '>     + 引用乙',
+        '缩进在引用前缀之后,标记跟随上一级 `> - 引用甲` 变为 +'
       )
       await ctx.press('Tab', 8)
-      includes(await ctx.lines(), '>   * 引用乙', 'Shift+Tab 缩回一级,标记仍为 *')
+      includes(await ctx.lines(), '>   + 引用乙', 'Shift+Tab 缩回一级,标记仍为 +')
     }
   },
 

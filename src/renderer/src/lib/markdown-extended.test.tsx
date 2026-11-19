@@ -252,6 +252,85 @@ describe('块级:嵌套列表', () => {
     const out = html('1. 甲\n  1. 乙\n  a. 丙')
     expect(out.match(/<ol class="md-list"/g)?.length).toBe(3)
   })
+
+  // 空行在任意层级都透明 —— 与块模型 itemRegionEnd / parseItemRun 同一口径。
+  // 只有确认还能续接时才跨过空行;跨不过去时空行原样留给 renderBlocks。
+  it('松散列表:空行后同缩进的子项仍是同一个子列表', () => {
+    const out = html('- 甲\n  - 乙\n\n  - 丙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    // 乙、丙 都在第二个(内层)列表里
+    const inner = out.slice(out.indexOf('<ul class="md-list">', out.indexOf('<ul class="md-list">') + 1))
+    expect(inner).toContain('乙')
+    expect(inner).toContain('丙')
+    expect(out.match(/<li/g)?.length).toBe(3)
+  })
+
+  it('父项与首个子项之间的空行不打断层级', () => {
+    const out = html('- 甲\n\n  - 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    // 子列表仍嵌在「甲」这一项里,没有掉到根层
+    expect(out.lastIndexOf('<ul class="md-list">')).toBeGreaterThan(out.indexOf('甲'))
+  })
+
+  it('根层松散列表:空行后同缩进的条目仍是一个列表', () => {
+    const out = html('- 甲\n\n- 乙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(1)
+    expect(out.match(/<li/g)?.length).toBe(2)
+  })
+
+  it('空行后换成有序列表则另起一个列表', () => {
+    const out = html('- 甲\n\n1. 乙')
+    expect(out).toContain('<ul class="md-list">')
+    expect(out).toContain('<ol class="md-list" type="1">')
+  })
+
+  it('跨过多个空行续接时,行锚点仍是真实文档行号', () => {
+    const out = html('- 甲\n  - 乙\n\n\n  - 丙', { extended: true, lineAnchors: true })
+    expect(out).toContain('data-line="0"')
+    expect(out).toContain('data-line="1"')
+    expect(out).toContain('data-line="4"')
+  })
+
+  it('列表后面接段落:空行不被吞掉,段落照常渲染', () => {
+    const out = html('- 甲\n  - 乙\n\n段落')
+    expect(out).toContain('<p class="md-p"')
+    expect(out).toContain('段落')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+  })
+
+  it('任务项与子列表之间允许空行,子列表仍在内容块里', () => {
+    const out = html('- [ ] 父\n\n  - [ ] 子')
+    const body = out.indexOf('md-task-body')
+    expect(body).toBeGreaterThan(-1)
+    expect(out.lastIndexOf('<ul class="md-list">')).toBeGreaterThan(body)
+    expect(out.match(/class="md-task"/g)?.length).toBe(2)
+  })
+
+  it('引用里的松散列表:引用空行也不打断嵌套', () => {
+    const out = html('> - 甲\n>   - 乙\n>\n>   - 丙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(2)
+    expect(out.slice(out.indexOf('<ul class="md-list">', out.indexOf('<ul class="md-list">') + 1))).toContain('丙')
+  })
+
+  // 标记样式只跟源码符号走,不按深度递进;同一缩进混用符号仍是一个列表。
+  it('无序标记按源码符号逐项渲染:- ● / + ○ / * ▪', () => {
+    const out = html('- 甲\n+ 乙\n* 丙')
+    expect(out.match(/<ul class="md-list">/g)?.length).toBe(1)
+    expect(out).toContain('<li style="list-style-type:disc">甲</li>')
+    expect(out).toContain('<li style="list-style-type:circle">乙</li>')
+    expect(out).toContain('<li style="list-style-type:square">丙</li>')
+  })
+
+  it('嵌套项同样按自己的符号显示标记', () => {
+    const out = html('- 父\n  * 子')
+    expect(out).toContain('list-style-type:disc')
+    expect(out).toContain('list-style-type:square')
+  })
+
+  it('任务项与有序项不写内联 list-style-type', () => {
+    expect(html('- [ ] 甲')).not.toContain('list-style-type')
+    expect(html('1. 甲\n2. 乙')).not.toContain('list-style-type')
+  })
 })
 
 describe('块级:标题层级 / 表格对齐 / 语义', () => {
@@ -310,7 +389,7 @@ describe('表格单元格里的块级内容', () => {
   it('列表:真的渲染成列表,不再是字面的「- 甲」', () => {
     const out = cell('- 甲<br>- 乙')
     expect(out).toContain('md-list')
-    expect(out).toContain('<li>甲</li>')
+    expect(out).toContain('<li style="list-style-type:disc">甲</li>')
     expect(out).not.toContain('- 甲')
   })
 
@@ -787,7 +866,7 @@ describe('引用块:正文按块渲染', () => {
   it('列表真的渲染成列表,不再是字面的「- 甲」', () => {
     const out = html(MD)
     expect(out).toContain('md-list')
-    expect(out).toContain('<li>甲</li>')
+    expect(out).toContain('<li style="list-style-type:disc">甲</li>')
     expect(out).not.toContain('- 甲')
   })
 

@@ -205,16 +205,16 @@ describe('indentMarkdownLines:标记跟随上一级', () => {
     options: IndentOptions = {}
   ): Map<number, string> | null => indentMarkdownLines(lines, targets, dir, 2, options)
 
-  it('上级 - → 本级 *', () => {
-    expect(plan(['- 甲', '  - 乙'], [1])?.get(1)).toBe('    * 乙')
+  it('上级 - → 本级 +', () => {
+    expect(plan(['- 甲', '  - 乙'], [1])?.get(1)).toBe('    + 乙')
   })
 
-  it('上级 * → 本级 +', () => {
-    expect(plan(['* 甲', '* 乙'], [1])?.get(1)).toBe('  + 乙')
+  it('上级 + → 本级 *', () => {
+    expect(plan(['+ 甲', '+ 乙'], [1])?.get(1)).toBe('  * 乙')
   })
 
-  it('上级 + → 本级 -', () => {
-    expect(plan(['+ 甲', '+ 乙'], [1])?.get(1)).toBe('  - 乙')
+  it('上级 * → 本级 -', () => {
+    expect(plan(['* 甲', '* 乙'], [1])?.get(1)).toBe('  - 乙')
   })
 
   it('没有上级时落回基础标记 -', () => {
@@ -228,26 +228,26 @@ describe('indentMarkdownLines:标记跟随上一级', () => {
 
   it('多选时逐行按各自的上一级算', () => {
     const out = plan(['* 甲', '* 乙', '* 丙'], [1, 2])
-    expect(out?.get(1)).toBe('  + 乙')
-    expect(out?.get(2)).toBe('  + 丙')
+    expect(out?.get(1)).toBe('  - 乙')
+    expect(out?.get(2)).toBe('  - 丙')
   })
 
   it('乱序传入也按行号升序处理,父项先更新', () => {
     const out = plan(['- 甲', '  - 乙'], [1, 0])
     expect(out?.get(0)).toBe('  - 甲')
-    expect(out?.get(1)).toBe('    * 乙')
+    expect(out?.get(1)).toBe('    + 乙')
   })
 
   it('反缩进按新的上一级重算', () => {
-    expect(plan(['- 甲', '  * 乙', '    + 丙'], [2], 'out')?.get(2)).toBe('  * 丙')
+    expect(plan(['- 甲', '  * 乙', '    + 丙'], [2], 'out')?.get(2)).toBe('  + 丙')
   })
 
   it('有序上级的无序孩子用 -;任务自身不改标记,但可作为上级', () => {
     expect(plan(['1. 甲', '  - 乙'], [1])?.get(1)).toBe('    - 乙')
     expect(plan(['- [ ] 甲'], [0])?.get(0)).toBe('  - [ ] 甲')
     expect(plan(['* [x] 甲'], [0])?.get(0)).toBe('  * [x] 甲')
-    expect(plan(['- [ ] 甲', '  - 乙'], [1])?.get(1)).toBe('    * 乙')
-    expect(plan(['* [x] 甲', '  - 乙'], [1])?.get(1)).toBe('    + 乙')
+    expect(plan(['- [ ] 甲', '  - 乙'], [1])?.get(1)).toBe('    + 乙')
+    expect(plan(['* [x] 甲', '  - 乙'], [1])?.get(1)).toBe('    - 乙')
   })
 
   it('有序项缩进后按有序上级的个数换档:1. → a. → i. → 1.', () => {
@@ -283,7 +283,7 @@ describe('indentMarkdownLines:标记跟随上一级', () => {
   })
 
   it('续行要落在上级的内容列之内', () => {
-    expect(plan(['- 甲', '  续行', '  - 乙'], [2])?.get(2)).toBe('    * 乙')
+    expect(plan(['- 甲', '  续行', '  - 乙'], [2])?.get(2)).toBe('    + 乙')
     expect(plan(['- 甲', ' 段', '  - 乙'], [2])?.get(2)).toBe('    - 乙')
   })
 
@@ -302,7 +302,7 @@ describe('indentMarkdownLines:标记跟随上一级', () => {
   })
 
   it('引用内按引用后的上级算;跨引用上下文不算上级', () => {
-    expect(plan(['> - 甲', '>   - 乙'], [1])?.get(1)).toBe('>     * 乙')
+    expect(plan(['> - 甲', '>   - 乙'], [1])?.get(1)).toBe('>     + 乙')
     expect(plan(['> - 甲', '  - 乙'], [1])?.get(1)).toBe('    - 乙')
   })
 

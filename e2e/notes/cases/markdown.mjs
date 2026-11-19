@@ -45,6 +45,29 @@ const NESTED_TASKS = [
   '  - [ ] 子任务乙',
   '- [ ] 父任务乙'
 ].join('\n')
+// 符号只决定标记样式:同一缩进混用 - / + / * 仍是一个列表,且不产生额外缩进。
+const LIST_GLYPHS = [
+  '# 列表符号',
+  '',
+  '- 一级减号',
+  '+ 一级加号',
+  '* 一级星号',
+  '- 父项',
+  '  - 子减号',
+  '  + 子加号',
+  '  * 子星号',
+  '- [ ] 任务项'
+].join('\n')
+// 空行在任意层级都透明:子项之间、父项与子项之间的空行都不打断嵌套。
+const LOOSE_NESTED = [
+  '# 松散嵌套',
+  '',
+  '- 父项甲',
+  '  - 子项甲',
+  '',
+  '  - 子项乙',
+  '- 父项乙'
+].join('\n')
 const TABLE_IMAGE = [
   '# 表格图片',
   '',
@@ -712,6 +735,106 @@ export default [
       ok(rects.childB.top > rects.childA.top + 8, '同级子项纵向排列')
       ok(rects.parentB.top > rects.childB.bottom - 1, '下一个父项排在整个子树下方')
       ok(rects.grand.right <= rects.bodyRight + 1, '嵌套内容不横向溢出预览区')
+    }
+  },
+
+  {
+    // 源码符号 → 标记样式:- ● / + ○ / * ▪。符号不参与分层,也不加缩进;
+    // 同一缩进混用符号仍是一个列表,每项各显示各的标记。
+    id: 'markdown/list-marker-glyphs',
+    area: 'markdown',
+    title: '无序标记按源码符号渲染:同缩进 - ● / + ○ / * ▪ 且不额外缩进,嵌套项也各用各的符号',
+    tags: ['render', 'preview', 'list'],
+    fixture: LIST_GLYPHS,
+    async run(ctx, t) {
+      await ctx.cdp.waitFor(`document.querySelectorAll('.notes-preview-body .md-list').length === 2`, {
+        message: '预览渲染根层列表与一个子列表'
+      })
+      const out = await ctx.cdp.json(`(() => {
+        const root = document.querySelector('.notes-preview-body > .md-list')
+        if (root === null) return null
+        const style = (el) => getComputedStyle(el).listStyleType
+        const roots = [...root.querySelectorAll(':scope > li')]
+        const nested = [...root.querySelectorAll(':scope > li > .md-list > li')]
+        return {
+          styles: roots.map(style),
+          lefts: roots.map((el) => Math.round(el.getBoundingClientRect().left)),
+          nested: nested.map((el) => ({
+            style: style(el),
+            left: Math.round(el.getBoundingClientRect().left)
+          }))
+        }
+      })()`)
+      ok(out !== null, '预览存在根层 .md-list')
+      eq(out.styles.slice(0, 3), ['disc', 'circle', 'square'], '根层 - / + / * 依次为实心圆、空心圆、方块')
+      eq(out.nested.map((n) => n.style), ['disc', 'circle', 'square'], '子列表三项各按自己的符号渲染')
+      eq(out.styles[4], 'none', '任务项不显示列表标记')
+      const rootLefts = out.lefts.slice(0, 3)
+      ok(
+        rootLefts.every((left) => Math.abs(left - rootLefts[0]) <= 1),
+        `符号不产生额外缩进(根层左缘 ${rootLefts.join(' / ')})`
+      )
+      ok(
+        out.nested.every((n) => n.left > out.lefts[0] + 8),
+        '子项仍在父项右侧:层级由源码缩进决定'
+      )
+    }
+  },
+
+  {
+    // 复现:带层级的列表中间出现空行后,后面的子项被渲染回一级。
+    // 现在空行透明 —— 同层续接、更深缩进挂成子列表;跨不过去时空行留给后面的块。
+    id: 'markdown/loose-nested-list-stays-nested',
+    area: 'markdown',
+    title: '空行不打断嵌套:子项之间、父项与子项之间的空行后仍留在原来的层级',
+    tags: ['render', 'preview', 'list'],
+    fixture: LOOSE_NESTED,
+    async run(ctx, t) {
+      await ctx.cdp.waitFor(`document.querySelectorAll('.notes-preview-body .md-list').length === 2`, {
+        message: '根层列表 + 一个子列表'
+      })
+      const out = await ctx.cdp.json(`(() => {
+        const root = document.querySelector('.notes-preview-body > .md-list')
+        if (root === null) return null
+        const own = (el) => {
+          const first = el.firstChild
+          return (first !== null && first.nodeType === 3 ? first.textContent : el.textContent ?? '').trim()
+        }
+        const all = [...root.querySelectorAll('li')]
+        const info = (text) => {
+          const el = all.find((li) => own(li) === text)
+          if (el === undefined) return null
+          const r = el.getBoundingClientRect()
+          return {
+            left: Math.round(r.left),
+            top: Math.round(r.top),
+            // 子项的列表挂在某一项 <li> 里;根层列表挂在预览正文下
+            listOwner: el.parentElement?.parentElement?.tagName ?? ''
+          }
+        }
+        return {
+          rootItems: root.querySelectorAll(':scope > li').length,
+          父项甲: info('父项甲'),
+          子项甲: info('子项甲'),
+          子项乙: info('子项乙'),
+          父项乙: info('父项乙')
+        }
+      })()`)
+      ok(out !== null, '预览存在根层 .md-list')
+      eq(out.rootItems, 2, '根层只有两个父项')
+      for (const name of ['父项甲', '子项甲', '子项乙', '父项乙']) ok(out[name] !== null, `找到 ${name}`)
+      eq(out.子项乙.listOwner, 'LI', '空行后的子项乙仍是父项甲的子列表')
+      ok(out.子项乙.left > out.父项甲.left + 8, '子项乙相对父项甲缩进,没有掉回根层')
+      ok(
+        Math.abs(out.子项乙.left - out.子项甲.left) <= 1,
+        `子项甲乙左对齐(实际 ${out.子项甲.left} / ${out.子项乙.left})`
+      )
+      ok(out.子项乙.top > out.子项甲.top + 8, '子项乙排在子项甲下方')
+      ok(out.父项乙.top > out.子项乙.top, '父项乙排在整个子树下方')
+      ok(
+        Math.abs(out.父项乙.left - out.父项甲.left) <= 1,
+        `父项乙回到根层缩进(实际 ${out.父项甲.left} / ${out.父项乙.left})`
+      )
     }
   },
 

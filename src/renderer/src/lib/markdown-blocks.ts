@@ -163,8 +163,9 @@ function consumeQuote(lines: string[], start: number, limit: number): ConsumedBl
 //
 // 一个列表**不再**是一个块：每一项各成一块、带自己的子项（与飞书一致，可单独拖走）。
 // 与预览解析器（markdown.tsx 的 parseListExt）对齐的几条：同层 = 缩进**完全相等**、
-// ul/ol 混排算两层、空行在预览里会把列表断开。唯一放宽的是**条目之间容忍空行**
-// （空行归前一个条目的 `to`，于是拖拽槽位仍然严丝合缝）。
+// ul/ol 混排算两层；空行透明（同层条目之间、父项与子列表之间都允许空行）。
+// 无序符号 `-` / `+` / `*` 只决定该项在预览里的标记样式，**不参与分层**：
+// 同一缩进混用符号仍是一层。
 
 interface ItemMark {
   /** 标记前导空白宽度（字符数，与预览 parseListExt 同口径） */
@@ -683,8 +684,8 @@ export function reorderMarkdownBlocks(
 
   const originalInsertAt = before ? target.from : target.to
   let insertAt = originalInsertAt - (source.from < originalInsertAt ? count : 0)
-  // ⚠ 同层列表项之间**不能**补空行：预览遇到空行就把列表断开，紧密列表会被悄悄改成
-  // 松散列表 / 两个列表。落点在列表内部是最常见的一种拖拽，这一条必须挡住。
+  // 同层列表项之间不补空行:这是**排版**选择(保持现有 Markdown 紧凑格式、少改源码),
+  // 不再涉及渲染正确性 —— 预览已与块模型同口径,空行不会把松散列表拆开。
   if (insertAt > 0 && lines[insertAt - 1] !== '' && sourceLines[0] !== '' && !sameListRunSeam(sourceLines[0], lines[insertAt - 1])) {
     lines.splice(insertAt, 0, '')
     insertAt += 1
