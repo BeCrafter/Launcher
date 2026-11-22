@@ -16,6 +16,7 @@ import canvas from './cases/canvas.mjs'
 import resize from './cases/resize.mjs'
 import previewOutline from './cases/preview-outline.mjs'
 import exportCases from './cases/export.mjs'
+import footer from './cases/footer.mjs'
 import update from './cases/update.mjs'
 
 /**
@@ -43,6 +44,7 @@ export const CASES = [
   ...resize,
   ...previewOutline,
   ...exportCases,
+  ...footer,
   // 放最后:更新用例会把状态机推到 error/available 再恢复,失败时也不该影响笔记用例
   ...update
 ]
@@ -66,5 +68,6 @@ export const AREA_TITLES = {
   resize: '可缩放区块的角柄与描边:图片、音视频、网页、PDF、表格、图表',
   'preview-outline': '预览标题大纲:右缘刻度、悬停目录、滚动跟随、跳转与双向折叠',
   export: '文档导出:笔记 Markdown/HTML/PDF,文本文件原文/HTML/PDF',
+  footer: '主区底栏:纯预览 / 空态 / 文件页 / 白板,38px 与仓库入口',
   update: '自动检查更新:启动与每 10 分钟检查、应用内横幅、稍后与设置开关、下载走既有机制'
 }

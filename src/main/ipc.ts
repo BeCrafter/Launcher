@@ -123,6 +123,8 @@ export function registerIpc(deps: IpcDeps): void {
       throw new Error(`blocked external url: ${String(url)}`)
     }
     console.log(`[ipc] openExternal ${url}`)
+    // E2E:真的拉起系统浏览器会抢焦点且不可控。日志保留,调用本身短路。
+    if (process.env['LAUNCHER_E2E_STUB_OPEN'] === '1') return
     return shell.openExternal(url)
   })
 

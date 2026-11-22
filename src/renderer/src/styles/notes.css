@@ -1165,12 +1165,24 @@ body.notes-pin-dragging {
   min-height: 0;
 }
 .notes-main-empty {
-  align-items: center;
-  justify-content: center;
+  /* 居中职责交给 .notes-empty-body:底栏要作为主区的另一个 flex 子项横向铺满,
+     主区自己再居中会把 footer 压成内容宽度。 */
   /* 「选一篇笔记开始」空态铺左栏目录树同款的 --surface:
      空页和左栏连成一块,不再在 .notes-view 的 --bg 上露出一块更深的洞。
      笔记空态与文件空态共用这一类,两者一起保持一致。 */
   background: var(--surface);
+}
+/* 空态内容(首次引导 / 加载骨架)的居中层。position:relative 同时把
+   .notes-opening-layer(absolute; inset:0)框在内容区里,加载遮罩不会盖住底栏。 */
+.notes-empty-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 /* 标题行 24px + 工具条行 30px = 54px,与左侧栏头(.sidebar-header)/ 其他页顶栏(.topbar)同高;
@@ -3442,6 +3454,49 @@ body.cm-block-dragging {
   padding: 0 12px;
   background: var(--surface);
   border-top: 1px solid var(--border2);
+}
+/* 通用底栏:纯预览 / 空态 / 文件页(编辑与分栏继续用上面的 .notes-toolbar)。
+   几何与工具条一致,但类名保持独立 —— e2e 用 .notes-toolbar 判断编辑页底栏是否在。 */
+.notes-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 38px;
+  padding: 0 12px;
+  background: var(--surface);
+  border-top: 1px solid var(--border2);
+}
+.notes-footer-spacer {
+  flex: 1;
+}
+.notes-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: var(--dim);
+  font-size: 10.5px;
+  text-decoration: none;
+}
+.notes-footer-link i {
+  font-size: 13px;
+}
+.notes-footer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-footer-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.notes-footer-link:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 1px;
 }
 .notes-toolbar-fmt {
   display: flex;

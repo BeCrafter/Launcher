@@ -66,6 +66,7 @@ import { NoteRefChips } from './NoteRefChips'
 import { NoteRefPicker } from './NoteRefPicker'
 import { NotesRail } from './NotesRail'
 import { NoteToolbar } from './NoteToolbar'
+import { NotesFooter } from './NotesFooter'
 import { FileView } from './FileView'
 import { useActiveDocKind } from './doc-actions'
 
@@ -657,24 +658,29 @@ export function NotesView(): React.JSX.Element {
           >
             <i className={railCollapsed ? 'fa-solid fa-angles-right' : 'fa-solid fa-angles-left'} />
           </button>
-          {/* 与左栏的首次引导同一套版式:同一次首屏,两边不该一个饱满一个单薄 */}
-          <div className="notes-firstrun">
-            <div className="notes-firstrun-icon">
-              <i className="fa-regular fa-note-sticky" />
+          {/* 内容单独一层:居中由它负责,底栏才能作为主区的另一个 flex 子项横向铺满。
+              加载遮罩也留在这一层里 —— 它只该盖住内容区,不能压住底栏。 */}
+          <div className="notes-empty-body">
+            {/* 与左栏的首次引导同一套版式:同一次首屏,两边不该一个饱满一个单薄 */}
+            <div className="notes-firstrun">
+              <div className="notes-firstrun-icon">
+                <i className="fa-regular fa-note-sticky" />
+              </div>
+              <div className="notes-firstrun-title">{t('notes.pick.title')}</div>
+              <p className="notes-firstrun-hint">{t('notes.pick.hint')}</p>
             </div>
-            <div className="notes-firstrun-title">{t('notes.pick.title')}</div>
-            <p className="notes-firstrun-hint">{t('notes.pick.hint')}</p>
+            {/* 第一次点开笔记:还没有旧正文可保留,同样给一层延迟出现的骨架 */}
+            {openingId !== null && (
+              <div
+                className="notes-opening-layer"
+                role="status"
+                aria-label={t('notes.opening')}
+              >
+                <Skeleton rows={8} />
+              </div>
+            )}
           </div>
-          {/* 第一次点开笔记:还没有旧正文可保留,同样给一层延迟出现的骨架 */}
-          {openingId !== null && (
-            <div
-              className="notes-opening-layer"
-              role="status"
-              aria-label={t('notes.opening')}
-            >
-              <Skeleton rows={8} />
-            </div>
-          )}
+          <NotesFooter />
         </div>
         <NoteRefPicker />
       </div>
@@ -1018,14 +1024,17 @@ export function NotesView(): React.JSX.Element {
           )}
         </div>
 
-        {/* 排版按钮只对编辑有意义:纯预览时不渲染整条,预览区因此拿到整块高度 */}
-        {viewMode !== 'preview' && (
+        {/* 排版按钮只对编辑有意义:纯预览时换成通用底栏(左侧留空,右侧仓库入口)。
+            两者二选一 —— 同时渲染会出现两条 38px 横条。 */}
+        {viewMode !== 'preview' ? (
           <NoteToolbar
             handleRef={editorRef}
             body={draft.body}
             onDiagram={() => openDiagramAt(null)}
             onEmbed={() => openEmbedAt(null)}
           />
+        ) : (
+          <NotesFooter />
         )}
       {blockMenu !== null && (
         <NoteBlockMenu

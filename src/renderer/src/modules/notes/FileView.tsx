@@ -38,6 +38,7 @@ import type { DrawioFrameHandle } from './file-views/DrawioFrame'
 import { effectiveDrawioMode, useDrawioStore } from '../../state/drawio-store'
 import { BytesLoader } from './file-views/BytesLoader'
 import { Skeleton } from '../../components/ui/Skeleton'
+import { NotesFooter } from './NotesFooter'
 
 /** 这些类型会写盘,头部显示保存状态 */
 function isTextKind(kind: NoteFileKind): boolean {
@@ -116,17 +117,21 @@ export function FileView(): React.JSX.Element {
         >
           <i className={railCollapsed ? 'fa-solid fa-angles-right' : 'fa-solid fa-angles-left'} />
         </button>
-        {openingPath !== null ? (
-          <Skeleton rows={8} />
-        ) : (
-          <div className="notes-firstrun">
-            <div className="notes-firstrun-icon">
-              <i className="fa-solid fa-file" />
+        {/* 内容区单独一层:居中由它负责,底栏才能横向铺满主区 */}
+        <div className="notes-empty-body">
+          {openingPath !== null ? (
+            <Skeleton rows={8} />
+          ) : (
+            <div className="notes-firstrun">
+              <div className="notes-firstrun-icon">
+                <i className="fa-solid fa-file" />
+              </div>
+              <div className="notes-firstrun-title">{t('notes.pick.title')}</div>
+              <p className="notes-firstrun-hint">{t('notes.pick.hint')}</p>
             </div>
-            <div className="notes-firstrun-title">{t('notes.pick.title')}</div>
-            <p className="notes-firstrun-hint">{t('notes.pick.hint')}</p>
-          </div>
-        )}
+          )}
+        </div>
+        <NotesFooter />
       </div>
     )
   }
@@ -438,6 +443,7 @@ export function FileView(): React.JSX.Element {
           <BinaryBody file={file} saveNonce={saveNonce} />
         )}
       </div>
+      <NotesFooter />
     </div>
   )
 }
